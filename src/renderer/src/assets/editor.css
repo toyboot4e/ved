@@ -1,0 +1,174 @@
+/* The body should never shrink */
+html,
+body {
+  width: 100%;
+  height: 100%;
+  margin: 0;
+  padding: 0;
+}
+
+/* Frameless & draggable window */
+body {
+  -webkit-app-region: drag;
+}
+button {
+  -webkit-app-region: no-drag;
+}
+
+.ved-editor-content {
+  -webkit-app-region: no-drag;
+  -webkit-user-select: none;
+}
+
+/* Basic color scheme */
+body {
+  background-color: rgb(36, 36, 36);
+  color: #d8d8d8;
+}
+
+/* ******************************************************************************
+ * Editor
+ * ******************************************************************************/
+
+.ved {
+  /* only the follows should be modifiable. Others should be calculated */
+  --font-size: 18px;
+
+  /* TODO: use number of characters for sizing */
+  --content-width: 410px;
+  --col-size: 400px;
+
+  --line-space: 2px; /* space between lines */
+  --pad-x: 20px;
+  --pad-y: 10px;
+
+  --footer-height: calc(var(--font-size) + var(--pad-y) * 2);
+  --editor-width: calc(var(--content-width) + var(--pad-x) * 2);
+  --editor-height: calc(100% - var(--footer-height) * 2);
+
+  width: var(--editor-width);
+  height: 100%;
+  margin: auto;
+}
+
+.ved-editor {
+  width: var(--editor-width);
+  height: var(--editor-height);
+}
+
+.ved-editor-content.vert-mode {
+  font-size: var(--font-size);
+  line-height: calc(var(--font-size) + var(--line-space));
+}
+
+/* plain text and <p> tags in contenteditable */
+.ved-editor-content > * {
+  /* no margin for contenteditable */
+  margin-block-start: 0;
+  margin-block-end: 0;
+
+  margin: 0;
+  --space: calc(var(--line-space) / 2);
+  padding: 0 var(--space) 0 var(--space);
+}
+
+/* Placholder */
+.ved-editor-content[placeholder]:empty:before {
+  content: attr(placeholder);
+  color: #555;
+}
+
+[contenteditable] {
+  outline: 0px solid transparent;
+  /* Hide the jittering caret */
+  /* caret-color: transparent; */
+}
+
+/* ******************************************************************************
+ *  Vertical writing
+ * ******************************************************************************/
+
+/* Hide scrollbar */
+.ved-editor::-webkit-scrollbar {
+  width: 0px;
+  background: transparent;
+}
+
+/* Wrapper that makes the content scrollable */
+.ved-editor.vert-mode:not(multi-col-mode) {
+  overflow-x: scroll;
+}
+
+.ved-editor.vert-mode.multi-col-mode {
+  overflow-y: scroll;
+}
+
+/* Content corresponds to a column */
+.ved-editor-content.vert-mode {
+  /* wrap anyway */
+  word-break: break-all;
+  word-wrap: break-word;
+
+  enable vertical writing
+  writing-mode: vertical-rl;
+  -webkit-writing-mode: vertical-rl;
+  -ms-writing-mode: tb-rl; /* IE */
+}
+
+.ved-editor-content.vert-mode.multi-col-mode {
+  width: var(--content-width);
+  height: var(--col-size);
+
+  margin: var(--pad-y) var(--pad-x) var(--footer-height) var(--pad-x);
+  padding: 0 0 var(--pad-y) 0;
+  border-bottom: solid 1px #808080; /* Emulate an initial column rule */
+
+  column-span: all;
+  /* column-width (row height) makes no sence in vertical writing mode, but
+     * we have to give it some value to enable multi columns */
+  column-width: var(--col-size);
+  column-gap: calc(var(--pad-y) * 2);
+  column-rule: solid 1px #808080;
+}
+
+.ved-editor-content.vert-mode:not(.multi-col-mode) {
+  /* TODO: scroll mode support */
+}
+
+/* Formats */
+a.vert-mode {
+  /* show underline right to characters */
+  text-decoration: overline;
+}
+
+.ved-editor-content.num-combine {
+  -webkit-text-combine: horizontal;
+  -ms-text-combine-horizontal: all;
+  text-combine-upright: digits 2;
+}
+
+.ved-editor-content.indent-view {
+  text-indent: 1em;
+}
+
+/* ******************************************************************************
+ *  Navigator
+ * ******************************************************************************/
+
+.ved-header {
+  height: var(--footer-height);
+}
+
+.ved-footer {
+  height: var(--footer-height);
+  padding: 0;
+  border-top: 1px solid #808080;
+
+  display: flex;
+  justify-content: center;
+  align-items: center;
+}
+
+.ved-footer-counter {
+  color: #c0b18b;
+}
