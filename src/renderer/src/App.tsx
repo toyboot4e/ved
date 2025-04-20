@@ -1,4 +1,4 @@
-import { Editor } from './components/Editor'
+import { VedEditor } from './components/Editor'
 
 export const App = (): React.JSX.Element => {
   // const ipcHandle = (): void => window.electron.ipcRenderer.send('ping')
@@ -7,7 +7,7 @@ export const App = (): React.JSX.Element => {
     <div className="ved">
       {/* Make space for trafic lights(macOS only) */}
       <div className="ved-header"></div>
-      {Editor({ vertical: true })}
+      {VedEditor({ vertical: true })}
       <div className="ved-footer">
         <p id="counter" className="ved-footer-counter"></p>
       </div>

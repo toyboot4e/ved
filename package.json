@@ -28,6 +28,7 @@
     "clsx": "^2.1.1",
     "electron-updater": "^6.3.9",
     "slate": "^0.112.0",
+    "slate-history": "^0.113.1",
     "slate-react": "^0.112.1"
   },
   "devDependencies": {
