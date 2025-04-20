@@ -7,3 +7,5 @@ out
 
 .direnv
 .envrc
+
+*storybook.log

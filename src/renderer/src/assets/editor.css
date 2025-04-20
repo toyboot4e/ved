@@ -54,6 +54,7 @@ body {
 .ved-editor {
   width: var(--editor-width);
   height: var(--editor-height);
+  border: solid 2px black;
 }
 
 .ved-editor-content.vert-mode {
