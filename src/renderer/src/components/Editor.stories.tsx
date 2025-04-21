@@ -1,6 +1,6 @@
 import type { Meta, StoryObj } from '@storybook/react'
 
-import { VedEditor } from './Editor'
+import { VedEditor, WritingDirection } from './Editor'
 
 // TODO: Is it good idea to import here?
 import '../assets/main.css'
@@ -17,12 +17,12 @@ type Story = StoryObj<typeof meta>
 
 export const Vertical: Story = {
   args: {
-    vertical: true
+    dir: WritingDirection.Vertical
   }
 }
 
 export const Horizontal: Story = {
   args: {
-    vertical: false
+    dir: WritingDirection.Horizontal
   }
 }
