@@ -13,12 +13,16 @@ import {
 } from 'slate-react'
 import { useState, useCallback } from 'react'
 
+enum VedType {
+  Ruby
+}
+
 interface VedRange extends Range {
-  isVoldemort: boolean
+  ty: VedType
 }
 
 interface VedLeaf extends Text {
-  isVoldemort?: boolean
+  ty?: VedType
 }
 
 const EditorUtil = {
@@ -34,102 +38,125 @@ const EditorUtil = {
   }
 }
 
+const parseRuby = (text: string): [string, string] | null => {
+  console.log('parse ruby:', text)
+  // TODO: allow arbitrary form use regex?)
+  const offset = text.indexOf('[')
+  if (offset === -1) {
+    console.log('failed to find beginning of ruby')
+    return null
+  }
+
+  const l = text.indexOf('|', offset)
+  if (l === -1) {
+    console.log('failed to find delimiter of ruby')
+    return null
+  }
+
+  const r = text.indexOf(']', l)
+  if (r === -1) {
+    console.log('failed to find end of ruby')
+    return null
+  }
+
+  const ground = text.substring(offset + 1, l)
+  const hover = text.substring(l + 1, r)
+  console.log('found ruby', text, [offset, l, r], ground, hover, 'from', text)
+
+  return [ground, hover]
+}
+
+const decorateRubies = (ranges: VedRange[], path: Path, text: string) => {
+  let offset = 0
+  while (true) {
+    // TODO: portable, configurable format
+    // FIXME: aggregate the parse logic
+    offset = text.indexOf('[', offset)
+    if (offset === -1) break
+
+    const l = text.indexOf('|', offset)
+    if (l === -1) break
+
+    const r = text.indexOf(']', l)
+    if (r === -1) break
+
+    console.log('push ruby:', text.substring(offset, r + 1))
+    ranges.push({
+      ty: VedType.Ruby,
+      anchor: { path, offset },
+      focus: { path, offset: r + 1 }
+    })
+
+    offset = r
+  }
+  // const ranges: Range[] = []
+}
+
+// const decorateVoldemort = (ranges: VedRange[], path: Path, text: string) => {
+//   // const ranges: Range[] = []
+//   let start = 0
+//   let end = 0
+//
+//   const parts = text.split(/(Voldemort)/g)
+//   for (let part of parts) {
+//     start = end
+//     end = start + part.length
+//     if (part === 'Voldemort') {
+//       ranges.push({
+//         isVoldemort: true,
+//         anchor: { path, offset: start },
+//         focus: { path, offset: end }
+//       })
+//     }
+//   }
+// }
+
 const runDecorate = (editor: Editor, [node, path]: NodeEntry): VedRange[] => {
   if (!Text.isText(node)) {
     return []
   }
 
-  if (!node.text.includes('Voldemort')) {
-    return []
-  }
-
+  // FIXME: do not decorate by paragraph, not by text (?)
   // return if it intersects
   if (EditorUtil.isTextSelected(editor, path)) {
     return []
   }
 
-  const parts = node.text.split(/(Voldemort)/g)
-
-  // const ranges: Range[] = []
-  // TODO: type
   const ranges = []
-  let start = 0
-  let end = 0
-
-  for (let part of parts) {
-    start = end
-    end = start + part.length
-    if (part === 'Voldemort') {
-      ranges.push({
-        isVoldemort: true,
-        anchor: { path, offset: start },
-        focus: { path, offset: end }
-      })
-    }
-  }
+  decorateRubies(ranges, path, node.text)
 
   return ranges
 }
 
 const useDecorate = (editor: Editor) => {
-  return useCallback((entry: NodeEntry) => runDecorate(editor, entry), [])
-}
-
-const useLeafSelected = (node: Node): boolean => {
-  const editor = useSlateStatic()
-  const selection = useSlateSelection()
-  if (!selection) {
-    return false
-  }
-  // DOM Editor らしい？
-  const range = editor.range(ReactEditor.findPath(editor, node))
-  return Range.intersection(selection, range) !== null
+  // TODO: use
+  // const { selection } = editor
+  return useCallback((entry: NodeEntry) => runDecorate(editor, entry), [editor])
 }
 
 const Leaf = ({ attributes, children, leaf: rawLeaf }: RenderLeafProps) => {
   const leaf = rawLeaf as VedLeaf
+  const returnDefault = () => <span {...attributes}>{children}</span>
 
-  // TODO: ignore placeholder?
-
-  // TODO: maybe run `useMemo` for the derived value and use it as dependencies for avoiding re-rendering
-  // const isIntersecting = useLeafSelected(leaf)
-
-  // TODO: decorate で作った CustomText に downcast したい
-  if (!leaf.isVoldemort) {
-    return <span {...attributes}>{children}</span>
+  console.log('leaf:', leaf.text)
+  console.log('leaf:', leaf.ty, leaf.text)
+  if (leaf.ty === null || leaf.ty === undefined) {
+    return returnDefault()
   }
 
-  console.log('found volde!!')
-  const text = leaf.text
-  if (text == 'Voldemort') {
-    return (
-      <span {...attributes} style={{ fontWeight: 'bold', color: 'red' }}>
-        You-Know-Who
-      </span>
-    )
+  const parsed = parseRuby(leaf.text)
+  if (parsed === null) {
+    console.log('failed to parse ruby')
+    return returnDefault()
   }
 
-  return <span {...attributes}>{children}</span>
-
-  // INVARIANT: `leaf` is a text paragraph
-  console.log(children.length, leaf.text)
-
-  // TODO: detect selection or cursor
-
-  // TODO: Do parse
-  const pos = leaf.text.indexOf('|')
-
-  // parse the text
-  // const output = `decorated: ${leaf.text}`
-  const left = leaf.text.substring(0, pos)
-  const right = leaf.text.substring(pos + 1)
-  // <ruby> 明日 <rp>(</rp><rt>Ashita</rt><rp>)</rp> </ruby>
+  const [ground, hover] = parsed
   return (
     <span {...attributes}>
       <ruby>
-        {left}
+        {ground}
         <rp>(</rp>
-        <rt>{right}</rt>
+        <rt>{hover}</rt>
         <rp>)</rp>
       </ruby>
     </span>
