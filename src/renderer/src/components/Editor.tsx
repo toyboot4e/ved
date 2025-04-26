@@ -174,14 +174,11 @@ export type VedEditorProps = {
   readonly dir: WritingDirection
 }
 
-export const VedEditor = ({ dir }: VedEditorProps): React.JSX.Element => {
-  const [editor] = useState(() => withReact(withHistory(createEditor())))
-  const initialValue = [{ type: 'paragraph', children: [{ text: '' }] }]
-  const decorate = useDecorate(editor)
-  const renderLeaf = useCallback((props: RenderLeafProps) => <Leaf {...props} />, [])
-  const vert = dir === WritingDirection.Vertical
-
-  const onKeyDown = useCallback(
+const useOnKeyDown = (
+  editor: Editor,
+  vert: boolean
+): React.KeyboardEventHandler<HTMLDivElement> => {
+  return useCallback(
     (event: React.KeyboardEvent) => {
       if (vert) {
         // remap arrow keys on vertical writing mode
@@ -197,8 +194,18 @@ export const VedEditor = ({ dir }: VedEditorProps): React.JSX.Element => {
         }
       }
     },
-    [editor]
+    [editor, vert]
   )
+}
+
+export const VedEditor = ({ dir }: VedEditorProps): React.JSX.Element => {
+  // TODO: Should use `useMemo` as in hovering toolbar example?
+  const [editor] = useState(() => withReact(withHistory(createEditor())))
+  const initialValue = [{ type: 'paragraph', children: [{ text: '' }] }]
+  const decorate = useDecorate(editor)
+  const renderLeaf = useCallback((props: RenderLeafProps) => <Leaf {...props} />, [])
+  const vert = dir === WritingDirection.Vertical
+  const onKeyDown = useOnKeyDown(editor, vert)
 
   return (
     <div className={clsx('ved-editor', vert && 'vert-mode', vert && 'multi-col-mode')}>
