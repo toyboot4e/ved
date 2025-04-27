@@ -62,6 +62,7 @@ const decorateRubies = (editor: Editor, ranges: VedRange[], path: Path, text: st
     const { selection } = editor
     console.log(selection, text)
   }
+
   let offset = 0
   while (true) {
     // TODO: portable, configurable format
@@ -98,24 +99,33 @@ const decorateRubies = (editor: Editor, ranges: VedRange[], path: Path, text: st
   }
 }
 
-const decorateImpl = (editor: Editor, [node, path]: NodeEntry): VedRange[] => {
+const decorateImpl = (
+  editor: Editor,
+  appearPolicy: AppearPolicy,
+  [node, path]: NodeEntry
+): VedRange[] => {
   if (!Text.isText(node)) {
     return []
   }
 
-  // // This is the paragraph-based style strip:
-  // if (EditorUtil.isTextSelected(editor, path)) {
-  //   return []
-  // }
+  // by-paragraph appear
+  if (appearPolicy == AppearPolicy.ByParagraph && EditorUtil.intersects(editor, path)) {
+    return []
+  }
 
   const ranges = []
+
+  // it works-with by-character appear polciy, but it's ok as by-paragraph appera policy shows more
   decorateRubies(editor, ranges, path, node.text)
 
   return ranges
 }
 
-const useDecorate = (editor: Editor) => {
-  return useCallback((entry: NodeEntry) => decorateImpl(editor, entry), [editor])
+const useDecorate = (editor: Editor, appearPolicy: AppearPolicy) => {
+  return useCallback(
+    (entry: NodeEntry) => decorateImpl(editor, appearPolicy, entry),
+    [editor, appearPolicy]
+  )
 }
 
 const Leaf = ({ attributes, children, leaf: rawLeaf }: RenderLeafProps) => {
@@ -139,17 +149,6 @@ const Leaf = ({ attributes, children, leaf: rawLeaf }: RenderLeafProps) => {
       </ruby>
     </span>
   )
-}
-
-export enum WritingDirection {
-  Vertical,
-  Horizontal
-}
-
-/** Properties of {@link VedEditor}. */
-export type VedEditorProps = {
-  // TODO: change it to an enum
-  readonly dir: WritingDirection
 }
 
 const useOnKeyDown = (
@@ -176,11 +175,28 @@ const useOnKeyDown = (
   )
 }
 
-export const VedEditor = ({ dir }: VedEditorProps): React.JSX.Element => {
+export enum WritingDirection {
+  Vertical,
+  Horizontal
+}
+
+export enum AppearPolicy {
+  ByParagraph,
+  ByCharacter
+  // Rich
+}
+
+/** Properties of {@link VedEditor}. */
+export type VedEditorProps = {
+  readonly dir: WritingDirection
+  readonly appearPolicy: AppearPolicy
+}
+
+export const VedEditor = ({ dir, appearPolicy }: VedEditorProps): React.JSX.Element => {
   // TODO: Should use `useMemo` as in hovering toolbar example?
   const [editor] = useState(() => withReact(withHistory(createEditor())))
   const initialValue = [{ type: 'paragraph', children: [{ text: '' }] }]
-  const decorate = useDecorate(editor)
+  const decorate = useDecorate(editor, appearPolicy)
   const renderLeaf = useCallback((props: RenderLeafProps) => <Leaf {...props} />, [])
   const vert = dir === WritingDirection.Vertical
   const onKeyDown = useOnKeyDown(editor, vert)
