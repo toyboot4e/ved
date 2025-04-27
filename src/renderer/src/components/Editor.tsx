@@ -27,7 +27,8 @@ interface VedLeaf extends Text {
 }
 
 const EditorUtil = {
-  isTextSelected: (editor: Editor, path: Path) => {
+  /** Returns whether the editor selection intersects with a node. */
+  intersects: (editor: Editor, path: Path) => {
     const { selection } = editor
 
     if (!selection) {
@@ -36,10 +37,31 @@ const EditorUtil = {
 
     const range = Editor.range(editor, path)
     return Range.intersection(selection, range) !== null
+  },
+
+  /** Returns whether the editor selection intersects with a part of a node. */
+  intersectsIn: (editor: Editor, path: Path, anchor: number, focus: number) => {
+    const { selection } = editor
+
+    if (!selection) {
+      return false
+    }
+
+    return (
+      Range.intersection(selection, {
+        anchor: { path, offset: anchor },
+        focus: { path, offset: focus }
+      }) !== null
+    )
   }
 }
 
-const decorateRubies = (ranges: VedRange[], path: Path, text: string) => {
+const decorateRubies = (editor: Editor, ranges: VedRange[], path: Path, text: string) => {
+  {
+    // debug
+    const { selection } = editor
+    console.log(selection, text)
+  }
   let offset = 0
   while (true) {
     // TODO: portable, configurable format
@@ -52,6 +74,12 @@ const decorateRubies = (ranges: VedRange[], path: Path, text: string) => {
 
     const r = text.indexOf(')', l)
     if (r === -1) break
+
+    // strip the styling if the selection intersects with the ruby format:
+    if (EditorUtil.intersectsIn(editor, path, offset, r)) {
+      offset = r
+      continue
+    }
 
     ranges.push({
       // format indices are relative to the beginning symbol:
@@ -68,7 +96,6 @@ const decorateRubies = (ranges: VedRange[], path: Path, text: string) => {
 
     offset = r
   }
-  // const ranges: Range[] = []
 }
 
 const decorateImpl = (editor: Editor, [node, path]: NodeEntry): VedRange[] => {
@@ -82,7 +109,7 @@ const decorateImpl = (editor: Editor, [node, path]: NodeEntry): VedRange[] => {
   // }
 
   const ranges = []
-  decorateRubies(ranges, path, node.text)
+  decorateRubies(editor, ranges, path, node.text)
 
   return ranges
 }
@@ -99,7 +126,6 @@ const Leaf = ({ attributes, children, leaf: rawLeaf }: RenderLeafProps) => {
     return returnDefault()
   }
 
-  console.log(leaf.text, leaf.format)
   const leafText = leaf.text.substring(leaf.format.text[0], leaf.format.text[1])
   const leafRuby = leaf.text.substring(leaf.format.rubyText[0], leaf.format.rubyText[1])
 
