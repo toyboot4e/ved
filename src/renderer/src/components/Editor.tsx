@@ -1,5 +1,5 @@
 import { clsx } from 'clsx'
-import { createEditor, Editor, Path, Range, NodeEntry, Text } from 'slate'
+import { createEditor, Editor, Path, Range, NodeEntry, Text, Transforms } from 'slate'
 import { withHistory } from 'slate-history'
 import { Slate, withReact, Editable, RenderLeafProps } from 'slate-react'
 import { useState, useCallback } from 'react'
@@ -83,13 +83,12 @@ const decorateRubies = (editor: Editor, ranges: VedRange[], path: Path, text: st
     }
 
     ranges.push({
-      // format indices are relative to the beginning symbol:
       format: {
-        delimFront: [0, 1],
-        text: [1, l - offset],
-        sepMid: [l - offset, l + 1 - offset],
-        rubyText: [l + 1 - offset, r - offset],
-        delimEnd: [r - offset, r + 1 - offset]
+        delimFront: [offset, offset + 1],
+        text: [offset + 1, l],
+        sepMid: [l, l + 1],
+        rubyText: [l + 1, r],
+        delimEnd: [r, r + 1]
       },
       anchor: { path, offset },
       focus: { path, offset: r + 1 }
@@ -136,8 +135,12 @@ const Leaf = ({ attributes, children, leaf: rawLeaf }: RenderLeafProps) => {
     return returnDefault()
   }
 
-  const leafText = leaf.text.substring(leaf.format.text[0], leaf.format.text[1])
-  const leafRuby = leaf.text.substring(leaf.format.rubyText[0], leaf.format.rubyText[1])
+  const offset = leaf.format.delimFront[0]
+  const leafText = leaf.text.substring(leaf.format.text[0] - offset, leaf.format.text[1] - offset)
+  const leafRuby = leaf.text.substring(
+    leaf.format.rubyText[0] - offset,
+    leaf.format.rubyText[1] - offset
+  )
 
   return (
     <span {...attributes}>
