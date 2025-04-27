@@ -40,7 +40,6 @@ const EditorUtil = {
 }
 
 const decorateRubies = (ranges: VedRange[], path: Path, text: string) => {
-  console.log('deco', text)
   let offset = 0
   while (true) {
     // TODO: portable, configurable format
@@ -54,25 +53,14 @@ const decorateRubies = (ranges: VedRange[], path: Path, text: string) => {
     const r = text.indexOf(')', l)
     if (r === -1) break
 
-    console.log('push', {
-      format: {
-        delimFront: [offset, offset + 1],
-        text: [offset + 1, l],
-        sepMid: [l, l + 1],
-        rubyText: [l + 1, r],
-        delimEnd: [r, r + 1]
-      },
-      anchor: { path, offset },
-      focus: { path, offset: r + 1 }
-    })
-
     ranges.push({
+      // format indices are relative to the beginning symbol:
       format: {
-        delimFront: [0, offset],
-        text: [offset + 1, l - 1],
-        sepMid: [l, l + 1],
-        rubyText: [l + 1, r],
-        delimEnd: [r, r + 1]
+        delimFront: [0, 1],
+        text: [1, l - offset],
+        sepMid: [l - offset, l + 1 - offset],
+        rubyText: [l + 1 - offset, r - offset],
+        delimEnd: [r - offset, r + 1 - offset]
       },
       anchor: { path, offset },
       focus: { path, offset: r + 1 }
@@ -88,11 +76,10 @@ const decorateImpl = (editor: Editor, [node, path]: NodeEntry): VedRange[] => {
     return []
   }
 
-  // FIXME: this is by-paragraph style strip
-  // return if it intersects
-  if (EditorUtil.isTextSelected(editor, path)) {
-    return []
-  }
+  // // This is the paragraph-based style strip:
+  // if (EditorUtil.isTextSelected(editor, path)) {
+  //   return []
+  // }
 
   const ranges = []
   decorateRubies(ranges, path, node.text)
@@ -112,7 +99,7 @@ const Leaf = ({ attributes, children, leaf: rawLeaf }: RenderLeafProps) => {
     return returnDefault()
   }
 
-  // console.log(leaf.format)
+  console.log(leaf.text, leaf.format)
   const leafText = leaf.text.substring(leaf.format.text[0], leaf.format.text[1])
   const leafRuby = leaf.text.substring(leaf.format.rubyText[0], leaf.format.rubyText[1])
 
