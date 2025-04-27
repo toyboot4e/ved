@@ -1,28 +1,29 @@
 import { clsx } from 'clsx'
-import { createEditor, Editor, Transforms, Path, Range, Node, NodeEntry, Text } from 'slate'
+import { createEditor, Editor, Path, Range, NodeEntry, Text } from 'slate'
 import { withHistory } from 'slate-history'
-import {
-  Slate,
-  withReact,
-  useSlate,
-  useSlateStatic,
-  useSlateSelection,
-  Editable,
-  ReactEditor,
-  RenderLeafProps
-} from 'slate-react'
+import { Slate, withReact, Editable, RenderLeafProps } from 'slate-react'
 import { useState, useCallback } from 'react'
 
-enum VedType {
-  Ruby
+// TODO: how to handle intersecting decorations
+
+type Format = Ruby
+
+type Ruby = {
+  delimFront: [number, number]
+  text: [number, number]
+  sepMid: [number, number]
+  rubyText: [number, number]
+  delimEnd: [number, number]
 }
 
+/** Parsed `Range` into `Format`. */
 interface VedRange extends Range {
-  ty: VedType
+  format: Format
 }
 
+/** Parsed leaf `Text` with `Format`. */
 interface VedLeaf extends Text {
-  ty?: VedType
+  format?: Format
 }
 
 const EditorUtil = {
@@ -38,51 +39,41 @@ const EditorUtil = {
   }
 }
 
-const parseRuby = (text: string): [string, string] | null => {
-  console.log('parse ruby:', text)
-  // TODO: allow arbitrary form use regex?)
-  const offset = text.indexOf('[')
-  if (offset === -1) {
-    console.log('failed to find beginning of ruby')
-    return null
-  }
-
-  const l = text.indexOf('|', offset)
-  if (l === -1) {
-    console.log('failed to find delimiter of ruby')
-    return null
-  }
-
-  const r = text.indexOf(']', l)
-  if (r === -1) {
-    console.log('failed to find end of ruby')
-    return null
-  }
-
-  const ground = text.substring(offset + 1, l)
-  const hover = text.substring(l + 1, r)
-  console.log('found ruby', text, [offset, l, r], ground, hover, 'from', text)
-
-  return [ground, hover]
-}
-
 const decorateRubies = (ranges: VedRange[], path: Path, text: string) => {
+  console.log('deco', text)
   let offset = 0
   while (true) {
     // TODO: portable, configurable format
     // FIXME: aggregate the parse logic
-    offset = text.indexOf('[', offset)
+    offset = text.indexOf('|', offset)
     if (offset === -1) break
 
-    const l = text.indexOf('|', offset)
+    const l = text.indexOf('(', offset)
     if (l === -1) break
 
-    const r = text.indexOf(']', l)
+    const r = text.indexOf(')', l)
     if (r === -1) break
 
-    console.log('push ruby:', text.substring(offset, r + 1))
+    console.log('push', {
+      format: {
+        delimFront: [offset, offset + 1],
+        text: [offset + 1, l],
+        sepMid: [l, l + 1],
+        rubyText: [l + 1, r],
+        delimEnd: [r, r + 1]
+      },
+      anchor: { path, offset },
+      focus: { path, offset: r + 1 }
+    })
+
     ranges.push({
-      ty: VedType.Ruby,
+      format: {
+        delimFront: [0, offset],
+        text: [offset + 1, l - 1],
+        sepMid: [l, l + 1],
+        rubyText: [l + 1, r],
+        delimEnd: [r, r + 1]
+      },
       anchor: { path, offset },
       focus: { path, offset: r + 1 }
     })
@@ -92,31 +83,12 @@ const decorateRubies = (ranges: VedRange[], path: Path, text: string) => {
   // const ranges: Range[] = []
 }
 
-// const decorateVoldemort = (ranges: VedRange[], path: Path, text: string) => {
-//   // const ranges: Range[] = []
-//   let start = 0
-//   let end = 0
-//
-//   const parts = text.split(/(Voldemort)/g)
-//   for (let part of parts) {
-//     start = end
-//     end = start + part.length
-//     if (part === 'Voldemort') {
-//       ranges.push({
-//         isVoldemort: true,
-//         anchor: { path, offset: start },
-//         focus: { path, offset: end }
-//       })
-//     }
-//   }
-// }
-
-const runDecorate = (editor: Editor, [node, path]: NodeEntry): VedRange[] => {
+const decorateImpl = (editor: Editor, [node, path]: NodeEntry): VedRange[] => {
   if (!Text.isText(node)) {
     return []
   }
 
-  // FIXME: do not decorate by paragraph, not by text (?)
+  // FIXME: this is by-paragraph style strip
   // return if it intersects
   if (EditorUtil.isTextSelected(editor, path)) {
     return []
@@ -129,34 +101,27 @@ const runDecorate = (editor: Editor, [node, path]: NodeEntry): VedRange[] => {
 }
 
 const useDecorate = (editor: Editor) => {
-  // TODO: use
-  // const { selection } = editor
-  return useCallback((entry: NodeEntry) => runDecorate(editor, entry), [editor])
+  return useCallback((entry: NodeEntry) => decorateImpl(editor, entry), [editor])
 }
 
 const Leaf = ({ attributes, children, leaf: rawLeaf }: RenderLeafProps) => {
   const leaf = rawLeaf as VedLeaf
   const returnDefault = () => <span {...attributes}>{children}</span>
 
-  console.log('leaf:', leaf.text)
-  console.log('leaf:', leaf.ty, leaf.text)
-  if (leaf.ty === null || leaf.ty === undefined) {
+  if (leaf.format === undefined) {
     return returnDefault()
   }
 
-  const parsed = parseRuby(leaf.text)
-  if (parsed === null) {
-    console.log('failed to parse ruby')
-    return returnDefault()
-  }
+  // console.log(leaf.format)
+  const leafText = leaf.text.substring(leaf.format.text[0], leaf.format.text[1])
+  const leafRuby = leaf.text.substring(leaf.format.rubyText[0], leaf.format.rubyText[1])
 
-  const [ground, hover] = parsed
   return (
     <span {...attributes}>
       <ruby>
-        {ground}
+        {leafText}
         <rp>(</rp>
-        <rt>{hover}</rt>
+        <rt>{leafRuby}</rt>
         <rp>)</rp>
       </ruby>
     </span>
