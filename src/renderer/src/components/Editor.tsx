@@ -179,7 +179,6 @@ const useDecorate = (editor: Editor, appearPolicy: AppearPolicy) => {
 const VedLeaf = ({ attributes, children, leaf: rawLeaf }: RenderLeafProps) => {
   const leaf = rawLeaf as VedLeaf
 
-  console.log('leaf', leaf.type, leaf.text)
   if (leaf.type === undefined) {
     // FIXME: create a three nesting span
     return <span {...attributes}>{children}</span>
@@ -209,28 +208,20 @@ const VedLeaf = ({ attributes, children, leaf: rawLeaf }: RenderLeafProps) => {
   // )
 }
 
-const InlineChromiumBugfix = () => (
-  <span contentEditable={false} style={{ fontSize: 0 }}>
-    {String.fromCodePoint(160) /* Non-breaking space */}
-  </span>
-)
 /** Ved element component. Note that `withInline` lets us insert `Ruby` as inline element. */
 const VedElement = ({ attributes, children, element: rawElement }: RenderElementProps) => {
   const vedElement = rawElement as VedElement
 
   // TODO: we could still use decorate??
-  console.log('elem', vedElement.type, vedElement)
   switch (vedElement.type) {
     case 'Ruby':
+      const element = vedElement as RubyElement
       return (
         <ruby {...attributes}>
-          {/*<InlineChromiumBugfix />*/}
           {children}
           <rp>(</rp>
-          <rt contentEditable={false}>振り仮名！</rt>
-          {/*<rt data-slate-node="text">振り仮名！</rt>*/}
+          <rt contentEditable={false}>{element.rubyText}</rt>
           <rp>)</rp>
-          {/*<InlineChromiumBugfix />*/}
         </ruby>
       )
 
@@ -261,7 +252,6 @@ const useOnKeyDown = (
         }
 
         // NOTE: This avoids sync error
-        // TODO:
         if (event.key === 'ArrowDown' || event.key === 'ArrowUp') {
           event.preventDefault()
           const reverse = event.key === 'ArrowUp'
@@ -345,27 +335,9 @@ const formatBuffer = (editor: Editor) => {
         // wrap the text
         const rubyElement = {
           type: 'Ruby',
-          children: [
-            { text }
-            // { type: 'Rt', text: rubyText }
-          ]
+          rubyText,
+          children: [{ text }]
         }
-
-        // // replace the ruby format with body text
-        // Transforms.insertText(editor, text, {
-        //   at: {
-        //     anchor: { path, offset: formats[i].delimFront[0] },
-        //     focus: { path, offset: formats[i].delimEnd[1] }
-        //   }
-        // })
-
-        // Transforms.wrapNodes(editor, rubyElement, {
-        //   at: {
-        //     anchor: { path, offset: formats[i].delimFront[0] },
-        //     focus: { path, offset: formats[i].delimFront[0] + text.length }
-        //   },
-        //   split: true
-        // })
 
         Transforms.insertNodes(
           editor,
