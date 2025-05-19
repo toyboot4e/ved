@@ -1,0 +1,44 @@
+import { Path, Range, Element, BaseElement, Node, NodeEntry, Text, Transforms } from 'slate'
+
+export type RichPos = {
+  richPath: Path
+  richOfffset: number
+}
+
+export type Format = Ruby
+
+export type Ruby = {
+  delimFront: [number, number]
+  text: [number, number]
+  sepMid: [number, number]
+  rubyText: [number, number]
+  delimEnd: [number, number]
+}
+
+export const parseFormats = (text: string): Format[] => {
+  const formats: Format[] = []
+
+  let offset = 0
+  while (true) {
+    offset = text.indexOf('|', offset)
+    if (offset === -1) break
+
+    const l = text.indexOf('(', offset)
+    if (l === -1) break
+
+    const r = text.indexOf(')', l)
+    if (r === -1) break
+
+    formats.push({
+      delimFront: [offset, offset + 1],
+      text: [offset + 1, l],
+      sepMid: [l, l + 1],
+      rubyText: [l + 1, r],
+      delimEnd: [r, r + 1]
+    })
+
+    offset = r
+  }
+
+  return formats
+}

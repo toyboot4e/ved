@@ -15,22 +15,11 @@ import {
 import { withHistory } from 'slate-history'
 import { Slate, withReact, Editable, RenderLeafProps, RenderElementProps } from 'slate-react'
 import { useState, useCallback } from 'react'
-
-// TODO: how to handle intersecting decorations
-
-type Format = Ruby
-
-type Ruby = {
-  delimFront: [number, number]
-  text: [number, number]
-  sepMid: [number, number]
-  rubyText: [number, number]
-  delimEnd: [number, number]
-}
+import * as parse from '../parse'
 
 /** Parsed `Range` into `Format`. */
 interface VedRange extends Range {
-  format: Format
+  format: parse.Format
 }
 
 type VedElement = BaseElement & { type?: VedElementType }
@@ -78,34 +67,6 @@ const EditorUtil = {
       }) !== null
     )
   }
-}
-
-const parseFormats = (text: string): Format[] => {
-  const formats = []
-
-  let offset = 0
-  while (true) {
-    offset = text.indexOf('|', offset)
-    if (offset === -1) break
-
-    const l = text.indexOf('(', offset)
-    if (l === -1) break
-
-    const r = text.indexOf(')', l)
-    if (r === -1) break
-
-    formats.push({
-      delimFront: [offset, offset + 1],
-      text: [offset + 1, l],
-      sepMid: [l, l + 1],
-      rubyText: [l + 1, r],
-      delimEnd: [r, r + 1]
-    })
-
-    offset = r
-  }
-
-  return formats
 }
 
 /** Ved leaf component */
@@ -259,7 +220,7 @@ const formatBuffer = (editor: Editor) => {
       }
 
       const path = [iRoot, iChild]
-      const formats = parseFormats(node.text)
+      const formats = parse.parseFormats(node.text)
       for (let i = formats.length - 1; i >= 0; i--) {
         const fullText = Editor.string(editor, path)
         const text = fullText.substring(formats[i].text[0], formats[i].text[1])
