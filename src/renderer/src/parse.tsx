@@ -3,7 +3,11 @@ import { Path } from 'slate'
 // TODO:
 export type RichPos = {
   richPath: Path
-  richOfffset: number
+  richOffset: number
+}
+
+export type PlainPos = {
+  plainOffset: number
 }
 
 export type Format = Ruby
@@ -19,8 +23,11 @@ export type Ruby = {
 // TODO: return map of positions
 export const parseFormats = (text: string): Format[] => {
   const formats: Format[] = []
+  // TODO: what type? map?
+  const plainToRich: Map<PlainPos, RichPos> = {}
 
   let offset = 0
+  let iChild = 0
   while (true) {
     offset = text.indexOf('|', offset)
     if (offset === -1) break
@@ -31,6 +38,7 @@ export const parseFormats = (text: string): Format[] => {
     const r = text.indexOf(')', l)
     if (r === -1) break
 
+    iChild += 1
     formats.push({
       delimFront: [offset, offset + 1],
       text: [offset + 1, l],
@@ -40,6 +48,7 @@ export const parseFormats = (text: string): Format[] => {
     })
 
     offset = r
+    iChild += 1
   }
 
   return formats

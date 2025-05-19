@@ -1,8 +1,9 @@
-import { Descendant, Range, Element, BaseElement, Node } from 'slate'
+import { Descendant, Range, Element, Node, Text } from 'slate'
 import { RenderLeafProps, RenderElementProps } from 'slate-react'
 
 export type Format = Ruby
 
+// FIXME: it's repeating.
 export type Ruby = {
   delimFront: [number, number]
   text: [number, number]
@@ -16,9 +17,17 @@ export interface VedRange extends Range {
   format: Format
 }
 
-export type VedElement = BaseElement & { type?: VedElementType }
+export type VedElement = RubyElement
 
-export type VedElementType = 'Ruby' | 'TODO'
+export const isVedElement = (node: Node): node is VedElement =>
+  Element.isElement(node) &&
+  // FIXME: correct casting?
+  'type' in node &&
+  typeof node.type === 'string' &&
+  // FIXME: DRY?
+  ['Ruby'].includes(node.type)
+
+export type VedElementType = VedElement['type']
 
 export type RubyElement = {
   type: 'Ruby'
@@ -26,10 +35,26 @@ export type RubyElement = {
   children: Descendant[]
 }
 
-export type VedLeafType = 'RubyBody' | 'Rt'
+export type VedLeaf = RubyBody | Rt
 
-export type VedLeaf = {
-  type: VedLeafType
+// FIXME: It's terribly wrong, `Node` is of `type`, not an interface
+export const isVedLeaf = (node: Node): node is VedLeaf =>
+  Text.isText(node) &&
+  // FIXME: correct casting?
+  'type' in node &&
+  typeof node.type === 'string' &&
+  // FIXME: DRY?
+  ['RubyBody', 'Rt'].includes(node.type)
+
+export type VedLeafType = VedLeaf['type']
+
+export type RubyBody = {
+  type: 'RubyBody'
+  text: string
+}
+
+export type Rt = {
+  type: 'Rt'
   text: string
 }
 
@@ -89,14 +114,14 @@ export const VedElement = ({ attributes, children, element: rawElement }: Render
 }
 
 export const nodeToPlainText = (node: Node): string => {
-  if (Element.isElement(node)) {
-    const element = node as VedElement
-    switch (element.type) {
+  if (isVedElement(node)) {
+    switch (node.type) {
       case 'Ruby':
-        return 'THIS IS a ruby! TODO: retrieve the text!'
-      default:
-        return Node.string(element)
+        return `|({node.rubyText}`
     }
+
+    // unreachable
+    throw new Error(`invalid ved element type: ${node.type}`)
   }
 
   return Node.string(node)

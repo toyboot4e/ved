@@ -122,11 +122,13 @@ export type VedEditorProps = {
   readonly setAppearPolicy: (_: AppearPolicy) => void
 }
 
+// FIXME: DRY (rich.RubyElement.type)
+const inlineTypes: [string] = ['Ruby']
+
 const withInlines = <T extends BaseEditor>(editor: T) => {
   const { isInline } = editor
-
-  editor.isInline = (element: rich.VedElement) =>
-    (element.type !== undefined && ['Ruby'].includes(element.type)) || isInline(element)
+  editor.isInline = (element: Element) =>
+    rich.isVedElement(element) ? inlineTypes.includes(element.type) : isInline(element)
 
   return editor
 }
