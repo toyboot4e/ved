@@ -39,36 +39,6 @@ type VedLeaf = {
   text: string
 }
 
-const EditorUtil = {
-  /** Returns whether the editor selection intersects with a node. */
-  intersects: (editor: Editor, path: Path) => {
-    const { selection } = editor
-
-    if (!selection) {
-      return false
-    }
-
-    const range = Editor.range(editor, path)
-    return Range.intersection(selection, range) !== null
-  },
-
-  /** Returns whether the editor selection intersects with a part of a node. */
-  intersectsIn: (editor: Editor, path: Path, anchor: number, focus: number) => {
-    const { selection } = editor
-
-    if (!selection) {
-      return false
-    }
-
-    return (
-      Range.intersection(selection, {
-        anchor: { path, offset: anchor },
-        focus: { path, offset: focus }
-      }) !== null
-    )
-  }
-}
-
 /** Ved leaf component */
 const VedLeaf = ({ attributes, children, leaf: rawLeaf }: RenderLeafProps) => {
   const leaf = rawLeaf as VedLeaf
