@@ -108,73 +108,6 @@ const parseFormats = (text: string): Format[] => {
   return formats
 }
 
-const decorateRubies = (editor: Editor, ranges: VedRange[], path: Path, text: string) => {
-  let offset = 0
-  while (true) {
-    // TODO: portable, configurable format
-    // FIXME: aggregate the parse logic
-    offset = text.indexOf('|', offset)
-    if (offset === -1) break
-
-    const l = text.indexOf('(', offset)
-    if (l === -1) break
-
-    const r = text.indexOf(')', l)
-    if (r === -1) break
-
-    // strip the styling if the selection intersects with the ruby format:
-    if (EditorUtil.intersectsIn(editor, path, offset, r)) {
-      offset = r
-      continue
-    }
-
-    ranges.push({
-      format: {
-        delimFront: [offset, offset + 1],
-        text: [offset + 1, l],
-        sepMid: [l, l + 1],
-        rubyText: [l + 1, r],
-        delimEnd: [r, r + 1]
-      },
-      anchor: { path, offset },
-      focus: { path, offset: r + 1 }
-    })
-
-    offset = r
-  }
-}
-
-const decorateImpl = (
-  editor: Editor,
-  appearPolicy: AppearPolicy,
-  [node, path]: NodeEntry
-): VedRange[] => {
-  return []
-
-  if (!Text.isText(node)) {
-    return []
-  }
-
-  // by-paragraph appear
-  if (appearPolicy === AppearPolicy.ByParagraph && EditorUtil.intersects(editor, path)) {
-    return []
-  }
-
-  const ranges = []
-
-  // it works-with by-character appear polciy, but it's ok as by-paragraph appera policy shows more
-  decorateRubies(editor, ranges, path, node.text)
-
-  return ranges
-}
-
-const useDecorate = (editor: Editor, appearPolicy: AppearPolicy) => {
-  return useCallback(
-    (entry: NodeEntry) => decorateImpl(editor, appearPolicy, entry),
-    [editor, appearPolicy]
-  )
-}
-
 /** Ved leaf component */
 const VedLeaf = ({ attributes, children, leaf: rawLeaf }: RenderLeafProps) => {
   const leaf = rawLeaf as VedLeaf
@@ -375,7 +308,6 @@ export const VedEditor = ({
   // TODO: Should use `useMemo` as in hovering toolbar example?
   const [editor] = useState(() => withInlines(withReact(withHistory(createEditor()))))
   const initialValue = [{ type: 'paragraph', children: [{ text: '' }] }]
-  const decorate = useDecorate(editor, appearPolicy)
   const renderLeaf = useCallback((props: RenderLeafProps) => <VedLeaf {...props} />, [appearPolicy])
   const renderElement = useCallback(
     (props: RenderElementProps) => <VedElement {...props} />,
@@ -407,7 +339,6 @@ export const VedEditor = ({
           id="editor-content"
           placeholder="本文"
           className={clsx('ved-editor-content', vert && 'vert-mode', vert && 'multi-col-mode')}
-          decorate={decorate}
           renderLeaf={renderLeaf}
           renderElement={renderElement}
           onKeyDown={onKeyDown}
