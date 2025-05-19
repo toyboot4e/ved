@@ -1,23 +1,67 @@
 import { clsx } from 'clsx'
-import {
-  createEditor,
-  Descendant,
-  Editor,
-  Path,
-  Range,
-  Element,
-  BaseElement,
-  Node,
-  NodeEntry,
-  Text,
-  Transforms
-} from 'slate'
+import { createEditor, BaseEditor, Editor, Element, Text, Transforms } from 'slate'
 import { withHistory } from 'slate-history'
 import { Slate, withReact, Editable, RenderLeafProps, RenderElementProps } from 'slate-react'
 import { useState, useCallback } from 'react'
-import * as editorDom from './editor/dom'
+import * as rich from './editor/rich'
+import * as parse from './../parse'
 
 // TODO: how to handle intersecting decorations
+
+export const unformatBuffer = (editor: Editor) => {
+  editor.children.forEach((node, iNode) => {
+    const text = rich.nodeToPlainText(node)
+    const path = [iNode]
+    Transforms.removeNodes(editor, { at: path })
+    Transforms.insertNodes(editor, { children: [{ text }] }, { at: path })
+  })
+}
+
+export const formatBuffer = (editor: Editor) => {
+  // the `element` must be just under root
+  editor.children.forEach((underRoot, iRoot) => {
+    if (!Element.isElement(underRoot)) {
+      return
+    }
+
+    underRoot.children.forEach((node, iChild) => {
+      // TODO: handle non-leaf nodes
+      if (!Text.isText(node)) {
+        return
+      }
+
+      const path = [iRoot, iChild]
+      const formats = parse.parseFormats(node.text)
+      for (let i = formats.length - 1; i >= 0; i--) {
+        const fullText = Editor.string(editor, path)
+        const text = fullText.substring(formats[i].text[0], formats[i].text[1])
+        const rubyText = fullText.substring(formats[i].rubyText[0], formats[i].rubyText[1])
+
+        // wrap the text
+        const rubyElement = {
+          type: 'Ruby',
+          rubyText,
+          children: [{ text }]
+        }
+
+        Transforms.insertNodes(
+          editor,
+          rubyElement,
+          // { children: [{ text: 'go' }] },
+          {
+            at: {
+              anchor: { path, offset: formats[i].delimFront[0] },
+              focus: { path, offset: formats[i].delimEnd[1] }
+            }
+          }
+        )
+
+        // what does this do?
+        // Transforms.collapse(editor, { edge: 'end' })
+      }
+    })
+  })
+}
 
 const useOnKeyDown = (
   editor: Editor,
@@ -78,10 +122,10 @@ export type VedEditorProps = {
   readonly setAppearPolicy: (_: AppearPolicy) => void
 }
 
-const withInlines = (editor: Editor) => {
+const withInlines = <T extends BaseEditor>(editor: T) => {
   const { isInline } = editor
 
-  editor.isInline = (element: VedElement) =>
+  editor.isInline = (element: rich.VedElement) =>
     (element.type !== undefined && ['Ruby'].includes(element.type)) || isInline(element)
 
   return editor
@@ -95,9 +139,12 @@ export const VedEditor = ({
   // TODO: Should use `useMemo` as in hovering toolbar example?
   const [editor] = useState(() => withInlines(withReact(withHistory(createEditor()))))
   const initialValue = [{ type: 'paragraph', children: [{ text: '' }] }]
-  const renderLeaf = useCallback((props: RenderLeafProps) => <VedLeaf {...props} />, [appearPolicy])
+  const renderLeaf = useCallback(
+    (props: RenderLeafProps) => <rich.VedLeaf {...props} />,
+    [appearPolicy]
+  )
   const renderElement = useCallback(
-    (props: RenderElementProps) => <VedElement {...props} />,
+    (props: RenderElementProps) => <rich.VedElement {...props} />,
     [appearPolicy]
   )
   const vert = dir === WritingDirection.Vertical

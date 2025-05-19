@@ -1,5 +1,6 @@
-import { Path, Range, Element, BaseElement, Node, NodeEntry, Text, Transforms } from 'slate'
+import { Path } from 'slate'
 
+// TODO:
 export type RichPos = {
   richPath: Path
   richOfffset: number
@@ -15,6 +16,7 @@ export type Ruby = {
   delimEnd: [number, number]
 }
 
+// TODO: return map of positions
 export const parseFormats = (text: string): Format[] => {
   const formats: Format[] = []
 
