@@ -1,4 +1,4 @@
-import { VedEditor, WritingDirection, AppearPolicy } from './components/Editor'
+import { VedEditor, WritingDirection, AppearPolicy } from './components/editor'
 import { useState } from 'react'
 
 export const App = (): React.JSX.Element => {
