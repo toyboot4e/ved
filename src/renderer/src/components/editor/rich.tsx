@@ -1,5 +1,6 @@
-import { Descendant, Range, Element, Node, Text } from 'slate'
-import { RenderLeafProps, RenderElementProps } from 'slate-react'
+import { BaseEditor, Descendant, BaseRange, Range } from 'slate'
+import { ReactEditor, RenderLeafProps, RenderElementProps } from 'slate-react'
+import { HistoryEditor } from 'slate-history'
 
 export type Format = Ruby
 
@@ -17,36 +18,32 @@ export interface VedRange extends Range {
   format: Format
 }
 
-export type VedElement = RubyElement
-
-export const isVedElement = (node: Node): node is VedElement =>
-  Element.isElement(node) &&
-  // FIXME: correct casting?
-  'type' in node &&
-  typeof node.type === 'string' &&
-  // FIXME: DRY?
-  ['Ruby'].includes(node.type)
+export type VedElement = Paragraph | RubyElement
 
 export type VedElementType = VedElement['type']
 
-export type RubyElement = {
-  type: 'Ruby'
-  rubyText: string
+export type Paragraph = {
+  type: 'Paragraph'
   children: Descendant[]
 }
 
-export type VedLeaf = RubyBody | Rt
+// TODO: Treat it as a Text instead
+export type RubyElement = {
+  type: 'Ruby'
+  /** Ruby above or aside of the body text. */
+  rubyText: string
+  /** The body text is the only child. */
+  children: Descendant[]
+}
 
-// FIXME: It's terribly wrong, `Node` is of `type`, not an interface
-export const isVedLeaf = (node: Node): node is VedLeaf =>
-  Text.isText(node) &&
-  // FIXME: correct casting?
-  'type' in node &&
-  typeof node.type === 'string' &&
-  // FIXME: DRY?
-  ['RubyBody', 'Rt'].includes(node.type)
+export type VedText = Plaintext | RubyBody | Rt
 
-export type VedLeafType = VedLeaf['type']
+export type VedTextType = VedText['type']
+
+export type Plaintext = {
+  type: 'Plaintext'
+  text: string
+}
 
 export type RubyBody = {
   type: 'RubyBody'
@@ -59,17 +56,12 @@ export type Rt = {
 }
 
 /** Ved leaf component */
-export const VedLeaf = ({ attributes, children, leaf: rawLeaf }: RenderLeafProps) => {
-  const leaf = rawLeaf as VedLeaf
-
-  if (leaf.type === undefined) {
-    // FIXME: create a three nesting span
-    return <span {...attributes}>{children}</span>
-  }
-
+export const VedText = ({ leaf }: RenderLeafProps) => {
+  // FIXME: Should we think this is unreachable?
   switch (leaf.type) {
+    case 'Plaintext':
+      return leaf.text
     case 'RubyBody':
-      // TODO: <span> is added by Slate?
       return leaf.text
     case 'Rt':
       return (
@@ -97,6 +89,8 @@ export const VedElement = ({ attributes, children, element: rawElement }: Render
 
   // TODO: we could still use decorate??
   switch (vedElement.type) {
+    case 'Paragraph':
+      return <p {...attributes}>{children}</p>
     case 'Ruby':
       const element = vedElement as RubyElement
       return (
@@ -107,22 +101,32 @@ export const VedElement = ({ attributes, children, element: rawElement }: Render
           <rp>)</rp>
         </ruby>
       )
-
-    default:
-      return <p {...attributes}>{children}</p>
   }
 }
 
-export const nodeToPlainText = (node: Node): string => {
-  if (isVedElement(node)) {
-    switch (node.type) {
-      case 'Ruby':
-        return `|({node.rubyText}`
-    }
-
-    // unreachable
-    throw new Error(`invalid ved element type: ${node.type}`)
+export const descendantToPlainText = (d: Descendant): string => {
+  switch (d.type) {
+    case 'Paragraph':
+      return d.children.map(descendantToPlainText).join('')
+    case 'Ruby':
+      return `|({node.rubyText}`
+    case 'Plaintext':
+      return d.text
+    case 'RubyBody':
+      return d.text
+    case 'Rt':
+      return ''
   }
+}
 
-  return Node.string(node)
+// export interface VedEditor = BaseEditor & ReactEditor & HistoryEditor
+
+// TODO: Use custom paragraph type for initial values
+declare module 'slate' {
+  interface CustomTypes {
+    Editor: BaseEditor & ReactEditor & HistoryEditor
+    Element: VedElement
+    Text: VedText
+    Range: BaseRange // & {[key: string]: unknown}
+  }
 }

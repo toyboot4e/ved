@@ -1,5 +1,5 @@
 import { clsx } from 'clsx'
-import { createEditor, BaseEditor, Editor, Element, Text, Transforms } from 'slate'
+import { createEditor, BaseEditor, Descendant, Editor, Element, Text, Transforms } from 'slate'
 import { withHistory } from 'slate-history'
 import { Slate, withReact, Editable, RenderLeafProps, RenderElementProps } from 'slate-react'
 import { useState, useCallback } from 'react'
@@ -10,10 +10,22 @@ import * as parse from './../parse'
 
 export const unformatBuffer = (editor: Editor) => {
   editor.children.forEach((node, iNode) => {
-    const text = rich.nodeToPlainText(node)
+    const text = rich.descendantToPlainText(node)
     const path = [iNode]
     Transforms.removeNodes(editor, { at: path })
-    Transforms.insertNodes(editor, { children: [{ text }] }, { at: path })
+    Transforms.insertNodes(
+      editor,
+      {
+        type: 'Paragraph',
+        children: [
+          {
+            type: 'Plaintext',
+            text
+          }
+        ]
+      },
+      { at: path }
+    )
   })
 }
 
@@ -38,10 +50,10 @@ export const formatBuffer = (editor: Editor) => {
         const rubyText = fullText.substring(formats[i].rubyText[0], formats[i].rubyText[1])
 
         // wrap the text
-        const rubyElement = {
+        const rubyElement: rich.RubyElement = {
           type: 'Ruby',
           rubyText,
-          children: [{ text }]
+          children: [{ type: 'Plaintext', text }]
         }
 
         Transforms.insertNodes(
@@ -126,12 +138,17 @@ export type VedEditorProps = {
 const inlineTypes: [string] = ['Ruby']
 
 const withInlines = <T extends BaseEditor>(editor: T) => {
-  const { isInline } = editor
-  editor.isInline = (element: Element) =>
-    rich.isVedElement(element) ? inlineTypes.includes(element.type) : isInline(element)
-
+  // const { isInline } = editor
+  editor.isInline = (element: rich.VedElement) => inlineTypes.includes(element.type)
   return editor
 }
+
+const initialValue: Descendant[] = [
+  {
+    type: 'Paragraph',
+    children: [{ type: 'Plaintext', text: '' }]
+  }
+]
 
 export const VedEditor = ({
   dir,
@@ -140,9 +157,8 @@ export const VedEditor = ({
 }: VedEditorProps): React.JSX.Element => {
   // TODO: Should use `useMemo` as in hovering toolbar example?
   const [editor] = useState(() => withInlines(withReact(withHistory(createEditor()))))
-  const initialValue = [{ type: 'paragraph', children: [{ text: '' }] }]
   const renderLeaf = useCallback(
-    (props: RenderLeafProps) => <rich.VedLeaf {...props} />,
+    (props: RenderLeafProps) => <rich.VedText {...props} />,
     [appearPolicy]
   )
   const renderElement = useCallback(
