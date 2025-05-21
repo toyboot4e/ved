@@ -2,12 +2,20 @@ import { Path } from 'slate'
 
 // TODO:
 export type RichPos = {
-  richPath: Path
-  richOffset: number
+  path: Path
+  offset: number
+} & { __bland: 'richPos' }
+
+export const asRichPos = (x: { path: Path; offset: number }): RichPos => {
+  return x as RichPos
 }
 
 export type PlainPos = {
-  plainOffset: number
+  offset: number
+} & { __bland: 'plainPos' }
+
+export const asPlainPos = (x: { offset: number }): PlainPos => {
+  return x as PlainPos
 }
 
 export type Format = Ruby
