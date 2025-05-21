@@ -33,6 +33,7 @@ export type RubyElement = {
   /** Ruby above or aside of the body text. */
   rubyText: string
   /** The body text is the only child. */
+  // TODO: limit child type?
   children: Descendant[]
 }
 
@@ -55,22 +56,47 @@ export type Rt = {
   text: string
 }
 
+/** Ved element component. Note that `withInline` lets us insert `Ruby` as inline element. */
+export const VedElement = ({ attributes, children, element }: RenderElementProps) => {
+  // TODO: we could still use decorate??
+  switch (element.type) {
+    case 'Paragraph':
+      return <p {...attributes}>{children}</p>
+    case 'Ruby':
+      return (
+        <ruby {...attributes}>
+          {children}
+          <rp>(</rp>
+          <rt contentEditable={false}>{element.rubyText}</rt>
+          <rp>)</rp>
+        </ruby>
+      )
+    default:
+      throw new Error(`invalid ved element: ${element}`)
+  }
+}
+
 /** Ved leaf component */
-export const VedText = ({ leaf }: RenderLeafProps) => {
+export const VedText = ({ attributes, children, leaf }: RenderLeafProps) => {
   // FIXME: Should we think this is unreachable?
   switch (leaf.type) {
     case 'Plaintext':
-      return leaf.text
+      return <span {...attributes}>{children}</span>
     case 'RubyBody':
-      return leaf.text
+      // TODO: No need to use the attributes?
+      // TODO: Is this correct? Or leaf.text?
+      return <>{children}</>
     case 'Rt':
+      // TODO: No need to use the attributes?
       return (
         <>
           <rp>(</rp>
-          <rt>{leaf.text}</rt>
+          <rt>{children}</rt>
           <rp>)</rp>
         </>
       )
+    default:
+      throw new Error(`invalid ved leaf: ${leaf}`)
   }
 
   // return (
@@ -81,27 +107,6 @@ export const VedText = ({ leaf }: RenderLeafProps) => {
   //     <rp>)</rp>
   //   </ruby>
   // )
-}
-
-/** Ved element component. Note that `withInline` lets us insert `Ruby` as inline element. */
-export const VedElement = ({ attributes, children, element: rawElement }: RenderElementProps) => {
-  const vedElement = rawElement as VedElement
-
-  // TODO: we could still use decorate??
-  switch (vedElement.type) {
-    case 'Paragraph':
-      return <p {...attributes}>{children}</p>
-    case 'Ruby':
-      const element = vedElement as RubyElement
-      return (
-        <ruby {...attributes}>
-          {children}
-          <rp>(</rp>
-          <rt contentEditable={false}>{element.rubyText}</rt>
-          <rp>)</rp>
-        </ruby>
-      )
-  }
 }
 
 export const descendantToPlainText = (d: Descendant): string => {
