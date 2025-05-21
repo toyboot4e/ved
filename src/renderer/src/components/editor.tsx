@@ -135,7 +135,7 @@ export type VedEditorProps = {
 }
 
 // FIXME: DRY (rich.RubyElement.type)
-const inlineTypes: [string] = ['Ruby']
+const inlineTypes: [rich.VedElement['type']] = ['ruby']
 
 const withInlines = <T extends BaseEditor>(editor: T) => {
   // const { isInline } = editor
