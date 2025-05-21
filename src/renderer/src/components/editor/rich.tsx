@@ -23,13 +23,13 @@ export type VedElement = Paragraph | RubyElement
 export type VedElementType = VedElement['type']
 
 export type Paragraph = {
-  type: 'Paragraph'
+  type: 'paragraph'
   children: Descendant[]
 }
 
 // TODO: Treat it as a Text instead
 export type RubyElement = {
-  type: 'Ruby'
+  type: 'ruby'
   /** Ruby above or aside of the body text. */
   rubyText: string
   /** The body text is the only child. */
@@ -42,17 +42,17 @@ export type VedText = Plaintext | RubyBody | Rt
 export type VedTextType = VedText['type']
 
 export type Plaintext = {
-  type: 'Plaintext'
+  type: 'plaintext'
   text: string
 }
 
 export type RubyBody = {
-  type: 'RubyBody'
+  type: 'rubyBody'
   text: string
 }
 
 export type Rt = {
-  type: 'Rt'
+  type: 'rt'
   text: string
 }
 
@@ -60,9 +60,9 @@ export type Rt = {
 export const VedElement = ({ attributes, children, element }: RenderElementProps) => {
   // TODO: we could still use decorate??
   switch (element.type) {
-    case 'Paragraph':
+    case 'paragraph':
       return <p {...attributes}>{children}</p>
-    case 'Ruby':
+    case 'ruby':
       return (
         <ruby {...attributes}>
           {children}
@@ -80,13 +80,13 @@ export const VedElement = ({ attributes, children, element }: RenderElementProps
 export const VedText = ({ attributes, children, leaf }: RenderLeafProps) => {
   // FIXME: Should we think this is unreachable?
   switch (leaf.type) {
-    case 'Plaintext':
+    case 'plaintext':
       return <span {...attributes}>{children}</span>
-    case 'RubyBody':
+    case 'rubyBody':
       // TODO: No need to use the attributes?
       // TODO: Is this correct? Or leaf.text?
       return <>{children}</>
-    case 'Rt':
+    case 'rt':
       // TODO: No need to use the attributes?
       return (
         <>
@@ -111,15 +111,15 @@ export const VedText = ({ attributes, children, leaf }: RenderLeafProps) => {
 
 export const descendantToPlainText = (d: Descendant): string => {
   switch (d.type) {
-    case 'Paragraph':
+    case 'paragraph':
       return d.children.map(descendantToPlainText).join('')
-    case 'Ruby':
+    case 'ruby':
       return `|({node.rubyText}`
-    case 'Plaintext':
+    case 'plaintext':
       return d.text
-    case 'RubyBody':
+    case 'rubyBody':
       return d.text
-    case 'Rt':
+    case 'rt':
       return ''
   }
 }

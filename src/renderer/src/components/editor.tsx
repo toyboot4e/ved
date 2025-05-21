@@ -16,10 +16,10 @@ export const unformatBuffer = (editor: Editor) => {
     Transforms.insertNodes(
       editor,
       {
-        type: 'Paragraph',
+        type: 'paragraph',
         children: [
           {
-            type: 'Plaintext',
+            type: 'plaintext',
             text
           }
         ]
@@ -51,9 +51,9 @@ export const formatBuffer = (editor: Editor) => {
 
         // wrap the text
         const rubyElement: rich.RubyElement = {
-          type: 'Ruby',
+          type: 'ruby',
           rubyText,
-          children: [{ type: 'Plaintext', text }]
+          children: [{ type: 'plaintext', text }]
         }
 
         Transforms.insertNodes(
@@ -145,8 +145,8 @@ const withInlines = <T extends BaseEditor>(editor: T) => {
 
 const initialValue: Descendant[] = [
   {
-    type: 'Paragraph',
-    children: [{ type: 'Plaintext', text: '' }]
+    type: 'paragraph',
+    children: [{ type: 'plaintext', text: '' }]
   }
 ]
 
