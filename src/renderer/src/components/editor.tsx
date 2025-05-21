@@ -45,9 +45,10 @@ export const formatBuffer = (editor: Editor) => {
       const path = [iRoot, iChild]
       const formats = parse.parseFormats(node.text)
       for (let i = formats.length - 1; i >= 0; i--) {
+        const format = formats[i]!
         const fullText = Editor.string(editor, path)
-        const text = fullText.substring(formats[i].text[0], formats[i].text[1])
-        const rubyText = fullText.substring(formats[i].rubyText[0], formats[i].rubyText[1])
+        const text = fullText.substring(format.text[0], format.text[1]!)
+        const rubyText = fullText.substring(format.rubyText[0], format.rubyText[1])
 
         // wrap the text
         const rubyElement: rich.RubyElement = {
@@ -62,8 +63,8 @@ export const formatBuffer = (editor: Editor) => {
           // { children: [{ text: 'go' }] },
           {
             at: {
-              anchor: { path, offset: formats[i].delimFront[0] },
-              focus: { path, offset: formats[i].delimEnd[1] }
+              anchor: { path, offset: format.delimFront[0] },
+              focus: { path, offset: format.delimEnd[1] }
             }
           }
         )

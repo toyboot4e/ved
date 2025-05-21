@@ -57,7 +57,12 @@ export type Rt = {
 }
 
 /** Ved element component. Note that `withInline` lets us insert `Ruby` as inline element. */
-export const VedElement = ({ attributes, children, element }: RenderElementProps) => {
+// FIXME: write return type
+export const VedElement = ({
+  attributes,
+  children,
+  element
+}: RenderElementProps): React.JSX.Element => {
   // TODO: we could still use decorate??
   switch (element.type) {
     case 'paragraph':
@@ -77,7 +82,8 @@ export const VedElement = ({ attributes, children, element }: RenderElementProps
 }
 
 /** Ved leaf component */
-export const VedText = ({ attributes, children, leaf }: RenderLeafProps) => {
+// FIXME: write return type
+export const VedText = ({ attributes, children, leaf }: RenderLeafProps): React.JSX.Element => {
   // FIXME: Should we think this is unreachable?
   switch (leaf.type) {
     case 'plaintext':
