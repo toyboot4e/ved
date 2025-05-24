@@ -3,6 +3,7 @@ import eslintConfigPrettier from '@electron-toolkit/eslint-config-prettier'
 import eslintPluginReact from 'eslint-plugin-react'
 import eslintPluginReactHooks from 'eslint-plugin-react-hooks'
 import eslintPluginReactRefresh from 'eslint-plugin-react-refresh'
+import eslintPluginImport from 'eslint-plugin-import'
 
 export default tseslint.config(
   { ignores: ['**/node_modules', '**/dist', '**/out'] },
@@ -24,8 +25,14 @@ export default tseslint.config(
     },
     rules: {
       ...eslintPluginReactHooks.configs.recommended.rules,
-      ...eslintPluginReactRefresh.configs.vite.rules
-    }
+      ...eslintPluginReactRefresh.configs.vite.rules,
+      'sort-imports': ['error', { 'ignoreDeclarationSort': true }],
+      'import/order': ['error', { 'alphabetize': { 'order': 'asc' }, 'newlines-between': 'never' }],
+    },
+    extends: [
+      eslintPluginImport.flatConfigs.recommended,
+      eslintPluginImport.flatConfigs.typescript
+    ]
   },
   eslintConfigPrettier
 )
