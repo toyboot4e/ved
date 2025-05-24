@@ -1,6 +1,6 @@
-import { BaseEditor, Descendant, BaseRange, Range } from 'slate'
-import { ReactEditor, RenderLeafProps, RenderElementProps } from 'slate-react'
+import { BaseEditor, BaseRange, Descendant, Range } from 'slate'
 import { HistoryEditor } from 'slate-history'
+import { ReactEditor, RenderElementProps, RenderLeafProps } from 'slate-react'
 
 export type Format = Ruby
 

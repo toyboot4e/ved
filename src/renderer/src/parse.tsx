@@ -1,16 +1,46 @@
 import { Path } from 'slate'
 
-// TODO:
+/**
+ * Map of positions between plain text and rich text.
+ */
+export class BiMap {
+  // TODO: compress with intervals.
+  protected toRichPos: Map<PlainPos, RichPos>
+  protected toPlainPos: Map<RichPos, PlainPos>
+
+  constructor(toRichPos: Map<PlainPos, RichPos>, toPlainPos: Map<RichPos, PlainPos>) {
+    this.toRichPos = toRichPos
+    this.toPlainPos = toPlainPos
+  }
+
+  toRich(plain: PlainPos): RichPos | undefined {
+    return this.toRichPos.get(plain)
+  }
+
+  toPlain(rich: RichPos): PlainPos | undefined {
+    return this.toPlainPos.get(rich)
+  }
+}
+
+/**
+ * A point position in a rich text paragraph.
+ */
 export type RichPos = {
-  path: Path
+  /** Path relative to the belonging paragraph. */
+  relativePath: Path
+  /** Offset in the belonging node. */
   offset: number
 } & { __bland: 'richPos' }
 
-export const asRichPos = (x: { path: Path; offset: number }): RichPos => {
+export const asRichPos = (x: { relativePath: Path; offset: number }): RichPos => {
   return x as RichPos
 }
 
+/**
+ * A point position in a plain text paragraph.
+ */
 export type PlainPos = {
+  /** Offset in the paragraph. */
   offset: number
 } & { __bland: 'plainPos' }
 
@@ -18,41 +48,49 @@ export const asPlainPos = (x: { offset: number }): PlainPos => {
   return x as PlainPos
 }
 
-export type Format = Ruby
+export type Format = PlainText | Ruby
 
-export type Ruby = {
-  delimFront: [number, number]
+/**
+ * Slice of plain text that makes up a ruby.
+ */
+export type PlainText = {
+  type: 'plainText'
   text: [number, number]
+}
+
+/**
+ * Slice of plain text that makes up a ruby.
+ */
+export type Ruby = {
+  type: 'ruby'
+  /** Typically `|` */
+  delimFront: [number, number]
+  /** Ruby body */
+  text: [number, number]
+  /** Typically `(` */
   sepMid: [number, number]
-  rubyText: [number, number]
+  /** Ruby text */
+  ruby: [number, number]
+  /** Typically `)` */
   delimEnd: [number, number]
 }
 
-// TODO: return map of positions
-export const parseFormats = (text: string): Format[] => {
-  // TODO: consider other formats than ruby
-  const rubies = parseRubies(text)
-
-  // // TODO: assign maps
-  // const plainToRich: Map<PlainPos, RichPos> = {}
-  // if (rubies.length === 0) {
-  //   // TODO: create one-to-one mapping
-  //   for (let i = 0; i < text.length; i++) {
-  //     // FIXME: use Phantom type?
-  //     // FIXME: cannot use PlainPos as key???? oh dear
-  //     plainToRich[{ plainOffset: i }] = { richPath: [0], richOffset: i }
-  //   }
-  // } else {
-  //   // zip-like map
-  //   for (let ruby of rubies) {
-  //     //
-  //   }
-  // }
-
-  return rubies
+/**
+ * Parses a plain text.
+ */
+export const parse = (text: string): Format[] => {
+  return parseImpl(text)
 }
 
-const parseRubies = (text: string): Format[] => {
+/**
+ * Parses a plain text, creating a map between the original plain text and rich text positions.
+ */
+export const parseWithBimap = (text: string): [Format[], BiMap] => {
+  const formats = parseImpl(text)
+  return [formats, supplyBimap(formats)]
+}
+
+const parseImpl = (text: string): Format[] => {
   const formats: Format[] = []
 
   let offset = 0
@@ -67,10 +105,11 @@ const parseRubies = (text: string): Format[] => {
     if (r === -1) break
 
     formats.push({
+      type: 'ruby',
       delimFront: [offset, offset + 1],
       text: [offset + 1, l],
       sepMid: [l, l + 1],
-      rubyText: [l + 1, r],
+      ruby: [l + 1, r],
       delimEnd: [r, r + 1]
     })
 
@@ -78,4 +117,52 @@ const parseRubies = (text: string): Format[] => {
   }
 
   return formats
+}
+
+const toSpans = (fmt: Format): [[number, number], boolean][] => {
+  switch (fmt.type) {
+    case 'plainText':
+      return [[fmt.text, true]]
+
+    case 'ruby':
+      // TypeScript fails to compile if I inline this definition
+      return [
+        // |
+        [fmt.delimFront, false],
+        // body
+        [fmt.text, true],
+        // (
+        [fmt.sepMid, false],
+        // ruby
+        [fmt.ruby, false],
+        // )
+        [fmt.delimEnd, false]
+      ]
+  }
+}
+
+const supplyBimap = (formats: Format[]): BiMap => {
+  // TODO: comperss
+  const plainToRich = new Map<PlainPos, RichPos>()
+  const richToPlain = new Map<RichPos, PlainPos>()
+
+  const consume = (to: RichPos, [range, hasDisplay]: [[number, number], boolean]): RichPos => {
+    for (let i = range[0]; i < range[1]; i++) {
+      plainToRich.set(asPlainPos({ offset: i }), to)
+      if (hasDisplay) {
+        to.offset += 1
+      }
+    }
+    return to
+  }
+
+  const to0 = asRichPos({ relativePath: [0], offset: 0 })
+  formats.reduce((to: RichPos, format: Format) => {
+    toSpans(format).reduce(consume, to)
+    to.relativePath[to.relativePath.length - 1]! += 1
+    to.offset = 0
+    return to
+  }, to0)
+
+  return new BiMap(plainToRich, richToPlain)
 }

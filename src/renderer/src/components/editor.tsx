@@ -1,14 +1,14 @@
 import { clsx } from 'clsx'
-import { createEditor, BaseEditor, Descendant, Editor, Element, Text, Transforms } from 'slate'
+import { useCallback, useState } from 'react'
+import { BaseEditor, Descendant, Editor, Element, Text, Transforms, createEditor } from 'slate'
 import { withHistory } from 'slate-history'
-import { Slate, withReact, Editable, RenderLeafProps, RenderElementProps } from 'slate-react'
-import { useState, useCallback } from 'react'
-import * as rich from './editor/rich'
+import { Editable, RenderElementProps, RenderLeafProps, Slate, withReact } from 'slate-react'
 import * as parse from './../parse'
+import * as rich from './editor/rich'
 
 // TODO: how to handle intersecting decorations
 
-export const unformatBuffer = (editor: Editor) => {
+export const unformatBuffer = (editor: Editor): void => {
   editor.children.forEach((node, iNode) => {
     const text = rich.descendantToPlainText(node)
     const path = [iNode]
@@ -29,7 +29,7 @@ export const unformatBuffer = (editor: Editor) => {
   })
 }
 
-export const formatBuffer = (editor: Editor) => {
+export const formatBuffer = (editor: Editor): void => {
   // the `element` must be just under root
   editor.children.forEach((underRoot, iRoot) => {
     if (!Element.isElement(underRoot)) {
@@ -43,34 +43,38 @@ export const formatBuffer = (editor: Editor) => {
       }
 
       const path = [iRoot, iChild]
-      const formats = parse.parseFormats(node.text)
+      const formats = parse.parse(node.text)
       for (let i = formats.length - 1; i >= 0; i--) {
+        // FIXME: use plaintext!
         const format = formats[i]!
-        const fullText = Editor.string(editor, path)
-        const text = fullText.substring(format.text[0], format.text[1]!)
-        const rubyText = fullText.substring(format.rubyText[0], format.rubyText[1])
 
-        // wrap the text
-        const rubyElement: rich.RubyElement = {
-          type: 'ruby',
-          rubyText,
-          children: [{ type: 'plaintext', text }]
-        }
+        if (format.type == 'ruby') {
+          const fullText = Editor.string(editor, path)
+          const text = fullText.substring(format.text[0], format.text[1]!)
+          const rubyText = fullText.substring(format.ruby[0], format.ruby[1])
 
-        Transforms.insertNodes(
-          editor,
-          rubyElement,
-          // { children: [{ text: 'go' }] },
-          {
-            at: {
-              anchor: { path, offset: format.delimFront[0] },
-              focus: { path, offset: format.delimEnd[1] }
-            }
+          // wrap the text
+          const rubyElement: rich.RubyElement = {
+            type: 'ruby',
+            rubyText,
+            children: [{ type: 'plaintext', text }]
           }
-        )
 
-        // what does this do?
-        // Transforms.collapse(editor, { edge: 'end' })
+          Transforms.insertNodes(
+            editor,
+            rubyElement,
+            // { children: [{ text: 'go' }] },
+            {
+              at: {
+                anchor: { path, offset: format.delimFront[0] },
+                focus: { path, offset: format.delimEnd[1] }
+              }
+            }
+          )
+
+          // what does this do?
+          // Transforms.collapse(editor, { edge: 'end' })
+        }
       }
     })
   })
@@ -138,7 +142,7 @@ export type VedEditorProps = {
 // FIXME: DRY (rich.RubyElement.type)
 const inlineTypes: [rich.VedElement['type']] = ['ruby']
 
-const withInlines = <T extends BaseEditor>(editor: T) => {
+const withInlines = <T extends BaseEditor>(editor: T): T => {
   // const { isInline } = editor
   editor.isInline = (element: rich.VedElement) => inlineTypes.includes(element.type)
   return editor

@@ -1,5 +1,5 @@
-import { VedEditor, WritingDirection, AppearPolicy } from './components/editor'
 import { useState } from 'react'
+import { AppearPolicy, VedEditor, WritingDirection } from './components/editor'
 
 export const App = (): React.JSX.Element => {
   // const ipcHandle = (): void => window.electron.ipcRenderer.send('ping')

@@ -26,13 +26,10 @@ export default tseslint.config(
     rules: {
       ...eslintPluginReactHooks.configs.recommended.rules,
       ...eslintPluginReactRefresh.configs.vite.rules,
-      'sort-imports': ['error', { 'ignoreDeclarationSort': true }],
-      'import/order': ['error', { 'alphabetize': { 'order': 'asc' }, 'newlines-between': 'never' }],
+      'sort-imports': ['error', { ignoreDeclarationSort: true }],
+      'import/order': ['error', { alphabetize: { order: 'asc' }, 'newlines-between': 'never' }]
     },
-    extends: [
-      eslintPluginImport.flatConfigs.recommended,
-      eslintPluginImport.flatConfigs.typescript
-    ]
+    extends: [eslintPluginImport.flatConfigs.recommended, eslintPluginImport.flatConfigs.typescript]
   },
   eslintConfigPrettier
 )
