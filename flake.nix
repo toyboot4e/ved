@@ -14,7 +14,7 @@
         pkgs = import nixpkgs {
           inherit system;
         };
-        deps = with pkgs; [
+        deps = with pkgs; lib.optionals stdenvNoCC.isLinux [
           glib
           util-linux
           nss
@@ -39,6 +39,8 @@
           alsa-lib
           libdrm
           libGL
+        ] ++ lib.optionals stdenvNoCC.isDarwin [
+          #
         ];
       in
       {
@@ -52,7 +54,6 @@
 
             packages = [
               nodePackages.prettier
-              vite
             ];
             shellHook = ''
               export LD_LIBRARY_PATH="$LD_LIBRARY_PATH:${pkgs.lib.makeLibraryPath deps}"
