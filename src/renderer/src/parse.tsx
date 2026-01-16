@@ -159,6 +159,7 @@ const supplyBimap = (formats: Format[]): BiMap => {
   const to0 = asRichPos({ relativePath: [0], offset: 0 });
   formats.reduce((to: RichPos, format: Format) => {
     toSpans(format).reduce(consume, to);
+    // biome-ignore lint/style/noNonNullAssertion: safe
     to.relativePath[to.relativePath.length - 1]! += 1;
     to.offset = 0;
     return to;

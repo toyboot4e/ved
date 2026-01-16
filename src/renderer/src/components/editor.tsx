@@ -50,7 +50,7 @@ export const formatBuffer = (editor: Editor): void => {
 
         if (format.type === 'ruby') {
           const fullText = Editor.string(editor, path);
-          const text = fullText.substring(format.text[0], format.text[1]!);
+          const text = fullText.substring(format.text[0], format.text[1]);
           const rubyText = fullText.substring(format.ruby[0], format.ruby[1]);
 
           // wrap the text
