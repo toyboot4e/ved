@@ -96,7 +96,7 @@ const useOnKeyDown = (
           const dir = event.key === 'ArrowLeft' ? 'forward' : 'backward';
           const alter = event.shiftKey ? 'extend' : 'move';
           requestAnimationFrame(() => {
-            window.getSelection()!.modify(alter, dir, 'line');
+            window.getSelection()?.modify(alter, dir, 'line');
           });
           return;
         }
