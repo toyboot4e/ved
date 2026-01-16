@@ -32,10 +32,7 @@
         "noFloatingPromises": "error",
         "noMisusedPromises": "error"
       },
-      "recommended": true,
-      "suspicious": {
-        "noTsIgnore": "off" // TODO: remove this line
-      }
+      "recommended": true
     }
   },
   "javascript": {
