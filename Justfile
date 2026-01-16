@@ -11,7 +11,7 @@ c:
 
 # Runs biome check --fix ignoring errors
 cf:
-  npm run check:fix -- --format-with-errors true
+  npm run check:fix -- --format-with-errors true --diagnostic-level error
 
 # Updates dependency versions aggressively. It can fail.
 update:

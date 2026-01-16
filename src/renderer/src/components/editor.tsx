@@ -48,7 +48,7 @@ export const formatBuffer = (editor: Editor): void => {
         // FIXME: use plaintext!
         const format = formats[i]!;
 
-        if (format.type == 'ruby') {
+        if (format.type === 'ruby') {
           const fullText = Editor.string(editor, path);
           const text = fullText.substring(format.text[0], format.text[1]!);
           const rubyText = fullText.substring(format.ruby[0], format.ruby[1]);
@@ -116,7 +116,7 @@ const useOnKeyDown = (
         return;
       }
     },
-    [editor, vert, ...deps],
+    [editor, vert, toggleSlash, ...deps],
   );
 };
 
@@ -158,8 +158,8 @@ const initialValue: Descendant[] = [
 export const VedEditor = ({ dir, appearPolicy, setAppearPolicy }: VedEditorProps): React.JSX.Element => {
   // TODO: Should use `useMemo` as in hovering toolbar example?
   const [editor] = useState(() => withInlines(withReact(withHistory(createEditor()))));
-  const renderLeaf = useCallback((props: RenderLeafProps) => <rich.VedText {...props} />, [appearPolicy]);
-  const renderElement = useCallback((props: RenderElementProps) => <rich.VedElement {...props} />, [appearPolicy]);
+  const renderLeaf = useCallback((props: RenderLeafProps) => <rich.VedText {...props} />, []);
+  const renderElement = useCallback((props: RenderElementProps) => <rich.VedElement {...props} />, []);
   const vert = dir === WritingDirection.Vertical;
 
   const onKeyDown = useOnKeyDown(
