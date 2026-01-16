@@ -1,24 +1,24 @@
-import { Path } from 'slate'
+import type { Path } from 'slate';
 
 /**
  * Map of positions between plain text and rich text.
  */
 export class BiMap {
   // TODO: compress with intervals.
-  protected toRichPos: Map<PlainPos, RichPos>
-  protected toPlainPos: Map<RichPos, PlainPos>
+  protected toRichPos: Map<PlainPos, RichPos>;
+  protected toPlainPos: Map<RichPos, PlainPos>;
 
   constructor(toRichPos: Map<PlainPos, RichPos>, toPlainPos: Map<RichPos, PlainPos>) {
-    this.toRichPos = toRichPos
-    this.toPlainPos = toPlainPos
+    this.toRichPos = toRichPos;
+    this.toPlainPos = toPlainPos;
   }
 
   toRich(plain: PlainPos): RichPos | undefined {
-    return this.toRichPos.get(plain)
+    return this.toRichPos.get(plain);
   }
 
   toPlain(rich: RichPos): PlainPos | undefined {
-    return this.toPlainPos.get(rich)
+    return this.toPlainPos.get(rich);
   }
 }
 
@@ -27,82 +27,82 @@ export class BiMap {
  */
 export type RichPos = {
   /** Path relative to the belonging paragraph. */
-  relativePath: Path
+  relativePath: Path;
   /** Offset in the belonging node. */
-  offset: number
-} & { __bland: 'richPos' }
+  offset: number;
+} & { __bland: 'richPos' };
 
 export const asRichPos = (x: { relativePath: Path; offset: number }): RichPos => {
-  return x as RichPos
-}
+  return x as RichPos;
+};
 
 /**
  * A point position in a plain text paragraph.
  */
 export type PlainPos = {
   /** Offset in the paragraph. */
-  offset: number
-} & { __bland: 'plainPos' }
+  offset: number;
+} & { __bland: 'plainPos' };
 
 export const asPlainPos = (x: { offset: number }): PlainPos => {
-  return x as PlainPos
-}
+  return x as PlainPos;
+};
 
-export type Format = PlainText | Ruby
+export type Format = PlainText | Ruby;
 
 /**
  * Slice of plain text that makes up a ruby.
  */
 export type PlainText = {
-  type: 'plainText'
-  text: [number, number]
-}
+  type: 'plainText';
+  text: [number, number];
+};
 
 /**
  * Slice of plain text that makes up a ruby.
  */
 export type Ruby = {
-  type: 'ruby'
+  type: 'ruby';
   /** Typically `|` */
-  delimFront: [number, number]
+  delimFront: [number, number];
   /** Ruby body */
-  text: [number, number]
+  text: [number, number];
   /** Typically `(` */
-  sepMid: [number, number]
+  sepMid: [number, number];
   /** Ruby text */
-  ruby: [number, number]
+  ruby: [number, number];
   /** Typically `)` */
-  delimEnd: [number, number]
-}
+  delimEnd: [number, number];
+};
 
 /**
  * Parses a plain text.
  */
 export const parse = (text: string): Format[] => {
-  return parseImpl(text)
-}
+  return parseImpl(text);
+};
 
 /**
  * Parses a plain text, creating a map between the original plain text and rich text positions.
  */
 export const parseWithBimap = (text: string): [Format[], BiMap] => {
-  const formats = parseImpl(text)
-  return [formats, supplyBimap(formats)]
-}
+  const formats = parseImpl(text);
+  return [formats, supplyBimap(formats)];
+};
 
 const parseImpl = (text: string): Format[] => {
-  const formats: Format[] = []
+  const formats: Format[] = [];
 
-  let offset = 0
+  let offset = 0;
   while (true) {
-    offset = text.indexOf('|', offset)
-    if (offset === -1) break
+    offset = text.indexOf('|', offset);
+    if (offset === -1) break;
 
-    const l = text.indexOf('(', offset)
-    if (l === -1) break
+    const l = text.indexOf('(', offset);
+    if (l === -1) break;
 
-    const r = text.indexOf(')', l)
-    if (r === -1) break
+    const r = text.indexOf(')', l);
+    if (r === -1) break;
 
     formats.push({
       type: 'ruby',
@@ -110,19 +110,19 @@ const parseImpl = (text: string): Format[] => {
       text: [offset + 1, l],
       sepMid: [l, l + 1],
       ruby: [l + 1, r],
-      delimEnd: [r, r + 1]
-    })
+      delimEnd: [r, r + 1],
+    });
 
-    offset = r
+    offset = r;
   }
 
-  return formats
-}
+  return formats;
+};
 
 const toSpans = (fmt: Format): [[number, number], boolean][] => {
   switch (fmt.type) {
     case 'plainText':
-      return [[fmt.text, true]]
+      return [[fmt.text, true]];
 
     case 'ruby':
       // TypeScript fails to compile if I inline this definition
@@ -136,33 +136,33 @@ const toSpans = (fmt: Format): [[number, number], boolean][] => {
         // ruby
         [fmt.ruby, false],
         // )
-        [fmt.delimEnd, false]
-      ]
+        [fmt.delimEnd, false],
+      ];
   }
-}
+};
 
 const supplyBimap = (formats: Format[]): BiMap => {
   // TODO: comperss
-  const plainToRich = new Map<PlainPos, RichPos>()
-  const richToPlain = new Map<RichPos, PlainPos>()
+  const plainToRich = new Map<PlainPos, RichPos>();
+  const richToPlain = new Map<RichPos, PlainPos>();
 
   const consume = (to: RichPos, [range, hasDisplay]: [[number, number], boolean]): RichPos => {
     for (let i = range[0]; i < range[1]; i++) {
-      plainToRich.set(asPlainPos({ offset: i }), to)
+      plainToRich.set(asPlainPos({ offset: i }), to);
       if (hasDisplay) {
-        to.offset += 1
+        to.offset += 1;
       }
     }
-    return to
-  }
+    return to;
+  };
 
-  const to0 = asRichPos({ relativePath: [0], offset: 0 })
+  const to0 = asRichPos({ relativePath: [0], offset: 0 });
   formats.reduce((to: RichPos, format: Format) => {
-    toSpans(format).reduce(consume, to)
-    to.relativePath[to.relativePath.length - 1]! += 1
-    to.offset = 0
-    return to
-  }, to0)
+    toSpans(format).reduce(consume, to);
+    to.relativePath[to.relativePath.length - 1]! += 1;
+    to.offset = 0;
+    return to;
+  }, to0);
 
-  return new BiMap(plainToRich, richToPlain)
-}
+  return new BiMap(plainToRich, richToPlain);
+};

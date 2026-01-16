@@ -1,72 +1,68 @@
-import { BaseEditor, BaseRange, Descendant, Range } from 'slate'
-import { HistoryEditor } from 'slate-history'
-import { ReactEditor, RenderElementProps, RenderLeafProps } from 'slate-react'
+import type { BaseEditor, BaseRange, Descendant, Range } from 'slate';
+import type { HistoryEditor } from 'slate-history';
+import type { ReactEditor, RenderElementProps, RenderLeafProps } from 'slate-react';
 
-export type Format = Ruby
+export type Format = Ruby;
 
 // FIXME: it's repeating.
 export type Ruby = {
-  delimFront: [number, number]
-  text: [number, number]
-  sepMid: [number, number]
-  rubyText: [number, number]
-  delimEnd: [number, number]
-}
+  delimFront: [number, number];
+  text: [number, number];
+  sepMid: [number, number];
+  rubyText: [number, number];
+  delimEnd: [number, number];
+};
 
 /** Parsed `Range` into `Format`. */
 export interface VedRange extends Range {
-  format: Format
+  format: Format;
 }
 
-export type VedElement = Paragraph | RubyElement
+export type VedElement = Paragraph | RubyElement;
 
-export type VedElementType = VedElement['type']
+export type VedElementType = VedElement['type'];
 
 export type Paragraph = {
-  type: 'paragraph'
-  children: Descendant[]
-}
+  type: 'paragraph';
+  children: Descendant[];
+};
 
 // TODO: Treat it as a Text instead
 export type RubyElement = {
-  type: 'ruby'
+  type: 'ruby';
   /** Ruby above or aside of the body text. */
-  rubyText: string
+  rubyText: string;
   /** The body text is the only child. */
   // TODO: limit child type?
-  children: Descendant[]
-}
+  children: Descendant[];
+};
 
-export type VedText = Plaintext | RubyBody | Rt
+export type VedText = Plaintext | RubyBody | Rt;
 
-export type VedTextType = VedText['type']
+export type VedTextType = VedText['type'];
 
 export type Plaintext = {
-  type: 'plaintext'
-  text: string
-}
+  type: 'plaintext';
+  text: string;
+};
 
 export type RubyBody = {
-  type: 'rubyBody'
-  text: string
-}
+  type: 'rubyBody';
+  text: string;
+};
 
 export type Rt = {
-  type: 'rt'
-  text: string
-}
+  type: 'rt';
+  text: string;
+};
 
 /** Ved element component. Note that `withInline` lets us insert `Ruby` as inline element. */
 // FIXME: write return type
-export const VedElement = ({
-  attributes,
-  children,
-  element
-}: RenderElementProps): React.JSX.Element => {
+export const VedElement = ({ attributes, children, element }: RenderElementProps): React.JSX.Element => {
   // TODO: we could still use decorate??
   switch (element.type) {
     case 'paragraph':
-      return <p {...attributes}>{children}</p>
+      return <p {...attributes}>{children}</p>;
     case 'ruby':
       return (
         <ruby {...attributes}>
@@ -75,11 +71,11 @@ export const VedElement = ({
           <rt contentEditable={false}>{element.rubyText}</rt>
           <rp>)</rp>
         </ruby>
-      )
+      );
     default:
-      throw new Error(`invalid ved element: ${element}`)
+      throw new Error(`invalid ved element: ${element}`);
   }
-}
+};
 
 /** Ved leaf component */
 // FIXME: write return type
@@ -87,11 +83,11 @@ export const VedText = ({ attributes, children, leaf }: RenderLeafProps): React.
   // FIXME: Should we think this is unreachable?
   switch (leaf.type) {
     case 'plaintext':
-      return <span {...attributes}>{children}</span>
+      return <span {...attributes}>{children}</span>;
     case 'rubyBody':
       // TODO: No need to use the attributes?
       // TODO: Is this correct? Or leaf.text?
-      return <>{children}</>
+      return <>{children}</>;
     case 'rt':
       // TODO: No need to use the attributes?
       return (
@@ -100,9 +96,9 @@ export const VedText = ({ attributes, children, leaf }: RenderLeafProps): React.
           <rt>{children}</rt>
           <rp>)</rp>
         </>
-      )
+      );
     default:
-      throw new Error(`invalid ved leaf: ${leaf}`)
+      throw new Error(`invalid ved leaf: ${leaf}`);
   }
 
   // return (
@@ -113,31 +109,31 @@ export const VedText = ({ attributes, children, leaf }: RenderLeafProps): React.
   //     <rp>)</rp>
   //   </ruby>
   // )
-}
+};
 
 export const descendantToPlainText = (d: Descendant): string => {
   switch (d.type) {
     case 'paragraph':
-      return d.children.map(descendantToPlainText).join('')
+      return d.children.map(descendantToPlainText).join('');
     case 'ruby':
-      return `|({node.rubyText}`
+      return `|({node.rubyText}`;
     case 'plaintext':
-      return d.text
+      return d.text;
     case 'rubyBody':
-      return d.text
+      return d.text;
     case 'rt':
-      return ''
+      return '';
   }
-}
+};
 
 // export interface VedEditor = BaseEditor & ReactEditor & HistoryEditor
 
 // TODO: Use custom paragraph type for initial values
 declare module 'slate' {
   interface CustomTypes {
-    Editor: BaseEditor & ReactEditor & HistoryEditor
-    Element: VedElement
-    Text: VedText
-    Range: BaseRange // & {[key: string]: unknown}
+    Editor: BaseEditor & ReactEditor & HistoryEditor;
+    Element: VedElement;
+    Text: VedText;
+    Range: BaseRange; // & {[key: string]: unknown}
   }
 }
