@@ -110,7 +110,7 @@ body {
   word-break: break-all;
   word-wrap: break-word;
 
-  enable vertical writing
+  /* enable vertical writing */
   writing-mode: vertical-rl;
   -webkit-writing-mode: vertical-rl;
   -ms-writing-mode: tb-rl; /* IE */
