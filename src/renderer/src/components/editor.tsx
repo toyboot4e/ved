@@ -9,6 +9,9 @@ import styles from './editor.module.scss';
 
 // TODO: how to handle intersecting decorations
 
+/**
+ * Converts the rich text content to plaintext.
+ */
 export const unformatBuffer = (editor: Editor): void => {
   editor.children.forEach((node, iNode) => {
     const text = rich.descendantToPlainText(node);
@@ -30,6 +33,9 @@ export const unformatBuffer = (editor: Editor): void => {
   });
 };
 
+/**
+ * Converts the plaintext content to rich text.
+ */
 export const formatBuffer = (editor: Editor): void => {
   // the `element` must be just under root
   editor.children.forEach((underRoot, iRoot) => {

@@ -32,7 +32,7 @@ $editor-width: $content-width + $pad-x * 2;
 
 .editorContent {
   -webkit-app-region: no-drag;
-  -webkit-user-select: none;
+  -webkit-user-select: text;
 
   > * {
     margin-block-start: 0;
