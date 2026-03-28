@@ -3,7 +3,7 @@ import { useCallback, useState } from 'react';
 import { type BaseEditor, createEditor, type Descendant, Editor, Element, Text, Transforms } from 'slate';
 import { withHistory } from 'slate-history';
 import { Editable, type RenderElementProps, type RenderLeafProps, Slate, withReact } from 'slate-react';
-import styles from './../assets/editor.module.scss';
+import styles from './editor.module.scss';
 import * as parse from './../parse';
 import * as rich from './editor/rich';
 
