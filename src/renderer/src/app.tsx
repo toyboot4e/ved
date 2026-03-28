@@ -1,6 +1,6 @@
 import { useState } from 'react';
-import styles from './components/editor.module.scss';
 import { AppearPolicy, VedEditor, WritingDirection } from './components/editor';
+import styles from './components/editor.module.scss';
 
 export const App = (): React.JSX.Element => {
   // const ipcHandle = (): void => window.electron.ipcRenderer.send('ping')

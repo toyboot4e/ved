@@ -3,9 +3,9 @@ import { useCallback, useState } from 'react';
 import { type BaseEditor, createEditor, type Descendant, Editor, Element, Text, Transforms } from 'slate';
 import { withHistory } from 'slate-history';
 import { Editable, type RenderElementProps, type RenderLeafProps, Slate, withReact } from 'slate-react';
-import styles from './editor.module.scss';
 import * as parse from './../parse';
 import * as rich from './editor/rich';
+import styles from './editor.module.scss';
 
 // TODO: how to handle intersecting decorations
 
@@ -46,7 +46,7 @@ export const formatBuffer = (editor: Editor): void => {
       const path = [iRoot, iChild];
       const formats = parse.parse(node.text);
       for (let i = formats.length - 1; i >= 0; i--) {
-        // FIXME: use plaintext!
+        // biome-ignore lint/style/noNonNullAssertion: safe
         const format = formats[i]!;
 
         if (format.type === 'ruby') {
