@@ -13,6 +13,12 @@ c:
 cf:
   npm run check:fix -- --format-with-errors true --diagnostic-level error
 
+# Starts development server
+dev:
+  npm run dev
+
+alias d := dev
+
 # Updates dependency versions aggressively. It can fail.
 update:
   npx npm-check-updates -u && npm install
