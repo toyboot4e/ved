@@ -3,7 +3,7 @@ import { electronApp, is, optimizer } from '@electron-toolkit/utils';
 import { app, BrowserWindow, ipcMain, shell } from 'electron';
 import icon from '../../resources/icon.png?asset';
 
-function createWindow(): void {
+const createWindow = () => {
   // Create the browser window.
   const mainWindow = new BrowserWindow({
     width: 900,
@@ -33,7 +33,7 @@ function createWindow(): void {
   } else {
     mainWindow.loadFile(join(__dirname, '../renderer/index.html'));
   }
-}
+};
 
 // This method will be called when Electron has finished
 // initialization and is ready to create browser windows.
