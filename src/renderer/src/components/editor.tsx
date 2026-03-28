@@ -3,6 +3,7 @@ import { useCallback, useState } from 'react';
 import { type BaseEditor, createEditor, type Descendant, Editor, Element, Text, Transforms } from 'slate';
 import { withHistory } from 'slate-history';
 import { Editable, type RenderElementProps, type RenderLeafProps, Slate, withReact } from 'slate-react';
+import styles from './../assets/editor.module.scss';
 import * as parse from './../parse';
 import * as rich from './editor/rich';
 
@@ -180,12 +181,12 @@ export const VedEditor = ({ dir, appearPolicy, setAppearPolicy }: VedEditorProps
   );
 
   return (
-    <div className={clsx('ved-editor', vert && 'vert-mode', vert && 'multi-col-mode')}>
+    <div className={clsx(styles.editor, vert && styles.vertMode, vert && styles.multiColMode)}>
       <Slate editor={editor} initialValue={initialValue}>
         <Editable
           id='editor-content'
           placeholder='本文'
-          className={clsx('ved-editor-content', vert && 'vert-mode', vert && 'multi-col-mode')}
+          className={clsx(styles.editorContent, vert && styles.vertMode, vert && styles.multiColMode)}
           renderLeaf={renderLeaf}
           renderElement={renderElement}
           onKeyDown={onKeyDown}

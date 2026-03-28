@@ -1,4 +1,5 @@
 import { useState } from 'react';
+import styles from './assets/editor.module.scss';
 import { AppearPolicy, VedEditor, WritingDirection } from './components/editor';
 
 export const App = (): React.JSX.Element => {
@@ -7,12 +8,12 @@ export const App = (): React.JSX.Element => {
   const [appearPolicy, setAppearPolicy] = useState(AppearPolicy.Rich);
 
   return (
-    <div className='ved'>
+    <div className={styles.root}>
       {/* Make space for trafic lights(macOS only) */}
-      <div className='ved-header'></div>
+      <div className={styles.header}></div>
       {VedEditor({ dir, appearPolicy, setAppearPolicy })}
-      <div className='ved-footer'>
-        <p id='counter' className='ved-footer-counter'></p>
+      <div className={styles.footer}>
+        <p id='counter' className={styles.footerCounter}></p>
       </div>
     </div>
   );

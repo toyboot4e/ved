@@ -1,0 +1,114 @@
+$font-size: 18px;
+// TODO: use number of characters for sizing
+$content-width: 410px;
+$col-size: 400px;
+$line-space: 2px;
+$pad-x: 20px;
+$pad-y: 10px;
+$footer-height: $font-size + $pad-y * 2;
+$editor-width: $content-width + $pad-x * 2;
+
+.root {
+  width: $editor-width;
+  height: 100%;
+  margin: auto;
+}
+
+.header {
+  height: $footer-height;
+}
+
+.editor {
+  width: $editor-width;
+  height: calc(100% - $footer-height * 2);
+  border: solid 2px black;
+
+  // Hide scrollbar
+  &::-webkit-scrollbar {
+    width: 0px;
+    background: transparent;
+  }
+}
+
+.editorContent {
+  -webkit-app-region: no-drag;
+  -webkit-user-select: none;
+
+  > * {
+    margin-block-start: 0;
+    margin-block-end: 0;
+    margin: 0;
+    $space: calc($line-space / 2);
+    padding: 0 $space 0 $space;
+  }
+
+  // Placeholder
+  &[placeholder]:empty::before {
+    content: attr(placeholder);
+    color: #555;
+  }
+}
+
+.footer {
+  height: $footer-height;
+  padding: 0;
+  border-top: 1px solid #808080;
+  display: flex;
+  justify-content: center;
+  align-items: center;
+}
+
+.footerCounter {
+  color: #c0b18b;
+}
+
+// Vertical writing mode
+
+.vertMode {
+  &.editor {
+    &:not(.multiColMode) {
+      overflow-x: scroll;
+    }
+
+    &.multiColMode {
+      overflow-y: scroll;
+    }
+  }
+
+  &.editorContent {
+    font-size: $font-size;
+    line-height: $font-size + $line-space;
+    word-break: break-all;
+    word-wrap: break-word;
+    writing-mode: vertical-rl;
+    -webkit-writing-mode: vertical-rl;
+    -ms-writing-mode: tb-rl;
+
+    &.multiColMode {
+      width: $content-width;
+      height: $col-size;
+      margin: $pad-y $pad-x $footer-height $pad-x;
+      padding: 0 0 $pad-y 0;
+      border-bottom: solid 1px #808080;
+      column-span: all;
+      column-width: $col-size;
+      column-gap: $pad-y * 2;
+      column-rule: solid 1px #808080;
+    }
+  }
+}
+
+// Formats
+a.vertMode {
+  text-decoration: overline;
+}
+
+.numCombine {
+  -webkit-text-combine: horizontal;
+  -ms-text-combine-horizontal: all;
+  text-combine-upright: digits 2;
+}
+
+.indentView {
+  text-indent: 1em;
+}

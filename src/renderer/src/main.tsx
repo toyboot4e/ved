@@ -1,6 +1,4 @@
-// TODO: Is it good idea to import here?
-import './assets/main.css';
-import './assets/editor.css';
+import './assets/main.scss';
 
 import { StrictMode } from 'react';
 import { createRoot } from 'react-dom/client';
