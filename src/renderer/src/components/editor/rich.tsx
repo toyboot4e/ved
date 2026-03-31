@@ -55,8 +55,13 @@ export type Rt = {
   text: string;
 };
 
-/** Context to tell Rt leaves whether they're inside an expanded ruby. */
-export const ExpandedRubyContext = React.createContext(false);
+/**
+ * Context for Rt leaf rendering:
+ * - `undefined` (default): Rich mode — Rt is hidden (VedElement shows `<rt>`)
+ * - `false`: non-expanded annotation in ByCharacter/ByParagraph — Rt renders as `<rt>`
+ * - `true`: expanded — Rt renders inline with `()` delimiters
+ */
+export const ExpandedRubyContext = React.createContext<boolean | undefined>(undefined);
 
 /** Ved element component. Note that `withInline` lets us insert `Ruby` as inline element. */
 // FIXME: write return type
@@ -71,14 +76,14 @@ export const VedElement = ({
   switch (element.type) {
     case 'paragraph':
       return <p {...attributes}>{children}</p>;
-    case 'ruby':
-      if (expanded !== undefined) {
-        // ByCharacter/ByParagraph: stable <ruby> wrapper with expandable delimiters
-        const hidden = { display: 'none' } as const;
+    case 'ruby': {
+      const rtChild = element.children.find((c) => 'type' in c && c.type === 'rt');
+      const rtText = rtChild && 'text' in rtChild ? rtChild.text : '';
+      if (expanded === true) {
         return (
-          <ExpandedRubyContext.Provider value={expanded}>
+          <ExpandedRubyContext.Provider value={true}>
             <ruby {...attributes}>
-              <span className={styles.rubyExpanded} contentEditable={false} style={expanded ? undefined : hidden}>
+              <span className={styles.rubyExpanded} contentEditable={false}>
                 |
               </span>
               {children}
@@ -86,11 +91,16 @@ export const VedElement = ({
           </ExpandedRubyContext.Provider>
         );
       }
+      // Rich / non-expanded: proper <ruby> with <rt> annotation (Rt Slate child hidden)
       return (
         <ruby {...attributes} className={isActive ? styles.rubyActive : undefined}>
           {children}
+          <rp>(</rp>
+          <rt contentEditable={false}>{rtText}</rt>
+          <rp>)</rp>
         </ruby>
       );
+    }
     default:
       throw new Error(`invalid ved element: ${element}`);
   }
@@ -107,7 +117,7 @@ export const VedText = ({ attributes, children, leaf }: RenderLeafProps): React.
     case 'rubyBody':
       return <span {...attributes}>{children}</span>;
     case 'rt':
-      if (expanded) {
+      if (expanded === true) {
         return (
           <span {...attributes}>
             <span className={styles.rubyExpanded} contentEditable={false}>
@@ -120,7 +130,12 @@ export const VedText = ({ attributes, children, leaf }: RenderLeafProps): React.
           </span>
         );
       }
-      return <rt {...attributes}>{children}</rt>;
+      // Non-expanded and Rich: hidden (VedElement renders the <rt> annotation)
+      return (
+        <span {...attributes} style={{ display: 'none' }}>
+          {children}
+        </span>
+      );
     default:
       throw new Error(`invalid ved leaf: ${JSON.stringify(leaf)}`);
   }
