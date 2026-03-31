@@ -1,6 +1,12 @@
 import type React from 'react';
 import type { BaseEditor, BaseRange, Descendant } from 'slate';
-import { ReactEditor, type RenderElementProps, type RenderLeafProps, useSlateSelection, useSlateStatic } from 'slate-react';
+import {
+  ReactEditor,
+  type RenderElementProps,
+  type RenderLeafProps,
+  useSlateSelection,
+  useSlateStatic,
+} from 'slate-react';
 import * as parse from '../../parse';
 import styles from '../editor.module.scss';
 
@@ -47,8 +53,7 @@ const RubyElementView = ({ attributes, children, element }: RenderElementProps):
   if (sel) {
     try {
       const path = ReactEditor.findPath(editor, element);
-      isActive =
-        sel.anchor.path.length >= 3 && sel.anchor.path[0] === path[0] && sel.anchor.path[1] === path[1];
+      isActive = sel.anchor.path.length >= 3 && sel.anchor.path[0] === path[0] && sel.anchor.path[1] === path[1];
     } catch {
       // element not found in tree
     }
@@ -72,7 +77,11 @@ export const VedElement = ({ attributes, children, element }: RenderElementProps
     case 'paragraph':
       return <p {...attributes}>{children}</p>;
     case 'ruby':
-      return <RubyElementView attributes={attributes} children={children} element={element} />;
+      return (
+        <RubyElementView attributes={attributes} element={element}>
+          {children}
+        </RubyElementView>
+      );
     default:
       throw new Error(`invalid ved element: ${element}`);
   }
