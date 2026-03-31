@@ -57,6 +57,7 @@
             packages = with pkgs; [
               biome
             ];
+
             shellHook = ''
               export LD_LIBRARY_PATH="$LD_LIBRARY_PATH:${pkgs.lib.makeLibraryPath deps}"
             '';

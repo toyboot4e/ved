@@ -90,10 +90,10 @@ const useOnKeyDown = (
 
       if (mod) {
         const modeMap: Record<string, AppearPolicy> = {
-          a: AppearPolicy.ShowAll,
-          s: AppearPolicy.ByParagraph,
-          d: AppearPolicy.ByCharacter,
-          f: AppearPolicy.Rich,
+          s: AppearPolicy.ShowAll,
+          d: AppearPolicy.ByParagraph,
+          f: AppearPolicy.ByCharacter,
+          g: AppearPolicy.Rich,
         };
         const policy = modeMap[event.key];
         if (policy !== undefined) {
@@ -114,13 +114,12 @@ const RichElement = (props: RenderElementProps): React.JSX.Element => {
   const appearPolicy = React.useContext(AppearPolicyContext);
 
   let isActive = false;
-  let expanded = false;
+  let expanded: boolean | undefined;
 
   if (props.element.type === 'ruby' && selection) {
     try {
       const path = ReactEditor.findPath(editor, props.element);
-      const cursorInRuby =
-        Path.isAncestor(path, selection.anchor.path) || Path.isAncestor(path, selection.focus.path);
+      const cursorInRuby = Path.isAncestor(path, selection.anchor.path) || Path.isAncestor(path, selection.focus.path);
 
       switch (appearPolicy) {
         case AppearPolicy.Rich:
@@ -130,7 +129,6 @@ const RichElement = (props: RenderElementProps): React.JSX.Element => {
           expanded = cursorInRuby;
           break;
         case AppearPolicy.ByParagraph: {
-          // Expand all rubies in the cursor's paragraph
           const cursorParaIdx = selection.anchor.path[0];
           const rubyParaIdx = path[0];
           expanded = cursorParaIdx === rubyParaIdx;
@@ -221,7 +219,8 @@ export const VedEditor = ({ dir, appearPolicy, setAppearPolicy }: VedEditorProps
             if (wasRich) {
               // Rich → Plain
               const childIdx = point.path[1] ?? 0;
-              const plainOffset = richOffsetToPlain(richChildren, childIdx, point.offset);
+              const subChildIdx = point.path[2];
+              const plainOffset = richOffsetToPlain(richChildren, childIdx, point.offset, subChildIdx);
               return { path: [paraIdx, 0], offset: plainOffset };
             }
             // Plain → Rich

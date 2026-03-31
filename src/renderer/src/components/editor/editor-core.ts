@@ -1,4 +1,4 @@
-import { type BaseEditor, type Descendant, Element, type NodeEntry, Editor, Node, Text, Transforms } from 'slate';
+import { type BaseEditor, type Descendant, Editor, Element, Node, type NodeEntry, Text, Transforms } from 'slate';
 import { HistoryEditor } from 'slate-history';
 
 // FIXME: DRY (rich.RubyElement.type)

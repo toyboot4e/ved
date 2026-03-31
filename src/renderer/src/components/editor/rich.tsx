@@ -1,3 +1,4 @@
+import React, { useContext } from 'react';
 import type { BaseEditor, BaseRange, Descendant, Range } from 'slate';
 import type { HistoryEditor } from 'slate-history';
 import type { ReactEditor, RenderElementProps, RenderLeafProps } from 'slate-react';
@@ -32,10 +33,6 @@ export type Paragraph = {
 // TODO: Treat it as a Text instead
 export type RubyElement = {
   type: 'ruby';
-  /** Ruby above or aside of the body text. */
-  rubyText: string;
-  /** The body text is the only child. */
-  // TODO: limit child type?
   children: Descendant[];
 };
 
@@ -58,6 +55,9 @@ export type Rt = {
   text: string;
 };
 
+/** Context to tell Rt leaves whether they're inside an expanded ruby. */
+export const ExpandedRubyContext = React.createContext(false);
+
 /** Ved element component. Note that `withInline` lets us insert `Ruby` as inline element. */
 // FIXME: write return type
 export const VedElement = ({
@@ -72,25 +72,23 @@ export const VedElement = ({
     case 'paragraph':
       return <p {...attributes}>{children}</p>;
     case 'ruby':
-      if (expanded) {
+      if (expanded !== undefined) {
+        // ByCharacter/ByParagraph: stable <ruby> wrapper with expandable delimiters
+        const hidden = { display: 'none' } as const;
         return (
-          <span {...attributes}>
-            <span className={styles.rubyExpanded} contentEditable={false}>
-              |
-            </span>
-            {children}
-            <span className={styles.rubyExpanded} contentEditable={false}>
-              ({element.rubyText})
-            </span>
-          </span>
+          <ExpandedRubyContext.Provider value={expanded}>
+            <ruby {...attributes}>
+              <span className={styles.rubyExpanded} contentEditable={false} style={expanded ? undefined : hidden}>
+                |
+              </span>
+              {children}
+            </ruby>
+          </ExpandedRubyContext.Provider>
         );
       }
       return (
         <ruby {...attributes} className={isActive ? styles.rubyActive : undefined}>
           {children}
-          <rp>(</rp>
-          <rt contentEditable={false}>{element.rubyText}</rt>
-          <rp>)</rp>
         </ruby>
       );
     default:
@@ -101,49 +99,58 @@ export const VedElement = ({
 /** Ved leaf component */
 // FIXME: write return type
 export const VedText = ({ attributes, children, leaf }: RenderLeafProps): React.JSX.Element => {
-  // FIXME: Should we think this is unreachable?
+  const expanded = useContext(ExpandedRubyContext);
+
   switch (leaf.type) {
     case 'plaintext':
       return <span {...attributes}>{children}</span>;
     case 'rubyBody':
-      // TODO: No need to use the attributes?
-      // TODO: Is this correct? Or leaf.text?
-      return <>{children}</>;
+      return <span {...attributes}>{children}</span>;
     case 'rt':
-      // TODO: No need to use the attributes?
-      return (
-        <>
-          <rp>(</rp>
-          <rt>{children}</rt>
-          <rp>)</rp>
-        </>
-      );
+      if (expanded) {
+        return (
+          <span {...attributes}>
+            <span className={styles.rubyExpanded} contentEditable={false}>
+              (
+            </span>
+            {children}
+            <span className={styles.rubyExpanded} contentEditable={false}>
+              )
+            </span>
+          </span>
+        );
+      }
+      return <rt {...attributes}>{children}</rt>;
     default:
       throw new Error(`invalid ved leaf: ${JSON.stringify(leaf)}`);
   }
+};
 
-  // return (
-  //   <ruby {...attributes}>
-  //     {leafText}
-  //     <rp>(</rp>
-  //     <rt>{leafRuby}</rt>
-  //     <rp>)</rp>
-  //   </ruby>
-  // )
+/** Get the Rt text length of a ruby element. */
+export const rubyRtLength = (ruby: { children: Descendant[] }): number => {
+  const rtNode = ruby.children.find((c) => 'type' in c && c.type === 'rt');
+  return rtNode && 'text' in rtNode ? rtNode.text.length : 0;
 };
 
 export const descendantToPlainText = (d: Descendant): string => {
   switch (d.type) {
     case 'paragraph':
       return d.children.map(descendantToPlainText).join('');
-    case 'ruby':
-      return `|${d.children.map(descendantToPlainText).join('')}(${d.rubyText})`;
+    case 'ruby': {
+      const body = d.children
+        .filter((c) => !('type' in c && c.type === 'rt'))
+        .map(descendantToPlainText)
+        .join('');
+      const rtNode = d.children.find((c) => 'type' in c && c.type === 'rt');
+      const rt = rtNode && 'text' in rtNode ? rtNode.text : '';
+      return `|${body}(${rt})`;
+    }
     case 'plaintext':
       return d.text;
     case 'rubyBody':
       return d.text;
     case 'rt':
-      return '';
+      return d.text;
   }
 };
 
@@ -183,8 +190,10 @@ const lineToRichChildren = (line: string): Descendant[] => {
     const rubyText = line.substring(fmt.ruby[0], fmt.ruby[1]);
     children.push({
       type: 'ruby' as const,
-      rubyText,
-      children: [{ type: 'plaintext' as const, text: bodyText }],
+      children: [
+        { type: 'plaintext' as const, text: bodyText },
+        { type: 'rt' as const, text: rubyText },
+      ],
     });
 
     cursor = fmt.delimEnd[1];
