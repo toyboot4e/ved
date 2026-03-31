@@ -1,9 +1,10 @@
 import { clsx } from 'clsx';
 import { useCallback, useRef, useState } from 'react';
-import { type BaseEditor, type NodeEntry, createEditor, type Descendant, Editor, Text, Transforms } from 'slate';
-import { HistoryEditor, withHistory } from 'slate-history';
+import { createEditor, type Descendant, Editor, Transforms } from 'slate';
+import { withHistory } from 'slate-history';
 import { Editable, ReactEditor, type RenderElementProps, type RenderLeafProps, Slate, withReact } from 'slate-react';
 import { plainOffsetToRich, richOffsetToPlain } from './editor/cursor-map';
+import { coupleHistories, replaceContent, withInlines, withNormalizeText } from './editor/editor-core';
 import * as rich from './editor/rich';
 import styles from './editor.module.scss';
 
@@ -26,28 +27,6 @@ export type VedEditorProps = {
   readonly setAppearPolicy: (_: AppearPolicy) => void;
 };
 
-// FIXME: DRY (rich.RubyElement.type)
-const inlineTypes: [rich.VedElement['type']] = ['ruby'];
-
-const withInlines = <T extends BaseEditor>(editor: T): T => {
-  editor.isInline = (element: rich.VedElement) => inlineTypes.includes(element.type);
-  return editor;
-};
-
-/** Ensure every Text node has `type: 'plaintext'` (Slate creates bare `{text: ""}` nodes). */
-const withNormalizeText = <T extends BaseEditor>(editor: T): T => {
-  const { normalizeNode } = editor;
-  editor.normalizeNode = (entry: NodeEntry) => {
-    const [node, path] = entry;
-    if (Text.isText(node) && !('type' in node)) {
-      Transforms.setNodes(editor, { type: 'plaintext' } as Partial<Text>, { at: path });
-      return;
-    }
-    normalizeNode(entry);
-  };
-  return editor;
-};
-
 const initialText = '|ルビ(ruby)';
 
 const initialPlainValue: Descendant[] = [
@@ -59,49 +38,13 @@ const initialPlainValue: Descendant[] = [
 
 const initialRichValue: Descendant[] = rich.plaintextToRichTree(initialText);
 
-/**
- * Replace the entire content of an editor using Slate Transforms (so history records it).
- * Wrapped in `withoutMerging` so it becomes one discrete undo step.
- */
-const replaceContent = (editor: Editor, newChildren: Descendant[]): void => {
-  HistoryEditor.withoutMerging(editor, () => {
-    // Remove all existing nodes
-    while (editor.children.length > 0) {
-      Transforms.removeNodes(editor, { at: [0] });
-    }
-    // Insert new nodes
-    for (let i = 0; i < newChildren.length; i++) {
-      // biome-ignore lint/style/noNonNullAssertion: safe
-      Transforms.insertNodes(editor, newChildren[i]!, { at: [i] });
-    }
-  });
-};
-
-/**
- * Couple undo/redo between two editors so they stay in lockstep.
- */
-const coupleHistories = (editorA: Editor, editorB: Editor): void => {
-  const origUndoA = editorA.undo;
-  const origRedoA = editorA.redo;
-  const origUndoB = editorB.undo;
-  const origRedoB = editorB.redo;
-
-  editorA.undo = () => {
-    origUndoA();
-    origUndoB();
-  };
-  editorA.redo = () => {
-    origRedoA();
-    origRedoB();
-  };
-  editorB.undo = () => {
-    origUndoA();
-    origUndoB();
-  };
-  editorB.redo = () => {
-    origRedoA();
-    origRedoB();
-  };
+const useVedEditors = () => {
+  return useState(() => {
+    const plainEditor = withNormalizeText(withReact(withHistory(createEditor())));
+    const richEditor = withNormalizeText(withInlines(withReact(withHistory(createEditor()))));
+    coupleHistories(plainEditor, richEditor);
+    return { plainEditor, richEditor };
+  })[0];
 };
 
 const useOnKeyDown = (
@@ -145,17 +88,10 @@ const useOnKeyDown = (
 };
 
 export const VedEditor = ({ dir, appearPolicy, setAppearPolicy }: VedEditorProps): React.JSX.Element => {
-  const [plainEditor] = useState(() => withNormalizeText(withReact(withHistory(createEditor()))));
-  const [richEditor] = useState(() => withNormalizeText(withInlines(withReact(withHistory(createEditor())))));
+  const { plainEditor, richEditor } = useVedEditors();
 
   // Guard to prevent sync feedback loops
   const syncingRef = useRef(false);
-
-  // Couple undo/redo (only once, on first render via useState)
-  const [_coupled] = useState(() => {
-    coupleHistories(plainEditor, richEditor);
-    return true;
-  });
 
   const renderLeaf = useCallback((props: RenderLeafProps) => <rich.VedText {...props} />, []);
   const renderElement = useCallback((props: RenderElementProps) => <rich.VedElement {...props} />, []);
