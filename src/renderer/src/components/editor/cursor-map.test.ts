@@ -83,22 +83,14 @@ const descendantToPlainText = (d: Descendant): string => {
 // ---------------------------------------------------------------------------
 
 describe('cursor-map PBT', () => {
-  it('roundtrip rich→plain→rich for plaintext children (interior offsets)', () => {
+  it('roundtrip rich→plain→rich for plaintext children', () => {
     fc.assert(
       fc.property(arbRichChildren(), (children) => {
         for (let i = 0; i < children.length; i++) {
           const child = children[i]!;
           if (!('text' in child)) continue; // only plaintext
-          if (child.text.length === 0) continue;
 
-          // The end offset (child.text.length) is ambiguous when the next child is a ruby,
-          // because plainOffsetToRich prefers the ruby. Only test interior offsets + end
-          // when the next sibling is NOT a ruby.
-          const next = children[i + 1];
-          const nextIsRuby = next && 'type' in next && next.type === 'ruby';
-          const maxOffset = nextIsRuby ? child.text.length - 1 : child.text.length;
-
-          for (let offset = 0; offset <= maxOffset; offset++) {
+          for (let offset = 0; offset <= child.text.length; offset++) {
             const plain = richOffsetToPlain(children, i, offset);
             const back = plainOffsetToRich(children, plain);
             expect(back).toEqual({ path: [i], offset });
@@ -227,30 +219,34 @@ describe('cursor-map examples', () => {
     ];
 
     // Plain text: |漢(かん)字
-    // Offsets:    0123  45 67
-    //             |漢 (  か ん )  字
-    //             0  1  2  3  4  5  6
+    //             |  漢  (  か  ん  )  字
+    // plain idx:  0  1   2  3   4   5  6  7
 
-    // child 0 (empty plaintext), offset 0 → plain 0
-    expect(richOffsetToPlain(children, 0, 0)).toBe(0);
-
-    // child 1 (ruby body), offset 0 → plain 1 (after `|`)
-    expect(richOffsetToPlain(children, 1, 0)).toBe(1);
-
-    // child 1 (ruby body), offset 1 → plain 2 (after `漢`)
-    expect(richOffsetToPlain(children, 1, 1)).toBe(2);
-
-    // child 2 (plaintext "字"), offset 0 → plain 6 (after `)`)
-    expect(richOffsetToPlain(children, 2, 0)).toBe(6);
-
-    // child 2 (plaintext "字"), offset 1 → plain 7
+    // --- richOffsetToPlain ---
+    expect(richOffsetToPlain(children, 0, 0)).toBe(0); // empty plaintext → 0
+    expect(richOffsetToPlain(children, 1, 0)).toBe(1); // ruby body start → 1
+    expect(richOffsetToPlain(children, 1, 1)).toBe(2); // ruby body end → 2
+    expect(richOffsetToPlain(children, 2, 0)).toBe(6); // plaintext "字" → 6
     expect(richOffsetToPlain(children, 2, 1)).toBe(7);
 
-    // plain 1 → ruby body offset 0 (the `|` maps into the body start)
+    // --- plainOffsetToRich ---
+    // plain 0 (`|`) → OUTSIDE ruby: previous plaintext end
+    expect(plainOffsetToRich(children, 0)).toEqual({ path: [0], offset: 0 });
+
+    // plain 1 (body char) → inside ruby body offset 0
     expect(plainOffsetToRich(children, 1)).toEqual({ path: [1, 0], offset: 0 });
 
-    // plain 2 → ruby body offset 1
+    // plain 2 (`(`) → inside ruby body end (offset 1 = bodyLen)
     expect(plainOffsetToRich(children, 2)).toEqual({ path: [1, 0], offset: 1 });
+
+    // plain 3 (rubyText `か`) → OUTSIDE ruby: next plaintext start
+    expect(plainOffsetToRich(children, 3)).toEqual({ path: [2], offset: 0 });
+
+    // plain 4 (rubyText `ん`) → OUTSIDE ruby: next plaintext start
+    expect(plainOffsetToRich(children, 4)).toEqual({ path: [2], offset: 0 });
+
+    // plain 5 (`)`) → OUTSIDE ruby: next plaintext start
+    expect(plainOffsetToRich(children, 5)).toEqual({ path: [2], offset: 0 });
 
     // plain 6 → plaintext "字" offset 0
     expect(plainOffsetToRich(children, 6)).toEqual({ path: [2], offset: 0 });

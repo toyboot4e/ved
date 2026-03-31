@@ -52,7 +52,24 @@ export const plainOffsetToRich = (
     if (plainOffset < consumed + len) {
       const local = plainOffset - consumed;
       if ('type' in child && child.type === 'ruby') {
-        return { path: [i, 0], offset: rubyLocalToBodyOffset(rubyBodyLength(child), local) };
+        const bodyLen = rubyBodyLength(child);
+        if (local <= 0) {
+          // On `|` → land outside ruby (previous sibling end)
+          if (i > 0) {
+            const prev = richChildren[i - 1]!;
+            return { path: [i - 1], offset: 'text' in prev ? prev.text.length : 0 };
+          }
+          return { path: [i, 0], offset: 0 };
+        }
+        if (local <= bodyLen + 1) {
+          // Body chars (1..bodyLen) or `(` (bodyLen+1) → inside ruby body
+          return { path: [i, 0], offset: Math.min(local - 1, bodyLen) };
+        }
+        // rubyText chars or `)` → land outside ruby (next sibling start)
+        if (i + 1 < richChildren.length) {
+          return { path: [i + 1], offset: 0 };
+        }
+        return { path: [i, 0], offset: bodyLen };
       }
       return { path: [i], offset: local };
     }
