@@ -98,7 +98,7 @@ export const VedText = ({ attributes, children, leaf }: RenderLeafProps): React.
         </>
       );
     default:
-      throw new Error(`invalid ved leaf: ${leaf}`);
+      throw new Error(`invalid ved leaf: ${JSON.stringify(leaf)}`);
   }
 
   // return (

@@ -10,7 +10,7 @@ import styles from './editor.module.scss';
 // TODO: how to handle intersecting decorations
 
 /**
- * Converts the rich text content to plaintext.
+ * Converts the rich text content to plaintext in-place.
  */
 export const unformatBuffer = (editor: Editor): void => {
   editor.children.forEach((node, iNode) => {
@@ -34,7 +34,7 @@ export const unformatBuffer = (editor: Editor): void => {
 };
 
 /**
- * Converts the plaintext content to rich text.
+ * Converts the plaintext content to rich text in-place.
  */
 export const formatBuffer = (editor: Editor): void => {
   // the `element` must be just under root
@@ -95,6 +95,7 @@ const useOnKeyDown = (
 ): React.KeyboardEventHandler<HTMLDivElement> => {
   return useCallback(
     (event: React.KeyboardEvent) => {
+      const mod = window.electron.process.platform === 'darwin' ? event.metaKey : event.ctrlKey;
       if (vert) {
         // remap arrow keys on vertical writing mode
         if (event.key === 'ArrowRight' || event.key === 'ArrowLeft') {
@@ -116,9 +117,8 @@ const useOnKeyDown = (
         }
       }
 
-      if (event.key === '/' && event.ctrlKey) {
+      if (event.key === '/' && mod) {
         event.preventDefault();
-        // toggle
         toggleSlash();
         return;
       }
