@@ -1,5 +1,4 @@
 import { type BaseEditor, type Descendant, Editor, Element, Node, type NodeEntry, Text, Transforms } from 'slate';
-import { HistoryEditor } from 'slate-history';
 
 // FIXME: DRY (rich.RubyElement.type)
 const inlineTypes: string[] = ['ruby'];
@@ -29,48 +28,73 @@ export const withNormalizeText = <T extends BaseEditor>(editor: T): T => {
 };
 
 /**
- * Replace the entire content of an editor using Slate Transforms (so history records it).
- * Wrapped in `withoutMerging` so it becomes one discrete undo step.
+ * Replace the entire content of an editor using Slate Transforms.
+ * No Slate history is used — undo/redo is handled by PlainTextHistory.
  */
 export const replaceContent = (editor: Editor, newChildren: Descendant[]): void => {
-  HistoryEditor.withNewBatch(editor, () => {
-    Editor.withoutNormalizing(editor, () => {
-      // Remove all existing nodes
-      while (editor.children.length > 0) {
-        Transforms.removeNodes(editor, { at: [0] });
-      }
-      // Insert new nodes
-      for (let i = 0; i < newChildren.length; i++) {
-        // biome-ignore lint/style/noNonNullAssertion: safe
-        Transforms.insertNodes(editor, newChildren[i]!, { at: [i] });
-      }
-    });
+  Editor.withoutNormalizing(editor, () => {
+    // Remove all existing nodes
+    while (editor.children.length > 0) {
+      Transforms.removeNodes(editor, { at: [0] });
+    }
+    // Insert new nodes
+    for (let i = 0; i < newChildren.length; i++) {
+      // biome-ignore lint/style/noNonNullAssertion: safe
+      Transforms.insertNodes(editor, newChildren[i]!, { at: [i] });
+    }
   });
 };
 
-/**
- * Couple undo/redo between two editors so they stay in lockstep.
- */
-export const coupleHistories = (editorA: Editor, editorB: Editor): void => {
-  const origUndoA = editorA.undo;
-  const origRedoA = editorA.redo;
-  const origUndoB = editorB.undo;
-  const origRedoB = editorB.redo;
+// ---------------------------------------------------------------------------
+// Custom plain-text history
+// ---------------------------------------------------------------------------
 
-  editorA.undo = () => {
-    origUndoA();
-    origUndoB();
-  };
-  editorA.redo = () => {
-    origRedoA();
-    origRedoB();
-  };
-  editorB.undo = () => {
-    origUndoA();
-    origUndoB();
-  };
-  editorB.redo = () => {
-    origRedoA();
-    origRedoB();
-  };
+export type HistoryEntry = {
+  text: string;
+  cursor: { para: number; offset: number } | null;
 };
+
+export class PlainTextHistory {
+  entries: HistoryEntry[];
+  pointer: number;
+  private lastPushTime: number = 0;
+  private debounceMs: number = 500;
+
+  constructor(initialText: string) {
+    this.entries = [{ text: initialText, cursor: null }];
+    this.pointer = 0;
+  }
+
+  push(entry: HistoryEntry): void {
+    const now = Date.now();
+    if (now - this.lastPushTime < this.debounceMs && this.pointer > 0) {
+      // Within debounce window: replace current entry (batch edits)
+      this.entries[this.pointer] = entry;
+    } else {
+      // New batch: truncate redo entries and push
+      this.entries = this.entries.slice(0, this.pointer + 1);
+      this.entries.push(entry);
+      this.pointer = this.entries.length - 1;
+    }
+    this.lastPushTime = now;
+  }
+
+  undo(): HistoryEntry | null {
+    if (this.pointer <= 0) return null;
+    this.pointer--;
+    // biome-ignore lint/style/noNonNullAssertion: bounds checked
+    return this.entries[this.pointer]!;
+  }
+
+  redo(): HistoryEntry | null {
+    if (this.pointer >= this.entries.length - 1) return null;
+    this.pointer++;
+    // biome-ignore lint/style/noNonNullAssertion: bounds checked
+    return this.entries[this.pointer]!;
+  }
+
+  current(): HistoryEntry {
+    // biome-ignore lint/style/noNonNullAssertion: always at least one entry
+    return this.entries[this.pointer]!;
+  }
+}

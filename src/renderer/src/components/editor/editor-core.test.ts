@@ -1,14 +1,13 @@
 import { createEditor, type Descendant } from 'slate';
-import { withHistory } from 'slate-history';
 import { describe, expect, it } from 'vitest';
-import { coupleHistories, replaceContent, withInlines, withNormalizeText } from './editor-core';
+import { PlainTextHistory, replaceContent, withInlines, withNormalizeText } from './editor-core';
 
 // ---------------------------------------------------------------------------
 // Helper
 // ---------------------------------------------------------------------------
 
 const createTestEditor = (initial: Descendant[]) => {
-  const editor = withNormalizeText(withInlines(withHistory(createEditor())));
+  const editor = withNormalizeText(withInlines(createEditor()));
   editor.children = initial;
   editor.onChange();
   return editor;
@@ -38,100 +37,109 @@ describe('replaceContent', () => {
     expect(getTexts(editor)).toEqual(['world']);
   });
 
-  it('is undoable as a single step', () => {
+  it('can replace content multiple times', () => {
     const editor = createTestEditor([paragraph('original')]);
     replaceContent(editor, [paragraph('replaced')]);
     expect(getTexts(editor)).toEqual(['replaced']);
 
-    editor.undo();
-    expect(getTexts(editor)).toEqual(['original']);
-  });
-
-  it('is redoable after undo', () => {
-    const editor = createTestEditor([paragraph('original')]);
-    replaceContent(editor, [paragraph('replaced')]);
-    editor.undo();
-    expect(getTexts(editor)).toEqual(['original']);
-
-    editor.redo();
-    expect(getTexts(editor)).toEqual(['replaced']);
+    replaceContent(editor, [paragraph('replaced again')]);
+    expect(getTexts(editor)).toEqual(['replaced again']);
   });
 });
 
 // ---------------------------------------------------------------------------
-// coupleHistories
+// PlainTextHistory
 // ---------------------------------------------------------------------------
 
-describe('coupleHistories', () => {
-  // coupleHistories makes undo/redo call origUndoA+origUndoB simultaneously.
-  // Each editor has its own independent history stack, so one undo pops from both.
-
-  it('undo on editor A also undoes editor B', () => {
-    const a = createTestEditor([paragraph('a1')]);
-    const b = createTestEditor([paragraph('b1')]);
-    coupleHistories(a, b);
-
-    replaceContent(a, [paragraph('a2')]);
-    replaceContent(b, [paragraph('b2')]);
-
-    // One undo pops both stacks: a2→a1, b2→b1
-    a.undo();
-    expect(getTexts(a)).toEqual(['a1']);
-    expect(getTexts(b)).toEqual(['b1']);
+describe('PlainTextHistory', () => {
+  it('initializes with the given text', () => {
+    const history = new PlainTextHistory('hello');
+    expect(history.current()).toEqual({ text: 'hello', cursor: null });
   });
 
-  it('redo on editor A also redoes editor B', () => {
-    const a = createTestEditor([paragraph('a1')]);
-    const b = createTestEditor([paragraph('b1')]);
-    coupleHistories(a, b);
-
-    replaceContent(a, [paragraph('a2')]);
-    replaceContent(b, [paragraph('b2')]);
-
-    a.undo();
-    expect(getTexts(a)).toEqual(['a1']);
-    expect(getTexts(b)).toEqual(['b1']);
-
-    // One redo pushes both stacks: a1→a2, b1→b2
-    a.redo();
-    expect(getTexts(a)).toEqual(['a2']);
-    expect(getTexts(b)).toEqual(['b2']);
+  it('push adds a new entry', () => {
+    const history = new PlainTextHistory('hello');
+    // Force new batch by manipulating internal state
+    (history as unknown as { lastPushTime: number }).lastPushTime = 0;
+    history.push({ text: 'world', cursor: { para: 0, offset: 5 } });
+    expect(history.current()).toEqual({ text: 'world', cursor: { para: 0, offset: 5 } });
   });
 
-  it('undo on editor B also undoes editor A (symmetric)', () => {
-    const a = createTestEditor([paragraph('a1')]);
-    const b = createTestEditor([paragraph('b1')]);
-    coupleHistories(a, b);
+  it('undo returns previous entry', () => {
+    const history = new PlainTextHistory('hello');
+    (history as unknown as { lastPushTime: number }).lastPushTime = 0;
+    history.push({ text: 'world', cursor: { para: 0, offset: 5 } });
 
-    replaceContent(a, [paragraph('a2')]);
-    replaceContent(b, [paragraph('b2')]);
-
-    b.undo();
-    expect(getTexts(a)).toEqual(['a1']);
-    expect(getTexts(b)).toEqual(['b1']);
+    const entry = history.undo();
+    expect(entry).toEqual({ text: 'hello', cursor: null });
+    expect(history.current()).toEqual({ text: 'hello', cursor: null });
   });
-});
 
-// ---------------------------------------------------------------------------
-// Integration: simulating mode switch
-// ---------------------------------------------------------------------------
+  it('undo returns null at the beginning', () => {
+    const history = new PlainTextHistory('hello');
+    expect(history.undo()).toBeNull();
+  });
 
-describe('integration: mode switch simulation', () => {
-  it('edit plain → replaceContent on rich → undo both → both revert', () => {
-    const plain = createTestEditor([paragraph('hello')]);
-    const rich = createTestEditor([paragraph('hello')]);
-    coupleHistories(plain, rich);
+  it('redo returns next entry after undo', () => {
+    const history = new PlainTextHistory('hello');
+    (history as unknown as { lastPushTime: number }).lastPushTime = 0;
+    history.push({ text: 'world', cursor: { para: 0, offset: 5 } });
 
-    // Simulate editing plain and syncing to rich
-    replaceContent(plain, [paragraph('hello world')]);
-    replaceContent(rich, [paragraph('hello world')]);
+    history.undo();
+    const entry = history.redo();
+    expect(entry).toEqual({ text: 'world', cursor: { para: 0, offset: 5 } });
+  });
 
-    expect(getTexts(plain)).toEqual(['hello world']);
-    expect(getTexts(rich)).toEqual(['hello world']);
+  it('redo returns null at the end', () => {
+    const history = new PlainTextHistory('hello');
+    expect(history.redo()).toBeNull();
+  });
 
-    // Coupled undo pops both stacks simultaneously → both revert
-    plain.undo();
-    expect(getTexts(plain)).toEqual(['hello']);
-    expect(getTexts(rich)).toEqual(['hello']);
+  it('push after undo truncates redo entries', () => {
+    const history = new PlainTextHistory('a');
+    (history as unknown as { lastPushTime: number }).lastPushTime = 0;
+    history.push({ text: 'b', cursor: null });
+    (history as unknown as { lastPushTime: number }).lastPushTime = 0;
+    history.push({ text: 'c', cursor: null });
+
+    // Undo to 'b'
+    history.undo();
+    expect(history.current().text).toBe('b');
+
+    // Push new entry — should truncate 'c'
+    (history as unknown as { lastPushTime: number }).lastPushTime = 0;
+    history.push({ text: 'd', cursor: null });
+    expect(history.current().text).toBe('d');
+
+    // Redo should return null (no 'c' to redo to)
+    expect(history.redo()).toBeNull();
+  });
+
+  it('multiple undo/redo cycles work correctly', () => {
+    const history = new PlainTextHistory('a');
+    (history as unknown as { lastPushTime: number }).lastPushTime = 0;
+    history.push({ text: 'b', cursor: null });
+    (history as unknown as { lastPushTime: number }).lastPushTime = 0;
+    history.push({ text: 'c', cursor: null });
+
+    expect(history.current().text).toBe('c');
+
+    history.undo();
+    expect(history.current().text).toBe('b');
+
+    history.undo();
+    expect(history.current().text).toBe('a');
+
+    history.undo(); // at beginning
+    expect(history.current().text).toBe('a');
+
+    history.redo();
+    expect(history.current().text).toBe('b');
+
+    history.redo();
+    expect(history.current().text).toBe('c');
+
+    history.redo(); // at end
+    expect(history.current().text).toBe('c');
   });
 });
