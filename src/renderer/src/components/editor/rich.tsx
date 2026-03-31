@@ -1,24 +1,8 @@
 import type React from 'react';
-import type { BaseEditor, BaseRange, Descendant, Range } from 'slate';
-import type { ReactEditor, RenderElementProps, RenderLeafProps } from 'slate-react';
+import type { BaseEditor, BaseRange, Descendant } from 'slate';
+import { ReactEditor, type RenderElementProps, type RenderLeafProps, useSlateSelection, useSlateStatic } from 'slate-react';
 import * as parse from '../../parse';
 import styles from '../editor.module.scss';
-
-export type Format = Ruby;
-
-// FIXME: it's repeating.
-export type Ruby = {
-  delimFront: [number, number];
-  text: [number, number];
-  sepMid: [number, number];
-  rubyText: [number, number];
-  delimEnd: [number, number];
-};
-
-/** Parsed `Range` into `Format`. */
-export interface VedRange extends Range {
-  format: Format;
-}
 
 export type VedElement = Paragraph | RubyElement;
 
@@ -54,23 +38,41 @@ export type Rt = {
   text: string;
 };
 
+/** Ruby element with selection-aware highlight. Only ruby elements re-render on selection change. */
+const RubyElementView = ({ attributes, children, element }: RenderElementProps): React.JSX.Element => {
+  const sel = useSlateSelection();
+  const editor = useSlateStatic();
+
+  let isActive = false;
+  if (sel) {
+    try {
+      const path = ReactEditor.findPath(editor, element);
+      isActive =
+        sel.anchor.path.length >= 3 && sel.anchor.path[0] === path[0] && sel.anchor.path[1] === path[1];
+    } catch {
+      // element not found in tree
+    }
+  }
+
+  const rtChild = element.children.find((c) => 'type' in c && c.type === 'rt');
+  const rtText = rtChild && 'text' in rtChild ? rtChild.text : '';
+  return (
+    <ruby {...attributes} className={isActive ? styles.rubyActive : undefined}>
+      {children}
+      <rp>(</rp>
+      <rt contentEditable={false}>{rtText}</rt>
+      <rp>)</rp>
+    </ruby>
+  );
+};
+
 /** Ved element component. Note that `withInline` lets us insert `Ruby` as inline element. */
 export const VedElement = ({ attributes, children, element }: RenderElementProps): React.JSX.Element => {
   switch (element.type) {
     case 'paragraph':
       return <p {...attributes}>{children}</p>;
-    case 'ruby': {
-      const rtChild = element.children.find((c) => 'type' in c && c.type === 'rt');
-      const rtText = rtChild && 'text' in rtChild ? rtChild.text : '';
-      return (
-        <ruby {...attributes}>
-          {children}
-          <rp>(</rp>
-          <rt contentEditable={false}>{rtText}</rt>
-          <rp>)</rp>
-        </ruby>
-      );
-    }
+    case 'ruby':
+      return <RubyElementView attributes={attributes} children={children} element={element} />;
     default:
       throw new Error(`invalid ved element: ${element}`);
   }
