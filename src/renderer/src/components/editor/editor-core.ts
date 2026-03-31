@@ -1,4 +1,4 @@
-import { type BaseEditor, type Descendant, type NodeEntry, Editor, Text, Transforms } from 'slate';
+import { type BaseEditor, type Descendant, Element, type NodeEntry, Editor, Node, Text, Transforms } from 'slate';
 import { HistoryEditor } from 'slate-history';
 
 // FIXME: DRY (rich.RubyElement.type)
@@ -9,13 +9,18 @@ export const withInlines = <T extends BaseEditor>(editor: T): T => {
   return editor;
 };
 
-/** Ensure every Text node has `type: 'plaintext'` (Slate creates bare `{text: ""}` nodes). */
+/** Ensure every Text node has `type: 'plaintext'` and unwrap empty ruby elements. */
 export const withNormalizeText = <T extends BaseEditor>(editor: T): T => {
   const { normalizeNode } = editor;
   editor.normalizeNode = (entry: NodeEntry) => {
     const [node, path] = entry;
     if (Text.isText(node) && !('type' in node)) {
       Transforms.setNodes(editor, { type: 'plaintext' } as Partial<Text>, { at: path });
+      return;
+    }
+    // Remove ruby elements with empty body text (e.g. after splitting with Enter)
+    if (Element.isElement(node) && node.type === 'ruby' && Node.string(node) === '') {
+      Transforms.unwrapNodes(editor, { at: path });
       return;
     }
     normalizeNode(entry);
