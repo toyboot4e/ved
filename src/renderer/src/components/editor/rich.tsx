@@ -1,4 +1,4 @@
-import React from 'react';
+import React, { useContext } from 'react';
 import type { BaseEditor, BaseRange, Descendant, Range } from 'slate';
 import type { ReactEditor, RenderElementProps, RenderLeafProps } from 'slate-react';
 import * as parse from '../../parse';
@@ -54,19 +54,40 @@ export type Rt = {
   text: string;
 };
 
-/** Ved element component. Wrapped rubies render as <ruby> with <rt>. */
+/**
+ * Context for Rt leaf rendering:
+ * - `undefined` (default): Rich mode — Rt is hidden (VedElement shows `<rt>`)
+ * - `true`: expanded — Rt renders inline with `()` delimiters
+ */
+export const ExpandedRubyContext = React.createContext<boolean | undefined>(undefined);
+
+/** Ved element component. Note that `withInline` lets us insert `Ruby` as inline element. */
 export const VedElement = ({
   attributes,
   children,
   element,
   isActive,
-}: RenderElementProps & { isActive?: boolean }): React.JSX.Element => {
+  expanded,
+}: RenderElementProps & { isActive?: boolean; expanded?: boolean }): React.JSX.Element => {
   switch (element.type) {
     case 'paragraph':
       return <p {...attributes}>{children}</p>;
     case 'ruby': {
       const rtChild = element.children.find((c) => 'type' in c && c.type === 'rt');
       const rtText = rtChild && 'text' in rtChild ? rtChild.text : '';
+      if (expanded === true) {
+        return (
+          <ExpandedRubyContext.Provider value={true}>
+            <ruby {...attributes}>
+              <span className={styles.rubyExpanded} contentEditable={false}>
+                |
+              </span>
+              {children}
+            </ruby>
+          </ExpandedRubyContext.Provider>
+        );
+      }
+      // Rich / non-expanded: proper <ruby> with <rt> annotation (Rt Slate child hidden)
       return (
         <ruby {...attributes} className={isActive ? styles.rubyActive : undefined}>
           {children}
@@ -81,9 +102,9 @@ export const VedElement = ({
   }
 };
 
-/** Ved leaf component. Supports rubyHighlight decoration for unwrapped ruby syntax. */
+/** Ved leaf component. Supports rubyHighlight decoration for ShowAll mode. */
 export const VedText = ({ attributes, children, leaf }: RenderLeafProps): React.JSX.Element => {
-  // Handle ruby syntax highlighting from decorations
+  // Handle ruby syntax highlighting from decorations (ShowAll mode)
   if ('rubyHighlight' in leaf) {
     return (
       <span {...attributes} className={styles.rubyHighlight}>
@@ -92,12 +113,27 @@ export const VedText = ({ attributes, children, leaf }: RenderLeafProps): React.
     );
   }
 
+  const expanded = useContext(ExpandedRubyContext);
+
   switch (leaf.type) {
     case 'plaintext':
     case 'rubyBody':
       return <span {...attributes}>{children}</span>;
     case 'rt':
-      // In wrapped rubies, Rt is hidden (VedElement renders <rt> directly)
+      if (expanded === true) {
+        return (
+          <span {...attributes}>
+            <span className={styles.rubyExpanded} contentEditable={false}>
+              (
+            </span>
+            {children}
+            <span className={styles.rubyExpanded} contentEditable={false}>
+              )
+            </span>
+          </span>
+        );
+      }
+      // Non-expanded and Rich: hidden (VedElement renders the <rt> annotation)
       return (
         <span {...attributes} style={{ display: 'none' }}>
           {children}
@@ -185,63 +221,6 @@ export const lineToRichChildren = (line: string): Descendant[] => {
   return children;
 };
 
-/**
- * Parse a single line into mixed Slate children: rubies for which `shouldUnwrap`
- * returns true are left as plain text (editable with decorations), others are
- * wrapped as ruby elements.
- */
-export const lineToMixedChildren = (
-  line: string,
-  shouldUnwrap: (rubyIndex: number) => boolean,
-): Descendant[] => {
-  const formats = parse.parse(line).filter((f) => f.type === 'ruby');
-  if (formats.length === 0) {
-    return [{ type: 'plaintext' as const, text: line }];
-  }
-
-  const children: Descendant[] = [];
-  let cursor = 0;
-
-  for (let i = 0; i < formats.length; i++) {
-    // biome-ignore lint/style/noNonNullAssertion: bounds checked
-    const fmt = formats[i]!;
-
-    if (shouldUnwrap(i)) {
-      // Skip — leave as plain text. The gap logic below will include it.
-      continue;
-    }
-
-    // This ruby should be wrapped — first add any plaintext before it
-    if (cursor < fmt.delimFront[0]) {
-      children.push({ type: 'plaintext' as const, text: line.substring(cursor, fmt.delimFront[0]) });
-    }
-
-    const bodyText = line.substring(fmt.text[0], fmt.text[1]);
-    const rubyText = line.substring(fmt.ruby[0], fmt.ruby[1]);
-    children.push({
-      type: 'ruby' as const,
-      children: [
-        { type: 'plaintext' as const, text: bodyText },
-        { type: 'rt' as const, text: rubyText },
-      ],
-    });
-
-    cursor = fmt.delimEnd[1];
-  }
-
-  // Text after last wrapped ruby (includes any trailing unwrapped rubies)
-  if (cursor < line.length) {
-    children.push({ type: 'plaintext' as const, text: line.substring(cursor) });
-  }
-
-  // Slate requires at least one child
-  if (children.length === 0) {
-    children.push({ type: 'plaintext' as const, text: '' });
-  }
-
-  return children;
-};
-
 /** Parse plaintext into a rich (WYSIWYG) Slate tree with ruby elements. */
 export const plaintextToRichTree = (text: string): Descendant[] => {
   const lines = text.split('\n');
@@ -250,8 +229,6 @@ export const plaintextToRichTree = (text: string): Descendant[] => {
     children: lineToRichChildren(line),
   }));
 };
-
-// export interface VedEditor = BaseEditor & ReactEditor
 
 declare module 'slate' {
   interface CustomTypes {

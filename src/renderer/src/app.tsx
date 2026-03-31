@@ -11,7 +11,7 @@ export const App = (): React.JSX.Element => {
     <div className={styles.root}>
       {/* Make space for trafic lights(macOS only) */}
       <div className={styles.header}></div>
-      {VedEditor({ dir, appearPolicy, setAppearPolicy })}
+      {VedEditor({ initialText: '|ルビ(ruby)', dir, appearPolicy, setAppearPolicy })}
       <div className={styles.footer}>
         <p id='counter' className={styles.footerCounter}></p>
       </div>
