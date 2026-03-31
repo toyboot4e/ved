@@ -65,12 +65,26 @@ export const VedElement = ({
   children,
   element,
   isActive,
-}: RenderElementProps & { isActive?: boolean }): React.JSX.Element => {
+  expanded,
+}: RenderElementProps & { isActive?: boolean; expanded?: boolean }): React.JSX.Element => {
   // TODO: we could still use decorate??
   switch (element.type) {
     case 'paragraph':
       return <p {...attributes}>{children}</p>;
     case 'ruby':
+      if (expanded) {
+        return (
+          <span {...attributes}>
+            <span className={styles.rubyExpanded} contentEditable={false}>
+              |
+            </span>
+            {children}
+            <span className={styles.rubyExpanded} contentEditable={false}>
+              ({element.rubyText})
+            </span>
+          </span>
+        );
+      }
       return (
         <ruby {...attributes} className={isActive ? styles.rubyActive : undefined}>
           {children}

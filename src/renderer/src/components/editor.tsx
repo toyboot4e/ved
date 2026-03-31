@@ -1,5 +1,5 @@
 import { clsx } from 'clsx';
-import { useCallback, useRef, useState } from 'react';
+import React, { useCallback, useRef, useState } from 'react';
 import { createEditor, type Descendant, Editor, Path, Transforms } from 'slate';
 import { withHistory } from 'slate-history';
 import {
@@ -36,6 +36,8 @@ export type VedEditorProps = {
   readonly setAppearPolicy: (_: AppearPolicy) => void;
 };
 
+const AppearPolicyContext = React.createContext(AppearPolicy.Rich);
+
 const initialText = '|ルビ(ruby)';
 
 const initialPlainValue: Descendant[] = [
@@ -59,7 +61,7 @@ const useVedEditors = () => {
 const useOnKeyDown = (
   editor: Editor,
   vert: boolean,
-  toggleSlash: () => void,
+  setMode: (policy: AppearPolicy) => void,
   deps: React.DependencyList,
 ): React.KeyboardEventHandler<HTMLDivElement> => {
   return useCallback(
@@ -86,13 +88,22 @@ const useOnKeyDown = (
         }
       }
 
-      if (event.key === '/' && mod) {
-        event.preventDefault();
-        toggleSlash();
-        return;
+      if (mod) {
+        const modeMap: Record<string, AppearPolicy> = {
+          a: AppearPolicy.ShowAll,
+          s: AppearPolicy.ByParagraph,
+          d: AppearPolicy.ByCharacter,
+          f: AppearPolicy.Rich,
+        };
+        const policy = modeMap[event.key];
+        if (policy !== undefined) {
+          event.preventDefault();
+          setMode(policy);
+          return;
+        }
       }
     },
-    [editor, vert, toggleSlash, ...deps],
+    [editor, vert, setMode, ...deps],
   );
 };
 
@@ -100,18 +111,38 @@ const useOnKeyDown = (
 const RichElement = (props: RenderElementProps): React.JSX.Element => {
   const selection = useSlateSelection();
   const editor = useSlateStatic();
+  const appearPolicy = React.useContext(AppearPolicyContext);
 
   let isActive = false;
+  let expanded = false;
+
   if (props.element.type === 'ruby' && selection) {
     try {
       const path = ReactEditor.findPath(editor, props.element);
-      isActive = Path.isAncestor(path, selection.anchor.path) || Path.isAncestor(path, selection.focus.path);
+      const cursorInRuby =
+        Path.isAncestor(path, selection.anchor.path) || Path.isAncestor(path, selection.focus.path);
+
+      switch (appearPolicy) {
+        case AppearPolicy.Rich:
+          isActive = cursorInRuby;
+          break;
+        case AppearPolicy.ByCharacter:
+          expanded = cursorInRuby;
+          break;
+        case AppearPolicy.ByParagraph: {
+          // Expand all rubies in the cursor's paragraph
+          const cursorParaIdx = selection.anchor.path[0];
+          const rubyParaIdx = path[0];
+          expanded = cursorParaIdx === rubyParaIdx;
+          break;
+        }
+      }
     } catch {
       // element may not be mounted yet
     }
   }
 
-  return <rich.VedElement {...props} isActive={isActive} />;
+  return <rich.VedElement {...props} isActive={isActive} expanded={expanded} />;
 };
 
 export const VedEditor = ({ dir, appearPolicy, setAppearPolicy }: VedEditorProps): React.JSX.Element => {
@@ -125,7 +156,7 @@ export const VedEditor = ({ dir, appearPolicy, setAppearPolicy }: VedEditorProps
   const renderRichElement = useCallback((props: RenderElementProps) => <RichElement {...props} />, []);
   const vert = dir === WritingDirection.Vertical;
 
-  const isRichMode = appearPolicy === AppearPolicy.Rich;
+  const isRichMode = appearPolicy !== AppearPolicy.ShowAll;
 
   // Sync hidden editor when active editor changes
   const onPlainEditorChange = useCallback(
@@ -164,56 +195,65 @@ export const VedEditor = ({ dir, appearPolicy, setAppearPolicy }: VedEditorProps
     [plainEditor, isRichMode],
   );
 
-  const toggleMode = useCallback(() => {
-    const fromEditor = isRichMode ? richEditor : plainEditor;
-    const toEditor = isRichMode ? plainEditor : richEditor;
-    const sel = fromEditor.selection;
+  const setMode = useCallback(
+    (newPolicy: AppearPolicy) => {
+      const wasRich = appearPolicy !== AppearPolicy.ShowAll;
+      const willBeRich = newPolicy !== AppearPolicy.ShowAll;
 
-    let mappedSelection: { anchor: { path: number[]; offset: number }; focus: { path: number[]; offset: number } } | null =
-      null;
+      // Cursor mapping only needed when switching between plain and rich
+      if (wasRich !== willBeRich) {
+        const fromEditor = wasRich ? richEditor : plainEditor;
+        const toEditor = wasRich ? plainEditor : richEditor;
+        const sel = fromEditor.selection;
 
-    if (sel) {
-      const mapPoint = (point: { path: number[]; offset: number }) => {
-        const paraIdx = point.path[0] ?? 0;
-        const para = richEditor.children[paraIdx];
-        if (!para || !('children' in para)) return point;
-        const richChildren = (para as { children: Descendant[] }).children;
+        let mappedSelection: {
+          anchor: { path: number[]; offset: number };
+          focus: { path: number[]; offset: number };
+        } | null = null;
 
-        if (isRichMode) {
-          // Rich → Plain
-          const childIdx = point.path[1] ?? 0;
-          const plainOffset = richOffsetToPlain(richChildren, childIdx, point.offset);
-          return { path: [paraIdx, 0], offset: plainOffset };
+        if (sel) {
+          const mapPoint = (point: { path: number[]; offset: number }) => {
+            const paraIdx = point.path[0] ?? 0;
+            const para = richEditor.children[paraIdx];
+            if (!para || !('children' in para)) return point;
+            const richChildren = (para as { children: Descendant[] }).children;
+
+            if (wasRich) {
+              // Rich → Plain
+              const childIdx = point.path[1] ?? 0;
+              const plainOffset = richOffsetToPlain(richChildren, childIdx, point.offset);
+              return { path: [paraIdx, 0], offset: plainOffset };
+            }
+            // Plain → Rich
+            const { path: subPath, offset } = plainOffsetToRich(richChildren, point.offset);
+            return { path: [paraIdx, ...subPath], offset };
+          };
+
+          mappedSelection = { anchor: mapPoint(sel.anchor), focus: mapPoint(sel.focus) };
         }
-        // Plain → Rich
-        const { path: subPath, offset } = plainOffsetToRich(richChildren, point.offset);
-        return { path: [paraIdx, ...subPath], offset };
-      };
 
-      mappedSelection = { anchor: mapPoint(sel.anchor), focus: mapPoint(sel.focus) };
-    }
+        setAppearPolicy(newPolicy);
 
-    if (isRichMode) {
-      setAppearPolicy(AppearPolicy.ShowAll);
-    } else {
-      setAppearPolicy(AppearPolicy.Rich);
-    }
-
-    if (mappedSelection) {
-      const selection = mappedSelection;
-      requestAnimationFrame(() => {
-        try {
-          Transforms.select(toEditor, selection);
-          ReactEditor.focus(toEditor);
-        } catch {
-          // Selection may be invalid if editor content changed
+        if (mappedSelection) {
+          const selection = mappedSelection;
+          requestAnimationFrame(() => {
+            try {
+              Transforms.select(toEditor, selection);
+              ReactEditor.focus(toEditor);
+            } catch {
+              // Selection may be invalid if editor content changed
+            }
+          });
         }
-      });
-    }
-  }, [isRichMode, setAppearPolicy, plainEditor, richEditor]);
+      } else {
+        setAppearPolicy(newPolicy);
+      }
+    },
+    [appearPolicy, setAppearPolicy, plainEditor, richEditor],
+  );
 
-  const onPlainKeyDown = useOnKeyDown(plainEditor, vert, toggleMode, [appearPolicy]);
-  const onRichKeyDown = useOnKeyDown(richEditor, vert, toggleMode, [appearPolicy]);
+  const onPlainKeyDown = useOnKeyDown(plainEditor, vert, setMode, [appearPolicy]);
+  const onRichKeyDown = useOnKeyDown(richEditor, vert, setMode, [appearPolicy]);
 
   return (
     <>
@@ -238,16 +278,18 @@ export const VedEditor = ({ dir, appearPolicy, setAppearPolicy }: VedEditorProps
         className={clsx(styles.editor, vert && styles.vertMode, vert && styles.multiColMode)}
         style={{ display: isRichMode ? undefined : 'none' }}
       >
-        <Slate editor={richEditor} initialValue={initialRichValue} onChange={onRichEditorChange}>
-          <Editable
-            id='editor-content-rich'
-            placeholder='本文'
-            className={clsx(styles.editorContent, vert && styles.vertMode, vert && styles.multiColMode)}
-            renderLeaf={renderLeaf}
-            renderElement={renderRichElement}
-            onKeyDown={onRichKeyDown}
-          />
-        </Slate>
+        <AppearPolicyContext.Provider value={appearPolicy}>
+          <Slate editor={richEditor} initialValue={initialRichValue} onChange={onRichEditorChange}>
+            <Editable
+              id='editor-content-rich'
+              placeholder='本文'
+              className={clsx(styles.editorContent, vert && styles.vertMode, vert && styles.multiColMode)}
+              renderLeaf={renderLeaf}
+              renderElement={renderRichElement}
+              onKeyDown={onRichKeyDown}
+            />
+          </Slate>
+        </AppearPolicyContext.Provider>
       </div>
     </>
   );
