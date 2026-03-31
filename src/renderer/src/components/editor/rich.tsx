@@ -1,4 +1,4 @@
-import React from 'react';
+import type React from 'react';
 import type { BaseEditor, BaseRange, Descendant, Range } from 'slate';
 import type { ReactEditor, RenderElementProps, RenderLeafProps } from 'slate-react';
 import * as parse from '../../parse';

@@ -1,14 +1,8 @@
 import { clsx } from 'clsx';
-import React, { useCallback, useRef, useState } from 'react';
-import { createEditor, type Descendant, Editor, type NodeEntry, Path, Text, Transforms } from 'slate';
-import {
-  Editable,
-  ReactEditor,
-  type RenderElementProps,
-  type RenderLeafProps,
-  Slate,
-  withReact,
-} from 'slate-react';
+import type React from 'react';
+import { useCallback, useRef, useState } from 'react';
+import { createEditor, type Descendant, Editor, type NodeEntry, Text, Transforms } from 'slate';
+import { Editable, ReactEditor, type RenderElementProps, type RenderLeafProps, Slate, withReact } from 'slate-react';
 import * as parse from '../parse';
 import { plainOffsetToRich, richOffsetToPlain } from './editor/cursor-map';
 import { PlainTextHistory, replaceContent, withInlines, withNormalizeText } from './editor/editor-core';
@@ -159,38 +153,6 @@ const restoreCursorSync = (editor: Editor, cursorPlain: { para: number; offset: 
 // Key handler
 // ---------------------------------------------------------------------------
 
-/** After a character move in Rich mode, skip over hidden `rt` nodes. */
-const skipRt = (editor: Editor, reverse: boolean): void => {
-  const sel = editor.selection;
-  if (!sel) return;
-  try {
-    const [node] = Editor.node(editor, sel.anchor.path);
-    if (!Text.isText(node) || !('type' in node) || node.type !== 'rt') return;
-
-    const rubyPath = Path.parent(sel.anchor.path);
-    if (reverse) {
-      // Moving backward: go to end of previous sibling (rubyBody)
-      const rtIndex = sel.anchor.path[sel.anchor.path.length - 1]!;
-      if (rtIndex > 0) {
-        const bodyPath = [...rubyPath, rtIndex - 1];
-        const [bodyNode] = Editor.node(editor, bodyPath);
-        if (Text.isText(bodyNode)) {
-          const point = { path: bodyPath, offset: bodyNode.text.length };
-          Transforms.select(editor, { anchor: point, focus: point });
-        }
-      }
-    } else {
-      // Moving forward: go to after the ruby element
-      const afterPoint = Editor.after(editor, rubyPath);
-      if (afterPoint) {
-        Transforms.select(editor, { anchor: afterPoint, focus: afterPoint });
-      }
-    }
-  } catch {
-    // ignore
-  }
-};
-
 const useOnKeyDown = (
   editor: Editor,
   vert: boolean,
@@ -239,17 +201,6 @@ const useOnKeyDown = (
         }
       }
 
-      // Horizontal character movement: skip hidden rt in Rich mode
-      if (!vert && appearPolicy === AppearPolicy.Rich && !mod && !event.altKey && !event.shiftKey) {
-        if (event.key === 'ArrowLeft' || event.key === 'ArrowRight') {
-          event.preventDefault();
-          const reverse = event.key === 'ArrowLeft';
-          Transforms.move(editor, { unit: 'offset', reverse });
-          skipRt(editor, reverse);
-          return;
-        }
-      }
-
       if (mod) {
         const modeMap: Record<string, AppearPolicy> = {
           s: AppearPolicy.ShowAll,
@@ -265,7 +216,7 @@ const useOnKeyDown = (
         }
       }
     },
-    [editor, vert, appearPolicy, setMode, handleUndo, handleRedo, ...deps],
+    [editor, vert, setMode, handleUndo, handleRedo, ...deps],
   );
 };
 
@@ -274,8 +225,9 @@ const useOnKeyDown = (
 // ---------------------------------------------------------------------------
 
 const decorateRuby = ([node, path]: NodeEntry): ReturnType<NonNullable<Parameters<typeof Editable>[0]['decorate']>> => {
-  const ranges: (ReturnType<NonNullable<Parameters<typeof Editable>[0]['decorate']>> extends (infer R)[] ? R : never)[] =
-    [];
+  const ranges: (ReturnType<NonNullable<Parameters<typeof Editable>[0]['decorate']>> extends (infer R)[]
+    ? R
+    : never)[] = [];
 
   if (!Text.isText(node)) return ranges;
 
