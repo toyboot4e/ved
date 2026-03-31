@@ -47,19 +47,16 @@ const withNormalizeText = <T extends BaseEditor>(editor: T): T => {
   return editor;
 };
 
+const initialText = '|ルビ(ruby)';
+
 const initialPlainValue: Descendant[] = [
   {
     type: 'paragraph',
-    children: [{ type: 'plaintext', text: '' }],
+    children: [{ type: 'plaintext', text: initialText }],
   },
 ];
 
-const initialRichValue: Descendant[] = [
-  {
-    type: 'paragraph',
-    children: [{ type: 'plaintext', text: '' }],
-  },
-];
+const initialRichValue: Descendant[] = rich.plaintextToRichTree(initialText);
 
 /**
  * Replace the entire content of an editor using Slate Transforms (so history records it).
