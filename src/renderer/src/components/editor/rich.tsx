@@ -2,6 +2,7 @@ import type { BaseEditor, BaseRange, Descendant, Range } from 'slate';
 import type { HistoryEditor } from 'slate-history';
 import type { ReactEditor, RenderElementProps, RenderLeafProps } from 'slate-react';
 import * as parse from '../../parse';
+import styles from '../editor.module.scss';
 
 export type Format = Ruby;
 
@@ -59,14 +60,19 @@ export type Rt = {
 
 /** Ved element component. Note that `withInline` lets us insert `Ruby` as inline element. */
 // FIXME: write return type
-export const VedElement = ({ attributes, children, element }: RenderElementProps): React.JSX.Element => {
+export const VedElement = ({
+  attributes,
+  children,
+  element,
+  isActive,
+}: RenderElementProps & { isActive?: boolean }): React.JSX.Element => {
   // TODO: we could still use decorate??
   switch (element.type) {
     case 'paragraph':
       return <p {...attributes}>{children}</p>;
     case 'ruby':
       return (
-        <ruby {...attributes}>
+        <ruby {...attributes} className={isActive ? styles.rubyActive : undefined}>
           {children}
           <rp>(</rp>
           <rt contentEditable={false}>{element.rubyText}</rt>

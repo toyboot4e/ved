@@ -1,8 +1,17 @@
 import { clsx } from 'clsx';
 import { useCallback, useRef, useState } from 'react';
-import { createEditor, type Descendant, Editor, Transforms } from 'slate';
+import { createEditor, type Descendant, Editor, Path, Transforms } from 'slate';
 import { withHistory } from 'slate-history';
-import { Editable, ReactEditor, type RenderElementProps, type RenderLeafProps, Slate, withReact } from 'slate-react';
+import {
+  Editable,
+  ReactEditor,
+  type RenderElementProps,
+  type RenderLeafProps,
+  Slate,
+  useSlateSelection,
+  useSlateStatic,
+  withReact,
+} from 'slate-react';
 import { plainOffsetToRich, richOffsetToPlain } from './editor/cursor-map';
 import { coupleHistories, replaceContent, withInlines, withNormalizeText } from './editor/editor-core';
 import * as rich from './editor/rich';
@@ -87,6 +96,24 @@ const useOnKeyDown = (
   );
 };
 
+/** Wrapper that highlights the active ruby element based on cursor position. */
+const RichElement = (props: RenderElementProps): React.JSX.Element => {
+  const selection = useSlateSelection();
+  const editor = useSlateStatic();
+
+  let isActive = false;
+  if (props.element.type === 'ruby' && selection) {
+    try {
+      const path = ReactEditor.findPath(editor, props.element);
+      isActive = Path.isAncestor(path, selection.anchor.path) || Path.isAncestor(path, selection.focus.path);
+    } catch {
+      // element may not be mounted yet
+    }
+  }
+
+  return <rich.VedElement {...props} isActive={isActive} />;
+};
+
 export const VedEditor = ({ dir, appearPolicy, setAppearPolicy }: VedEditorProps): React.JSX.Element => {
   const { plainEditor, richEditor } = useVedEditors();
 
@@ -95,6 +122,7 @@ export const VedEditor = ({ dir, appearPolicy, setAppearPolicy }: VedEditorProps
 
   const renderLeaf = useCallback((props: RenderLeafProps) => <rich.VedText {...props} />, []);
   const renderElement = useCallback((props: RenderElementProps) => <rich.VedElement {...props} />, []);
+  const renderRichElement = useCallback((props: RenderElementProps) => <RichElement {...props} />, []);
   const vert = dir === WritingDirection.Vertical;
 
   const isRichMode = appearPolicy === AppearPolicy.Rich;
@@ -216,7 +244,7 @@ export const VedEditor = ({ dir, appearPolicy, setAppearPolicy }: VedEditorProps
             placeholder='本文'
             className={clsx(styles.editorContent, vert && styles.vertMode, vert && styles.multiColMode)}
             renderLeaf={renderLeaf}
-            renderElement={renderElement}
+            renderElement={renderRichElement}
             onKeyDown={onRichKeyDown}
           />
         </Slate>
