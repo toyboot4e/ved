@@ -1,4 +1,4 @@
-import React, { useContext } from 'react';
+import React from 'react';
 import type { BaseEditor, BaseRange, Descendant, Range } from 'slate';
 import type { ReactEditor, RenderElementProps, RenderLeafProps } from 'slate-react';
 import * as parse from '../../parse';
@@ -54,42 +54,16 @@ export type Rt = {
   text: string;
 };
 
-/**
- * Context for Rt leaf rendering:
- * - `undefined` (default): Rich mode — Rt is hidden (VedElement shows `<rt>`)
- * - `true`: expanded — Rt renders inline with `()` delimiters
- */
-export const ExpandedRubyContext = React.createContext<boolean | undefined>(undefined);
-
 /** Ved element component. Note that `withInline` lets us insert `Ruby` as inline element. */
-export const VedElement = ({
-  attributes,
-  children,
-  element,
-  isActive,
-  expanded,
-}: RenderElementProps & { isActive?: boolean; expanded?: boolean }): React.JSX.Element => {
+export const VedElement = ({ attributes, children, element }: RenderElementProps): React.JSX.Element => {
   switch (element.type) {
     case 'paragraph':
       return <p {...attributes}>{children}</p>;
     case 'ruby': {
       const rtChild = element.children.find((c) => 'type' in c && c.type === 'rt');
       const rtText = rtChild && 'text' in rtChild ? rtChild.text : '';
-      if (expanded === true) {
-        return (
-          <ExpandedRubyContext.Provider value={true}>
-            <ruby {...attributes}>
-              <span className={styles.rubyExpanded} contentEditable={false}>
-                |
-              </span>
-              {children}
-            </ruby>
-          </ExpandedRubyContext.Provider>
-        );
-      }
-      // Rich / non-expanded: proper <ruby> with <rt> annotation (Rt Slate child hidden)
       return (
-        <ruby {...attributes} className={isActive ? styles.rubyActive : undefined}>
+        <ruby {...attributes}>
           {children}
           <rp>(</rp>
           <rt contentEditable={false}>{rtText}</rt>
@@ -113,27 +87,12 @@ export const VedText = ({ attributes, children, leaf }: RenderLeafProps): React.
     );
   }
 
-  const expanded = useContext(ExpandedRubyContext);
-
   switch (leaf.type) {
     case 'plaintext':
     case 'rubyBody':
       return <span {...attributes}>{children}</span>;
     case 'rt':
-      if (expanded === true) {
-        return (
-          <span {...attributes}>
-            <span className={styles.rubyExpanded} contentEditable={false}>
-              (
-            </span>
-            {children}
-            <span className={styles.rubyExpanded} contentEditable={false}>
-              )
-            </span>
-          </span>
-        );
-      }
-      // Non-expanded and Rich: hidden (VedElement renders the <rt> annotation)
+      // Hidden: VedElement renders the <rt> annotation above the body
       return (
         <span {...attributes} style={{ display: 'none' }}>
           {children}
@@ -177,8 +136,12 @@ export const serialize = (nodes: Descendant[]): string => {
   return nodes.map(descendantToPlainText).join('\n');
 };
 
-/** Parse a single line of plaintext into rich Slate children (with inline ruby elements). */
-export const lineToRichChildren = (line: string): Descendant[] => {
+/**
+ * Parse a single line of plaintext into rich Slate children (with inline ruby elements).
+ * When `expandedRubyIndices` is provided, rubies whose 0-based index is in the set
+ * are emitted as plaintext `|body(ruby)` instead of a RubyElement.
+ */
+export const lineToRichChildren = (line: string, expandedRubyIndices?: Set<number>): Descendant[] => {
   const formats = parse.parse(line);
   if (formats.length === 0) {
     return [{ type: 'plaintext' as const, text: line }];
@@ -186,6 +149,7 @@ export const lineToRichChildren = (line: string): Descendant[] => {
 
   const children: Descendant[] = [];
   let cursor = 0;
+  let rubyIdx = 0;
 
   for (const fmt of formats) {
     if (fmt.type !== 'ruby') continue;
@@ -195,22 +159,33 @@ export const lineToRichChildren = (line: string): Descendant[] => {
       children.push({ type: 'plaintext' as const, text: line.substring(cursor, fmt.delimFront[0]) });
     }
 
-    const bodyText = line.substring(fmt.text[0], fmt.text[1]);
-    const rubyText = line.substring(fmt.ruby[0], fmt.ruby[1]);
-    children.push({
-      type: 'ruby' as const,
-      children: [
-        { type: 'plaintext' as const, text: bodyText },
-        { type: 'rt' as const, text: rubyText },
-      ],
-    });
+    if (expandedRubyIndices?.has(rubyIdx)) {
+      // Expanded: emit as plaintext |body(ruby)
+      children.push({ type: 'plaintext' as const, text: line.substring(fmt.delimFront[0], fmt.delimEnd[1]) });
+    } else {
+      const bodyText = line.substring(fmt.text[0], fmt.text[1]);
+      const rubyText = line.substring(fmt.ruby[0], fmt.ruby[1]);
+      children.push({
+        type: 'ruby' as const,
+        children: [
+          { type: 'plaintext' as const, text: bodyText },
+          { type: 'rt' as const, text: rubyText },
+        ],
+      });
+    }
 
     cursor = fmt.delimEnd[1];
+    rubyIdx++;
   }
 
-  // Text after last ruby
+  // Text after last ruby (or empty node so cursor can land after a trailing ruby)
   if (cursor < line.length) {
     children.push({ type: 'plaintext' as const, text: line.substring(cursor) });
+  } else if (children.length > 0) {
+    const last = children[children.length - 1];
+    if (last && 'type' in last && last.type === 'ruby') {
+      children.push({ type: 'plaintext' as const, text: '' });
+    }
   }
 
   // Slate requires at least one child

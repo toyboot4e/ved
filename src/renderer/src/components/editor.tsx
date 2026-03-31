@@ -1,5 +1,5 @@
 import { clsx } from 'clsx';
-import React, { useCallback, useMemo, useRef, useState } from 'react';
+import React, { useCallback, useRef, useState } from 'react';
 import { createEditor, type Descendant, Editor, type NodeEntry, Path, Text, Transforms } from 'slate';
 import {
   Editable,
@@ -7,8 +7,6 @@ import {
   type RenderElementProps,
   type RenderLeafProps,
   Slate,
-  useSlateSelection,
-  useSlateStatic,
   withReact,
 } from 'slate-react';
 import * as parse from '../parse';
@@ -37,8 +35,6 @@ export type VedEditorProps = {
   readonly setAppearPolicy: (_: AppearPolicy) => void;
 };
 
-const AppearPolicyContext = React.createContext(AppearPolicy.Rich);
-
 // ---------------------------------------------------------------------------
 // Tree building
 // ---------------------------------------------------------------------------
@@ -55,6 +51,51 @@ const buildTreeForMode = (text: string, mode: AppearPolicy): Descendant[] => {
     }));
   }
   return rich.plaintextToRichTree(text);
+};
+
+/** Find the 0-based ruby index whose range contains cursorOffset, or null. */
+const findActiveRubyIndex = (line: string, cursorOffset: number): number | null => {
+  const formats = parse.parse(line);
+  let rubyIdx = 0;
+  for (const fmt of formats) {
+    if (fmt.type !== 'ruby') continue;
+    if (cursorOffset >= fmt.delimFront[0] && cursorOffset <= fmt.delimEnd[1]) {
+      return rubyIdx;
+    }
+    rubyIdx++;
+  }
+  return null;
+};
+
+/** Build a Slate tree with selective ruby expansion based on cursor position. */
+const buildTreeWithExpansion = (
+  text: string,
+  mode: AppearPolicy,
+  activeParaIdx: number | null,
+  activeRubyIdx: number | null,
+): Descendant[] => {
+  if (mode === AppearPolicy.ShowAll) {
+    return buildTreeForMode(text, mode);
+  }
+
+  const lines = text.split('\n');
+  return lines.map((line, i) => {
+    let expandedIndices: Set<number> | undefined;
+    if (i === activeParaIdx) {
+      if (mode === AppearPolicy.ByParagraph) {
+        const rubyCount = parse.parse(line).filter((f) => f.type === 'ruby').length;
+        if (rubyCount > 0) {
+          expandedIndices = new Set(Array.from({ length: rubyCount }, (_, j) => j));
+        }
+      } else if (activeRubyIdx !== null) {
+        expandedIndices = new Set([activeRubyIdx]);
+      }
+    }
+    return {
+      type: 'paragraph' as const,
+      children: rich.lineToRichChildren(line, expandedIndices),
+    };
+  });
 };
 
 // ---------------------------------------------------------------------------
@@ -229,50 +270,6 @@ const useOnKeyDown = (
 };
 
 // ---------------------------------------------------------------------------
-// Ruby element with render-time expansion
-// ---------------------------------------------------------------------------
-
-/**
- * Determines isActive / expanded for each ruby element based on cursor
- * position and appear policy. No tree manipulation needed — just rendering.
- */
-const RichElement = (props: RenderElementProps): React.JSX.Element => {
-  const selection = useSlateSelection();
-  const editor = useSlateStatic();
-  const appearPolicy = React.useContext(AppearPolicyContext);
-
-  let isActive = false;
-  let expanded: boolean | undefined;
-
-  if (props.element.type === 'ruby' && selection) {
-    try {
-      const path = ReactEditor.findPath(editor, props.element);
-      const cursorInRuby =
-        Path.isAncestor(path, selection.anchor.path) || Path.isAncestor(path, selection.focus.path);
-
-      switch (appearPolicy) {
-        case AppearPolicy.Rich:
-          isActive = cursorInRuby;
-          break;
-        case AppearPolicy.ByCharacter:
-          expanded = cursorInRuby;
-          break;
-        case AppearPolicy.ByParagraph: {
-          const cursorParaIdx = selection.anchor.path[0];
-          const rubyParaIdx = path[0];
-          expanded = cursorParaIdx === rubyParaIdx;
-          break;
-        }
-      }
-    } catch {
-      // element may not be mounted yet
-    }
-  }
-
-  return <rich.VedElement {...props} isActive={isActive} expanded={expanded} />;
-};
-
-// ---------------------------------------------------------------------------
 // Decoration function for ruby syntax highlighting (ShowAll mode)
 // ---------------------------------------------------------------------------
 
@@ -314,6 +311,44 @@ const decorateRuby = ([node, path]: NodeEntry): ReturnType<NonNullable<Parameter
 };
 
 // ---------------------------------------------------------------------------
+// Ruby structure change detection
+// ---------------------------------------------------------------------------
+
+/**
+ * Compare expected ruby element count (accounting for expansion) vs actual count per paragraph.
+ * Expanded rubies become plaintext nodes so expected count is reduced accordingly.
+ */
+const rubyStructureChanged = (
+  value: Descendant[],
+  plaintext: string,
+  mode: AppearPolicy,
+  activePara: number | null,
+  activeRuby: number | null,
+): boolean => {
+  const lines = plaintext.split('\n');
+  for (let i = 0; i < value.length; i++) {
+    const para = value[i];
+    if (!para || !('children' in para)) continue;
+    const parsedCount = parse.parse(lines[i] ?? '').filter((f) => f.type === 'ruby').length;
+    const elementCount = (para as { children: Descendant[] }).children.filter(
+      (c) => 'type' in c && (c as { type: string }).type === 'ruby',
+    ).length;
+
+    let expectedCount = parsedCount;
+    if (i === activePara) {
+      if (mode === AppearPolicy.ByParagraph) {
+        expectedCount = 0;
+      } else if (activeRuby !== null) {
+        expectedCount = Math.max(0, parsedCount - 1);
+      }
+    }
+
+    if (expectedCount !== elementCount) return true;
+  }
+  return false;
+};
+
+// ---------------------------------------------------------------------------
 // Main editor component
 // ---------------------------------------------------------------------------
 
@@ -329,23 +364,79 @@ export const VedEditor = ({ initialText, dir, appearPolicy, setAppearPolicy }: V
   // Guard to prevent onChange during tree rebuild
   const rebuildingRef = useRef(false);
 
+  // Track active expansion zone
+  const activeParaRef = useRef<number | null>(null);
+  const activeRubyRef = useRef<number | null>(null);
+
   const renderLeaf = useCallback((props: RenderLeafProps) => <rich.VedText {...props} />, []);
-  const renderRichElement = useCallback((props: RenderElementProps) => <RichElement {...props} />, []);
+  const renderElement = useCallback((props: RenderElementProps) => <rich.VedElement {...props} />, []);
   const vert = dir === WritingDirection.Vertical;
 
-  // --- onChange: just serialize and push to history ---
+  // --- onChange: handle both text changes and selection-only changes ---
   const onChange = useCallback(
     (value: Descendant[]) => {
       if (rebuildingRef.current) return;
 
       const plaintext = rich.serialize(value);
-      if (plaintext !== lastPlaintextRef.current) {
+      const textChanged = plaintext !== lastPlaintextRef.current;
+
+      let cursor: { para: number; offset: number } | null = null;
+
+      if (textChanged) {
         lastPlaintextRef.current = plaintext;
-        const cursor = getCursorPlainOffset(editor);
+        cursor = getCursorPlainOffset(editor);
         history.push({ text: plaintext, cursor });
       }
+
+      // Rich and ShowAll modes don't expand rubies — only rebuild on structural changes
+      if (appearPolicy === AppearPolicy.ShowAll || appearPolicy === AppearPolicy.Rich) {
+        if (textChanged && rubyStructureChanged(value, plaintext, appearPolicy, null, null)) {
+          cursor ??= getCursorPlainOffset(editor);
+          const tree = buildTreeForMode(lastPlaintextRef.current, appearPolicy);
+          rebuildingRef.current = true;
+          try {
+            replaceContent(editor, tree);
+            if (cursor) restoreCursorSync(editor, cursor);
+          } finally {
+            rebuildingRef.current = false;
+          }
+        }
+        return;
+      }
+
+      // ByParagraph / ByCharacter: track active zone for expansion
+      cursor ??= getCursorPlainOffset(editor);
+      const newActivePara = cursor?.para ?? null;
+      let newActiveRuby: number | null = null;
+      if (cursor && newActivePara !== null && appearPolicy === AppearPolicy.ByCharacter) {
+        const lines = lastPlaintextRef.current.split('\n');
+        const line = lines[newActivePara] ?? '';
+        newActiveRuby = findActiveRubyIndex(line, cursor.offset);
+      }
+
+      let needsRebuild = false;
+      if (textChanged) {
+        needsRebuild = rubyStructureChanged(value, plaintext, appearPolicy, newActivePara, newActiveRuby);
+      }
+      if (newActivePara !== activeParaRef.current || newActiveRuby !== activeRubyRef.current) {
+        needsRebuild = true;
+      }
+
+      if (needsRebuild) {
+        activeParaRef.current = newActivePara;
+        activeRubyRef.current = newActiveRuby;
+        cursor ??= getCursorPlainOffset(editor);
+        const tree = buildTreeWithExpansion(lastPlaintextRef.current, appearPolicy, newActivePara, newActiveRuby);
+        rebuildingRef.current = true;
+        try {
+          replaceContent(editor, tree);
+          if (cursor) restoreCursorSync(editor, cursor);
+        } finally {
+          rebuildingRef.current = false;
+        }
+      }
     },
-    [editor, history],
+    [editor, history, appearPolicy],
   );
 
   // --- Undo/Redo ---
@@ -354,6 +445,8 @@ export const VedEditor = ({ initialText, dir, appearPolicy, setAppearPolicy }: V
       if (!entry) return;
 
       lastPlaintextRef.current = entry.text;
+      activeParaRef.current = null;
+      activeRubyRef.current = null;
       const tree = buildTreeForMode(entry.text, appearPolicy);
 
       rebuildingRef.current = true;
@@ -380,26 +473,23 @@ export const VedEditor = ({ initialText, dir, appearPolicy, setAppearPolicy }: V
   const handleUndo = useCallback(() => restoreFromHistory(history.undo()), [history, restoreFromHistory]);
   const handleRedo = useCallback(() => restoreFromHistory(history.redo()), [history, restoreFromHistory]);
 
-  // --- Mode switch: only rebuild when crossing ShowAll boundary ---
+  // --- Mode switch: rebuild tree (always, to reset expansion state) ---
   const setMode = useCallback(
     (newPolicy: AppearPolicy) => {
-      const wasShowAll = appearPolicy === AppearPolicy.ShowAll;
-      const willBeShowAll = newPolicy === AppearPolicy.ShowAll;
+      const plaintext = rich.serialize(editor.children);
+      const cursorPlain = getCursorPlainOffset(editor);
+      activeParaRef.current = null;
+      activeRubyRef.current = null;
+      const tree = buildTreeForMode(plaintext, newPolicy);
 
-      if (wasShowAll !== willBeShowAll) {
-        const plaintext = rich.serialize(editor.children);
-        const cursorPlain = getCursorPlainOffset(editor);
-        const tree = buildTreeForMode(plaintext, newPolicy);
-
-        rebuildingRef.current = true;
-        try {
-          replaceContent(editor, tree);
-          if (cursorPlain) {
-            restoreCursorSync(editor, cursorPlain);
-          }
-        } finally {
-          rebuildingRef.current = false;
+      rebuildingRef.current = true;
+      try {
+        replaceContent(editor, tree);
+        if (cursorPlain) {
+          restoreCursorSync(editor, cursorPlain);
         }
+      } finally {
+        rebuildingRef.current = false;
       }
 
       setAppearPolicy(newPolicy);
@@ -412,26 +502,24 @@ export const VedEditor = ({ initialText, dir, appearPolicy, setAppearPolicy }: V
         }
       });
     },
-    [editor, appearPolicy, setAppearPolicy],
+    [editor, setAppearPolicy],
   );
 
   const onKeyDown = useOnKeyDown(editor, vert, appearPolicy, setMode, handleUndo, handleRedo, []);
 
   return (
     <div className={clsx(styles.editor, vert && styles.vertMode, vert && styles.multiColMode)}>
-      <AppearPolicyContext.Provider value={appearPolicy}>
-        <Slate editor={editor} initialValue={initialValue} onChange={onChange}>
-          <Editable
-            id='editor-content'
-            placeholder='本文'
-            className={clsx(styles.editorContent, vert && styles.vertMode, vert && styles.multiColMode)}
-            renderLeaf={renderLeaf}
-            renderElement={renderRichElement}
-            decorate={decorateRuby}
-            onKeyDown={onKeyDown}
-          />
-        </Slate>
-      </AppearPolicyContext.Provider>
+      <Slate editor={editor} initialValue={initialValue} onChange={onChange}>
+        <Editable
+          id='editor-content'
+          placeholder='本文'
+          className={clsx(styles.editorContent, vert && styles.vertMode, vert && styles.multiColMode)}
+          renderLeaf={renderLeaf}
+          renderElement={renderElement}
+          decorate={decorateRuby}
+          onKeyDown={onKeyDown}
+        />
+      </Slate>
     </div>
   );
 };
