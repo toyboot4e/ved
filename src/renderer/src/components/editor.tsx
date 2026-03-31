@@ -149,6 +149,73 @@ const findCursorRubyIdx = (editor: Editor): { paraIdx: number; rubyIdx: number }
   return { paraIdx, rubyIdx };
 };
 
+/**
+ * Check whether the cursor has moved outside the text range of the currently
+ * expanded (unwrapped) ruby in ByCharacter mode.
+ */
+const isCursorOutsideExpandedRuby = (
+  editor: Editor,
+  expandedRuby: { paraIdx: number; rubyIdx: number },
+  plaintext: string,
+): boolean => {
+  const sel = editor.selection;
+  if (!sel) return true;
+
+  const cursorParaIdx = sel.anchor.path[0] ?? 0;
+  if (cursorParaIdx !== expandedRuby.paraIdx) return true;
+
+  const cursorPlain = getCursorPlainOffset(editor);
+  if (!cursorPlain) return true;
+
+  // Parse the paragraph's plaintext to find ruby ranges
+  const lines = plaintext.split('\n');
+  const paraLine = lines[expandedRuby.paraIdx];
+  if (!paraLine) return true;
+
+  const rubies = parse.parse(paraLine).filter((f) => f.type === 'ruby');
+  const expandedFmt = rubies[expandedRuby.rubyIdx];
+  if (!expandedFmt) return true;
+
+  return cursorPlain.offset < expandedFmt.delimFront[0] || cursorPlain.offset > expandedFmt.delimEnd[1];
+};
+
+/**
+ * Restore cursor synchronously after a tree rebuild.
+ * Maps a plain text offset to the correct path in the (already normalized) new tree.
+ * MUST be called while rebuildingRef.current is true so that the Transforms.select
+ * onChange is suppressed.
+ */
+const restoreCursorSync = (editor: Editor, cursorPlain: { para: number; offset: number }): void => {
+  try {
+    const paraNode = editor.children[cursorPlain.para];
+    if (!paraNode || !('children' in paraNode)) return;
+    const children = (paraNode as { children: Descendant[] }).children;
+
+    // Check if this paragraph is unwrapped (single plaintext child)
+    const firstChild = children[0];
+    const isUnwrapped =
+      children.length === 1 && firstChild && 'type' in firstChild && firstChild.type === 'plaintext';
+
+    if (isUnwrapped) {
+      // Clamp offset to text length
+      const maxOffset = 'text' in firstChild ? firstChild.text.length : 0;
+      const offset = Math.min(cursorPlain.offset, maxOffset);
+      Transforms.select(editor, {
+        anchor: { path: [cursorPlain.para, 0], offset },
+        focus: { path: [cursorPlain.para, 0], offset },
+      });
+    } else {
+      const { path: subPath, offset: richOffset } = plainOffsetToRich(children, cursorPlain.offset);
+      Transforms.select(editor, {
+        anchor: { path: [cursorPlain.para, ...subPath], offset: richOffset },
+        focus: { path: [cursorPlain.para, ...subPath], offset: richOffset },
+      });
+    }
+  } catch {
+    // ignore invalid selection
+  }
+};
+
 // ---------------------------------------------------------------------------
 // Key handler
 // ---------------------------------------------------------------------------
@@ -230,10 +297,6 @@ const RichElement = (props: RenderElementProps): React.JSX.Element => {
   if (props.element.type === 'ruby' && selection) {
     try {
       const path = ReactEditor.findPath(editor, props.element);
-      const cursorInRuby =
-        path.length > 0 &&
-        (path.every((p, i) => selection.anchor.path[i] === p || i >= path.length) ||
-          path.every((p, i) => selection.focus.path[i] === p || i >= path.length));
 
       // Check if cursor's path is a descendant of this ruby's path
       const anchorInRuby =
@@ -343,24 +406,15 @@ export const VedEditor = ({ dir, appearPolicy, setAppearPolicy }: VedEditorProps
       if (appearPolicy === AppearPolicy.ByParagraph) {
         const cursorParaIdx = editor.selection?.anchor.path[0] ?? 0;
         if (cursorParaIdx !== expandedParaRef.current) {
+          // Capture cursor BEFORE rebuild (selection becomes stale after replaceContent)
+          const cursorPlain = getCursorPlainOffset(editor);
           expandedParaRef.current = cursorParaIdx;
           rebuildingRef.current = true;
           try {
             const tree = buildTreeForMode(plaintext, AppearPolicy.ByParagraph, cursorParaIdx, null);
             replaceContent(editor, tree);
-            // Restore cursor — it's in the now-unwrapped paragraph
-            const cursor = getCursorPlainOffset(editor);
-            if (cursor) {
-              requestAnimationFrame(() => {
-                try {
-                  Transforms.select(editor, {
-                    anchor: { path: [cursor.para, 0], offset: cursor.offset },
-                    focus: { path: [cursor.para, 0], offset: cursor.offset },
-                  });
-                } catch {
-                  // ignore
-                }
-              });
+            if (cursorPlain) {
+              restoreCursorSync(editor, cursorPlain);
             }
           } finally {
             rebuildingRef.current = false;
@@ -369,31 +423,39 @@ export const VedEditor = ({ dir, appearPolicy, setAppearPolicy }: VedEditorProps
       } else if (appearPolicy === AppearPolicy.ByCharacter) {
         const rubyInfo = findCursorRubyIdx(editor);
         const prev = expandedRubyRef.current;
-        if (rubyInfo !== null && (prev === null || rubyInfo.paraIdx !== prev.paraIdx || rubyInfo.rubyIdx !== prev.rubyIdx)) {
-          // Cursor entered a different wrapped ruby — unwrap it
-          expandedRubyRef.current = rubyInfo;
+
+        let needsRebuild = false;
+        let newExpansion: { paraIdx: number; rubyIdx: number } | null = prev;
+
+        if (rubyInfo !== null) {
+          // Cursor is inside a wrapped ruby element — expand it if different from current
+          if (prev === null || rubyInfo.paraIdx !== prev.paraIdx || rubyInfo.rubyIdx !== prev.rubyIdx) {
+            newExpansion = rubyInfo;
+            needsRebuild = true;
+          }
+        } else if (prev !== null) {
+          // Cursor is NOT in a wrapped ruby — check if it left the expanded ruby's text range
+          if (isCursorOutsideExpandedRuby(editor, prev, plaintext)) {
+            newExpansion = null;
+            needsRebuild = true;
+          }
+        }
+
+        if (needsRebuild) {
+          // Capture cursor BEFORE rebuild
           const cursorPlain = getCursorPlainOffset(editor);
+          expandedRubyRef.current = newExpansion;
           rebuildingRef.current = true;
           try {
             const tree = buildTreeForMode(
               plaintext,
               AppearPolicy.ByCharacter,
-              rubyInfo.paraIdx,
-              rubyInfo.rubyIdx,
+              newExpansion?.paraIdx ?? (cursorPlain?.para ?? 0),
+              newExpansion?.rubyIdx ?? null,
             );
             replaceContent(editor, tree);
-            // Restore cursor in the now-unwrapped ruby text
             if (cursorPlain) {
-              requestAnimationFrame(() => {
-                try {
-                  Transforms.select(editor, {
-                    anchor: { path: [cursorPlain.para, 0], offset: cursorPlain.offset },
-                    focus: { path: [cursorPlain.para, 0], offset: cursorPlain.offset },
-                  });
-                } catch {
-                  // ignore
-                }
-              });
+              restoreCursorSync(editor, cursorPlain);
             }
           } finally {
             rebuildingRef.current = false;
@@ -418,42 +480,21 @@ export const VedEditor = ({ dir, appearPolicy, setAppearPolicy }: VedEditorProps
       rebuildingRef.current = true;
       try {
         replaceContent(editor, tree);
+        if (entry.cursor) {
+          restoreCursorSync(editor, entry.cursor);
+        }
       } finally {
         rebuildingRef.current = false;
       }
 
-      // Restore cursor
-      if (entry.cursor) {
-        const { para, offset } = entry.cursor;
-        requestAnimationFrame(() => {
-          try {
-            const paraNode = editor.children[para];
-            if (!paraNode || !('children' in paraNode)) return;
-            const children = (paraNode as { children: Descendant[] }).children;
-
-            // Check if this paragraph is unwrapped (single plaintext child)
-            const isUnwrapped =
-              children.length === 1 && 'type' in children[0]! && children[0]!.type === 'plaintext';
-
-            if (isUnwrapped) {
-              Transforms.select(editor, {
-                anchor: { path: [para, 0], offset },
-                focus: { path: [para, 0], offset },
-              });
-            } else {
-              // Wrapped paragraph — map plain offset to rich path
-              const { path: subPath, offset: richOffset } = plainOffsetToRich(children, offset);
-              Transforms.select(editor, {
-                anchor: { path: [para, ...subPath], offset: richOffset },
-                focus: { path: [para, ...subPath], offset: richOffset },
-              });
-            }
-            ReactEditor.focus(editor);
-          } catch {
-            // ignore invalid selection
-          }
-        });
-      }
+      // Focus needs the DOM to be ready
+      requestAnimationFrame(() => {
+        try {
+          ReactEditor.focus(editor);
+        } catch {
+          // ignore
+        }
+      });
     },
     [editor, appearPolicy],
   );
@@ -494,42 +535,23 @@ export const VedEditor = ({ dir, appearPolicy, setAppearPolicy }: VedEditorProps
       rebuildingRef.current = true;
       try {
         replaceContent(editor, tree);
+        if (cursorPlain) {
+          restoreCursorSync(editor, cursorPlain);
+        }
       } finally {
         rebuildingRef.current = false;
       }
 
       setAppearPolicy(newPolicy);
 
-      // Restore cursor in new tree
-      if (cursorPlain) {
-        const { para, offset } = cursorPlain;
-        requestAnimationFrame(() => {
-          try {
-            const paraNode = editor.children[para];
-            if (!paraNode || !('children' in paraNode)) return;
-            const children = (paraNode as { children: Descendant[] }).children;
-
-            const isUnwrapped =
-              children.length === 1 && 'type' in children[0]! && children[0]!.type === 'plaintext';
-
-            if (isUnwrapped) {
-              Transforms.select(editor, {
-                anchor: { path: [para, 0], offset },
-                focus: { path: [para, 0], offset },
-              });
-            } else {
-              const { path: subPath, offset: richOffset } = plainOffsetToRich(children, offset);
-              Transforms.select(editor, {
-                anchor: { path: [para, ...subPath], offset: richOffset },
-                focus: { path: [para, ...subPath], offset: richOffset },
-              });
-            }
-            ReactEditor.focus(editor);
-          } catch {
-            // ignore invalid selection
-          }
-        });
-      }
+      // Focus needs the DOM to be ready
+      requestAnimationFrame(() => {
+        try {
+          ReactEditor.focus(editor);
+        } catch {
+          // ignore
+        }
+      });
     },
     [editor, setAppearPolicy],
   );
