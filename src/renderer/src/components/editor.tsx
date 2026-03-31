@@ -188,17 +188,18 @@ const useOnKeyDown = (
 
         if (event.key === 'ArrowDown' || event.key === 'ArrowUp') {
           event.preventDefault();
-          const reverse = event.key === 'ArrowUp';
-          Transforms.move(editor, { unit: 'offset', reverse });
-          if (appearPolicy === AppearPolicy.Rich) {
-            skipRt(editor, reverse);
-          }
+          Editor.normalize(editor, { force: true });
+          const dir = event.key === 'ArrowUp' ? 'backward' : 'forward';
+          const alter = event.shiftKey ? 'extend' : 'move';
+          requestAnimationFrame(() => {
+            window.getSelection()?.modify(alter, dir, 'character');
+          });
           return;
         }
       }
 
       // Horizontal character movement: skip hidden rt in Rich mode
-      if (!vert && appearPolicy === AppearPolicy.Rich && !mod && !event.altKey) {
+      if (!vert && appearPolicy === AppearPolicy.Rich && !mod && !event.altKey && !event.shiftKey) {
         if (event.key === 'ArrowLeft' || event.key === 'ArrowRight') {
           event.preventDefault();
           const reverse = event.key === 'ArrowLeft';
