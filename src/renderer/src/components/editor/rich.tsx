@@ -1,6 +1,7 @@
 import type { BaseEditor, BaseRange, Descendant, Range } from 'slate';
 import type { HistoryEditor } from 'slate-history';
 import type { ReactEditor, RenderElementProps, RenderLeafProps } from 'slate-react';
+import * as parse from '../../parse';
 
 export type Format = Ruby;
 
@@ -116,7 +117,7 @@ export const descendantToPlainText = (d: Descendant): string => {
     case 'paragraph':
       return d.children.map(descendantToPlainText).join('');
     case 'ruby':
-      return `|({node.rubyText}`;
+      return `|${d.children.map(descendantToPlainText).join('')}(${d.rubyText})`;
     case 'plaintext':
       return d.text;
     case 'rubyBody':
@@ -124,6 +125,71 @@ export const descendantToPlainText = (d: Descendant): string => {
     case 'rt':
       return '';
   }
+};
+
+/** Serialize an entire editor tree to plaintext. Lines joined by newlines. */
+export const serialize = (nodes: Descendant[]): string => {
+  return nodes.map(descendantToPlainText).join('\n');
+};
+
+/** Parse plaintext into a plain (ShowAll) Slate tree. */
+export const plaintextToPlainTree = (text: string): Descendant[] => {
+  const lines = text.split('\n');
+  return lines.map((line) => ({
+    type: 'paragraph' as const,
+    children: [{ type: 'plaintext' as const, text: line }],
+  }));
+};
+
+/** Parse a single line of plaintext into rich Slate children (with inline ruby elements). */
+const lineToRichChildren = (line: string): Descendant[] => {
+  const formats = parse.parse(line);
+  if (formats.length === 0) {
+    return [{ type: 'plaintext' as const, text: line }];
+  }
+
+  const children: Descendant[] = [];
+  let cursor = 0;
+
+  for (const fmt of formats) {
+    if (fmt.type !== 'ruby') continue;
+
+    // Text before this ruby
+    if (cursor < fmt.delimFront[0]) {
+      children.push({ type: 'plaintext' as const, text: line.substring(cursor, fmt.delimFront[0]) });
+    }
+
+    const bodyText = line.substring(fmt.text[0], fmt.text[1]);
+    const rubyText = line.substring(fmt.ruby[0], fmt.ruby[1]);
+    children.push({
+      type: 'ruby' as const,
+      rubyText,
+      children: [{ type: 'plaintext' as const, text: bodyText }],
+    });
+
+    cursor = fmt.delimEnd[1];
+  }
+
+  // Text after last ruby
+  if (cursor < line.length) {
+    children.push({ type: 'plaintext' as const, text: line.substring(cursor) });
+  }
+
+  // Slate requires at least one child
+  if (children.length === 0) {
+    children.push({ type: 'plaintext' as const, text: '' });
+  }
+
+  return children;
+};
+
+/** Parse plaintext into a rich (WYSIWYG) Slate tree with ruby elements. */
+export const plaintextToRichTree = (text: string): Descendant[] => {
+  const lines = text.split('\n');
+  return lines.map((line) => ({
+    type: 'paragraph' as const,
+    children: lineToRichChildren(line),
+  }));
 };
 
 // export interface VedEditor = BaseEditor & ReactEditor & HistoryEditor

@@ -1,90 +1,109 @@
 import { clsx } from 'clsx';
-import { useCallback, useState } from 'react';
-import { type BaseEditor, createEditor, type Descendant, Editor, Element, Text, Transforms } from 'slate';
-import { withHistory } from 'slate-history';
+import { useCallback, useRef, useState } from 'react';
+import { type BaseEditor, type NodeEntry, createEditor, type Descendant, Editor, Text, Transforms } from 'slate';
+import { HistoryEditor, withHistory } from 'slate-history';
 import { Editable, type RenderElementProps, type RenderLeafProps, Slate, withReact } from 'slate-react';
-import * as parse from './../parse';
 import * as rich from './editor/rich';
 import styles from './editor.module.scss';
 
-// TODO: how to handle intersecting decorations
+export enum WritingDirection {
+  Vertical,
+  Horizontal,
+}
+
+export enum AppearPolicy {
+  ByParagraph,
+  ByCharacter,
+  Rich,
+  ShowAll,
+}
+
+/** Properties of {@link VedEditor}. */
+export type VedEditorProps = {
+  readonly dir: WritingDirection;
+  readonly appearPolicy: AppearPolicy;
+  readonly setAppearPolicy: (_: AppearPolicy) => void;
+};
+
+// FIXME: DRY (rich.RubyElement.type)
+const inlineTypes: [rich.VedElement['type']] = ['ruby'];
+
+const withInlines = <T extends BaseEditor>(editor: T): T => {
+  editor.isInline = (element: rich.VedElement) => inlineTypes.includes(element.type);
+  return editor;
+};
+
+/** Ensure every Text node has `type: 'plaintext'` (Slate creates bare `{text: ""}` nodes). */
+const withNormalizeText = <T extends BaseEditor>(editor: T): T => {
+  const { normalizeNode } = editor;
+  editor.normalizeNode = (entry: NodeEntry) => {
+    const [node, path] = entry;
+    if (Text.isText(node) && !('type' in node)) {
+      Transforms.setNodes(editor, { type: 'plaintext' } as Partial<Text>, { at: path });
+      return;
+    }
+    normalizeNode(entry);
+  };
+  return editor;
+};
+
+const initialPlainValue: Descendant[] = [
+  {
+    type: 'paragraph',
+    children: [{ type: 'plaintext', text: '' }],
+  },
+];
+
+const initialRichValue: Descendant[] = [
+  {
+    type: 'paragraph',
+    children: [{ type: 'plaintext', text: '' }],
+  },
+];
 
 /**
- * Converts the rich text content to plaintext in-place.
+ * Replace the entire content of an editor using Slate Transforms (so history records it).
+ * Wrapped in `withoutMerging` so it becomes one discrete undo step.
  */
-export const unformatBuffer = (editor: Editor): void => {
-  editor.children.forEach((node, iNode) => {
-    const text = rich.descendantToPlainText(node);
-    const path = [iNode];
-    Transforms.removeNodes(editor, { at: path });
-    Transforms.insertNodes(
-      editor,
-      {
-        type: 'paragraph',
-        children: [
-          {
-            type: 'plaintext',
-            text,
-          },
-        ],
-      },
-      { at: path },
-    );
+const replaceContent = (editor: Editor, newChildren: Descendant[]): void => {
+  HistoryEditor.withoutMerging(editor, () => {
+    // Remove all existing nodes
+    while (editor.children.length > 0) {
+      Transforms.removeNodes(editor, { at: [0] });
+    }
+    // Insert new nodes
+    for (let i = 0; i < newChildren.length; i++) {
+      // biome-ignore lint/style/noNonNullAssertion: safe
+      Transforms.insertNodes(editor, newChildren[i]!, { at: [i] });
+    }
   });
 };
 
 /**
- * Converts the plaintext content to rich text in-place.
+ * Couple undo/redo between two editors so they stay in lockstep.
  */
-export const formatBuffer = (editor: Editor): void => {
-  // the `element` must be just under root
-  editor.children.forEach((underRoot, iRoot) => {
-    if (!Element.isElement(underRoot)) {
-      return;
-    }
+const coupleHistories = (editorA: Editor, editorB: Editor): void => {
+  const origUndoA = editorA.undo;
+  const origRedoA = editorA.redo;
+  const origUndoB = editorB.undo;
+  const origRedoB = editorB.redo;
 
-    underRoot.children.forEach((node, iChild) => {
-      // TODO: handle non-leaf nodes
-      if (!Text.isText(node)) {
-        return;
-      }
-
-      const path = [iRoot, iChild];
-      const formats = parse.parse(node.text);
-      for (let i = formats.length - 1; i >= 0; i--) {
-        // biome-ignore lint/style/noNonNullAssertion: safe
-        const format = formats[i]!;
-
-        if (format.type === 'ruby') {
-          const fullText = Editor.string(editor, path);
-          const text = fullText.substring(format.text[0], format.text[1]);
-          const rubyText = fullText.substring(format.ruby[0], format.ruby[1]);
-
-          // wrap the text
-          const rubyElement: rich.RubyElement = {
-            type: 'ruby',
-            rubyText,
-            children: [{ type: 'plaintext', text }],
-          };
-
-          Transforms.insertNodes(
-            editor,
-            rubyElement,
-            // { children: [{ text: 'go' }] },
-            {
-              at: {
-                anchor: { path, offset: format.delimFront[0] },
-                focus: { path, offset: format.delimEnd[1] },
-              },
-            },
-          );
-
-          // what does this do?
-          // Transforms.collapse(editor, { edge: 'end' })
-        }
-      }
-    });
-  });
+  editorA.undo = () => {
+    origUndoA();
+    origUndoB();
+  };
+  editorA.redo = () => {
+    origRedoA();
+    origRedoB();
+  };
+  editorB.undo = () => {
+    origUndoA();
+    origUndoB();
+  };
+  editorB.redo = () => {
+    origRedoA();
+    origRedoB();
+  };
 };
 
 const useOnKeyDown = (
@@ -127,77 +146,107 @@ const useOnKeyDown = (
   );
 };
 
-export enum WritingDirection {
-  Vertical,
-  Horizontal,
-}
-
-export enum AppearPolicy {
-  ByParagraph,
-  ByCharacter,
-  Rich,
-  ShowAll,
-}
-
-/** Properties of {@link VedEditor}. */
-export type VedEditorProps = {
-  readonly dir: WritingDirection;
-  readonly appearPolicy: AppearPolicy;
-  readonly setAppearPolicy: (_: AppearPolicy) => void;
-};
-
-// FIXME: DRY (rich.RubyElement.type)
-const inlineTypes: [rich.VedElement['type']] = ['ruby'];
-
-const withInlines = <T extends BaseEditor>(editor: T): T => {
-  // const { isInline } = editor
-  editor.isInline = (element: rich.VedElement) => inlineTypes.includes(element.type);
-  return editor;
-};
-
-const initialValue: Descendant[] = [
-  {
-    type: 'paragraph',
-    children: [{ type: 'plaintext', text: '' }],
-  },
-];
-
 export const VedEditor = ({ dir, appearPolicy, setAppearPolicy }: VedEditorProps): React.JSX.Element => {
-  // TODO: Should use `useMemo` as in hovering toolbar example?
-  const [editor] = useState(() => withInlines(withReact(withHistory(createEditor()))));
+  const [plainEditor] = useState(() => withNormalizeText(withReact(withHistory(createEditor()))));
+  const [richEditor] = useState(() => withNormalizeText(withInlines(withReact(withHistory(createEditor())))));
+
+  // Guard to prevent sync feedback loops
+  const syncingRef = useRef(false);
+
+  // Couple undo/redo (only once, on first render via useState)
+  const [_coupled] = useState(() => {
+    coupleHistories(plainEditor, richEditor);
+    return true;
+  });
+
   const renderLeaf = useCallback((props: RenderLeafProps) => <rich.VedText {...props} />, []);
   const renderElement = useCallback((props: RenderElementProps) => <rich.VedElement {...props} />, []);
   const vert = dir === WritingDirection.Vertical;
 
-  const onKeyDown = useOnKeyDown(
-    editor,
-    vert,
-    () => {
-      if (appearPolicy === AppearPolicy.Rich) {
-        console.log('unformat buffer');
-        unformatBuffer(editor);
-        setAppearPolicy(AppearPolicy.ShowAll);
-      } else {
-        console.log('format buffer');
-        formatBuffer(editor);
-        setAppearPolicy(AppearPolicy.Rich);
+  const isRichMode = appearPolicy === AppearPolicy.Rich;
+
+  // Sync hidden editor when active editor changes
+  const onPlainEditorChange = useCallback(
+    (value: Descendant[]) => {
+      if (syncingRef.current) return;
+      // Only sync when plain editor is the active one
+      if (isRichMode) return;
+
+      syncingRef.current = true;
+      try {
+        const plaintext = rich.serialize(value);
+        const richTree = rich.plaintextToRichTree(plaintext);
+        replaceContent(richEditor, richTree);
+      } finally {
+        syncingRef.current = false;
       }
     },
-    [appearPolicy],
+    [richEditor, isRichMode],
   );
 
+  const onRichEditorChange = useCallback(
+    (value: Descendant[]) => {
+      if (syncingRef.current) return;
+      // Only sync when rich editor is the active one
+      if (!isRichMode) return;
+
+      syncingRef.current = true;
+      try {
+        const plaintext = rich.serialize(value);
+        const plainTree = rich.plaintextToPlainTree(plaintext);
+        replaceContent(plainEditor, plainTree);
+      } finally {
+        syncingRef.current = false;
+      }
+    },
+    [plainEditor, isRichMode],
+  );
+
+  const toggleMode = useCallback(() => {
+    if (isRichMode) {
+      setAppearPolicy(AppearPolicy.ShowAll);
+    } else {
+      setAppearPolicy(AppearPolicy.Rich);
+    }
+  }, [isRichMode, setAppearPolicy]);
+
+  const onPlainKeyDown = useOnKeyDown(plainEditor, vert, toggleMode, [appearPolicy]);
+  const onRichKeyDown = useOnKeyDown(richEditor, vert, toggleMode, [appearPolicy]);
+
   return (
-    <div className={clsx(styles.editor, vert && styles.vertMode, vert && styles.multiColMode)}>
-      <Slate editor={editor} initialValue={initialValue}>
-        <Editable
-          id='editor-content'
-          placeholder='本文'
-          className={clsx(styles.editorContent, vert && styles.vertMode, vert && styles.multiColMode)}
-          renderLeaf={renderLeaf}
-          renderElement={renderElement}
-          onKeyDown={onKeyDown}
-        />
-      </Slate>
-    </div>
+    <>
+      {/* Plain text editor (ShowAll mode) */}
+      <div
+        className={clsx(styles.editor, vert && styles.vertMode, vert && styles.multiColMode)}
+        style={{ display: !isRichMode ? undefined : 'none' }}
+      >
+        <Slate editor={plainEditor} initialValue={initialPlainValue} onChange={onPlainEditorChange}>
+          <Editable
+            id='editor-content-plain'
+            placeholder='本文'
+            className={clsx(styles.editorContent, vert && styles.vertMode, vert && styles.multiColMode)}
+            renderLeaf={renderLeaf}
+            renderElement={renderElement}
+            onKeyDown={onPlainKeyDown}
+          />
+        </Slate>
+      </div>
+      {/* Rich text editor (WYSIWYG mode) */}
+      <div
+        className={clsx(styles.editor, vert && styles.vertMode, vert && styles.multiColMode)}
+        style={{ display: isRichMode ? undefined : 'none' }}
+      >
+        <Slate editor={richEditor} initialValue={initialRichValue} onChange={onRichEditorChange}>
+          <Editable
+            id='editor-content-rich'
+            placeholder='本文'
+            className={clsx(styles.editorContent, vert && styles.vertMode, vert && styles.multiColMode)}
+            renderLeaf={renderLeaf}
+            renderElement={renderElement}
+            onKeyDown={onRichKeyDown}
+          />
+        </Slate>
+      </div>
+    </>
   );
 };
