@@ -12,16 +12,61 @@ $editor-width: $content-width + $pad-x * 2;
   width: $editor-width;
   height: 100%;
   margin: auto;
+  display: flex;
+  flex-direction: column;
 }
 
 .header {
-  height: $footer-height;
+  min-height: $footer-height;
+  display: flex;
+  align-items: center;
+}
+
+.toolbar {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  align-items: center;
+  width: 100%;
+  padding: 4px 0;
+}
+
+.toolbarGroup {
+  display: flex;
+  margin: 0;
+  padding: 0;
+  border: 1px solid #808080;
+  border-radius: 4px;
+  overflow: hidden;
+}
+
+.toolbarButton {
+  font-size: 12px;
+  padding: 2px 8px;
+  border: none;
+  background: transparent;
+  cursor: pointer;
+
+  &:not(:last-child) {
+    border-right: 1px solid #808080;
+  }
+
+  &[aria-pressed='true'] {
+    background: #c0b18b;
+    color: #fff;
+  }
 }
 
 .editor {
   width: $editor-width;
-  height: calc(100% - $footer-height * 2);
+  flex: 1 1 auto;
+  min-height: 0;
   border: solid 2px black;
+
+  // Horizontal writing scrolls vertically
+  &:not(.vertMode) {
+    overflow-y: auto;
+  }
 
   // Hide scrollbar
   &::-webkit-scrollbar {
@@ -33,6 +78,13 @@ $editor-width: $content-width + $pad-x * 2;
 .editorContent {
   -webkit-app-region: no-drag;
   -webkit-user-select: text;
+
+  // Horizontal writing
+  &:not(.vertMode) {
+    font-size: $font-size;
+    line-height: $font-size + $line-space;
+    padding: $pad-y $pad-x;
+  }
 
   > * {
     margin-block-start: 0;
@@ -83,6 +135,13 @@ $editor-width: $content-width + $pad-x * 2;
     writing-mode: vertical-rl;
     -webkit-writing-mode: vertical-rl;
     -ms-writing-mode: tb-rl;
+
+    // Continuous flow: fill the editor height, grow leftwards (horizontal scroll)
+    &:not(.multiColMode) {
+      height: 100%;
+      box-sizing: border-box;
+      padding: $pad-y $pad-x;
+    }
 
     &.multiColMode {
       width: $content-width;

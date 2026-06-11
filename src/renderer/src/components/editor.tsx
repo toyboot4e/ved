@@ -1,6 +1,6 @@
 import { clsx } from 'clsx';
 import type React from 'react';
-import { useCallback, useRef, useState } from 'react';
+import { useCallback, useEffect, useRef, useState } from 'react';
 import { createEditor, type DecoratedRange, type Descendant, Editor, type NodeEntry, Text, Transforms } from 'slate';
 import { Editable, ReactEditor, type RenderElementProps, type RenderLeafProps, Slate, withReact } from 'slate-react';
 import * as parse from '../parse';
@@ -9,9 +9,12 @@ import { PlainTextHistory, replaceContent, withInlines, withNormalizeText } from
 import * as rich from './editor/rich';
 import styles from './editor.module.scss';
 
-export enum WritingDirection {
-  Vertical,
+export enum WritingMode {
   Horizontal,
+  /** Vertical (vertical-rl), one continuous flow with horizontal scroll. */
+  Vertical,
+  /** Vertical (vertical-rl) split into columns (dankumi) with vertical scroll. */
+  VerticalColumns,
 }
 
 export enum AppearPolicy {
@@ -24,7 +27,7 @@ export enum AppearPolicy {
 /** Properties of {@link VedEditor}. */
 export type VedEditorProps = {
   readonly initialText: string;
-  readonly dir: WritingDirection;
+  readonly writingMode: WritingMode;
   readonly appearPolicy: AppearPolicy;
   readonly setAppearPolicy: (_: AppearPolicy) => void;
 };
@@ -267,7 +270,12 @@ const rubyStructureChanged = (
 // Main editor component
 // ---------------------------------------------------------------------------
 
-export const VedEditor = ({ initialText, dir, appearPolicy, setAppearPolicy }: VedEditorProps): React.JSX.Element => {
+export const VedEditor = ({
+  initialText,
+  writingMode,
+  appearPolicy,
+  setAppearPolicy,
+}: VedEditorProps): React.JSX.Element => {
   const [editor] = useState(() => withNormalizeText(withInlines(withReact(createEditor()))));
 
   const [initialValue] = useState(() => buildTreeForMode(initialText, appearPolicy));
@@ -285,7 +293,8 @@ export const VedEditor = ({ initialText, dir, appearPolicy, setAppearPolicy }: V
 
   const renderLeaf = useCallback((props: RenderLeafProps) => <rich.VedText {...props} />, []);
   const renderElement = useCallback((props: RenderElementProps) => <rich.VedElement {...props} />, []);
-  const vert = dir === WritingDirection.Vertical;
+  const vert = writingMode !== WritingMode.Horizontal;
+  const multiCol = writingMode === WritingMode.VerticalColumns;
 
   // --- onChange: handle both text changes and selection-only changes ---
   const onChange = useCallback(
@@ -394,47 +403,48 @@ export const VedEditor = ({ initialText, dir, appearPolicy, setAppearPolicy }: V
   const handleUndo = useCallback(() => restoreFromHistory(history.undo()), [history, restoreFromHistory]);
   const handleRedo = useCallback(() => restoreFromHistory(history.redo()), [history, restoreFromHistory]);
 
-  // --- Mode switch: rebuild tree (always, to reset expansion state) ---
-  const setMode = useCallback(
-    (newPolicy: AppearPolicy) => {
-      const plaintext = rich.serialize(editor.children);
-      const cursorPlain = getCursorPlainOffset(editor);
-      activeParaRef.current = null;
-      activeRubyRef.current = null;
-      const tree = buildTreeForMode(plaintext, newPolicy);
+  // --- Mode switch: rebuild tree when the view mode prop changes ---
+  // The mode is owned by the parent (toolbar buttons and keyboard shortcuts
+  // both go through setAppearPolicy); this effect applies it to the tree.
+  const appliedPolicyRef = useRef(appearPolicy);
+  useEffect(() => {
+    if (appliedPolicyRef.current === appearPolicy) return;
+    appliedPolicyRef.current = appearPolicy;
 
-      rebuildingRef.current = true;
-      try {
-        replaceContent(editor, tree);
-        if (cursorPlain) {
-          restoreCursorSync(editor, cursorPlain);
-        }
-      } finally {
-        rebuildingRef.current = false;
+    const plaintext = rich.serialize(editor.children);
+    const cursorPlain = getCursorPlainOffset(editor);
+    activeParaRef.current = null;
+    activeRubyRef.current = null;
+    const tree = buildTreeForMode(plaintext, appearPolicy);
+
+    rebuildingRef.current = true;
+    try {
+      replaceContent(editor, tree);
+      if (cursorPlain) {
+        restoreCursorSync(editor, cursorPlain);
       }
+    } finally {
+      rebuildingRef.current = false;
+    }
 
-      setAppearPolicy(newPolicy);
+    requestAnimationFrame(() => {
+      try {
+        ReactEditor.focus(editor);
+      } catch {
+        // ignore
+      }
+    });
+  }, [editor, appearPolicy]);
 
-      requestAnimationFrame(() => {
-        try {
-          ReactEditor.focus(editor);
-        } catch {
-          // ignore
-        }
-      });
-    },
-    [editor, setAppearPolicy],
-  );
-
-  const onKeyDown = useOnKeyDown(editor, vert, setMode, handleUndo, handleRedo);
+  const onKeyDown = useOnKeyDown(editor, vert, setAppearPolicy, handleUndo, handleRedo);
 
   return (
-    <div className={clsx(styles.editor, vert && styles.vertMode, vert && styles.multiColMode)}>
+    <div className={clsx(styles.editor, vert && styles.vertMode, multiCol && styles.multiColMode)}>
       <Slate editor={editor} initialValue={initialValue} onChange={onChange}>
         <Editable
           id='editor-content'
           placeholder='本文'
-          className={clsx(styles.editorContent, vert && styles.vertMode, vert && styles.multiColMode)}
+          className={clsx(styles.editorContent, vert && styles.vertMode, multiCol && styles.multiColMode)}
           renderLeaf={renderLeaf}
           renderElement={renderElement}
           decorate={decorateRuby}
