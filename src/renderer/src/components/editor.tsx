@@ -1,7 +1,7 @@
 import { clsx } from 'clsx';
 import type React from 'react';
 import { useCallback, useRef, useState } from 'react';
-import { createEditor, type Descendant, Editor, type NodeEntry, Text, Transforms } from 'slate';
+import { createEditor, type DecoratedRange, type Descendant, Editor, type NodeEntry, Text, Transforms } from 'slate';
 import { Editable, ReactEditor, type RenderElementProps, type RenderLeafProps, Slate, withReact } from 'slate-react';
 import * as parse from '../parse';
 import { plainOffsetToRich, richOffsetToPlain } from './editor/cursor-map';
@@ -126,24 +126,9 @@ const restoreCursorSync = (editor: Editor, cursorPlain: { para: number; offset: 
     if (!paraNode || !('children' in paraNode)) return;
     const children = (paraNode as { children: Descendant[] }).children;
 
-    const firstChild = children[0];
-    const isPlainParagraph =
-      children.length === 1 && firstChild && 'type' in firstChild && firstChild.type === 'plaintext';
-
-    if (isPlainParagraph) {
-      const maxOffset = 'text' in firstChild ? firstChild.text.length : 0;
-      const offset = Math.min(cursorPlain.offset, maxOffset);
-      Transforms.select(editor, {
-        anchor: { path: [cursorPlain.para, 0], offset },
-        focus: { path: [cursorPlain.para, 0], offset },
-      });
-    } else {
-      const { path: subPath, offset: richOffset } = plainOffsetToRich(children, cursorPlain.offset);
-      Transforms.select(editor, {
-        anchor: { path: [cursorPlain.para, ...subPath], offset: richOffset },
-        focus: { path: [cursorPlain.para, ...subPath], offset: richOffset },
-      });
-    }
+    const { path: subPath, offset: richOffset } = plainOffsetToRich(children, cursorPlain.offset);
+    const point = { path: [cursorPlain.para, ...subPath], offset: richOffset };
+    Transforms.select(editor, { anchor: point, focus: point });
   } catch {
     // ignore invalid selection
   }
@@ -222,42 +207,22 @@ const useOnKeyDown = (
 // Decoration function for ruby syntax highlighting (ShowAll mode)
 // ---------------------------------------------------------------------------
 
-const decorateRuby = ([node, path]: NodeEntry): ReturnType<NonNullable<Parameters<typeof Editable>[0]['decorate']>> => {
-  const ranges: (ReturnType<NonNullable<Parameters<typeof Editable>[0]['decorate']>> extends (infer R)[]
-    ? R
-    : never)[] = [];
-
+const decorateRuby = ([node, path]: NodeEntry): DecoratedRange[] => {
+  const ranges: DecoratedRange[] = [];
   if (!Text.isText(node)) return ranges;
 
-  const text = node.text;
-  const formats = parse.parse(text);
-
-  for (const fmt of formats) {
+  for (const fmt of parse.parse(node.text)) {
     if (fmt.type !== 'ruby') continue;
-
-    ranges.push({
-      anchor: { path, offset: fmt.delimFront[0] },
-      focus: { path, offset: fmt.delimFront[1] },
-      rubyHighlight: true,
-    } as never);
-    ranges.push({
-      anchor: { path, offset: fmt.sepMid[0] },
-      focus: { path, offset: fmt.sepMid[1] },
-      rubyHighlight: true,
-    } as never);
-    ranges.push({
-      anchor: { path, offset: fmt.ruby[0] },
-      focus: { path, offset: fmt.ruby[1] },
-      rubyHighlight: true,
-    } as never);
-    ranges.push({
-      anchor: { path, offset: fmt.delimEnd[0] },
-      focus: { path, offset: fmt.delimEnd[1] },
-      rubyHighlight: true,
-    } as never);
+    for (const [start, end] of [fmt.delimFront, fmt.sepMid, fmt.ruby, fmt.delimEnd]) {
+      ranges.push({
+        anchor: { path, offset: start },
+        focus: { path, offset: end },
+        rubyHighlight: true,
+      });
+    }
   }
 
-  return ranges as never;
+  return ranges;
 };
 
 // ---------------------------------------------------------------------------

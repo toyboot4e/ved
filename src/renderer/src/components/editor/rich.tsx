@@ -221,6 +221,6 @@ declare module 'slate' {
     Editor: BaseEditor & ReactEditor;
     Element: VedElement;
     Text: VedText;
-    Range: BaseRange;
+    Range: BaseRange & { rubyHighlight?: true };
   }
 }

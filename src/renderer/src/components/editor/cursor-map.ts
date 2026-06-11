@@ -47,13 +47,6 @@ export const rubyBodyLength = (ruby: { children: Descendant[] }): number =>
     .filter((c) => !('type' in c && c.type === 'rt'))
     .reduce((sum: number, c: Descendant) => sum + ('text' in c ? c.text.length : 0), 0);
 
-/** Map a local offset within a ruby's plain range to a body offset. */
-export const rubyLocalToBodyOffset = (bodyLen: number, local: number): number => {
-  if (local <= 0) return 0;
-  if (local <= bodyLen) return local - 1;
-  return bodyLen;
-};
-
 /** Map a plain editor offset to a rich editor cursor position (path within paragraph + offset). */
 export const plainOffsetToRich = (
   richChildren: Descendant[],
