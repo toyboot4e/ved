@@ -2,6 +2,7 @@ import { createEditor, type Descendant, Transforms } from 'slate';
 import { describe, expect, it } from 'vitest';
 import {
   getCursorPlainOffset,
+  moveCaretByCharacter,
   PlainTextHistory,
   replaceContent,
   restoreCursorSync,
@@ -9,7 +10,7 @@ import {
   withInlines,
   withNormalizeText,
 } from './editor-core';
-import { serialize } from './rich';
+import { AppearPolicy, serialize } from './rich';
 
 // ---------------------------------------------------------------------------
 // Helper
@@ -122,6 +123,78 @@ describe('syncParagraphs', () => {
     expect(serialize(editor.children)).toBe(before);
     // first paragraph untouched (single plaintext node)
     expect(editor.children[0]).toEqual(paragraph('plain'));
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Character movement (model-driven caret stops)
+// ---------------------------------------------------------------------------
+
+describe('moveCaretByCharacter', () => {
+  /** 字は|漢(かん)字 → ['字は', ruby[|, 漢, (, かん, )], '字'] */
+  const makeEditor = () => {
+    const editor = createTestEditor([paragraph('字は|漢(かん)字')]);
+    syncParagraphs(editor);
+    return editor;
+  };
+
+  const walk = (editor: ReturnType<typeof makeEditor>, policy: AppearPolicy, reverse: boolean): string[] => {
+    const seq: string[] = [];
+    for (let i = 0; i < 20; i++) {
+      const before = JSON.stringify(editor.selection?.focus);
+      moveCaretByCharacter(editor, policy, { reverse, extend: false });
+      const focus = editor.selection?.focus;
+      if (JSON.stringify(focus) === before) break; // document edge
+      seq.push(`${focus?.path.join('.')}@${focus?.offset}`);
+    }
+    return seq;
+  };
+
+  it('Rich: both boundary stops exist on BOTH sides of a collapsed ruby', () => {
+    const editor = makeEditor();
+    Transforms.select(editor, { path: [0, 0], offset: 0 });
+
+    expect(walk(editor, AppearPolicy.Rich, false)).toEqual([
+      '0.0@1', // 字|は
+      '0.0@2', // 字は| — outside, before the ruby
+      '0.1.1@0', // inside, body start (same visual spot: the boundary stop)
+      '0.1.1@1', // 漢| — inside, body end
+      '0.2@0', // outside, after the ruby (same visual spot: the boundary stop)
+      '0.2@1', // 字|
+    ]);
+  });
+
+  it('Rich: reverse walk is symmetric', () => {
+    const editor = makeEditor();
+    Transforms.select(editor, { path: [0, 2], offset: 1 });
+
+    expect(walk(editor, AppearPolicy.Rich, true)).toEqual([
+      '0.2@0', // outside, after the ruby
+      '0.1.1@1', // inside, body end
+      '0.1.1@0', // inside, body start
+      '0.0@2', // outside, before the ruby
+      '0.0@1',
+      '0.0@0',
+    ]);
+  });
+
+  it('ShowAll: every markup character is a stop', () => {
+    const editor = makeEditor();
+    Transforms.select(editor, { path: [0, 0], offset: 2 });
+
+    const seq = walk(editor, AppearPolicy.ShowAll, false);
+    // 字は|漢(かん)字 — 7 more characters to walk: | 漢 ( か ん ) 字,
+    // plus the boundary representations between leaves
+    expect(seq[seq.length - 1]).toBe('0.2@1');
+    expect(seq.length).toBeGreaterThanOrEqual(7);
+  });
+
+  it('extend grows the selection instead of moving it', () => {
+    const editor = makeEditor();
+    Transforms.select(editor, { path: [0, 0], offset: 0 });
+    moveCaretByCharacter(editor, AppearPolicy.Rich, { reverse: false, extend: true });
+    expect(editor.selection?.anchor).toEqual({ path: [0, 0], offset: 0 });
+    expect(editor.selection?.focus).toEqual({ path: [0, 0], offset: 1 });
   });
 });
 

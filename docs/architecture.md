@@ -140,9 +140,17 @@ Notes that took debugging to learn:
 - In `Columns`, the separator lines are a repeating background gradient on
   the scroll container (`background-attachment: local`): Chromium does not
   paint `column-rule` between overflow columns.
-- In the vertical modes, arrow keys are remapped via `Selection.modify()`
-  (`ArrowUp/Down` → character, `ArrowLeft/Right` → line) because
-  contenteditable caret movement is unreliable under `vertical-rl`.
+- Arrow keys: **character movement is model-driven**
+  (`moveCaretByCharacter`), stepping through Slate positions and skipping
+  the interior of hidden markup leaves. This is deliberate: a ruby boundary
+  has two distinct positions — "outside the ruby" and "inside, at the
+  body edge" — that render at the same pixel; visual movement collapses
+  them, model movement keeps both as stops (one extra press tells you which
+  side you are on, symmetric on both sides). It also never parks on
+  slate-react's zero-width anchors. Line movement stays visual
+  (`Selection.modify`) since line geometry needs the browser. In the
+  vertical modes the axes are rotated (`ArrowUp/Down` → character,
+  `ArrowLeft/Right` → line).
 
 Both modes are owned by `app.tsx` state and rendered by
 `components/toolbar.tsx`; keyboard shortcuts call the same state setters.
@@ -186,14 +194,15 @@ to download the binary.
 
 - Around collapsed rubies, several model positions render at the same
   visual spot (the hidden markup characters have zero width). Chromium may
-  snap the DOM caret within such a cluster, occasionally placing input one
-  model position away from where the caret was restored. Mitigations in
-  place: the parser keeps partially-typed syntax plain (no mid-typing
-  restructuring), and cursor restoration prefers visible leaves at
-  boundaries. Residual risk is at ruby edges only.
-- 0 ms-interval automated key bursts can race the React re-render after a
-  structure sync (`e2e/smoke.mjs` types with a 60 ms delay). Real typing
-  and IME commits do not produce such bursts.
+  snap the DOM caret within such a cluster when *clicking*; arrow movement
+  is model-driven and unaffected. Mitigations: the parser keeps
+  partially-typed syntax plain (no mid-typing restructuring), and cursor
+  restoration prefers visible leaves at boundaries.
+- Automated input needs care: synthetic key events are subject to keyboard
+  layout and the system IME, and sub-60 ms bursts right after a
+  programmatic selection change can race slate's DOM→model selection sync.
+  `e2e/smoke.mjs` therefore inserts text via `beforeinput` with human-ish
+  timing and detaches the IME. Real typing and IME commits are unaffected.
 - `syncParagraphs` compares every paragraph on every change; fine at current
   sizes, trivially limitable to dirty paragraphs if it ever shows up in
   profiles.

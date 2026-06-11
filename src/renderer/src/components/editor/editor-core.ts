@@ -1,6 +1,6 @@
-import { type Descendant, Editor, Element, Node, type NodeEntry, Text, Transforms } from 'slate';
+import { type Descendant, Editor, Element, Node, type NodeEntry, Path, type Point, Text, Transforms } from 'slate';
 import { paraOffsetToPoint, pointToParaOffset } from './cursor-map';
-import { childrenEqual, lineToChildren, type VedElementType } from './rich';
+import { AppearPolicy, childrenEqual, lineToChildren, type VedElementType } from './rich';
 
 const inlineTypes: VedElementType[] = ['ruby'];
 
@@ -21,6 +21,61 @@ export const withNormalizeText = <T extends Editor>(editor: T): T => {
     normalizeNode(entry);
   };
   return editor;
+};
+
+/**
+ * Is the leaf at `point` rendered hidden? Mirrors RubyElementView: delim/rt
+ * leaves are hidden unless their ruby is expanded by the view mode and the
+ * current selection.
+ */
+const leafHiddenAt = (editor: Editor, point: Point, policy: AppearPolicy): boolean => {
+  const leaf = Node.leaf(editor, point.path);
+  if (leaf.type !== 'delim' && leaf.type !== 'rt') return false;
+  if (policy === AppearPolicy.ShowAll) return false;
+
+  const sel = editor.selection;
+  if (sel) {
+    const rubyPath = Path.parent(point.path);
+    if (policy === AppearPolicy.ByParagraph && rubyPath[0] === sel.anchor.path[0]) return false;
+    if (policy === AppearPolicy.ByCharacter && Path.isAncestor(rubyPath, sel.anchor.path)) return false;
+  }
+  return true;
+};
+
+/**
+ * Move the caret by one character, model-driven.
+ *
+ * Visual caret movement cannot express ruby boundaries: positions like
+ * "right before a ruby" and "inside it, at the body start" render at the
+ * same pixel, and the browser collapses them into one stop (and parks on
+ * slate-react's zero-width anchors). Stepping through model positions
+ * instead keeps BOTH boundary stops — the extra key press tells the user
+ * which side of the boundary the cursor is on — while skipping the interior
+ * of hidden markup leaves entirely.
+ */
+export const moveCaretByCharacter = (
+  editor: Editor,
+  policy: AppearPolicy,
+  options: { reverse: boolean; extend: boolean },
+): void => {
+  const sel = editor.selection;
+  if (!sel) return;
+
+  let point = sel.focus;
+  while (true) {
+    const next = options.reverse
+      ? Editor.before(editor, point, { unit: 'offset' })
+      : Editor.after(editor, point, { unit: 'offset' });
+    if (!next) return; // document edge
+    point = next;
+    if (!leafHiddenAt(editor, point, policy)) break;
+  }
+
+  if (options.extend) {
+    Transforms.select(editor, { anchor: sel.anchor, focus: point });
+  } else {
+    Transforms.select(editor, point);
+  }
 };
 
 /** Convert the editor's current cursor to a plain text offset within its paragraph. */

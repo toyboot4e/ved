@@ -7,6 +7,9 @@ const root = new URL('..', import.meta.url).pathname;
 const app = await _electron.launch({
   executablePath: `${root}node_modules/electron/dist/electron`,
   args: [`${root}out/main/index.js`],
+  // Detach the system IME (fcitx5/mozc): it intercepts synthetic key events
+  // and garbles typed text non-deterministically.
+  env: { ...process.env, GTK_IM_MODULE: '', QT_IM_MODULE: '', XMODIFIERS: '', GTK_IM_MODULE_FILE: '' },
 });
 const page = await app.firstWindow();
 await page.waitForSelector('#editor-content');
@@ -50,9 +53,14 @@ try {
       getSelection().collapse(first, 0);
     });
   await caretToStart();
-  // Human-ish key timing: 0ms-interval bursts can race the React re-render
-  // after a structure sync (not reachable by real typing or IME commits)
-  await page.keyboard.type('|試(し)あ', { delay: 60 });
+  // Let slate sync the programmatic DOM selection into its model, then
+  // insert per character (same beforeinput path as typing, but immune to
+  // keyboard-layout/IME key synthesis) with human-ish timing.
+  await page.waitForTimeout(150);
+  for (const ch of '|試(し)あ') {
+    await page.keyboard.insertText(ch);
+    await page.waitForTimeout(60);
+  }
   s = await snap();
   assert.equal(s.text, '|試(し)あ|ルビ(ruby)');
   assert.equal(s.rubies, 2);
@@ -85,6 +93,19 @@ try {
   const after = await sel();
   assert.notDeepEqual(after, before);
   step('vertical arrow navigation moves the caret');
+
+  // One press = one visible character: from the start, a single ArrowDown
+  // must step past the first visible glyph, not park inside a zero-width
+  // span (slate-react's empty-leaf anchors)
+  const leaf = await page.evaluate(() => {
+    const sel = getSelection();
+    return {
+      leafText: sel.focusNode?.parentElement?.closest('[data-slate-leaf]')?.textContent ?? null,
+      zeroWidth: !!sel.focusNode?.parentElement?.closest('[data-slate-zero-width]'),
+    };
+  });
+  assert.equal(leaf.zeroWidth, false);
+  step('caret never parks in a zero-width span');
 
   // Undo restores the initial document
   await page.keyboard.press('Control+z');

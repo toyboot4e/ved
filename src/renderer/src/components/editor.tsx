@@ -1,11 +1,12 @@
 import { clsx } from 'clsx';
 import type React from 'react';
 import { useCallback, useRef, useState } from 'react';
-import { createEditor, type Descendant } from 'slate';
+import { createEditor, type Descendant, type Editor } from 'slate';
 import { Editable, ReactEditor, type RenderElementProps, type RenderLeafProps, Slate, withReact } from 'slate-react';
 import {
   getCursorPlainOffset,
   type HistoryEntry,
+  moveCaretByCharacter,
   PlainTextHistory,
   replaceContent,
   restoreCursorSync,
@@ -38,8 +39,17 @@ export type VedEditorProps = {
 // Key handler
 // ---------------------------------------------------------------------------
 
+/** Move the caret visually by line (line geometry needs the browser). */
+const moveCaretByLine = (alter: 'move' | 'extend', dir: 'forward' | 'backward'): void => {
+  requestAnimationFrame(() => {
+    window.getSelection()?.modify(alter, dir, 'line');
+  });
+};
+
 const useOnKeyDown = (
+  editor: Editor,
   vert: boolean,
+  appearPolicy: AppearPolicy,
   setMode: (policy: AppearPolicy) => void,
   handleUndo: () => void,
   handleRedo: () => void,
@@ -59,24 +69,33 @@ const useOnKeyDown = (
         return;
       }
 
+      const alter = event.shiftKey ? 'extend' : 'move';
+      const extend = event.shiftKey;
+
       if (vert) {
+        // Visual axes are rotated under vertical-rl: left/right = lines,
+        // up/down = characters.
         if (event.key === 'ArrowRight' || event.key === 'ArrowLeft') {
           event.preventDefault();
-          const dir = event.key === 'ArrowLeft' ? 'forward' : 'backward';
-          const alter = event.shiftKey ? 'extend' : 'move';
-          requestAnimationFrame(() => {
-            window.getSelection()?.modify(alter, dir, 'line');
-          });
+          moveCaretByLine(alter, event.key === 'ArrowLeft' ? 'forward' : 'backward');
           return;
         }
 
         if (event.key === 'ArrowDown' || event.key === 'ArrowUp') {
           event.preventDefault();
-          const dir = event.key === 'ArrowUp' ? 'backward' : 'forward';
-          const alter = event.shiftKey ? 'extend' : 'move';
-          requestAnimationFrame(() => {
-            window.getSelection()?.modify(alter, dir, 'character');
-          });
+          moveCaretByCharacter(editor, appearPolicy, { reverse: event.key === 'ArrowUp', extend });
+          return;
+        }
+      } else if (!mod && !event.altKey) {
+        if (event.key === 'ArrowRight' || event.key === 'ArrowLeft') {
+          event.preventDefault();
+          moveCaretByCharacter(editor, appearPolicy, { reverse: event.key === 'ArrowLeft', extend });
+          return;
+        }
+
+        if (event.key === 'ArrowDown' || event.key === 'ArrowUp') {
+          event.preventDefault();
+          moveCaretByLine(alter, event.key === 'ArrowDown' ? 'forward' : 'backward');
           return;
         }
       }
@@ -96,7 +115,7 @@ const useOnKeyDown = (
         }
       }
     },
-    [vert, setMode, handleUndo, handleRedo],
+    [editor, vert, appearPolicy, setMode, handleUndo, handleRedo],
   );
 };
 
@@ -200,7 +219,7 @@ export const VedEditor = ({
 
   // View mode changes are pure rendering: the context value re-renders the
   // ruby elements with different classes. No tree change, no cursor work.
-  const onKeyDown = useOnKeyDown(vert, setAppearPolicy, handleUndo, handleRedo);
+  const onKeyDown = useOnKeyDown(editor, vert, appearPolicy, setAppearPolicy, handleUndo, handleRedo);
 
   return (
     <div className={clsx(styles.editor, vert && styles.vertMode, multiCol && styles.multiColMode)}>
