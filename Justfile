@@ -7,23 +7,22 @@ help:
 
 # Runs biome check --fix
 c:
-  npm run check:fix
+  pnpm run check:fix
 
 # Runs biome check --fix ignoring errors
 cf:
-  npm run check:fix -- --format-with-errors true --diagnostic-level error
+  pnpm run check:fix --format-with-errors true --diagnostic-level error
 
 # Starts development server
 dev:
-  npm run dev
+  pnpm run dev
 
 alias d := dev
 
 # Updates dependency versions aggressively. It can fail.
 update:
-  npx npm-check-updates -u && npm install
+  pnpm dlx npm-check-updates -u && pnpm install
 
 # Creates a new electron-vite project. This is just a note.
 create:
-  npm create @quick-start/electron@latest
-
+  pnpm create @quick-start/electron@latest

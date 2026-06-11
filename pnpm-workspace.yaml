@@ -1,0 +1,12 @@
+# Dependency build scripts are blocked unless acknowledged here.
+# electron@42 no longer ships a postinstall at all — its binary download
+# runs from this project's own postinstall instead. The others work without
+# their build scripts (platform binaries ship as optional dependencies;
+# electron-winstaller is Windows-only).
+allowBuilds:
+  electron: true
+  esbuild: false
+  '@parcel/watcher': false
+  electron-winstaller: false
+minimumReleaseAgeExclude:
+  - '@types/node@25.9.3'

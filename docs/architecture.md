@@ -166,6 +166,12 @@ IM module on X11. The main process also sets `ozone-platform-hint=auto`,
 `enable-wayland-ime` and `wayland-text-input-version=3` for Wayland
 sessions.
 
+Tooling: the package manager is **pnpm** (`packageManager` pin in
+`package.json`; dependency build scripts acknowledged in
+`pnpm-workspace.yaml`). electron@42 no longer ships its own postinstall, so
+this project's `postinstall` runs `node node_modules/electron/install.js`
+to download the binary.
+
 ## Known papercuts / future work
 
 - Hidden delimiters occupy caret positions: at a visual line end the caret

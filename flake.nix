@@ -65,6 +65,7 @@
 
             packages = with pkgs; [
               biome
+              pnpm
             ];
 
             shellHook = ''
