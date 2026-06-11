@@ -1,15 +1,15 @@
-import { type BaseEditor, type Descendant, Editor, Element, Node, type NodeEntry, Text, Transforms } from 'slate';
+import { type Descendant, Editor, Element, Node, type NodeEntry, Text, Transforms } from 'slate';
 
 // FIXME: DRY (rich.RubyElement.type)
 const inlineTypes: string[] = ['ruby'];
 
-export const withInlines = <T extends BaseEditor>(editor: T): T => {
+export const withInlines = <T extends Editor>(editor: T): T => {
   editor.isInline = (element: { type: string }) => inlineTypes.includes(element.type);
   return editor;
 };
 
 /** Ensure every Text node has `type: 'plaintext'` and unwrap empty ruby elements. */
-export const withNormalizeText = <T extends BaseEditor>(editor: T): T => {
+export const withNormalizeText = <T extends Editor>(editor: T): T => {
   const { normalizeNode } = editor;
   editor.normalizeNode = (entry: NodeEntry) => {
     const [node, path] = entry;

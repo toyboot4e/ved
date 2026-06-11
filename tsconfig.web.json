@@ -4,10 +4,6 @@
   "compilerOptions": {
     "composite": true,
     "jsx": "react-jsx",
-    "baseUrl": ".",
-    "paths": {
-      "@renderer/*": ["src/renderer/src/*"]
-    },
     "strict": true,
     "noUncheckedIndexedAccess": true,
     "exactOptionalPropertyTypes": true,
