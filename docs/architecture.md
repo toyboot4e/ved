@@ -1,134 +1,141 @@
 # ved architecture
 
 ved is an Electron + React + Slate editor for Japanese vertical writing
-(tategaki). Its central design decision: **plain text is the document model**;
-everything rich is a projection of it.
+(tategaki). Two decisions define the design:
+
+1. **Plain text is the document model.** Lines are paragraphs; inline markup
+   is lightweight syntax (today only ruby: `|身体(からだ)`).
+2. **Identity text model.** The Slate tree holds that plain text *character
+   for character* — including the markup characters `|`, `(`, `)` — in every
+   view mode. `Node.string(paragraph)` is the plain line. Everything visual
+   (annotations, hidden syntax, highlighting) is CSS over the same DOM text.
 
 ```
-plaintext  (source of truth, e.g. "字は|漢(かん)字")
-   │  parse.ts (format spans)
+plaintext   "字は|漢(かん)字"
+   │   parse.ts → format spans
    ▼
-Slate tree (projection, rebuilt per view mode)
-   │  rich.tsx serialize()
+Slate tree  [ plaintext "字は",
+              ruby [ delim "|", body "漢", delim "(", rt "かん", delim ")" ],
+              plaintext "字" ]
+   │   Node.string
    ▼
-plaintext  (read back after every change)
+plaintext   "字は|漢(かん)字"        (identical, by construction)
 ```
 
 ## Document model
 
-The document is a single string. Lines are paragraphs. Inline markup uses a
-lightweight syntax; today only ruby:
-
-```
-|身体(からだ)     →  body "身体" annotated with "からだ"
-```
-
 `src/renderer/src/parse.ts` scans a line and returns `Format` spans with the
-offsets of each syntactic part (`|`, body, `(`, ruby text, `)`). The parser is
-the only place that knows the concrete syntax.
+offsets of each syntactic part. The syntax characters are defined once there
+(`RUBY_DELIM_FRONT` / `RUBY_SEP_MID` / `RUBY_DELIM_END`) and shared by the
+parser and the tree builder.
 
-## Projection: view modes (`AppearPolicy`)
+A ruby is an inline element wrapping typed text leaves:
 
-The Slate tree is built from plaintext by `rich.tsx` according to the view
-mode. Switching modes rebuilds the tree; the document never changes.
+```
+|漢(かん)  →  { type: 'ruby', children: [
+                { type: 'delim', text: '|'  },
+                { type: 'body',  text: '漢'  },
+                { type: 'delim', text: '('  },
+                { type: 'rt',    text: 'かん' },
+                { type: 'delim', text: ')'  } ] }
+```
 
-| Mode | Shortcut | Tree shape |
+The wrapper element is required: a lone `display: ruby-text` span does not
+annotate its preceding siblings (Chromium gives it an anonymous ruby
+container of its own) — see
+[spikes/identity-text-model.md](spikes/identity-text-model.md).
+
+The canonical paragraph shape (`rich.tsx lineToChildren`) is Slate-normal by
+construction so that structure repair converges:
+
+- text leaves surround every inline ruby (empty `plaintext` if needed);
+- empty `body`/`rt` pieces are dropped and adjacent delimiters merged
+  (Slate would merge empty text leaves into neighbors otherwise).
+
+## Rendering: view modes (`AppearPolicy`)
+
+The tree and the text are identical in all modes; only CSS classes change.
+The mode flows through `AppearPolicyContext`; each ruby element decides per
+render whether it is "expanded" (shown as syntax) using the mode and the
+current selection:
+
+| Mode | Shortcut | Expanded rubies |
 |---|---|---|
-| `ShowAll` ("Plain") | Ctrl+S | One `plaintext` text node per paragraph. Ruby syntax is shown verbatim, highlighted via decorations. |
-| `ByParagraph` | Ctrl+D | Rich tree, but every ruby in the cursor's paragraph is "expanded" back to syntax text. |
-| `ByCharacter` | Ctrl+F | Rich tree, but only the ruby under the cursor is expanded. |
-| `Rich` | Ctrl+G | Ruby always rendered as `<ruby>` elements. |
+| `ShowAll` ("Plain") | Ctrl+S | all |
+| `ByParagraph` | Ctrl+D | those in the cursor's paragraph |
+| `ByCharacter` | Ctrl+F | the one containing the cursor |
+| `Rich` | Ctrl+G | none |
 
-A ruby in the rich tree is an inline element with two text children:
+Collapsed rendering (`.rubyWrap`): wrapper `display: ruby`, delimiters
+`font-size: 0` (hidden but caret-addressable — `display: none` would remove
+the caret stops), `rt` as `display: ruby-text`. Expanded rendering
+(`.rubyExpanded`): plain inline text with the markup in gray.
 
-```
-{ type: 'ruby', children: [ { type: 'plaintext', text: '身体' },
-                            { type: 'rt',        text: 'からだ' } ] }
-```
+Because expansion is a render-time decision, cursor movement and mode
+switches never touch the tree: no rebuild, no cursor restore, no IME hazard.
 
-The `rt` child is hidden in the leaf renderer; the element renderer draws the
-annotation with a real `<rt>`. Keeping `rt` inside the tree means
-`serialize()` can reconstruct the exact plaintext from the tree alone.
+## Structure repair (`editor-core.ts syncParagraphs`)
 
-### Rebuild rules (`editor.tsx onChange`)
+The one structural job left: when typing completes or breaks ruby syntax,
+the node structure must follow the text. On every text change (detected by
+comparing `serialize(value)` with the last known plaintext):
 
-After every Slate change the tree is serialized and compared with the last
-known plaintext. A rebuild (replace tree + restore cursor) happens when:
+1. For each paragraph, compute `lineToChildren(Node.string(paragraph))`.
+2. If the actual children differ structurally (`childrenEqual`), replace
+   them. The text is unchanged by construction; only node boundaries move.
+3. Restore the cursor from its plain offset (saved before the repair).
 
-- the ruby *structure* changed (a complete `|…(…)` appeared or vanished), or
-- in `ByParagraph`/`ByCharacter`, the active paragraph / active ruby under
-  the cursor changed (expansion zone moved).
+The repair is deferred while `ReactEditor.isComposing(editor)` — replacing
+nodes mid-composition cancels the IME session — and runs on the next change
+after the composition ends (`pendingSyncRef`).
 
-Two hard rules:
+## Cursor mapping (`cursor-map.ts`)
 
-- **Never rebuild during IME composition** (`ReactEditor.isComposing` guard).
-  A rebuild re-selects the cursor, which cancels the composition session —
-  fatal for Japanese input.
-- **`ShowAll` never rebuilds**: edits already happen directly in the
-  plaintext nodes.
+With the identity model this is generic accumulation over text leaves, with
+zero format knowledge:
+
+- `pointToParaOffset(children, relativePath, offset)` — sum the text lengths
+  of leaves before the point.
+- `paraOffsetToPoint(children, offset)` — first leaf reaching the offset;
+  boundary offsets map to the *end* of the earlier leaf, so a cursor right
+  before a ruby stays outside it.
+
+Used only around structure repair and history restore. Round-trip properties
+are fast-check-tested in `cursor-map.test.ts`.
+
+## History (`editor-core.ts PlainTextHistory`)
+
+`slate-history` is not used: operation-level undo is meaningless across
+structure repair. Instead `{ plaintext, cursor }` snapshots with a 500 ms
+debounce. Undo/redo rebuilds the whole tree from text (`plaintextToTree` +
+`replaceContent`) and re-resolves the cursor. A debounced push only replaces
+the newest entry; after an undo it truncates the redo tail.
 
 ## Layout: writing modes (`WritingMode`)
 
-Orthogonal to view modes and implemented purely in CSS classes
-(`editor.module.scss`); no tree rebuild involved.
+Orthogonal to view modes; pure CSS (`editor.module.scss`):
 
 | Mode | CSS | Scroll |
 |---|---|---|
 | `Horizontal` | normal flow | vertical |
-| `Vertical` | `writing-mode: vertical-rl`, continuous flow | horizontal |
+| `Vertical` | `vertical-rl`, fixed 80-character lines | both axes |
 | `VerticalColumns` | `vertical-rl` + CSS multi-column (*dankumi*) | vertical |
 
-In the vertical modes, arrow keys are remapped (`ArrowUp/Down` → character
-back/forward, `ArrowLeft/Right` → line forward/back) via
-`Selection.modify()`, because contenteditable's visual caret movement is
-unreliable under `vertical-rl`.
+Notes that took debugging to learn:
+
+- The percentage height chain must be anchored at `#root` (the React mount
+  point), or flex items size to content.
+- In `Vertical`, the *scroll container* itself is `vertical-rl`, so the
+  first line starts at the right edge and leftward overflow is scrollable.
+- In `Columns`, the separator lines are a repeating background gradient on
+  the scroll container (`background-attachment: local`): Chromium does not
+  paint `column-rule` between overflow columns.
+- In the vertical modes, arrow keys are remapped via `Selection.modify()`
+  (`ArrowUp/Down` → character, `ArrowLeft/Right` → line) because
+  contenteditable caret movement is unreliable under `vertical-rl`.
 
 Both modes are owned by `app.tsx` state and rendered by
-`components/toolbar.tsx`; keyboard shortcuts call the same state setters. The
-editor applies a view-mode change in an effect (serialize → rebuild → restore
-cursor → refocus).
-
-## Cursor mapping (`cursor-map.ts`)
-
-Rebuilding the tree destroys the Slate selection, so the cursor is saved as a
-**plain offset** within its paragraph before a rebuild and re-resolved after.
-
-The mapping is built on an explicit **segment table**: `segmentsOf(children)`
-walks a paragraph's children once and emits ordered, gap-free segments
-
-```
-{ plainStart, plainEnd, path, offsetBase, visible }
-```
-
-covering the serialized plain text. Content runs (body text, rt text,
-plaintext) are `visible: true`; markup characters (`|`, `(`, `)`) are
-`visible: false` and park the cursor at `offsetBase` of their target node
-(e.g. `|` → end of the previous sibling, `(` → body end). Both directions
-are then plain lookups over the table:
-
-- `plainOffsetToRich`: first segment containing the offset.
-- `richOffsetToPlain`: the visible segment of the node covering the offset.
-
-`segmentsOf` is the *only* place that knows how a ruby spreads over its
-serialized form; the syntax characters themselves are defined once in
-`parse.ts` (`RUBY_DELIM_FRONT`/`RUBY_SEP_MID`/`RUBY_DELIM_END`) and shared by
-the parser, the serializer, and the segment builder. The table is derived
-from the live tree (not from re-parsing the text), so it stays correct even
-mid-edit when the tree temporarily diverges from the canonical projection.
-
-Plain offsets are stable across projections — the same offset is valid in any
-view mode, which is what makes mode switching cursor-preserving. The
-roundtrip properties are covered by fast-check tests in
-`cursor-map.test.ts`.
-
-## History (`editor-core.ts`)
-
-`slate-history` is not used: operations recorded against one projection are
-meaningless after a rebuild. Instead `PlainTextHistory` snapshots
-`{ plaintext, cursor }` with a 500 ms debounce. Undo/redo restores the text,
-rebuilds the projection for the current mode, and re-resolves the cursor.
-A debounced push only replaces the newest entry; after an undo it truncates
-the redo tail instead (see `editor-core.test.ts`).
+`components/toolbar.tsx`; keyboard shortcuts call the same state setters.
 
 ## Module map
 
@@ -140,45 +147,33 @@ src/renderer/src/
   parse.ts                 plaintext → format spans (syntax knowledge)
   components/
     toolbar.tsx            writing-mode / view-mode button groups
-    editor.tsx             VedEditor: onChange, rebuild policy, key handling
-    editor.module.scss     layout modes, toolbar, ruby styles
+    editor.tsx             VedEditor: onChange → history + syncParagraphs
+    editor.module.scss     layout modes, toolbar, ruby classes
     editor/
-      rich.tsx             tree building, serialization, render components
-      cursor-map.ts        plain offset ↔ rich path/offset
-      editor-core.ts       editor plugins, replaceContent, PlainTextHistory
+      rich.tsx             AppearPolicy, node types, lineToChildren,
+                           serialize, render components
+      cursor-map.ts        plain offset ↔ point (generic accumulation)
+      editor-core.ts       plugins, syncParagraphs, replaceContent,
+                           PlainTextHistory
+spikes/                    throwaway experiment pages + drivers
+docs/spikes/               spike findings
 ```
 
 NixOS specifics live in `flake.nix`: Electron's runtime libraries via
 `LD_LIBRARY_PATH`, plus a generated GTK immodules cache
-(`GTK_IM_MODULE_FILE`) so the prebuilt Electron's gtk3 can load the fcitx5 IM
-module on X11.
+(`GTK_IM_MODULE_FILE`) so the prebuilt Electron's gtk3 can load the fcitx5
+IM module on X11. The main process also sets `ozone-platform-hint=auto`,
+`enable-wayland-ime` and `wayland-text-input-version=3` for Wayland
+sessions.
 
-## Known weaknesses / future directions
+## Known papercuts / future work
 
-The segment table (above) centralizes the position arithmetic, but two
-sources of format knowledge remain: `parse.ts` spans → tree building in
-`rich.tsx`, and tree shape → segments in `cursor-map.ts`. Remaining steps,
-in order of ambition:
-
-1. **Replace `rubyStructureChanged`.** Structure-change detection is still a
-   heuristic ruby-count comparison. With projection in one place it can
-   become exact: project the new plaintext, normalize like Slate would
-   (empty text nodes around inlines), and compare shapes with the current
-   tree. Care: a naive comparison that ignores Slate's normalization would
-   mismatch forever and rebuild on every keystroke.
-
-2. **Identity text model.** Keep *every* character of the plaintext in the
-   Slate text nodes in all modes and render ruby with CSS
-   (`display: ruby` / `ruby-text`), so plain offset ≡ rich offset and view
-   modes become CSS class switches. **Spiked and found viable** — see
-   [spikes/identity-text-model.md](spikes/identity-text-model.md) for the
-   verified rendering/caret results and the required hybrid shape (ruby
-   stays an element wrapping `delim`/`body`/`rt` leaves that hold the full
-   plain text; delimiters hidden with `font-size: 0`, not `display: none`).
-
-The segment representation is backend-independent by design: segments
-reference "paragraph child index + offset", and only the caller interprets
-those as Slate `Path`s. That keeps the format logic testable without Slate
-and portable if the editor backend ever changes (the old `BiMap` — removed —
-was the same idea with the wrong data structure: per-character `Map`s keyed
-by object identity).
+- Hidden delimiters occupy caret positions: at a visual line end the caret
+  can sit before a hidden `)` (e.g. after pressing `End`), and arrow keys
+  take extra presses across collapsed markup. Candidate fix: caret-movement
+  overrides that skip `delim` leaves in collapsed rubies.
+- `syncParagraphs` compares every paragraph on every change; fine at current
+  sizes, trivially limitable to dirty paragraphs if it ever shows up in
+  profiles.
+- The annotation (`ruby-text`) can overflow the fixed `line-height` in
+  vertical mode; needs visual tuning.
