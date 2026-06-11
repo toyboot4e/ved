@@ -24,7 +24,8 @@
     "build:win": "pnpm run build && electron-builder --win",
     "build:mac": "electron-vite build && electron-builder --mac",
     "build:linux": "electron-vite build && electron-builder --linux",
-    "test": "vitest run --project unit"
+    "test": "vitest run --project unit",
+    "smoke": "node e2e/smoke.mjs"
   },
   "dependencies": {
     "@electron-toolkit/preload": "^3.0.2",
@@ -32,7 +33,6 @@
     "clsx": "^2.1.1",
     "electron-updater": "^6.8.9",
     "slate": "^0.124.1",
-    "slate-history": "^0.113.1",
     "slate-react": "^0.124.2"
   },
   "devDependencies": {
@@ -42,8 +42,6 @@
     "@types/react": "^19.2.17",
     "@types/react-dom": "^19.2.3",
     "@vitejs/plugin-react": "^5.2.0",
-    "@vitest/browser": "^4.1.8",
-    "@vitest/coverage-v8": "^4.1.8",
     "electron": "^42.4.0",
     "electron-builder": "^26.15.2",
     "electron-vite": "^5.0.0",

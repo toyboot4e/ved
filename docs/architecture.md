@@ -176,8 +176,11 @@ to download the binary.
 
 - Hidden delimiters occupy caret positions: at a visual line end the caret
   can sit before a hidden `)` (e.g. after pressing `End`), and arrow keys
-  take extra presses across collapsed markup. Candidate fix: caret-movement
-  overrides that skip `delim` leaves in collapsed rubies.
+  take extra presses across collapsed markup. Worse, `Home`/`End` move to
+  *visual* line extremes, which with a ruby at the line edge can be inside
+  the annotation box (caught by `e2e/smoke.mjs`). Candidate fix:
+  caret-movement overrides that skip `delim` leaves and map Home/End to
+  text-order line extremes.
 - `syncParagraphs` compares every paragraph on every change; fine at current
   sizes, trivially limitable to dirty paragraphs if it ever shows up in
   profiles.

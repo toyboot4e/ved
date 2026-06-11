@@ -1,6 +1,14 @@
-import { createEditor, type Descendant } from 'slate';
+import { createEditor, type Descendant, Transforms } from 'slate';
 import { describe, expect, it } from 'vitest';
-import { PlainTextHistory, replaceContent, syncParagraphs, withInlines, withNormalizeText } from './editor-core';
+import {
+  getCursorPlainOffset,
+  PlainTextHistory,
+  replaceContent,
+  restoreCursorSync,
+  syncParagraphs,
+  withInlines,
+  withNormalizeText,
+} from './editor-core';
 import { serialize } from './rich';
 
 // ---------------------------------------------------------------------------
@@ -114,6 +122,33 @@ describe('syncParagraphs', () => {
     expect(serialize(editor.children)).toBe(before);
     // first paragraph untouched (single plaintext node)
     expect(editor.children[0]).toEqual(paragraph('plain'));
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Cursor save/restore across structure repair
+// ---------------------------------------------------------------------------
+
+describe('cursor across syncParagraphs', () => {
+  it('survives a paragraph rebuild at the same plain offset', () => {
+    const editor = createTestEditor([paragraph('|漢(かん)字')]);
+    // Cursor after `ん` (plain offset 5)
+    Transforms.select(editor, { anchor: { path: [0, 0], offset: 5 }, focus: { path: [0, 0], offset: 5 } });
+    const cursor = getCursorPlainOffset(editor);
+    expect(cursor).toEqual({ para: 0, offset: 5 });
+
+    syncParagraphs(editor);
+    // biome-ignore lint/style/noNonNullAssertion: asserted above
+    restoreCursorSync(editor, cursor!);
+
+    expect(getCursorPlainOffset(editor)).toEqual({ para: 0, offset: 5 });
+    // Restored inside the rt leaf, after ん
+    expect(editor.selection?.anchor).toEqual({ path: [0, 1, 3], offset: 2 });
+  });
+
+  it('returns null without a selection', () => {
+    const editor = createTestEditor([paragraph('abc')]);
+    expect(getCursorPlainOffset(editor)).toBeNull();
   });
 });
 

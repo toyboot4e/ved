@@ -1,13 +1,14 @@
 import { clsx } from 'clsx';
 import type React from 'react';
 import { useCallback, useRef, useState } from 'react';
-import { createEditor, type Descendant, Editor, Transforms } from 'slate';
+import { createEditor, type Descendant } from 'slate';
 import { Editable, ReactEditor, type RenderElementProps, type RenderLeafProps, Slate, withReact } from 'slate-react';
-import { paraOffsetToPoint, pointToParaOffset } from './editor/cursor-map';
 import {
+  getCursorPlainOffset,
   type HistoryEntry,
   PlainTextHistory,
   replaceContent,
+  restoreCursorSync,
   syncParagraphs,
   withInlines,
   withNormalizeText,
@@ -34,44 +35,10 @@ export type VedEditorProps = {
 };
 
 // ---------------------------------------------------------------------------
-// Cursor utilities
-// ---------------------------------------------------------------------------
-
-/** Convert the editor's current cursor to a plain text offset within its paragraph. */
-const getCursorPlainOffset = (editor: Editor): { para: number; offset: number } | null => {
-  const sel = editor.selection;
-  if (!sel) return null;
-
-  const paraIdx = sel.anchor.path[0] ?? 0;
-  const para = editor.children[paraIdx];
-  if (!para || !('children' in para)) return null;
-
-  return {
-    para: paraIdx,
-    offset: pointToParaOffset(para.children, sel.anchor.path.slice(1), sel.anchor.offset),
-  };
-};
-
-/** Restore the cursor from a plain offset after a structural change. */
-const restoreCursorSync = (editor: Editor, cursorPlain: { para: number; offset: number }): void => {
-  try {
-    const paraNode = editor.children[cursorPlain.para];
-    if (!paraNode || !('children' in paraNode)) return;
-
-    const { path, offset } = paraOffsetToPoint(paraNode.children, cursorPlain.offset);
-    const point = { path: [cursorPlain.para, ...path], offset };
-    Transforms.select(editor, { anchor: point, focus: point });
-  } catch {
-    // ignore invalid selection
-  }
-};
-
-// ---------------------------------------------------------------------------
 // Key handler
 // ---------------------------------------------------------------------------
 
 const useOnKeyDown = (
-  editor: Editor,
   vert: boolean,
   setMode: (policy: AppearPolicy) => void,
   handleUndo: () => void,
@@ -95,7 +62,6 @@ const useOnKeyDown = (
       if (vert) {
         if (event.key === 'ArrowRight' || event.key === 'ArrowLeft') {
           event.preventDefault();
-          Editor.normalize(editor, { force: true });
           const dir = event.key === 'ArrowLeft' ? 'forward' : 'backward';
           const alter = event.shiftKey ? 'extend' : 'move';
           requestAnimationFrame(() => {
@@ -106,7 +72,6 @@ const useOnKeyDown = (
 
         if (event.key === 'ArrowDown' || event.key === 'ArrowUp') {
           event.preventDefault();
-          Editor.normalize(editor, { force: true });
           const dir = event.key === 'ArrowUp' ? 'backward' : 'forward';
           const alter = event.shiftKey ? 'extend' : 'move';
           requestAnimationFrame(() => {
@@ -131,7 +96,7 @@ const useOnKeyDown = (
         }
       }
     },
-    [editor, vert, setMode, handleUndo, handleRedo],
+    [vert, setMode, handleUndo, handleRedo],
   );
 };
 
@@ -235,7 +200,7 @@ export const VedEditor = ({
 
   // View mode changes are pure rendering: the context value re-renders the
   // ruby elements with different classes. No tree change, no cursor work.
-  const onKeyDown = useOnKeyDown(editor, vert, setAppearPolicy, handleUndo, handleRedo);
+  const onKeyDown = useOnKeyDown(vert, setAppearPolicy, handleUndo, handleRedo);
 
   return (
     <div className={clsx(styles.editor, vert && styles.vertMode, multiCol && styles.multiColMode)}>

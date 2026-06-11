@@ -1,11 +1,11 @@
 import { type Descendant, Editor, Element, Node, type NodeEntry, Text, Transforms } from 'slate';
-import { childrenEqual, lineToChildren } from './rich';
+import { paraOffsetToPoint, pointToParaOffset } from './cursor-map';
+import { childrenEqual, lineToChildren, type VedElementType } from './rich';
 
-// FIXME: DRY (rich.RubyElement.type)
-const inlineTypes: string[] = ['ruby'];
+const inlineTypes: VedElementType[] = ['ruby'];
 
 export const withInlines = <T extends Editor>(editor: T): T => {
-  editor.isInline = (element: { type: string }) => inlineTypes.includes(element.type);
+  editor.isInline = (element: Element) => inlineTypes.includes(element.type);
   return editor;
 };
 
@@ -21,6 +21,35 @@ export const withNormalizeText = <T extends Editor>(editor: T): T => {
     normalizeNode(entry);
   };
   return editor;
+};
+
+/** Convert the editor's current cursor to a plain text offset within its paragraph. */
+export const getCursorPlainOffset = (editor: Editor): { para: number; offset: number } | null => {
+  const sel = editor.selection;
+  if (!sel) return null;
+
+  const paraIdx = sel.anchor.path[0] ?? 0;
+  const para = editor.children[paraIdx];
+  if (!para || !('children' in para)) return null;
+
+  return {
+    para: paraIdx,
+    offset: pointToParaOffset(para.children, sel.anchor.path.slice(1), sel.anchor.offset),
+  };
+};
+
+/** Restore the cursor from a plain offset after a structural change. */
+export const restoreCursorSync = (editor: Editor, cursorPlain: { para: number; offset: number }): void => {
+  try {
+    const paraNode = editor.children[cursorPlain.para];
+    if (!paraNode || !('children' in paraNode)) return;
+
+    const { path, offset } = paraOffsetToPoint(paraNode.children, cursorPlain.offset);
+    const point = { path: [cursorPlain.para, ...path], offset };
+    Transforms.select(editor, { anchor: point, focus: point });
+  } catch {
+    // ignore invalid selection
+  }
 };
 
 /**
