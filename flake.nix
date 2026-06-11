@@ -29,7 +29,8 @@
             gtk3
             pango
             cairo
-            # TODO: support Wayland?
+            # Wayland (required for native Wayland and its text-input IME protocol)
+            wayland
             xorg.libX11
             xorg.libXcomposite
             xorg.libXdamage

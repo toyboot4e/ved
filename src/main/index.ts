@@ -3,6 +3,16 @@ import { electronApp, is, optimizer } from '@electron-toolkit/utils';
 import { app, BrowserWindow, ipcMain, shell } from 'electron';
 import icon from '../../resources/icon.png?asset';
 
+// IME (fcitx5/ibus + mozc) support on Linux. Without these switches Chromium
+// runs through XWayland on a Wayland session and never connects to the
+// compositor's text-input protocol, so the IME cannot be activated.
+// Must be set before the `ready` event.
+if (process.platform === 'linux') {
+  app.commandLine.appendSwitch('ozone-platform-hint', 'auto');
+  app.commandLine.appendSwitch('enable-wayland-ime');
+  app.commandLine.appendSwitch('wayland-text-input-version', '3');
+}
+
 const createWindow = () => {
   // Create the browser window.
   const mainWindow = new BrowserWindow({
@@ -10,6 +20,7 @@ const createWindow = () => {
     height: 670,
     show: false,
     autoHideMenuBar: true,
+    acceptFirstMouse: true,
     ...(process.platform === 'linux' ? { icon } : {}),
     webPreferences: {
       preload: join(__dirname, '../preload/index.js'),
