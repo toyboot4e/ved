@@ -67,13 +67,6 @@ $editor-width: $content-width + $pad-x * 2;
   &:not(.vertMode) {
     overflow-y: auto;
   }
-
-  // Hide scrollbar (vertical and horizontal)
-  &::-webkit-scrollbar {
-    width: 0px;
-    height: 0px;
-    background: transparent;
-  }
 }
 
 .editorContent {
@@ -124,7 +117,9 @@ $col-gap: $pad-y * 2;
 .vertMode {
   &.editor {
     &:not(.multiColMode) {
-      overflow-x: scroll;
+      // Both axes: lines overflow leftwards, the fixed 80-character line
+      // length overflows the viewport vertically.
+      overflow: auto;
       // The scroll container itself must be vertical-rl: the first line then
       // starts at the right edge and overflow grows leftwards, scrollable.
       writing-mode: vertical-rl;
@@ -160,10 +155,9 @@ $col-gap: $pad-y * 2;
     -webkit-writing-mode: vertical-rl;
     -ms-writing-mode: tb-rl;
 
-    // Continuous flow: lines run at most $max-line-chars characters,
-    // bounded by the editor height
+    // Continuous flow: lines are fixed at $max-line-chars characters
     &:not(.multiColMode) {
-      height: min(100%, calc(#{$max-line-chars}em + #{$pad-y * 2}));
+      height: calc(#{$max-line-chars}em + #{$pad-y * 2});
       box-sizing: border-box;
       padding: $pad-y $pad-x;
     }
