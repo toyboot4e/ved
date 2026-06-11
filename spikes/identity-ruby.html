@@ -1,0 +1,78 @@
+<!doctype html>
+<html lang="ja">
+<head>
+<meta charset="utf-8">
+<title>Identity text model spike: CSS ruby over plain characters</title>
+<style>
+  body { font-family: serif; font-size: 24px; margin: 16px; }
+  section { margin-bottom: 20px; }
+  h2 { font-size: 13px; color: #666; font-family: sans-serif; margin: 4px 0; }
+
+  /* Ruby rendered purely with CSS display values over inline spans.
+     The full plain text |漢(かん) stays in the DOM character-for-character. */
+  .ruby { display: ruby; ruby-position: over; }
+  .rb   { display: ruby-base; }
+  .rt   { display: ruby-text; font-size: 0.5em; color: #c00; }
+
+  /* Two candidate ways to hide the syntax characters */
+  .d-none .d { display: none; }
+  .d-fs0  .d { font-size: 0; }
+
+  .vert {
+    writing-mode: vertical-rl;
+    height: 200px;
+    border: 1px solid #999;
+    padding: 4px;
+  }
+
+  .cols {
+    writing-mode: vertical-rl;
+    width: 420px;
+    height: 110px;
+    column-width: 110px;
+    column-gap: 20px;
+    column-rule: 1px solid #ccc;
+    border: 1px solid #999;
+  }
+
+  [contenteditable] { border: 1px solid #06c; padding: 2px; }
+</style>
+</head>
+<body>
+
+<section id="h-none" class="d-none">
+  <h2>1. horizontal — delims display:none</h2>
+  <p>字は<span class="ruby"><span class="d">|</span><span class="rb">漢</span><span class="d">(</span><span class="rt">かん</span><span class="d">)</span></span>字です</p>
+</section>
+
+<section id="h-fs0" class="d-fs0">
+  <h2>2. horizontal — delims font-size:0</h2>
+  <p>字は<span class="ruby"><span class="d">|</span><span class="rb">漢</span><span class="d">(</span><span class="rt">かん</span><span class="d">)</span></span>字です</p>
+</section>
+
+<section id="v-fs0" class="d-fs0">
+  <h2>3. vertical-rl — delims font-size:0</h2>
+  <div class="vert">
+    <p>これは<span class="ruby"><span class="d">|</span><span class="rb">漢字</span><span class="d">(</span><span class="rt">かんじ</span><span class="d">)</span></span>のルビです。縦書きの行が続きます。</p>
+  </div>
+</section>
+
+<section id="cols" class="d-fs0">
+  <h2>4. vertical-rl + multicol — ruby near column breaks</h2>
+  <div class="cols">
+    <p>縦書き段組みの<span class="ruby"><span class="d">|</span><span class="rb">試験</span><span class="d">(</span><span class="rt">しけん</span><span class="d">)</span></span>テキストです。長い文章が続いて段が折り返すときに<span class="ruby"><span class="d">|</span><span class="rb">注釈</span><span class="d">(</span><span class="rt">ちゅうしゃく</span><span class="d">)</span></span>がどう描画されるかを<span class="ruby"><span class="d">|</span><span class="rb">確認</span><span class="d">(</span><span class="rt">かくにん</span><span class="d">)</span></span>します。</p>
+  </div>
+</section>
+
+<section id="e-none" class="d-none">
+  <h2>5. contenteditable — delims display:none</h2>
+  <p contenteditable>字は<span class="ruby"><span class="d">|</span><span class="rb">漢</span><span class="d">(</span><span class="rt">かん</span><span class="d">)</span></span>字です</p>
+</section>
+
+<section id="e-fs0" class="d-fs0">
+  <h2>6. contenteditable — delims font-size:0</h2>
+  <p contenteditable>字は<span class="ruby"><span class="d">|</span><span class="rb">漢</span><span class="d">(</span><span class="rt">かん</span><span class="d">)</span></span>字です</p>
+</section>
+
+</body>
+</html>

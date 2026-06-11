@@ -167,14 +167,14 @@ in order of ambition:
    tree. Care: a naive comparison that ignores Slate's normalization would
    mismatch forever and rebuild on every keystroke.
 
-2. **Identity text model + decorations.** Keep *every* character of the
-   plaintext in the Slate text nodes in all modes, and style the syntax
-   characters away (CSS can render real ruby from inline content:
-   `display: ruby` / `ruby-text` are supported by Chromium ≥ 128, and
-   delimiters can be collapsed visually). Then plain offset ≡ rich offset:
-   cursor mapping, tree rebuilds, and the composition guard all become
-   unnecessary, and view modes degrade to pure decoration changes. Needs a
-   spike to confirm `vertical-rl` + CSS ruby + column layout interact well.
+2. **Identity text model.** Keep *every* character of the plaintext in the
+   Slate text nodes in all modes and render ruby with CSS
+   (`display: ruby` / `ruby-text`), so plain offset ≡ rich offset and view
+   modes become CSS class switches. **Spiked and found viable** — see
+   [spikes/identity-text-model.md](spikes/identity-text-model.md) for the
+   verified rendering/caret results and the required hybrid shape (ruby
+   stays an element wrapping `delim`/`body`/`rt` leaves that hold the full
+   plain text; delimiters hidden with `font-size: 0`, not `display: none`).
 
 The segment representation is backend-independent by design: segments
 reference "paragraph child index + offset", and only the caller interprets
