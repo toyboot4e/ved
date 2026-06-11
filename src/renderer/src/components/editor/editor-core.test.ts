@@ -178,15 +178,46 @@ describe('moveCaretByCharacter', () => {
     ]);
   });
 
-  it('ShowAll: every markup character is a stop', () => {
+  it('ShowAll: every markup character is a stop, interior junctions deduped', () => {
     const editor = makeEditor();
     Transforms.select(editor, { path: [0, 0], offset: 2 });
 
-    const seq = walk(editor, AppearPolicy.ShowAll, false);
-    // 字は|漢(かん)字 — 7 more characters to walk: | 漢 ( か ん ) 字,
-    // plus the boundary representations between leaves
-    expect(seq[seq.length - 1]).toBe('0.2@1');
-    expect(seq.length).toBeGreaterThanOrEqual(7);
+    expect(walk(editor, AppearPolicy.ShowAll, false)).toEqual([
+      '0.1.0@0', // ruby start edge (pairs with 字は@2)
+      '0.1.0@1', // |
+      '0.1.1@1', // 漢
+      '0.1.2@1', // (
+      '0.1.3@1', // か
+      '0.1.3@2', // ん
+      '0.1.4@1', // ) — ruby end edge
+      '0.2@0', // outside (pairs with the edge)
+      '0.2@1', // 字
+    ]);
+  });
+
+  it('ByCharacter: entering from the end lands AFTER the whole syntax', () => {
+    const editor = makeEditor();
+    Transforms.select(editor, { path: [0, 2], offset: 0 });
+
+    moveCaretByCharacter(editor, AppearPolicy.ByCharacter, { reverse: true, extend: false });
+    // After `)` — the end of the now-expanded |漢(かん)
+    expect(editor.selection?.focus).toEqual({ path: [0, 1, 4], offset: 1 });
+
+    // Continued backward movement walks the expanded syntax
+    moveCaretByCharacter(editor, AppearPolicy.ByCharacter, { reverse: true, extend: false });
+    expect(editor.selection?.focus).toEqual({ path: [0, 1, 4], offset: 0 }); // before `)`
+  });
+
+  it('ByCharacter: entering from the start lands BEFORE the whole syntax', () => {
+    const editor = makeEditor();
+    Transforms.select(editor, { path: [0, 0], offset: 2 });
+
+    moveCaretByCharacter(editor, AppearPolicy.ByCharacter, { reverse: false, extend: false });
+    // Before `|` — the start of the now-expanded |漢(かん)
+    expect(editor.selection?.focus).toEqual({ path: [0, 1, 0], offset: 0 });
+
+    moveCaretByCharacter(editor, AppearPolicy.ByCharacter, { reverse: false, extend: false });
+    expect(editor.selection?.focus).toEqual({ path: [0, 1, 0], offset: 1 }); // after `|`
   });
 
   it('extend grows the selection instead of moving it', () => {

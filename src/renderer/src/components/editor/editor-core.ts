@@ -43,6 +43,33 @@ const leafHiddenAt = (editor: Editor, point: Point, policy: AppearPolicy): boole
 };
 
 /**
+ * Is `point` a duplicate representation of a leaf junction? Adjacent text
+ * leaves inside a ruby produce two model points at the same position
+ * (prev@end and next@0). Unlike the ruby EDGE pair — where outside/inside
+ * is a real semantic difference — interior junctions are pure noise: keep
+ * only the representation on the movement side (end-form going forward,
+ * start-form going backward).
+ */
+const isJunctionDuplicate = (editor: Editor, point: Point, policy: AppearPolicy, reverse: boolean): boolean => {
+  const { path, offset } = point;
+  if (!reverse) {
+    // Forward: drop leaf-start points whose previous sibling is a visible
+    // text leaf of the same element
+    if (offset !== 0 || path[path.length - 1] === 0) return false;
+    const prevPath = Path.previous(path);
+    if (!Text.isText(Node.get(editor, prevPath))) return false;
+    return !leafHiddenAt(editor, { path: prevPath, offset: 0 }, policy);
+  }
+  // Backward: drop leaf-end points whose next sibling is a visible text
+  // leaf of the same element
+  const leaf = Node.leaf(editor, path);
+  if (offset !== leaf.text.length) return false;
+  const nextPath = Path.next(path);
+  if (!Node.has(editor, nextPath) || !Text.isText(Node.get(editor, nextPath))) return false;
+  return !leafHiddenAt(editor, { path: nextPath, offset: 0 }, policy);
+};
+
+/**
  * Move the caret by one character, model-driven.
  *
  * Visual caret movement cannot express ruby boundaries: positions like
@@ -52,6 +79,11 @@ const leafHiddenAt = (editor: Editor, point: Point, policy: AppearPolicy): boole
  * instead keeps BOTH boundary stops — the extra key press tells the user
  * which side of the boundary the cursor is on — while skipping the interior
  * of hidden markup leaves entirely.
+ *
+ * In ByCharacter mode, entering a collapsed ruby expands it; the caret
+ * lands on the entry-side EDGE of the syntax (before `|` coming from the
+ * start, after `)` coming from the end) so continued movement walks the
+ * expanded syntax naturally.
  */
 export const moveCaretByCharacter = (
   editor: Editor,
@@ -68,7 +100,19 @@ export const moveCaretByCharacter = (
       : Editor.after(editor, point, { unit: 'offset' });
     if (!next) return; // document edge
     point = next;
-    if (!leafHiddenAt(editor, point, policy)) break;
+    if (leafHiddenAt(editor, point, policy)) continue;
+    if (isJunctionDuplicate(editor, point, policy, options.reverse)) continue;
+    break;
+  }
+
+  // ByCharacter: entering a ruby that was collapsed at keypress time
+  if (policy === AppearPolicy.ByCharacter && point.path.length === 3) {
+    const rubyPath = Path.parent(point.path);
+    const node = Node.get(editor, rubyPath);
+    const wasCollapsed = !Path.isAncestor(rubyPath, sel.anchor.path);
+    if (wasCollapsed && Element.isElement(node) && node.type === 'ruby') {
+      point = options.reverse ? Editor.end(editor, rubyPath) : Editor.start(editor, rubyPath);
+    }
   }
 
   if (options.extend) {
