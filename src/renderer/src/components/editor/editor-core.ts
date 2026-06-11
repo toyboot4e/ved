@@ -67,8 +67,11 @@ export class PlainTextHistory {
 
   push(entry: HistoryEntry): void {
     const now = Date.now();
-    if (now - this.lastPushTime < this.debounceMs && this.pointer > 0) {
-      // Within debounce window: replace current entry (batch edits)
+    const atLast = this.pointer === this.entries.length - 1;
+    if (now - this.lastPushTime < this.debounceMs && this.pointer > 0 && atLast) {
+      // Within debounce window and at the newest entry: replace it (batch edits).
+      // After an undo (pointer not at the end) we must not overwrite a middle
+      // entry in place — that would leave a stale redo stack.
       this.entries[this.pointer] = entry;
     } else {
       // New batch: truncate redo entries and push

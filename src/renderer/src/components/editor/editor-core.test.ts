@@ -115,6 +115,25 @@ describe('PlainTextHistory', () => {
     expect(history.redo()).toBeNull();
   });
 
+  it('debounced push after undo truncates instead of overwriting a middle entry', () => {
+    const history = new PlainTextHistory('a');
+    (history as unknown as { lastPushTime: number }).lastPushTime = 0;
+    history.push({ text: 'b', cursor: null });
+    (history as unknown as { lastPushTime: number }).lastPushTime = 0;
+    history.push({ text: 'c', cursor: null });
+
+    // Undo to 'b', then push again within the debounce window
+    history.undo();
+    (history as unknown as { lastPushTime: number }).lastPushTime = Date.now();
+    history.push({ text: 'd', cursor: null });
+
+    expect(history.current().text).toBe('d');
+    // 'c' must be gone — redoing into a stale future would corrupt the text
+    expect(history.redo()).toBeNull();
+    history.undo();
+    expect(history.current().text).toBe('b');
+  });
+
   it('multiple undo/redo cycles work correctly', () => {
     const history = new PlainTextHistory('a');
     (history as unknown as { lastPushTime: number }).lastPushTime = 0;

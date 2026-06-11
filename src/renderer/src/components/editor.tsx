@@ -156,11 +156,9 @@ const restoreCursorSync = (editor: Editor, cursorPlain: { para: number; offset: 
 const useOnKeyDown = (
   editor: Editor,
   vert: boolean,
-  appearPolicy: AppearPolicy,
   setMode: (policy: AppearPolicy) => void,
   handleUndo: () => void,
   handleRedo: () => void,
-  deps: React.DependencyList,
 ): React.KeyboardEventHandler<HTMLDivElement> => {
   return useCallback(
     (event: React.KeyboardEvent) => {
@@ -216,7 +214,7 @@ const useOnKeyDown = (
         }
       }
     },
-    [editor, vert, setMode, handleUndo, handleRedo, ...deps],
+    [editor, vert, setMode, handleUndo, handleRedo],
   );
 };
 
@@ -340,8 +338,14 @@ export const VedEditor = ({ initialText, dir, appearPolicy, setAppearPolicy }: V
         history.push({ text: plaintext, cursor });
       }
 
-      // Rich and ShowAll modes don't expand rubies — only rebuild on structural changes
-      if (appearPolicy === AppearPolicy.ShowAll || appearPolicy === AppearPolicy.Rich) {
+      // Rebuilding the tree mid-composition would cancel the IME session.
+      if (ReactEditor.isComposing(editor)) return;
+
+      // ShowAll edits the plaintext nodes directly — the tree never needs a rebuild.
+      if (appearPolicy === AppearPolicy.ShowAll) return;
+
+      // Rich mode doesn't expand rubies — only rebuild on structural changes
+      if (appearPolicy === AppearPolicy.Rich) {
         if (textChanged && rubyStructureChanged(value, plaintext, appearPolicy, null, null)) {
           cursor ??= getCursorPlainOffset(editor);
           const tree = buildTreeForMode(lastPlaintextRef.current, appearPolicy);
@@ -457,7 +461,7 @@ export const VedEditor = ({ initialText, dir, appearPolicy, setAppearPolicy }: V
     [editor, setAppearPolicy],
   );
 
-  const onKeyDown = useOnKeyDown(editor, vert, appearPolicy, setMode, handleUndo, handleRedo, []);
+  const onKeyDown = useOnKeyDown(editor, vert, setMode, handleUndo, handleRedo);
 
   return (
     <div className={clsx(styles.editor, vert && styles.vertMode, vert && styles.multiColMode)}>
