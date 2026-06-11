@@ -188,8 +188,30 @@ a.vertMode {
   text-indent: 1em;
 }
 
-.rubyHighlight {
-  color: #808080;
+// Ruby (identity text model): the markup characters |, (, ) live in the text
+// leaves; the wrapper class decides whether they render as an annotation or
+// as visible syntax. Both are pure CSS — the DOM text never changes.
+
+.rubyWrap {
+  display: ruby;
+  ruby-position: over;
+
+  .delim {
+    // Hidden but caret-addressable (display: none would remove caret stops)
+    font-size: 0;
+  }
+
+  .rt {
+    display: ruby-text;
+    font-size: 0.5em;
+  }
+}
+
+.rubyExpanded {
+  .delim,
+  .rt {
+    color: #808080;
+  }
 }
 
 .rubyActive {

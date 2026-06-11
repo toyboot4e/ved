@@ -1,4 +1,5 @@
 import { type Descendant, Editor, Element, Node, type NodeEntry, Text, Transforms } from 'slate';
+import { childrenEqual, lineToChildren } from './rich';
 
 // FIXME: DRY (rich.RubyElement.type)
 const inlineTypes: string[] = ['ruby'];
@@ -8,7 +9,7 @@ export const withInlines = <T extends Editor>(editor: T): T => {
   return editor;
 };
 
-/** Ensure every Text node has `type: 'plaintext'` and unwrap empty ruby elements. */
+/** Ensure every Text node has a type (Slate inserts untyped empty texts around inlines). */
 export const withNormalizeText = <T extends Editor>(editor: T): T => {
   const { normalizeNode } = editor;
   editor.normalizeNode = (entry: NodeEntry) => {
@@ -17,14 +18,39 @@ export const withNormalizeText = <T extends Editor>(editor: T): T => {
       Transforms.setNodes(editor, { type: 'plaintext' } as Partial<Text>, { at: path });
       return;
     }
-    // Remove ruby elements with empty body text (e.g. after splitting with Enter)
-    if (Element.isElement(node) && node.type === 'ruby' && Node.string(node) === '') {
-      Transforms.unwrapNodes(editor, { at: path });
-      return;
-    }
     normalizeNode(entry);
   };
   return editor;
+};
+
+/**
+ * Make every paragraph's structure match the canonical projection of its own
+ * plain text (ruby syntax ⇄ ruby elements). The plain text is preserved
+ * character for character; only the node structure changes, and only in
+ * paragraphs that diverged. Returns whether anything changed — cursor
+ * restoration is the caller's responsibility.
+ */
+export const syncParagraphs = (editor: Editor): boolean => {
+  let changed = false;
+  Editor.withoutNormalizing(editor, () => {
+    for (let i = 0; i < editor.children.length; i++) {
+      const para = editor.children[i];
+      if (!para || !Element.isElement(para) || para.type !== 'paragraph') continue;
+
+      const canonical = lineToChildren(Node.string(para));
+      if (childrenEqual(para.children, canonical)) continue;
+      changed = true;
+
+      // Insert first, then drop the stale children (a Slate element must
+      // never be left without children, even transiently).
+      const staleCount = para.children.length;
+      Transforms.insertNodes(editor, canonical, { at: [i, 0] });
+      for (let j = 0; j < staleCount; j++) {
+        Transforms.removeNodes(editor, { at: [i, canonical.length] });
+      }
+    }
+  });
+  return changed;
 };
 
 /**

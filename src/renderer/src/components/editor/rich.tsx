@@ -1,5 +1,7 @@
+import { clsx } from 'clsx';
 import type React from 'react';
-import type { BaseEditor, BaseRange, Descendant } from 'slate';
+import { createContext, useContext } from 'react';
+import { type BaseEditor, type BaseRange, type Descendant, Node, Path } from 'slate';
 import {
   ReactEditor,
   type RenderElementProps,
@@ -10,6 +12,43 @@ import {
 import * as parse from '../../parse';
 import styles from '../editor.module.scss';
 
+// ---------------------------------------------------------------------------
+// View modes
+// ---------------------------------------------------------------------------
+
+/** How much of the ruby markup is rendered as visible syntax characters. */
+export enum AppearPolicy {
+  /** Rubies in the cursor's paragraph render as syntax. */
+  ByParagraph,
+  /** The ruby under the cursor renders as syntax. */
+  ByCharacter,
+  /** Rubies always render as annotations. */
+  Rich,
+  /** Everything renders as plain text with syntax highlighting. */
+  ShowAll,
+}
+
+/**
+ * The current view mode, consumed by the render components. Rendering is the
+ * ONLY thing that changes between modes — the tree and the text do not.
+ */
+export const AppearPolicyContext = createContext<AppearPolicy>(AppearPolicy.Rich);
+
+// ---------------------------------------------------------------------------
+// Node types (identity text model)
+// ---------------------------------------------------------------------------
+//
+// Every character of the plain text lives in a text leaf — including the
+// ruby markup `|`, `(`, `)`. A ruby is an inline element wrapping typed
+// leaves so that `Node.string(paragraph)` IS the plain line:
+//
+//   |漢(かん)  →  { type: 'ruby', children: [
+//                   { type: 'delim', text: '|'  },
+//                   { type: 'body',  text: '漢'  },
+//                   { type: 'delim', text: '('  },
+//                   { type: 'rt',    text: 'かん' },
+//                   { type: 'delim', text: ')'  } ] }
+
 export type VedElement = Paragraph | RubyElement;
 
 export type VedElementType = VedElement['type'];
@@ -19,13 +58,12 @@ export type Paragraph = {
   children: Descendant[];
 };
 
-// TODO: Treat it as a Text instead
 export type RubyElement = {
   type: 'ruby';
   children: Descendant[];
 };
 
-export type VedText = Plaintext | RubyBody | Rt;
+export type VedText = Plaintext | RubyBody | Rt | Delim;
 
 export type VedTextType = VedText['type'];
 
@@ -35,7 +73,7 @@ export type Plaintext = {
 };
 
 export type RubyBody = {
-  type: 'rubyBody';
+  type: 'body';
   text: string;
 };
 
@@ -44,34 +82,55 @@ export type Rt = {
   text: string;
 };
 
-/** Ruby element with selection-aware highlight. Only ruby elements re-render on selection change. */
+/** Markup characters (`|`, `(`, `)`), hidden in annotation rendering. */
+export type Delim = {
+  type: 'delim';
+  text: string;
+};
+
+// ---------------------------------------------------------------------------
+// Render components
+// ---------------------------------------------------------------------------
+
+/**
+ * Ruby element. Renders as a CSS ruby annotation, or — when "expanded" by the
+ * view mode and cursor position — as plain inline syntax. Both are pure CSS
+ * class switches over the same DOM text, so toggling never moves the cursor
+ * and never breaks IME composition.
+ */
 const RubyElementView = ({ attributes, children, element }: RenderElementProps): React.JSX.Element => {
+  const policy = useContext(AppearPolicyContext);
   const sel = useSlateSelection();
   const editor = useSlateStatic();
 
-  let isActive = false;
+  let active = false;
+  let inActiveParagraph = false;
   if (sel) {
     try {
       const path = ReactEditor.findPath(editor, element);
-      isActive = sel.anchor.path.length >= 3 && sel.anchor.path[0] === path[0] && sel.anchor.path[1] === path[1];
+      active = Path.isAncestor(path, sel.anchor.path);
+      inActiveParagraph = sel.anchor.path[0] === path[0];
     } catch {
       // element not found in tree
     }
   }
 
-  const rtChild = element.children.find((c) => 'type' in c && c.type === 'rt');
-  const rtText = rtChild && 'text' in rtChild ? rtChild.text : '';
+  const expanded =
+    policy === AppearPolicy.ShowAll ||
+    (policy === AppearPolicy.ByParagraph && inActiveParagraph) ||
+    (policy === AppearPolicy.ByCharacter && active);
+
   return (
-    <ruby {...attributes} className={isActive ? styles.rubyActive : undefined}>
+    <span
+      {...attributes}
+      className={clsx(expanded ? styles.rubyExpanded : styles.rubyWrap, active && styles.rubyActive)}
+    >
       {children}
-      <rp>(</rp>
-      <rt contentEditable={false}>{rtText}</rt>
-      <rp>)</rp>
-    </ruby>
+    </span>
   );
 };
 
-/** Ved element component. Note that `withInline` lets us insert `Ruby` as inline element. */
+/** Ved element component. Note that `withInlines` lets us insert `ruby` as an inline element. */
 export const VedElement = ({ attributes, children, element }: RenderElementProps): React.JSX.Element => {
   switch (element.type) {
     case 'paragraph':
@@ -87,25 +146,18 @@ export const VedElement = ({ attributes, children, element }: RenderElementProps
   }
 };
 
-/** Ved leaf component. Supports rubyHighlight decoration for ShowAll mode. */
+/** Ved leaf component. Appearance is decided by the ancestor ruby's wrapper class. */
 export const VedText = ({ attributes, children, leaf }: RenderLeafProps): React.JSX.Element => {
-  // Handle ruby syntax highlighting from decorations (ShowAll mode)
-  if ('rubyHighlight' in leaf) {
-    return (
-      <span {...attributes} className={styles.rubyHighlight}>
-        {children}
-      </span>
-    );
-  }
-
   switch (leaf.type) {
-    case 'plaintext':
-    case 'rubyBody':
-      return <span {...attributes}>{children}</span>;
-    case 'rt':
-      // Hidden: VedElement renders the <rt> annotation above the body
+    case 'delim':
       return (
-        <span {...attributes} style={{ display: 'none' }}>
+        <span {...attributes} className={styles.delim}>
+          {children}
+        </span>
+      );
+    case 'rt':
+      return (
+        <span {...attributes} className={styles.rt}>
           {children}
         </span>
       );
@@ -114,106 +166,69 @@ export const VedText = ({ attributes, children, leaf }: RenderLeafProps): React.
   }
 };
 
-/** Get the Rt text length of a ruby element. */
-export const rubyRtLength = (ruby: { children: Descendant[] }): number => {
-  const rtNode = ruby.children.find((c) => 'type' in c && c.type === 'rt');
-  return rtNode && 'text' in rtNode ? rtNode.text.length : 0;
-};
+// ---------------------------------------------------------------------------
+// Plain text ⇄ tree
+// ---------------------------------------------------------------------------
 
-export const descendantToPlainText = (d: Descendant): string => {
-  switch (d.type) {
-    case 'paragraph':
-      return d.children.map(descendantToPlainText).join('');
-    case 'ruby': {
-      const body = d.children
-        .filter((c) => !('type' in c && c.type === 'rt'))
-        .map(descendantToPlainText)
-        .join('');
-      const rtNode = d.children.find((c) => 'type' in c && c.type === 'rt');
-      const rt = rtNode && 'text' in rtNode ? rtNode.text : '';
-      return `${parse.RUBY_DELIM_FRONT}${body}${parse.RUBY_SEP_MID}${rt}${parse.RUBY_DELIM_END}`;
-    }
-    case 'plaintext':
-      return d.text;
-    case 'rubyBody':
-      return d.text;
-    case 'rt':
-      return d.text;
-  }
-};
-
-/** Serialize an entire editor tree to plaintext. Lines joined by newlines. */
-export const serialize = (nodes: Descendant[]): string => {
-  return nodes.map(descendantToPlainText).join('\n');
-};
+/** Serialize an editor tree to plaintext. Identity: paragraphs hold the text verbatim. */
+export const serialize = (nodes: Descendant[]): string => nodes.map((n) => Node.string(n)).join('\n');
 
 /**
- * Parse a single line of plaintext into rich Slate children (with inline ruby elements).
- * When `expandedRubyIndices` is provided, rubies whose 0-based index is in the set
- * are emitted as plaintext `|body(ruby)` instead of a RubyElement.
+ * The canonical children of a paragraph holding `line`: plaintext runs with
+ * inline ruby elements, all text preserved character for character.
+ *
+ * The shape is Slate-normal so that `syncParagraphs` converges: text nodes
+ * surround every inline (empty if needed), and empty body/rt leaves are
+ * dropped with adjacent delimiters merged (Slate would merge empty text
+ * leaves into their neighbors otherwise).
  */
-export const lineToRichChildren = (line: string, expandedRubyIndices?: Set<number>): Descendant[] => {
-  const formats = parse.parse(line);
-  if (formats.length === 0) {
-    return [{ type: 'plaintext' as const, text: line }];
-  }
-
+export const lineToChildren = (line: string): Descendant[] => {
   const children: Descendant[] = [];
   let cursor = 0;
-  let rubyIdx = 0;
 
-  for (const fmt of formats) {
+  for (const fmt of parse.parse(line)) {
     if (fmt.type !== 'ruby') continue;
+    children.push({ type: 'plaintext', text: line.substring(cursor, fmt.delimFront[0]) });
 
-    // Text before this ruby
-    if (cursor < fmt.delimFront[0]) {
-      children.push({ type: 'plaintext' as const, text: line.substring(cursor, fmt.delimFront[0]) });
+    const pieces: [VedTextType, string][] = [
+      ['delim', line.substring(fmt.delimFront[0], fmt.delimFront[1])],
+      ['body', line.substring(fmt.text[0], fmt.text[1])],
+      ['delim', line.substring(fmt.sepMid[0], fmt.sepMid[1])],
+      ['rt', line.substring(fmt.ruby[0], fmt.ruby[1])],
+      ['delim', line.substring(fmt.delimEnd[0], fmt.delimEnd[1])],
+    ];
+    const rubyChildren: VedText[] = [];
+    for (const [type, text] of pieces) {
+      if (text === '') continue;
+      const prev = rubyChildren[rubyChildren.length - 1];
+      if (prev && prev.type === type) {
+        prev.text += text;
+      } else {
+        rubyChildren.push({ type, text } as VedText);
+      }
     }
-
-    if (expandedRubyIndices?.has(rubyIdx)) {
-      // Expanded: emit as plaintext |body(ruby)
-      children.push({ type: 'plaintext' as const, text: line.substring(fmt.delimFront[0], fmt.delimEnd[1]) });
-    } else {
-      const bodyText = line.substring(fmt.text[0], fmt.text[1]);
-      const rubyText = line.substring(fmt.ruby[0], fmt.ruby[1]);
-      children.push({
-        type: 'ruby' as const,
-        children: [
-          { type: 'plaintext' as const, text: bodyText },
-          { type: 'rt' as const, text: rubyText },
-        ],
-      });
-    }
-
+    children.push({ type: 'ruby', children: rubyChildren });
     cursor = fmt.delimEnd[1];
-    rubyIdx++;
   }
 
-  // Text after last ruby (or empty node so cursor can land after a trailing ruby)
-  if (cursor < line.length) {
-    children.push({ type: 'plaintext' as const, text: line.substring(cursor) });
-  } else if (children.length > 0) {
-    const last = children[children.length - 1];
-    if (last && 'type' in last && last.type === 'ruby') {
-      children.push({ type: 'plaintext' as const, text: '' });
-    }
-  }
-
-  // Slate requires at least one child
-  if (children.length === 0) {
-    children.push({ type: 'plaintext' as const, text: '' });
-  }
-
+  children.push({ type: 'plaintext', text: line.substring(cursor) });
   return children;
 };
 
-/** Parse plaintext into a rich (WYSIWYG) Slate tree with ruby elements. */
-export const plaintextToRichTree = (text: string): Descendant[] => {
-  const lines = text.split('\n');
-  return lines.map((line) => ({
-    type: 'paragraph' as const,
-    children: lineToRichChildren(line),
-  }));
+/** Parse plaintext into a Slate tree. Lines become paragraphs. */
+export const plaintextToTree = (text: string): Descendant[] =>
+  text.split('\n').map((line) => ({ type: 'paragraph' as const, children: lineToChildren(line) }));
+
+/** Structural equality of paragraph children (node types and text). */
+export const childrenEqual = (a: Descendant[], b: Descendant[]): boolean => {
+  if (a.length !== b.length) return false;
+  return a.every((x, i) => {
+    // biome-ignore lint/style/noNonNullAssertion: same length
+    const y = b[i]!;
+    if ('text' in x) return 'text' in y && x.type === y.type && x.text === y.text;
+    if ('text' in y) return false;
+    return x.type === y.type && childrenEqual(x.children, y.children);
+  });
 };
 
 declare module 'slate' {
@@ -221,6 +236,6 @@ declare module 'slate' {
     Editor: BaseEditor & ReactEditor;
     Element: VedElement;
     Text: VedText;
-    Range: BaseRange & { rubyHighlight?: true };
+    Range: BaseRange;
   }
 }

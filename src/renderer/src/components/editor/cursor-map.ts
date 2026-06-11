@@ -1,142 +1,62 @@
 import type { Descendant } from 'slate';
-import { RUBY_DELIM_END, RUBY_DELIM_FRONT, RUBY_SEP_MID } from '../../parse';
-import { rubyRtLength } from './rich';
 
-/**
- * One contiguous run of plain-text characters and the rich position it maps to.
- *
- * The segment table of a paragraph covers its serialized plain text without
- * gaps, in order. `visible: false` marks markup characters that have no
- * character of their own in the rich tree (`|`, `(`, `)`); a cursor on them
- * is parked at `offsetBase` of the target node.
- */
-export type Segment = {
-  /** Start offset (inclusive) in the paragraph's plain text. */
-  plainStart: number;
-  /** End offset (exclusive) in the paragraph's plain text. */
-  plainEnd: number;
-  /** Path of the target text node, relative to the paragraph. */
+// The tree holds the plain text character for character (identity text
+// model), so mapping between plain offsets and Slate points is plain
+// accumulation over text leaves — no format knowledge involved.
+
+type TextEntry = {
+  /** Path relative to the paragraph. */
   path: number[];
-  /** Offset in the target node that corresponds to `plainStart`. */
-  offsetBase: number;
-  /** Whether each plain character advances the rich offset. */
-  visible: boolean;
+  text: string;
 };
 
-/** Compute the body text length of a ruby element (excluding Rt). */
-export const rubyBodyLength = (ruby: { children: Descendant[] }): number =>
-  ruby.children
-    .filter((c) => !('type' in c && c.type === 'rt'))
-    .reduce((sum: number, c: Descendant) => sum + ('text' in c ? c.text.length : 0), 0);
-
-/** Compute the plain-text character count that a single rich child contributes. */
-export const richChildPlainLength = (child: Descendant): number => {
-  if ('type' in child && child.type === 'ruby') {
-    return (
-      RUBY_DELIM_FRONT.length +
-      rubyBodyLength(child) +
-      RUBY_SEP_MID.length +
-      rubyRtLength(child) +
-      RUBY_DELIM_END.length
-    );
-  }
-  if ('text' in child) {
-    return child.text.length;
-  }
-  return 0;
-};
-
-/**
- * Build the segment table for a paragraph's children. This is the only place
- * that knows how a ruby element spreads over its serialized form.
- */
-export const segmentsOf = (children: Descendant[]): Segment[] => {
-  const segments: Segment[] = [];
-  let plain = 0;
-
-  const push = (length: number, path: number[], offsetBase: number, visible: boolean): void => {
-    segments.push({ plainStart: plain, plainEnd: plain + length, path, offsetBase, visible });
-    plain += length;
-  };
-
+/** Text leaves of a paragraph in document order, with their relative paths. */
+const textEntries = (children: Descendant[]): TextEntry[] => {
+  const entries: TextEntry[] = [];
   children.forEach((child, i) => {
-    if ('type' in child && child.type === 'ruby') {
-      const bodyLen = rubyBodyLength(child);
-      const rtLen = rubyRtLength(child);
-
-      // `|` — the cursor lands outside the ruby, at the end of the previous
-      // sibling (Slate normalization guarantees a text node before an inline)
-      const prev = children[i - 1];
-      if (prev !== undefined && 'text' in prev) {
-        push(RUBY_DELIM_FRONT.length, [i - 1], prev.text.length, false);
-      } else {
-        push(RUBY_DELIM_FRONT.length, [i, 0], 0, false);
-      }
-      push(bodyLen, [i, 0], 0, true);
-      push(RUBY_SEP_MID.length, [i, 0], bodyLen, false);
-      push(rtLen, [i, 1], 0, true);
-      push(RUBY_DELIM_END.length, [i, 1], rtLen, false);
-    } else if ('text' in child) {
-      push(child.text.length, [i], 0, true);
+    if ('text' in child) {
+      entries.push({ path: [i], text: child.text });
+    } else if ('children' in child) {
+      (child.children as Descendant[]).forEach((sub, j) => {
+        if ('text' in sub) entries.push({ path: [i, j], text: sub.text });
+      });
     }
   });
-
-  return segments;
+  return entries;
 };
 
 const samePath = (a: number[], b: number[]): boolean => a.length === b.length && a.every((x, i) => x === b[i]);
 
-/** Map a rich editor cursor (child index + offset within child) to a plain editor offset within the same paragraph. */
-export const richOffsetToPlain = (
-  richChildren: Descendant[],
-  childIndex: number,
-  offset: number,
-  subChildIndex?: number,
-): number => {
-  const segments = segmentsOf(richChildren);
+/** Total plain-text length of a paragraph's children. */
+export const paraLength = (children: Descendant[]): number =>
+  textEntries(children).reduce((sum, e) => sum + e.text.length, 0);
 
-  const lookup = (path: number[]): number | null => {
-    let start: number | null = null;
-    for (const seg of segments) {
-      if (!samePath(seg.path, path)) continue;
-      const len = seg.plainEnd - seg.plainStart;
-      if (seg.visible && offset >= seg.offsetBase && offset <= seg.offsetBase + len) {
-        return seg.plainStart + (offset - seg.offsetBase);
-      }
-      start ??= seg.plainStart;
-    }
-    return start;
-  };
-
-  const exact = lookup(subChildIndex === undefined ? [childIndex] : [childIndex, subChildIndex]);
-  if (exact !== null) return exact;
-  // A point on a ruby element itself (no sub-child): treat as its body
-  if (subChildIndex === undefined) {
-    return lookup([childIndex, 0]) ?? 0;
+/** Map a paragraph-relative Slate point to a plain-text offset within the paragraph. */
+export const pointToParaOffset = (children: Descendant[], path: number[], offset: number): number => {
+  let consumed = 0;
+  for (const entry of textEntries(children)) {
+    if (samePath(entry.path, path)) return consumed + Math.min(offset, entry.text.length);
+    consumed += entry.text.length;
   }
-  return 0;
+  // Unknown path — clamp to the end
+  return consumed;
 };
 
-/** Map a plain editor offset to a rich editor cursor position (path within paragraph + offset). */
-export const plainOffsetToRich = (
-  richChildren: Descendant[],
-  plainOffset: number,
-): { path: number[]; offset: number } => {
-  const segments = segmentsOf(richChildren);
-  if (segments.length === 0) return { path: [0], offset: 0 };
-
-  for (const seg of segments) {
-    if (plainOffset < seg.plainEnd) {
-      const local = Math.max(0, plainOffset - seg.plainStart);
-      return { path: seg.path, offset: seg.offsetBase + (seg.visible ? local : 0) };
+/**
+ * Map a plain-text offset to a paragraph-relative Slate point.
+ * A boundary offset maps to the end of the earlier leaf, so a cursor right
+ * before a ruby stays outside of it.
+ */
+export const paraOffsetToPoint = (children: Descendant[], offset: number): { path: number[]; offset: number } => {
+  const entries = textEntries(children);
+  let consumed = 0;
+  for (const entry of entries) {
+    if (offset <= consumed + entry.text.length) {
+      return { path: entry.path, offset: Math.max(0, offset - consumed) };
     }
+    consumed += entry.text.length;
   }
-
-  // Past the end — clamp to the last segment's end
-  // biome-ignore lint/style/noNonNullAssertion: length checked above
-  const last = segments[segments.length - 1]!;
-  return {
-    path: last.path,
-    offset: last.offsetBase + (last.visible ? last.plainEnd - last.plainStart : 0),
-  };
+  // Past the end — clamp to the last leaf's end
+  const last = entries[entries.length - 1];
+  return last ? { path: last.path, offset: last.text.length } : { path: [0], offset: 0 };
 };

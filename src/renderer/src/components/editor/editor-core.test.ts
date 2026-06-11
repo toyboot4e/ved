@@ -1,6 +1,7 @@
 import { createEditor, type Descendant } from 'slate';
 import { describe, expect, it } from 'vitest';
-import { PlainTextHistory, replaceContent, withInlines, withNormalizeText } from './editor-core';
+import { PlainTextHistory, replaceContent, syncParagraphs, withInlines, withNormalizeText } from './editor-core';
+import { serialize } from './rich';
 
 // ---------------------------------------------------------------------------
 // Helper
@@ -44,6 +45,75 @@ describe('replaceContent', () => {
 
     replaceContent(editor, [paragraph('replaced again')]);
     expect(getTexts(editor)).toEqual(['replaced again']);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// syncParagraphs
+// ---------------------------------------------------------------------------
+
+describe('syncParagraphs', () => {
+  it('converts ruby syntax into a ruby element', () => {
+    const editor = createTestEditor([paragraph('|漢(かん)字')]);
+    expect(syncParagraphs(editor)).toBe(true);
+    expect(editor.children).toEqual([
+      {
+        type: 'paragraph',
+        children: [
+          { type: 'plaintext', text: '' },
+          {
+            type: 'ruby',
+            children: [
+              { type: 'delim', text: '|' },
+              { type: 'body', text: '漢' },
+              { type: 'delim', text: '(' },
+              { type: 'rt', text: 'かん' },
+              { type: 'delim', text: ')' },
+            ],
+          },
+          { type: 'plaintext', text: '字' },
+        ],
+      },
+    ]);
+  });
+
+  it('is idempotent', () => {
+    const editor = createTestEditor([paragraph('|漢(かん)字')]);
+    syncParagraphs(editor);
+    expect(syncParagraphs(editor)).toBe(false);
+  });
+
+  it('flattens a ruby whose syntax broke', () => {
+    const editor = createTestEditor([
+      {
+        type: 'paragraph',
+        children: [
+          { type: 'plaintext', text: '' },
+          {
+            type: 'ruby',
+            children: [
+              { type: 'delim', text: '|' },
+              { type: 'body', text: '漢' },
+              { type: 'delim', text: '(' },
+              { type: 'rt', text: 'かん' },
+              // `)` deleted by the user
+            ],
+          },
+          { type: 'plaintext', text: '字' },
+        ],
+      },
+    ]);
+    expect(syncParagraphs(editor)).toBe(true);
+    expect(editor.children).toEqual([paragraph('|漢(かん字')]);
+  });
+
+  it('leaves untouched paragraphs alone and preserves the text', () => {
+    const editor = createTestEditor([paragraph('plain'), paragraph('|漢(かん)')]);
+    const before = serialize(editor.children);
+    syncParagraphs(editor);
+    expect(serialize(editor.children)).toBe(before);
+    // first paragraph untouched (single plaintext node)
+    expect(editor.children[0]).toEqual(paragraph('plain'));
   });
 });
 
