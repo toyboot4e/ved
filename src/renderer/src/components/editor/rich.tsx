@@ -93,10 +93,18 @@ export type Delim = {
 // ---------------------------------------------------------------------------
 
 /**
- * Ruby element. Renders as a CSS ruby annotation, or — when "expanded" by the
- * view mode and cursor position — as plain inline syntax. Both are pure CSS
- * class switches over the same DOM text, so toggling never moves the cursor
- * and never breaks IME composition.
+ * Ruby element. Collapsed, it renders as a native <ruby> whose annotation is
+ * a READ-ONLY duplicate of the rt leaf: the in-flow markup leaves (delim/rt)
+ * are display: none, so the caret skips them and never wanders into the
+ * annotation. Expanded (by the view mode and cursor position), the ruby
+ * layout is neutralized and the leaves render as plain syntax.
+ *
+ * Both are CSS class switches over the same model text, so toggling never
+ * moves the cursor and never breaks IME composition. The duplication is
+ * presentation-only — the model text stays the single source of truth.
+ *
+ * (CSS-only ruby over the leaf spans mis-pairs: Chromium aligns the
+ * annotation with the zero-width delimiter instead of the base.)
  */
 const RubyElementView = ({ attributes, children, element }: RenderElementProps): React.JSX.Element => {
   const policy = useContext(AppearPolicyContext);
@@ -120,13 +128,17 @@ const RubyElementView = ({ attributes, children, element }: RenderElementProps):
     (policy === AppearPolicy.ByParagraph && inActiveParagraph) ||
     (policy === AppearPolicy.ByCharacter && active);
 
+  const rtLeaf = element.children.find((c) => 'type' in c && c.type === 'rt');
+  const rtText = rtLeaf && 'text' in rtLeaf ? rtLeaf.text : '';
+
   return (
-    <span
+    <ruby
       {...attributes}
       className={clsx(expanded ? styles.rubyExpanded : styles.rubyWrap, active && styles.rubyActive)}
     >
       {children}
-    </span>
+      <rt contentEditable={false}>{rtText}</rt>
+    </ruby>
   );
 };
 

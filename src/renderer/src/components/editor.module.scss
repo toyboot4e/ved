@@ -190,27 +190,34 @@ a.vertMode {
 
 // Ruby (identity text model): the markup characters |, (, ) live in the text
 // leaves; the wrapper class decides whether they render as an annotation or
-// as visible syntax. Both are pure CSS — the DOM text never changes.
+// as visible syntax. Both are pure CSS — the model text never changes.
 
 .rubyWrap {
-  display: ruby;
-  ruby-position: over;
-
-  .delim {
-    // Hidden but caret-addressable (display: none would remove caret stops)
-    font-size: 0;
+  // Collapsed: hide the in-flow markup leaves entirely (the caret skips
+  // display: none text), and show the read-only <rt> duplicated by the
+  // element renderer as the annotation.
+  .delim,
+  .rt {
+    display: none;
   }
 
-  .rt {
-    display: ruby-text;
+  rt {
     font-size: 0.5em;
+    user-select: none;
   }
 }
 
 .rubyExpanded {
+  // Expanded: neutralize the ruby layout; the leaves render as plain syntax
+  display: inline;
+
   .delim,
   .rt {
     color: #808080;
+  }
+
+  rt {
+    display: none;
   }
 }
 

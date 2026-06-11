@@ -142,8 +142,8 @@ describe('cursor across syncParagraphs', () => {
     restoreCursorSync(editor, cursor!);
 
     expect(getCursorPlainOffset(editor)).toEqual({ para: 0, offset: 5 });
-    // Restored inside the rt leaf, after ん
-    expect(editor.selection?.anchor).toEqual({ path: [0, 1, 3], offset: 2 });
+    // Restored at the same plain offset, biased past the hidden rt boundary
+    expect(editor.selection?.anchor).toEqual({ path: [0, 1, 4], offset: 0 });
   });
 
   it('returns null without a selection', () => {

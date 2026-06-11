@@ -146,13 +146,15 @@ describe('cursor-map examples', () => {
 
     // plain:  |  漢  (  か  ん  )  字
     // offset: 0  1   2  3   4   5  6  7
+    // Boundaries after hidden markup leaves (delim/rt) prefer the next
+    // visible leaf, so restored carets land on rendered text.
     expect(paraOffsetToPoint(children, 0)).toEqual({ path: [0], offset: 0 }); // before `|`, outside the ruby
-    expect(paraOffsetToPoint(children, 1)).toEqual({ path: [1, 0], offset: 1 }); // after `|`
-    expect(paraOffsetToPoint(children, 2)).toEqual({ path: [1, 1], offset: 1 }); // after 漢
-    expect(paraOffsetToPoint(children, 3)).toEqual({ path: [1, 2], offset: 1 }); // after `(`
+    expect(paraOffsetToPoint(children, 1)).toEqual({ path: [1, 1], offset: 0 }); // after `|` → body start
+    expect(paraOffsetToPoint(children, 2)).toEqual({ path: [1, 1], offset: 1 }); // after 漢 (body is visible)
+    expect(paraOffsetToPoint(children, 3)).toEqual({ path: [1, 3], offset: 0 }); // after `(` → rt start
     expect(paraOffsetToPoint(children, 4)).toEqual({ path: [1, 3], offset: 1 }); // after か
-    expect(paraOffsetToPoint(children, 5)).toEqual({ path: [1, 3], offset: 2 }); // after ん
-    expect(paraOffsetToPoint(children, 6)).toEqual({ path: [1, 4], offset: 1 }); // after `)`
+    expect(paraOffsetToPoint(children, 5)).toEqual({ path: [1, 4], offset: 0 }); // after ん → `)` start
+    expect(paraOffsetToPoint(children, 6)).toEqual({ path: [2], offset: 0 }); // after `)` → trailing text
     expect(paraOffsetToPoint(children, 7)).toEqual({ path: [2], offset: 1 }); // after 字
 
     expect(pointToParaOffset(children, [1, 1], 0)).toBe(1); // 漢 start

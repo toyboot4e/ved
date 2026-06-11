@@ -66,10 +66,18 @@ current selection:
 | `ByCharacter` | Ctrl+F | the one containing the cursor |
 | `Rich` | Ctrl+G | none |
 
-Collapsed rendering (`.rubyWrap`): wrapper `display: ruby`, delimiters
-`font-size: 0` (hidden but caret-addressable — `display: none` would remove
-the caret stops), `rt` as `display: ruby-text`. Expanded rendering
-(`.rubyExpanded`): plain inline text with the markup in gray.
+Collapsed rendering (`.rubyWrap`): a native `<ruby>` element whose
+annotation is a **read-only duplicate** of the rt leaf
+(`<rt contentEditable={false}>`), while the in-flow markup leaves
+(`delim`/`rt`) are `display: none` — so the caret skips the markup entirely
+and can never wander into the annotation. Expanded rendering
+(`.rubyExpanded`): ruby layout neutralized, leaves render as plain syntax in
+gray, the duplicate annotation hidden. The duplication is presentation-only;
+the model text remains the single source of truth.
+
+Why not CSS-only ruby over the leaves (the spike's original idea): Chromium
+mis-pairs anonymous ruby bases across slate-react's nested leaf spans — the
+annotation aligns with a zero-width delimiter instead of spanning the base.
 
 Because expansion is a render-time decision, cursor movement and mode
 switches never touch the tree: no rebuild, no cursor restore, no IME hazard.
@@ -98,7 +106,9 @@ zero format knowledge:
   of leaves before the point.
 - `paraOffsetToPoint(children, offset)` — first leaf reaching the offset;
   boundary offsets map to the *end* of the earlier leaf, so a cursor right
-  before a ruby stays outside it.
+  before a ruby stays outside it — except after `delim`/`rt` leaves, where
+  the next leaf's start is preferred so restored carets land on visible
+  text (those leaves render `display: none` in collapsed rubies).
 
 Used only around structure repair and history restore. Round-trip properties
 are fast-check-tested in `cursor-map.test.ts`.
@@ -174,13 +184,16 @@ to download the binary.
 
 ## Known papercuts / future work
 
-- Hidden delimiters occupy caret positions: at a visual line end the caret
-  can sit before a hidden `)` (e.g. after pressing `End`), and arrow keys
-  take extra presses across collapsed markup. Worse, `Home`/`End` move to
-  *visual* line extremes, which with a ruby at the line edge can be inside
-  the annotation box (caught by `e2e/smoke.mjs`). Candidate fix:
-  caret-movement overrides that skip `delim` leaves and map Home/End to
-  text-order line extremes.
+- Around collapsed rubies, several model positions render at the same
+  visual spot (the hidden markup characters have zero width). Chromium may
+  snap the DOM caret within such a cluster, occasionally placing input one
+  model position away from where the caret was restored. Mitigations in
+  place: the parser keeps partially-typed syntax plain (no mid-typing
+  restructuring), and cursor restoration prefers visible leaves at
+  boundaries. Residual risk is at ruby edges only.
+- 0 ms-interval automated key bursts can race the React re-render after a
+  structure sync (`e2e/smoke.mjs` types with a 60 ms delay). Real typing
+  and IME commits do not produce such bursts.
 - `syncParagraphs` compares every paragraph on every change; fine at current
   sizes, trivially limitable to dirty paragraphs if it ever shows up in
   profiles.

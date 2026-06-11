@@ -97,3 +97,20 @@ character. What this buys:
 - Slate normalization merges adjacent text nodes with identical marks; the
   delim/body/rt leaves alternate, so no merging occurs within a ruby, but
   custom `normalizeNode` rules must preserve the leaf typing.
+
+## Production addendum
+
+Two of the spike's conclusions did not survive contact with slate-react:
+
+1. **CSS-only ruby mis-pairs over leaf spans.** With the editor's nested
+   `data-slate-leaf`/`data-slate-string` structure, Chromium aligned the
+   annotation with a zero-width delimiter instead of spanning the base
+   (measured: annotation at the base's *end* coordinate). The production
+   rendering uses a native `<ruby>` with a read-only duplicated `<rt>`
+   instead; the in-flow markup leaves are hidden.
+2. **`font-size: 0` lost to `display: none`.** Caret-addressable hidden
+   characters meant the caret visibly stopped on (and could type into)
+   markup and the annotation. With the duplicated-annotation rendering,
+   `display: none` leaves are skipped by the caret — the better UX — and
+   programmatic selection into them still works for cursor restoration,
+   as this spike itself established.

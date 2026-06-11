@@ -13,7 +13,10 @@ await page.waitForSelector('#editor-content');
 
 const snap = () =>
   page.evaluate(() => {
-    const el = document.getElementById('editor-content');
+    const el = document.getElementById('editor-content').cloneNode(true);
+    // Drop the read-only duplicated annotations — they are presentation,
+    // not model text
+    for (const rt of el.querySelectorAll('rt[contenteditable=false]')) rt.remove();
     return {
       // ﻿ anchors come from slate-react's empty-leaf rendering
       text: (el.textContent ?? '').replaceAll('﻿', ''),
@@ -47,7 +50,9 @@ try {
       getSelection().collapse(first, 0);
     });
   await caretToStart();
-  await page.keyboard.type('|試(し)あ');
+  // Human-ish key timing: 0ms-interval bursts can race the React re-render
+  // after a structure sync (not reachable by real typing or IME commits)
+  await page.keyboard.type('|試(し)あ', { delay: 60 });
   s = await snap();
   assert.equal(s.text, '|試(し)あ|ルビ(ruby)');
   assert.equal(s.rubies, 2);

@@ -59,6 +59,29 @@ describe('lineToChildren', () => {
     ]);
   });
 
+  it('a lone | before a ruby stays plain (the later | wins)', () => {
+    expect(lineToChildren('||ルビ(ruby)')).toEqual([
+      { type: 'plaintext', text: '|' },
+      {
+        type: 'ruby',
+        children: [
+          { type: 'delim', text: '|' },
+          { type: 'body', text: 'ルビ' },
+          { type: 'delim', text: '(' },
+          { type: 'rt', text: 'ruby' },
+          { type: 'delim', text: ')' },
+        ],
+      },
+      { type: 'plaintext', text: '' },
+    ]);
+  });
+
+  it('partially-typed syntax before a ruby stays plain', () => {
+    const children = lineToChildren('|試(し|ルビ(ruby)');
+    expect(children[0]).toEqual({ type: 'plaintext', text: '|試(し' });
+    expect(children[1]).toMatchObject({ type: 'ruby' });
+  });
+
   it('never produces empty text leaves inside a ruby', () => {
     fc.assert(
       fc.property(arbMarkupText(), (line) => {
