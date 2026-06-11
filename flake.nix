@@ -31,13 +31,13 @@
             cairo
             # Wayland (required for native Wayland and its text-input IME protocol)
             wayland
-            xorg.libX11
-            xorg.libXcomposite
-            xorg.libXdamage
-            xorg.libXext
-            xorg.libXfixes
-            xorg.libXrandr
-            xorg.libxcb
+            libx11
+            libxcomposite
+            libxdamage
+            libxext
+            libxfixes
+            libxrandr
+            libxcb
             libgbm
             expat
             libxkbcommon
@@ -47,6 +47,14 @@
           ] ++ lib.optionals stdenvNoCC.isDarwin [
             #
           ];
+
+          # IM module cache so the prebuilt Electron's gtk3 can resolve
+          # GTK_IM_MODULE=fcitx/fcitx5 — required for IME on X11.
+          # (The gtk3 package's own cache knows nothing about fcitx5-gtk.)
+          gtk3ImmodulesCache = pkgs.runCommand "gtk3-immodules.cache" { } ''
+            ${pkgs.gtk3.dev}/bin/gtk-query-immodules-3.0 \
+              ${pkgs.fcitx5-gtk}/lib/gtk-3.0/3.0.0/immodules/*.so > $out
+          '';
         in
         {
           default = pkgs.mkShell {
@@ -61,6 +69,8 @@
 
             shellHook = ''
               export LD_LIBRARY_PATH="$LD_LIBRARY_PATH:${pkgs.lib.makeLibraryPath deps}"
+            '' + pkgs.lib.optionalString pkgs.stdenvNoCC.isLinux ''
+              export GTK_IM_MODULE_FILE=${gtk3ImmodulesCache}
             '';
           };
         }
