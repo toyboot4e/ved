@@ -1,7 +1,7 @@
 import fc from 'fast-check';
 import type { Descendant } from 'slate';
 import { describe, expect, it } from 'vitest';
-import { plainOffsetToRich, richChildPlainLength, richOffsetToPlain, rubyBodyLength } from './cursor-map';
+import { plainOffsetToRich, richChildPlainLength, richOffsetToPlain, rubyBodyLength, segmentsOf } from './cursor-map';
 import { rubyRtLength } from './rich';
 
 // ---------------------------------------------------------------------------
@@ -240,6 +240,59 @@ describe('cursor-map PBT', () => {
       }),
       { numRuns: 500 },
     );
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Segment table
+// ---------------------------------------------------------------------------
+
+describe('segmentsOf', () => {
+  it('segments are contiguous and cover the whole plain text', () => {
+    fc.assert(
+      fc.property(arbRichChildren(), (children) => {
+        const segments = segmentsOf(children);
+        let plain = 0;
+        for (const seg of segments) {
+          expect(seg.plainStart).toBe(plain);
+          expect(seg.plainEnd).toBeGreaterThanOrEqual(seg.plainStart);
+          plain = seg.plainEnd;
+        }
+        expect(plain).toBe(totalPlainLength(children));
+      }),
+      { numRuns: 200 },
+    );
+  });
+
+  it('|漢(かん)字 — exact segment table', () => {
+    const children: Descendant[] = [
+      { type: 'plaintext', text: '' },
+      {
+        type: 'ruby',
+        children: [
+          { type: 'plaintext', text: '漢' },
+          { type: 'rt', text: 'かん' },
+        ],
+      },
+      { type: 'plaintext', text: '字' },
+    ];
+
+    expect(segmentsOf(children)).toEqual([
+      // empty leading plaintext
+      { plainStart: 0, plainEnd: 0, path: [0], offsetBase: 0, visible: true },
+      // `|` parks the cursor at the end of the previous sibling
+      { plainStart: 0, plainEnd: 1, path: [0], offsetBase: 0, visible: false },
+      // body 漢
+      { plainStart: 1, plainEnd: 2, path: [1, 0], offsetBase: 0, visible: true },
+      // `(` parks at body end
+      { plainStart: 2, plainEnd: 3, path: [1, 0], offsetBase: 1, visible: false },
+      // rt かん
+      { plainStart: 3, plainEnd: 5, path: [1, 1], offsetBase: 0, visible: true },
+      // `)` parks at rt end
+      { plainStart: 5, plainEnd: 6, path: [1, 1], offsetBase: 2, visible: false },
+      // trailing 字
+      { plainStart: 6, plainEnd: 7, path: [2], offsetBase: 0, visible: true },
+    ]);
   });
 });
 

@@ -91,16 +91,35 @@ cursor → refocus).
 ## Cursor mapping (`cursor-map.ts`)
 
 Rebuilding the tree destroys the Slate selection, so the cursor is saved as a
-**plain offset** within its paragraph before a rebuild and re-resolved after:
+**plain offset** within its paragraph before a rebuild and re-resolved after.
 
-- `richOffsetToPlain(children, childIdx, offset, subChildIdx)` walks the
-  paragraph's children, counting each child's plain length
-  (`|` + body + `(` + rt + `)` for a ruby element).
-- `plainOffsetToRich(children, plainOffset)` is the inverse; offsets that land
-  on invisible syntax characters are clamped to the nearest visible position.
+The mapping is built on an explicit **segment table**: `segmentsOf(children)`
+walks a paragraph's children once and emits ordered, gap-free segments
+
+```
+{ plainStart, plainEnd, path, offsetBase, visible }
+```
+
+covering the serialized plain text. Content runs (body text, rt text,
+plaintext) are `visible: true`; markup characters (`|`, `(`, `)`) are
+`visible: false` and park the cursor at `offsetBase` of their target node
+(e.g. `|` → end of the previous sibling, `(` → body end). Both directions
+are then plain lookups over the table:
+
+- `plainOffsetToRich`: first segment containing the offset.
+- `richOffsetToPlain`: the visible segment of the node covering the offset.
+
+`segmentsOf` is the *only* place that knows how a ruby spreads over its
+serialized form; the syntax characters themselves are defined once in
+`parse.ts` (`RUBY_DELIM_FRONT`/`RUBY_SEP_MID`/`RUBY_DELIM_END`) and shared by
+the parser, the serializer, and the segment builder. The table is derived
+from the live tree (not from re-parsing the text), so it stays correct even
+mid-edit when the tree temporarily diverges from the canonical projection.
 
 Plain offsets are stable across projections — the same offset is valid in any
-view mode, which is what makes mode switching cursor-preserving.
+view mode, which is what makes mode switching cursor-preserving. The
+roundtrip properties are covered by fast-check tests in
+`cursor-map.test.ts`.
 
 ## History (`editor-core.ts`)
 
@@ -136,15 +155,19 @@ module on X11.
 
 ## Known weaknesses / future directions
 
-The syntax knowledge is duplicated three times: `parse.ts` (spans),
-`rich.tsx` (tree building + serialization), and `cursor-map.ts` (the
-`1 + body + 1 + rt + 1` arithmetic). Each new format (bold, scene breaks, …)
-multiplies hand-written offset math, and structure-change detection
-(`rubyStructureChanged`) is a heuristic count comparison.
+The segment table (above) centralizes the position arithmetic, but two
+sources of format knowledge remain: `parse.ts` spans → tree building in
+`rich.tsx`, and tree shape → segments in `cursor-map.ts`. Remaining steps,
+in order of ambition:
 
-Two candidate refactorings, in order of preference:
+1. **Replace `rubyStructureChanged`.** Structure-change detection is still a
+   heuristic ruby-count comparison. With projection in one place it can
+   become exact: project the new plaintext, normalize like Slate would
+   (empty text nodes around inlines), and compare shapes with the current
+   tree. Care: a naive comparison that ignores Slate's normalization would
+   mismatch forever and rebuild on every keystroke.
 
-1. **Identity text model + decorations.** Keep *every* character of the
+2. **Identity text model + decorations.** Keep *every* character of the
    plaintext in the Slate text nodes in all modes, and style the syntax
    characters away (CSS can render real ruby from inline content:
    `display: ruby` / `ruby-text` are supported by Chromium ≥ 128, and
@@ -153,16 +176,9 @@ Two candidate refactorings, in order of preference:
    unnecessary, and view modes degrade to pure decoration changes. Needs a
    spike to confirm `vertical-rl` + CSS ruby + column layout interact well.
 
-2. **Single projection pass with a segment table.** If (1) fails, make tree
-   building emit a position map as a by-product: an ordered list of
-   `{ plainRange, childIndex, childOffsetBase, visible }` segments per
-   paragraph. Both cursor directions become binary searches; the ±1
-   arithmetic and `rubyStructureChanged` disappear (a structural change is
-   "the projected children differ from the current tree"). The old `BiMap`
-   (removed) was this idea with the wrong data structure — per-character
-   `Map`s keyed by object identity instead of sorted interval arrays.
-
-Either way, the projection should stay backend-independent: segments
-reference "paragraph child index + offset", and only a thin adapter converts
-those to Slate `Path`s. That keeps the format logic testable without Slate
-and portable if the editor backend ever changes.
+The segment representation is backend-independent by design: segments
+reference "paragraph child index + offset", and only the caller interprets
+those as Slate `Path`s. That keeps the format logic testable without Slate
+and portable if the editor backend ever changes (the old `BiMap` — removed —
+was the same idea with the wrong data structure: per-character `Map`s keyed
+by object identity).

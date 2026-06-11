@@ -131,7 +131,7 @@ export const descendantToPlainText = (d: Descendant): string => {
         .join('');
       const rtNode = d.children.find((c) => 'type' in c && c.type === 'rt');
       const rt = rtNode && 'text' in rtNode ? rtNode.text : '';
-      return `|${body}(${rt})`;
+      return `${parse.RUBY_DELIM_FRONT}${body}${parse.RUBY_SEP_MID}${rt}${parse.RUBY_DELIM_END}`;
     }
     case 'plaintext':
       return d.text;
