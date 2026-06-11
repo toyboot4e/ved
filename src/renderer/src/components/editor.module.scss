@@ -68,9 +68,10 @@ $editor-width: $content-width + $pad-x * 2;
     overflow-y: auto;
   }
 
-  // Hide scrollbar
+  // Hide scrollbar (vertical and horizontal)
   &::-webkit-scrollbar {
     width: 0px;
+    height: 0px;
     background: transparent;
   }
 }
@@ -116,14 +117,37 @@ $editor-width: $content-width + $pad-x * 2;
 
 // Vertical writing mode
 
+// Line length cap in the continuous vertical mode (1em ≈ 1 CJK character)
+$max-line-chars: 80;
+$col-gap: $pad-y * 2;
+
 .vertMode {
   &.editor {
     &:not(.multiColMode) {
       overflow-x: scroll;
+      // The scroll container itself must be vertical-rl: the first line then
+      // starts at the right edge and overflow grows leftwards, scrollable.
+      writing-mode: vertical-rl;
+      -webkit-writing-mode: vertical-rl;
     }
 
     &.multiColMode {
       overflow-y: scroll;
+      // Separator between column rows. Chromium does not paint column-rule
+      // between overflow columns, so draw the lines as a repeating background
+      // that scrolls with the content (period = column height + gap, phase =
+      // the content's top margin).
+      background-image: repeating-linear-gradient(
+        to bottom,
+        transparent 0,
+        transparent #{$col-size + $pad-y - 0.5px},
+        #808080 #{$col-size + $pad-y - 0.5px},
+        #808080 #{$col-size + $pad-y + 0.5px},
+        transparent #{$col-size + $pad-y + 0.5px},
+        transparent #{$col-size + $col-gap}
+      );
+      background-attachment: local;
+      background-position: 0 $pad-y;
     }
   }
 
@@ -136,9 +160,10 @@ $editor-width: $content-width + $pad-x * 2;
     -webkit-writing-mode: vertical-rl;
     -ms-writing-mode: tb-rl;
 
-    // Continuous flow: fill the editor height, grow leftwards (horizontal scroll)
+    // Continuous flow: lines run at most $max-line-chars characters,
+    // bounded by the editor height
     &:not(.multiColMode) {
-      height: 100%;
+      height: min(100%, calc(#{$max-line-chars}em + #{$pad-y * 2}));
       box-sizing: border-box;
       padding: $pad-y $pad-x;
     }
@@ -148,11 +173,8 @@ $editor-width: $content-width + $pad-x * 2;
       height: $col-size;
       margin: $pad-y $pad-x $footer-height $pad-x;
       padding: 0 0 $pad-y 0;
-      border-bottom: solid 1px #808080;
-      column-span: all;
       column-width: $col-size;
-      column-gap: $pad-y * 2;
-      column-rule: solid 1px #808080;
+      column-gap: $col-gap;
     }
   }
 }
