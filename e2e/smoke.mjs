@@ -86,7 +86,7 @@ try {
   // The caret is placed programmatically: visual Home/End can land inside
   // the annotation box (known caret papercut, see docs/architecture.md).
   await page.click('#editor-content');
-  await pressMod('g'); // Rich
+  await pressMod('4'); // Rich
   const caretToStart = () =>
     page.evaluate(() => {
       const el = document.getElementById('editor-content');
@@ -108,14 +108,14 @@ try {
   step('typed syntax converts to a ruby element');
 
   // ShowAll: same text, all rubies expanded
-  await pressMod('s');
+  await pressMod('1');
   s = await snap();
   assert.equal(s.text, '|試(し)あ|ルビ(ruby)');
   assert.equal(s.collapsed, 0);
   step('ShowAll expands without changing text');
 
   // Rich again: collapsed
-  await pressMod('g');
+  await pressMod('4');
   s = await snap();
   assert.equal(s.collapsed, 2);
   step('Rich collapses again');

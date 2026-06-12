@@ -101,11 +101,12 @@ const useOnKeyDown = (
       }
 
       if (mod) {
+        // Digits, not letters: Ctrl+S/O are file shortcuts (handled app-level)
         const modeMap: Record<string, AppearPolicy> = {
-          s: AppearPolicy.ShowAll,
-          d: AppearPolicy.ByParagraph,
-          f: AppearPolicy.ByCharacter,
-          g: AppearPolicy.Rich,
+          '1': AppearPolicy.ShowAll,
+          '2': AppearPolicy.ByParagraph,
+          '3': AppearPolicy.ByCharacter,
+          '4': AppearPolicy.Rich,
         };
         const policy = modeMap[event.key];
         if (policy !== undefined) {

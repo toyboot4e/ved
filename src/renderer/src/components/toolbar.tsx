@@ -17,14 +17,14 @@ const writingModeItems: { mode: WritingMode; label: string; title: string }[] = 
 ];
 
 const appearPolicyItems: { policy: AppearPolicy; label: string; title: string }[] = [
-  { policy: AppearPolicy.ShowAll, label: 'Plain', title: 'Plain text with ruby syntax (Ctrl+S)' },
+  { policy: AppearPolicy.ShowAll, label: 'Plain', title: 'Plain text with ruby syntax (Ctrl+1)' },
   {
     policy: AppearPolicy.ByParagraph,
     label: 'Paragraph',
-    title: 'Expand ruby syntax in the cursor paragraph (Ctrl+D)',
+    title: 'Expand ruby syntax in the cursor paragraph (Ctrl+2)',
   },
-  { policy: AppearPolicy.ByCharacter, label: 'Character', title: 'Expand ruby syntax under the cursor (Ctrl+F)' },
-  { policy: AppearPolicy.Rich, label: 'Rich', title: 'Always render ruby (Ctrl+G)' },
+  { policy: AppearPolicy.ByCharacter, label: 'Character', title: 'Expand ruby syntax under the cursor (Ctrl+3)' },
+  { policy: AppearPolicy.Rich, label: 'Rich', title: 'Always render ruby (Ctrl+4)' },
 ];
 
 /** Prevent toolbar clicks from stealing focus (and the selection) from the editor. */

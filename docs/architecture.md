@@ -61,10 +61,14 @@ current selection:
 
 | Mode | Shortcut | Expanded rubies |
 |---|---|---|
-| `ShowAll` ("Plain") | Ctrl+S | all |
-| `ByParagraph` | Ctrl+D | those in the cursor's paragraph |
-| `ByCharacter` | Ctrl+F | the one containing the cursor |
-| `Rich` | Ctrl+G | none |
+| `ShowAll` ("Plain") | Ctrl+1 | all |
+| `ByParagraph` | Ctrl+2 | those in the cursor's paragraph |
+| `ByCharacter` | Ctrl+3 | the one containing the cursor |
+| `Rich` | Ctrl+4 | none |
+
+(The mod key is Cmd on macOS. Letter chords are reserved for file shortcuts
+— Ctrl+O open, Ctrl+S save, Ctrl+Shift+S save as — which live at the app
+level, not in the editor; see `src/renderer/src/app.tsx`.)
 
 Collapsed rendering (`.rubyWrap`): a native `<ruby>` element whose
 annotation is a **read-only duplicate** of the rt leaf
