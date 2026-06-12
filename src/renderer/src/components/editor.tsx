@@ -23,7 +23,7 @@ import {
   withNormalizeText,
 } from './editor/editor-core';
 import { AppearPolicy, AppearPolicyContext, plaintextToTree, serialize, VedElement, VedText } from './editor/rich';
-import { lineToScroll, type ScrollGeom, type ScrollMode, scrollToLine } from './editor/scroll-keep';
+import { lineToScroll, revealDelta, type ScrollGeom, type ScrollMode, scrollToLine } from './editor/scroll-keep';
 import styles from './editor.module.scss';
 
 export { AppearPolicy } from './editor/rich';
@@ -197,6 +197,43 @@ const useKeepScrollPosition = (
   return onScroll;
 };
 
+/**
+ * Switching the ruby display reflows the text (collapsed rubies are much
+ * shorter than their syntax), which can push the caret's line off-screen.
+ * Best effort, Typora-style: after the reflow, if the caret is no longer
+ * visible, scroll it to the nearest edge — and never move otherwise.
+ */
+const useRevealCaretOnPolicyChange = (
+  scrollerRef: React.RefObject<HTMLDivElement | null>,
+  editor: Editor,
+  appearPolicy: AppearPolicy,
+): void => {
+  // biome-ignore lint/correctness/useExhaustiveDependencies(appearPolicy): the policy change is the trigger — the effect reads the reflowed layout, not the value
+  useLayoutEffect(() => {
+    const scroller = scrollerRef.current;
+    const selection = editor.selection;
+    if (!scroller || !selection) return;
+
+    let rect: DOMRect | undefined;
+    try {
+      const caret = { anchor: selection.focus, focus: selection.focus };
+      const domRange = ReactEditor.toDOMRange(editor, caret);
+      rect = domRange.getClientRects()[0] ?? domRange.getBoundingClientRect();
+    } catch {
+      return; // selection not currently mapped to the DOM
+    }
+    // Collapsed ranges at element boundaries can yield an empty rect
+    if (!rect || (rect.top === 0 && rect.bottom === 0 && rect.left === 0 && rect.right === 0)) return;
+
+    const view = scroller.getBoundingClientRect();
+    const top = view.top + scroller.clientTop;
+    const left = view.left + scroller.clientLeft;
+    const cushion = 8;
+    scroller.scrollTop += revealDelta(rect.top, rect.bottom, top, top + scroller.clientHeight, cushion);
+    scroller.scrollLeft += revealDelta(rect.left, rect.right, left, left + scroller.clientWidth, cushion);
+  }, [appearPolicy, editor, scrollerRef]);
+};
+
 // ---------------------------------------------------------------------------
 // Main editor component
 // ---------------------------------------------------------------------------
@@ -317,6 +354,7 @@ export const VedEditor = ({
 
   const scrollerRef = useRef<HTMLDivElement>(null);
   const onScroll = useKeepScrollPosition(scrollerRef, writingMode);
+  useRevealCaretOnPolicyChange(scrollerRef, editor, appearPolicy);
 
   return (
     <div

@@ -161,6 +161,10 @@ Notes that took debugging to learn:
   index maps 1:1; it is captured on scroll and restored in a layout effect.
   Scroll anchoring is disabled (`overflow-anchor: none`) so Chromium does
   not fight the restore.
+- Switching the ruby display (`AppearPolicy`) reflows rubied text; best
+  effort, Typora-style: if the reflow pushed the caret out of view, it is
+  scrolled back to the nearest viewport edge — and never moved otherwise
+  (`useRevealCaretOnPolicyChange`).
 - Slate's default placeholder assumes horizontal writing (absolute,
   `top: 0`, `width: 100%`); `renderPlaceholder` (editor.tsx) instead pins
   it to the paragraph's logical start corner via `inset-block-start` /

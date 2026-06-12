@@ -30,6 +30,18 @@ export const scrollToLine = (mode: ScrollMode, geom: ScrollGeom, scrollTop: numb
 };
 
 /**
+ * Minimal scroll delta that reveals the span [lo, hi] inside the viewport
+ * [viewLo, viewHi]: zero when already (partly) visible, otherwise to the
+ * nearest edge, landing `cushion` px inside it. Add the result to the
+ * scroll offset.
+ */
+export const revealDelta = (lo: number, hi: number, viewLo: number, viewHi: number, cushion = 0): number => {
+  if (lo < viewLo) return lo - viewLo - cushion;
+  if (hi > viewHi) return hi - viewHi + cushion;
+  return 0;
+};
+
+/**
  * Scroll offsets that bring a line to the viewport start. Columns mode snaps
  * to the containing page row. The browser clamps out-of-range values.
  */
