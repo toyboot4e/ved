@@ -129,8 +129,9 @@ $editor-width: $content-width + $pad-x * 2;
 
 // Vertical writing mode
 
-// Line length cap in the continuous vertical mode (1em ≈ 1 CJK character)
-$max-line-chars: 80;
+// Line length cap in the continuous vertical mode, in fullwidth (全角)
+// characters: 40 zenkaku = 80 ASCII columns. (1em ≈ 1 CJK character.)
+$max-line-chars: 40;
 $col-gap: $pad-y * 2;
 
 .vertMode {
