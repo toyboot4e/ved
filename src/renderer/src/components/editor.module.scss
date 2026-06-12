@@ -179,18 +179,21 @@ $col-gap: $pad-y * 2;
       flex: 1 1 auto;
       overflow-y: scroll;
       // Separator between column rows. Chromium does not paint column-rule
-      // between overflow columns, so draw the lines as a repeating background
-      // that scrolls with the content (period = column height + gap, phase =
-      // the content's top margin).
-      background-image: repeating-linear-gradient(
+      // between overflow columns, so draw the lines as a background that
+      // scrolls with the content (period = column height + gap, phase = the
+      // content's top margin). A finite gradient tile under repeat-y, NOT
+      // repeating-linear-gradient: Chromium's compositor drops tiles of
+      // attachment-local repeating gradients depending on the scroll
+      // position (lines vanish at certain depths).
+      background-image: linear-gradient(
         to bottom,
-        transparent 0,
         transparent calc(var(--page-height) + #{$pad-y - 0.5px}),
         #808080 calc(var(--page-height) + #{$pad-y - 0.5px}),
         #808080 calc(var(--page-height) + #{$pad-y + 0.5px}),
-        transparent calc(var(--page-height) + #{$pad-y + 0.5px}),
-        transparent calc(var(--page-height) + #{$col-gap})
+        transparent calc(var(--page-height) + #{$pad-y + 0.5px})
       );
+      background-size: 100% calc(var(--page-height) + #{$col-gap});
+      background-repeat: repeat-y;
       background-attachment: local;
       background-position: 0 $pad-y;
     }
