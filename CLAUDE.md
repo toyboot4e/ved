@@ -32,6 +32,9 @@ Task runner is `just`:
   `src/main/file-service.ts`). Every new dialog needs such a seam.
 - **TypeScript everywhere.** Standalone scripts (e2e, spike drivers) are
   `.ts` run directly with `node` (Node 24 type stripping) — never `.mjs`.
+- **Character counts are ASCII columns.** When a size is given as "N
+  characters", it means halfwidth columns: N columns = N/2 fullwidth (全角)
+  characters = N/2 em. E.g. the vertical line cap of 80 characters is 40em.
 
 ## Current work: editor UI shell
 
