@@ -1,7 +1,8 @@
 import { join } from 'node:path';
 import { electronApp, is, optimizer } from '@electron-toolkit/utils';
-import { app, BrowserWindow, ipcMain, shell } from 'electron';
+import { app, BrowserWindow, shell } from 'electron';
 import icon from '../../resources/icon.png?asset';
+import { registerFileService } from './file-service';
 
 // IME (fcitx5/ibus + mozc) support on Linux. Without these switches Chromium
 // runs through XWayland on a Wayland session and never connects to the
@@ -60,8 +61,7 @@ app.whenReady().then(() => {
     optimizer.watchWindowShortcuts(window);
   });
 
-  // IPC test
-  ipcMain.on('ping', () => console.log('pong'));
+  registerFileService();
 
   createWindow();
 
