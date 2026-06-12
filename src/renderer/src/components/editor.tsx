@@ -1,6 +1,6 @@
 import { clsx } from 'clsx';
 import type React from 'react';
-import { useCallback, useRef, useState } from 'react';
+import { useCallback, useLayoutEffect, useRef, useState } from 'react';
 import { createEditor, type Descendant, type Editor } from 'slate';
 import { Editable, ReactEditor, type RenderElementProps, type RenderLeafProps, Slate, withReact } from 'slate-react';
 import {
@@ -15,6 +15,7 @@ import {
   withNormalizeText,
 } from './editor/editor-core';
 import { AppearPolicy, AppearPolicyContext, plaintextToTree, serialize, VedElement, VedText } from './editor/rich';
+import { lineToScroll, type ScrollGeom, type ScrollMode, scrollToLine } from './editor/scroll-keep';
 import styles from './editor.module.scss';
 
 export { AppearPolicy } from './editor/rich';
@@ -123,6 +124,72 @@ const useOnKeyDown = (
 };
 
 // ---------------------------------------------------------------------------
+// Scroll preservation across writing modes
+// ---------------------------------------------------------------------------
+
+const toScrollMode = (mode: WritingMode): ScrollMode => {
+  switch (mode) {
+    case WritingMode.Horizontal:
+      return 'horizontal';
+    case WritingMode.Vertical:
+      return 'vertical';
+    case WritingMode.VerticalColumns:
+      return 'columns';
+  }
+};
+
+/** Measures the scroll geometry from the live styles (they are configurable). */
+const measureGeom = (scroller: HTMLElement): ScrollGeom => {
+  const cs = getComputedStyle(scroller);
+  const lineChars = Number.parseFloat(cs.getPropertyValue('--page-line-chars')) || 40;
+  const linesPerRow = Number.parseFloat(cs.getPropertyValue('--page-lines')) || 20;
+  const content = scroller.querySelector('[contenteditable]');
+  const contentCs = content ? getComputedStyle(content) : null;
+  // Font metrics live on the content element, NOT the scroller (which
+  // inherits the body's font size)
+  const fontSize = (contentCs && Number.parseFloat(contentCs.fontSize)) || 18;
+  const linePitch = (contentCs && Number.parseFloat(contentCs.lineHeight)) || fontSize + 2;
+  const colGap = (contentCs && Number.parseFloat(contentCs.columnGap)) || 20;
+  return { linePitch, rowPitch: lineChars * fontSize + colGap, linesPerRow };
+};
+
+/**
+ * Keeps the reading position (first visible line) across writing-mode
+ * switches: captured continuously on scroll, restored after the mode's
+ * geometry is applied.
+ */
+const useKeepScrollPosition = (
+  scrollerRef: React.RefObject<HTMLDivElement | null>,
+  writingMode: WritingMode,
+): React.UIEventHandler<HTMLDivElement> => {
+  const firstLineRef = useRef(0);
+  const modeRef = useRef(writingMode);
+
+  const onScroll = useCallback(() => {
+    const scroller = scrollerRef.current;
+    if (!scroller) return;
+    firstLineRef.current = scrollToLine(
+      toScrollMode(modeRef.current),
+      measureGeom(scroller),
+      scroller.scrollTop,
+      scroller.scrollLeft,
+    );
+  }, [scrollerRef]);
+
+  useLayoutEffect(() => {
+    if (modeRef.current === writingMode) return;
+    modeRef.current = writingMode;
+    const scroller = scrollerRef.current;
+    if (!scroller) return;
+    const { top, left } = lineToScroll(toScrollMode(writingMode), measureGeom(scroller), firstLineRef.current);
+    scroller.scrollTop = top;
+    scroller.scrollLeft = left;
+  }, [writingMode, scrollerRef]);
+
+  return onScroll;
+};
+
+// ---------------------------------------------------------------------------
 // Main editor component
 // ---------------------------------------------------------------------------
 
@@ -227,8 +294,15 @@ export const VedEditor = ({
   // ruby elements with different classes. No tree change, no cursor work.
   const onKeyDown = useOnKeyDown(editor, vert, appearPolicy, setAppearPolicy, handleUndo, handleRedo);
 
+  const scrollerRef = useRef<HTMLDivElement>(null);
+  const onScroll = useKeepScrollPosition(scrollerRef, writingMode);
+
   return (
-    <div className={clsx(styles.editor, vert && styles.vertMode, multiCol && styles.multiColMode)}>
+    <div
+      ref={scrollerRef}
+      onScroll={onScroll}
+      className={clsx(styles.editor, vert && styles.vertMode, multiCol && styles.multiColMode)}
+    >
       <AppearPolicyContext.Provider value={appearPolicy}>
         <Slate editor={editor} initialValue={initialValue} onChange={onChange}>
           <Editable
