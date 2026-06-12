@@ -78,8 +78,11 @@ $editor-width: $content-width + $pad-x * 2;
 
 .editor {
   width: $editor-width;
-  flex: 1 1 auto;
+  // Hug the content height; shrink (and scroll inside) when the window is
+  // smaller than the content.
+  flex: 0 1 auto;
   min-height: 0;
+  align-self: center;
   border: solid 2px black;
 
   // Horizontal writing scrolls vertically
@@ -117,6 +120,8 @@ $editor-width: $content-width + $pad-x * 2;
 .footer {
   height: $footer-height;
   padding: 0;
+  // Stay at the window bottom even when the editor hugs a small content
+  margin-top: auto;
   border-top: 1px solid #808080;
   display: flex;
   justify-content: center;
@@ -137,8 +142,12 @@ $col-gap: $pad-y * 2;
 .vertMode {
   &.editor {
     &:not(.multiColMode) {
-      // Both axes: lines overflow leftwards, the fixed 80-character line
-      // length overflows the viewport vertically.
+      // Hug the lines written so far; cap at the column width, then
+      // scroll horizontally.
+      width: fit-content;
+      max-width: $editor-width;
+      // Both axes: lines overflow leftwards, the fixed line length
+      // overflows the viewport vertically.
       overflow: auto;
       // The scroll container itself must be vertical-rl: the first line then
       // starts at the right edge and overflow grows leftwards, scrollable.
