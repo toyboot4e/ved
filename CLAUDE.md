@@ -12,7 +12,7 @@ Task runner is `just`:
 - `just test [name]` — vitest unit tests
 - `just check` — biome check --fix (lint + format)
 - `just typecheck` — tsc over both node and web tsconfigs
-- `just smoke` — builds, then runs the Playwright e2e smoke test (`e2e/smoke.mjs`)
+- `just smoke` — builds, then runs the Playwright e2e smoke test (`test/e2e/smoke.ts`)
 - `just test-all` — unit + lint + build + smoke; the definition of done
 
 ## Invariants
@@ -30,6 +30,8 @@ Task runner is `just`:
 - **Dialog test seams.** Native dialogs cannot be driven by Playwright; main
   accepts stub paths via `VED_SMOKE_*` env vars (see
   `src/main/file-service.ts`). Every new dialog needs such a seam.
+- **TypeScript everywhere.** Standalone scripts (e2e, spike drivers) are
+  `.ts` run directly with `node` (Node 24 type stripping) — never `.mjs`.
 
 ## Current work: editor UI shell
 

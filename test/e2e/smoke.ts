@@ -1,5 +1,5 @@
 // End-to-end smoke test against the built app (run `pnpm run build` first).
-// Usage: pnpm run smoke   (or: node e2e/smoke.mjs)
+// Usage: pnpm run smoke   (or: node test/e2e/smoke.ts)
 import assert from 'node:assert/strict';
 import { mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
@@ -9,7 +9,7 @@ import { join } from 'node:path';
 import electronPath from 'electron';
 import { _electron } from 'playwright';
 
-const root = new URL('..', import.meta.url).pathname;
+const root = new URL('../../', import.meta.url).pathname;
 
 // File fixtures for the IPC layer. Native dialogs can't be driven by
 // Playwright, so main accepts stub paths via env vars (src/main/file-service.ts).
@@ -52,29 +52,32 @@ const snap = () =>
     };
   });
 
-const fail = (msg) => {
+const fail = (msg: string): void => {
   console.error(`✗ ${msg}`);
   process.exitCode = 1;
 };
-const step = (msg) => console.log(`✓ ${msg}`);
+const step = (msg: string): void => console.log(`✓ ${msg}`);
 
 // Mod chords (undo, view modes) go through synthetic keydown events: the app
 // expects Cmd on macOS, where a real Cmd+Z press is consumed by the default
 // application menu (Edit > Undo accelerator) and never reaches the page.
-const pressMod = async (key, { shift = false } = {}) => {
-  await page.evaluate((args) => {
-    const darwin = window.electron.process.platform === 'darwin';
-    document.getElementById('editor-content').dispatchEvent(
-      new KeyboardEvent('keydown', {
-        key: args.key,
-        bubbles: true,
-        cancelable: true,
-        ctrlKey: !darwin,
-        metaKey: darwin,
-        shiftKey: args.shift,
-      }),
-    );
-  }, { key, shift });
+const pressMod = async (key: string, { shift = false } = {}): Promise<void> => {
+  await page.evaluate(
+    (args) => {
+      const darwin = window.electron.process.platform === 'darwin';
+      document.getElementById('editor-content').dispatchEvent(
+        new KeyboardEvent('keydown', {
+          key: args.key,
+          bubbles: true,
+          cancelable: true,
+          ctrlKey: !darwin,
+          metaKey: darwin,
+          shiftKey: args.shift,
+        }),
+      );
+    },
+    { key, shift },
+  );
   await page.waitForTimeout(50);
 };
 
@@ -223,7 +226,7 @@ try {
   assert.equal(await readFile(saveAsPath, 'utf-8'), expectedOnDisk);
   step('saving clears the dirty marker');
 } catch (e) {
-  fail(e.message);
+  fail(e instanceof Error ? e.message : String(e));
 } finally {
   // A failure can leave the buffer dirty, and the stubbed close guard would
   // then block every close ("cancel") — drop the guard before closing.

@@ -177,8 +177,8 @@ src/renderer/src/
       cursor-map.ts        plain offset ↔ point (generic accumulation)
       editor-core.ts       plugins, syncParagraphs, replaceContent,
                            PlainTextHistory
-spikes/                    throwaway experiment pages + drivers
-docs/spikes/               spike findings
+test/e2e/                  Playwright smoke test against the built app
+docs/spikes/               spike findings + their experiment pages/drivers
 ```
 
 NixOS specifics live in `flake.nix`: Electron's runtime libraries via
@@ -205,7 +205,7 @@ to download the binary.
 - Automated input needs care: synthetic key events are subject to keyboard
   layout and the system IME, and sub-60 ms bursts right after a
   programmatic selection change can race slate's DOM→model selection sync.
-  `e2e/smoke.mjs` therefore inserts text via `beforeinput` with human-ish
+  `test/e2e/smoke.ts` therefore inserts text via `beforeinput` with human-ish
   timing and detaches the IME. Real typing and IME commits are unaffected.
 - `syncParagraphs` compares every paragraph on every change; fine at current
   sizes, trivially limitable to dirty paragraphs if it ever shows up in
