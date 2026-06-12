@@ -26,8 +26,9 @@
           # pnpm 10, not 11: pnpm 11's store writes a SQLite index whose file
           # descriptor is guarded on macOS; pnpm's cleanup closes fds by number
           # and gets SIGKILLed with EXC_GUARD inside the fetchDeps build.
+          # nodejs_24 matches the Node bundled in Electron 42 (24.15.0).
           nativeBuildInputs = with pkgs; [
-            nodejs_22
+            nodejs_24
             pnpm_10
             pnpmConfigHook
             makeWrapper
@@ -114,7 +115,7 @@
 
             packages = with pkgs; [
               biome
-              nodejs_22
+              nodejs_24
               pnpm
             ];
 
