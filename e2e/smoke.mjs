@@ -59,19 +59,20 @@ const step = (msg) => console.log(`✓ ${msg}`);
 // Mod chords (undo, view modes) go through synthetic keydown events: the app
 // expects Cmd on macOS, where a real Cmd+Z press is consumed by the default
 // application menu (Edit > Undo accelerator) and never reaches the page.
-const pressMod = async (key) => {
-  await page.evaluate((k) => {
+const pressMod = async (key, { shift = false } = {}) => {
+  await page.evaluate((args) => {
     const darwin = window.electron.process.platform === 'darwin';
     document.getElementById('editor-content').dispatchEvent(
       new KeyboardEvent('keydown', {
-        key: k,
+        key: args.key,
         bubbles: true,
         cancelable: true,
         ctrlKey: !darwin,
         metaKey: darwin,
+        shiftKey: args.shift,
       }),
     );
-  }, key);
+  }, { key, shift });
   await page.waitForTimeout(50);
 };
 
@@ -171,6 +172,32 @@ try {
   assert.equal(savedAs?.path, saveAsPath);
   assert.equal(await readFile(saveAsPath, 'utf-8'), '名前を付けて保存\n');
   step('ved.saveFileAs writes through the dialog stub');
+
+  // --- Open/save UI (Ctrl+O / Ctrl+S / Ctrl+Shift+S over the single buffer) ---
+  await pressMod('o');
+  await page.waitForFunction(() => document.getElementById('editor-content').textContent.includes('空'));
+  s = await snap();
+  assert.equal(s.text, '|空(そら)は青い');
+  assert.equal(await page.title(), 'open.txt — ved');
+  step('Ctrl+O opens the fixture into the editor');
+
+  // Edit, then save back to the same path
+  await page.click('#editor-content');
+  await caretToStart();
+  await page.waitForTimeout(150);
+  await page.keyboard.insertText('あ');
+  await page.waitForTimeout(100);
+  await pressMod('s');
+  await page.waitForTimeout(300);
+  assert.equal(await readFile(openPath, 'utf-8'), 'あ|空(そら)は青い');
+  step('Ctrl+S saves the edited buffer to its path');
+
+  // Save-as routes through the (stubbed) dialog and adopts the new path
+  await pressMod('S', { shift: true });
+  await page.waitForTimeout(300);
+  assert.equal(await readFile(saveAsPath, 'utf-8'), 'あ|空(そら)は青い');
+  assert.equal(await page.title(), 'save-as.txt — ved');
+  step('Ctrl+Shift+S saves through the dialog stub');
 } catch (e) {
   fail(e.message);
 } finally {

@@ -33,6 +33,8 @@ export type VedEditorProps = {
   readonly writingMode: WritingMode;
   readonly appearPolicy: AppearPolicy;
   readonly setAppearPolicy: (_: AppearPolicy) => void;
+  /** Reports the current plaintext after every text change (including undo/redo). */
+  readonly onTextChange?: (text: string) => void;
 };
 
 // ---------------------------------------------------------------------------
@@ -129,6 +131,7 @@ export const VedEditor = ({
   writingMode,
   appearPolicy,
   setAppearPolicy,
+  onTextChange,
 }: VedEditorProps): React.JSX.Element => {
   const [editor] = useState(() => withNormalizeText(withInlines(withReact(createEditor()))));
 
@@ -164,6 +167,7 @@ export const VedEditor = ({
       if (textChanged) {
         lastPlaintextRef.current = plaintext;
         history.push({ text: plaintext, cursor });
+        onTextChange?.(plaintext);
       }
 
       // Repairing the structure mid-composition would cancel the IME session.
@@ -184,7 +188,7 @@ export const VedEditor = ({
         rebuildingRef.current = false;
       }
     },
-    [editor, history],
+    [editor, history, onTextChange],
   );
 
   // --- Undo/Redo ---
@@ -193,6 +197,7 @@ export const VedEditor = ({
       if (!entry) return;
 
       lastPlaintextRef.current = entry.text;
+      onTextChange?.(entry.text);
 
       rebuildingRef.current = true;
       try {
@@ -212,7 +217,7 @@ export const VedEditor = ({
         }
       });
     },
-    [editor],
+    [editor, onTextChange],
   );
 
   const handleUndo = useCallback(() => restoreFromHistory(history.undo()), [history, restoreFromHistory]);

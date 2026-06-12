@@ -1,8 +1,9 @@
 # Plan: editor UI (app shell)
 
 Status: **in progress** (2026-06) — see the phase 0 checklist below. Today
-the app is a single hardcoded buffer with a toolbar and an empty footer,
-plus a file IPC layer (`window.ved`) not yet wired to any UI.
+the app is a single buffer with a toolbar and an empty footer; Ctrl+O /
+Ctrl+S / Ctrl+Shift+S work over the file IPC layer (`window.ved`), and the
+window title shows the file name. No dirty tracking or close guard yet.
 
 Goal: grow ved from "an editor surface" into "an editor app" — file open/save,
 a tab bar, a file-browser sidebar, Ctrl+P quick open, and configuration —
@@ -175,7 +176,7 @@ one optional prop (step 0.2).
   - Smoke test drives a real open / save / save-as roundtrip through
     `window.ved` against fixture files — no UI involved yet.
 
-- [ ] **Step 0.2 — open/save wired to the single buffer.**
+- [x] **Step 0.2 — open/save wired to the single buffer.** *(done 2026-06-12)*
   - New renderer module (`file-commands` + app-level shortcut listener):
     `Ctrl+O` open, `Ctrl+S` save (falls back to save-as when untitled),
     `Ctrl+Shift+S` save as. IME-guarded (`isComposing` / keyCode 229).
