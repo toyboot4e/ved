@@ -252,7 +252,9 @@ A single `config.json` in `app.getPath('userData')`, owned by main:
 - atomic writes; `chokidar` watch → live `onConfigChange` push to renderer
   (hand-edit the file, the app updates — this *is* the settings UI v1);
 - first settings: font family/size, default `WritingMode` / `AppearPolicy`,
-  column size, sidebar width, recent workspace;
+  page size (characters per line × lines per page — already wired as the
+  `--page-line-chars` / `--page-lines` custom properties on the app root;
+  the config just sets them), sidebar width, recent workspace;
 - a `config.open` command opens the file in a ved tab — dogfooding;
 - keybinding overrides as a `keymap` section once the registry is stable.
 

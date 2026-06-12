@@ -1,15 +1,25 @@
 $font-size: 18px;
-// TODO: use number of characters for sizing
-$content-width: 410px;
-$col-size: 400px;
 $line-space: 2px;
+$line-pitch: $font-size + $line-space;
 $pad-x: 20px;
 $pad-y: 10px;
 $footer-height: $font-size + $pad-y * 2;
-$editor-width: $content-width + $pad-x * 2;
 
 .root {
-  width: $editor-width;
+  // Page geometry. The view is configured in characters: N characters per
+  // line × M lines per page (counts are fullwidth 全角 characters; 1em ≈ 1
+  // CJK character, so 40 zenkaku = 80 ASCII columns). The text area is a
+  // fixed page; overflow scrolls (continuous vertical) or stacks page rows
+  // (vertical columns). Custom properties, not SCSS constants: the future
+  // view configuration (editor-ui-plan phase 4) overrides them at runtime.
+  --page-line-chars: 40;
+  --page-lines: 20;
+  // Vertical writing: line length runs vertically, lines stack horizontally
+  --page-height: calc(var(--page-line-chars) * #{$font-size});
+  --page-width: calc(var(--page-lines) * #{$line-pitch});
+  --editor-width: calc(var(--page-width) + #{$pad-x * 2});
+
+  width: var(--editor-width);
   height: 100%;
   margin: auto;
   display: flex;
@@ -77,7 +87,7 @@ $editor-width: $content-width + $pad-x * 2;
 }
 
 .editor {
-  width: $editor-width;
+  width: var(--editor-width);
   // Hug the content height; shrink (and scroll inside) when the window is
   // smaller than the content.
   flex: 0 1 auto;
@@ -134,20 +144,13 @@ $editor-width: $content-width + $pad-x * 2;
 
 // Vertical writing mode
 
-// Line length cap in the continuous vertical mode, in fullwidth (全角)
-// characters: 40 zenkaku = 80 ASCII columns. (1em ≈ 1 CJK character.)
-$max-line-chars: 40;
 $col-gap: $pad-y * 2;
 
 .vertMode {
   &.editor {
     &:not(.multiColMode) {
-      // Hug the lines written so far; cap at the column width, then
-      // scroll horizontally.
-      width: fit-content;
-      max-width: $editor-width;
-      // Both axes: lines overflow leftwards, the fixed line length
-      // overflows the viewport vertically.
+      // Fixed page box: lines beyond the page overflow leftwards and
+      // scroll; the fixed line length overflows the viewport vertically.
       overflow: auto;
       // The scroll container itself must be vertical-rl: the first line then
       // starts at the right edge and overflow grows leftwards, scrollable.
@@ -156,6 +159,8 @@ $col-gap: $pad-y * 2;
     }
 
     &.multiColMode {
+      // Fill the available height (the column rows scroll inside)
+      flex: 1 1 auto;
       overflow-y: scroll;
       // Separator between column rows. Chromium does not paint column-rule
       // between overflow columns, so draw the lines as a repeating background
@@ -164,11 +169,11 @@ $col-gap: $pad-y * 2;
       background-image: repeating-linear-gradient(
         to bottom,
         transparent 0,
-        transparent #{$col-size + $pad-y - 0.5px},
-        #808080 #{$col-size + $pad-y - 0.5px},
-        #808080 #{$col-size + $pad-y + 0.5px},
-        transparent #{$col-size + $pad-y + 0.5px},
-        transparent #{$col-size + $col-gap}
+        transparent calc(var(--page-height) + #{$pad-y - 0.5px}),
+        #808080 calc(var(--page-height) + #{$pad-y - 0.5px}),
+        #808080 calc(var(--page-height) + #{$pad-y + 0.5px}),
+        transparent calc(var(--page-height) + #{$pad-y + 0.5px}),
+        transparent calc(var(--page-height) + #{$col-gap})
       );
       background-attachment: local;
       background-position: 0 $pad-y;
@@ -184,19 +189,22 @@ $col-gap: $pad-y * 2;
     -webkit-writing-mode: vertical-rl;
     -ms-writing-mode: tb-rl;
 
-    // Continuous flow: lines are fixed at $max-line-chars characters
+    // Continuous flow: one fixed page box (--page-line-chars per line)
     &:not(.multiColMode) {
-      height: calc(#{$max-line-chars}em + #{$pad-y * 2});
+      height: calc(var(--page-height) + #{$pad-y * 2});
       box-sizing: border-box;
       padding: $pad-y $pad-x;
     }
 
+    // Column rows: each row is a page (--page-line-chars × --page-lines).
+    // No vertical padding inside the fixed height — it would eat into the
+    // line length (the gap between rows provides the breathing room).
     &.multiColMode {
-      width: $content-width;
-      height: $col-size;
+      width: var(--page-width);
+      height: var(--page-height);
       margin: $pad-y $pad-x $footer-height $pad-x;
-      padding: 0 0 $pad-y 0;
-      column-width: $col-size;
+      padding: 0;
+      column-width: var(--page-height);
       column-gap: $col-gap;
     }
   }
