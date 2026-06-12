@@ -53,5 +53,6 @@ export const matchFileCommand = (event: ChordEvent, isDarwin: boolean): FileComm
 /** The display name of a document: its base name, or a placeholder when untitled. */
 export const fileName = (path: string | null): string => path?.split(/[/\\]/).at(-1) ?? '無題';
 
-/** The window title for the current document. (The dirty marker arrives in step 0.3.) */
-export const windowTitle = (path: string | null): string => `${fileName(path)} — ved`;
+/** The window title for the current document; dirty buffers get a marker. */
+export const windowTitle = (path: string | null, dirty: boolean): string =>
+  `${dirty ? '● ' : ''}${fileName(path)} — ved`;

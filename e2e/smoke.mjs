@@ -198,6 +198,20 @@ try {
   assert.equal(await readFile(saveAsPath, 'utf-8'), 'あ|空(そら)は青い');
   assert.equal(await page.title(), 'save-as.txt — ved');
   step('Ctrl+Shift+S saves through the dialog stub');
+
+  // --- Dirty state ---
+  await page.click('#editor-content');
+  await page.keyboard.insertText('や');
+  await page.waitForTimeout(100);
+  assert.equal(await page.title(), '● save-as.txt — ved');
+  step('editing shows the dirty marker in the title');
+
+  const expectedOnDisk = (await snap()).text;
+  await pressMod('s');
+  await page.waitForTimeout(300);
+  assert.equal(await page.title(), 'save-as.txt — ved');
+  assert.equal(await readFile(saveAsPath, 'utf-8'), expectedOnDisk);
+  step('saving clears the dirty marker');
 } catch (e) {
   fail(e.message);
 } finally {

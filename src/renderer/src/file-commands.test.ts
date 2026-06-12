@@ -71,11 +71,16 @@ describe('matchFileCommand', () => {
 describe('fileName / windowTitle', () => {
   it('uses the base name of the path', () => {
     expect(fileName('/home/me/novel/第一章.txt')).toBe('第一章.txt');
-    expect(windowTitle('/home/me/novel/第一章.txt')).toBe('第一章.txt — ved');
+    expect(windowTitle('/home/me/novel/第一章.txt', false)).toBe('第一章.txt — ved');
   });
 
   it('falls back to a placeholder when untitled', () => {
     expect(fileName(null)).toBe('無題');
-    expect(windowTitle(null)).toBe('無題 — ved');
+    expect(windowTitle(null, false)).toBe('無題 — ved');
+  });
+
+  it('marks dirty documents', () => {
+    expect(windowTitle('/tmp/a.txt', true)).toBe('● a.txt — ved');
+    expect(windowTitle(null, true)).toBe('● 無題 — ved');
   });
 });

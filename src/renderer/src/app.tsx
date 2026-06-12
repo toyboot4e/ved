@@ -18,21 +18,28 @@ export const App = (): React.JSX.Element => {
   const [appearPolicy, setAppearPolicy] = useState(AppearPolicy.Rich);
 
   const [doc, setDoc] = useState<DocState>({ path: null, initialText: INITIAL_TEXT, docId: 0 });
+  const [dirty, setDirty] = useState(false);
 
-  // Current plaintext, reported by the editor (also on undo/redo)
+  // Current and last-saved plaintext; the editor reports changes (also on
+  // undo/redo). Refs, not state: no re-render per keystroke — only a dirty
+  // flip re-renders.
   const textRef = useRef(INITIAL_TEXT);
+  const savedTextRef = useRef(INITIAL_TEXT);
   const onTextChange = useCallback((text: string) => {
     textRef.current = text;
+    setDirty(text !== savedTextRef.current);
   }, []);
 
   useEffect(() => {
-    document.title = windowTitle(doc.path);
-  }, [doc.path]);
+    document.title = windowTitle(doc.path, dirty);
+  }, [doc.path, dirty]);
 
   const handleOpen = useCallback(async () => {
     const opened = await window.ved.openFile();
     if (!opened) return;
     textRef.current = opened.text;
+    savedTextRef.current = opened.text;
+    setDirty(false);
     // Replace the document by remounting the editor — never mutate the live tree
     setDoc((d) => ({ path: opened.path, initialText: opened.text, docId: d.docId + 1 }));
   }, []);
@@ -41,7 +48,11 @@ export const App = (): React.JSX.Element => {
     async (saveAs: boolean) => {
       const text = textRef.current;
       const path = saveAs ? await saveViaDialog(window.ved, text) : await saveOrSaveAs(window.ved, doc.path, text);
-      if (path !== null && path !== doc.path) {
+      if (path === null) return; // dialog canceled
+      savedTextRef.current = text;
+      // The user may have typed during the async write
+      setDirty(textRef.current !== text);
+      if (path !== doc.path) {
         setDoc((d) => ({ ...d, path }));
       }
     },
