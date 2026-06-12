@@ -42,7 +42,10 @@ const createWindow = () => {
   installCloseGuard(mainWindow);
 
   mainWindow.on('ready-to-show', () => {
-    mainWindow.show();
+    // e2e runs keep the window hidden (layout and input still work)
+    if (!process.env.VED_SMOKE_HIDDEN) {
+      mainWindow.show();
+    }
   });
 
   mainWindow.webContents.setWindowOpenHandler((details) => {
