@@ -125,25 +125,46 @@ debounce. Undo/redo rebuilds the whole tree from text (`plaintextToTree` +
 `replaceContent`) and re-resolves the cursor. A debounced push only replaces
 the newest entry; after an undo it truncates the redo tail.
 
-## Layout: writing modes (`WritingMode`)
+## Layout: writing modes (`WritingMode`) and the page
 
-Orthogonal to view modes; pure CSS (`editor.module.scss`):
+The text area is a **page**: N characters per line × M lines, counted in
+fullwidth characters ("80 characters" means 80 ASCII columns = 40 zenkaku).
+The geometry lives in CSS custom properties on the app root
+(`--page-line-chars`, `--page-lines` in `editor.module.scss`) so the future
+configuration sets it at runtime; everything else derives via `calc()`. A
+`vertMode` class on the root transposes the page box for vertical writing.
 
-| Mode | CSS | Scroll |
-|---|---|---|
-| `Horizontal` | normal flow | vertical |
-| `Vertical` | `vertical-rl`, fixed 80-character lines | both axes |
-| `VerticalColumns` | `vertical-rl` + CSS multi-column (*dankumi*) | vertical |
+Orthogonal to view modes; pure CSS:
+
+| Mode | CSS | Page | Scroll |
+|---|---|---|---|
+| `Horizontal` | normal flow | line-length wide × lines tall | vertical |
+| `Vertical` | `vertical-rl` | transposed, one fixed page box | both axes |
+| `VerticalColumns` | `vertical-rl` + CSS multi-column (*dankumi*) | page rows stack downward | vertical |
 
 Notes that took debugging to learn:
 
 - The percentage height chain must be anchored at `#root` (the React mount
   point), or flex items size to content.
+- The editor box is `box-sizing: content-box`: its 2px borders must not eat
+  into the page (they shaved 4px off the line length with border-box).
 - In `Vertical`, the *scroll container* itself is `vertical-rl`, so the
   first line starts at the right edge and leftward overflow is scrollable.
-- In `Columns`, the separator lines are a repeating background gradient on
-  the scroll container (`background-attachment: local`): Chromium does not
-  paint `column-rule` between overflow columns.
+- In `Columns`, the separator lines are a background gradient on the scroll
+  container (`background-attachment: local`): Chromium does not paint
+  `column-rule` between overflow columns. The gradient must be a finite
+  tile under `background-size` + `repeat-y`, NOT `repeating-linear-gradient`
+  — Chromium's compositor drops tiles of attachment-local repeating
+  gradients depending on the scroll position.
+- Switching modes keeps the reading position (`editor/scroll-keep.ts`):
+  all modes wrap at the same character count, so the first visible line
+  index maps 1:1; it is captured on scroll and restored in a layout effect.
+  Scroll anchoring is disabled (`overflow-anchor: none`) so Chromium does
+  not fight the restore.
+- Slate's default placeholder assumes horizontal writing (absolute,
+  `top: 0`, `width: 100%`); `renderPlaceholder` (editor.tsx) instead pins
+  it to the paragraph's logical start corner via `inset-block-start` /
+  `inset-inline-start`, which follow the writing mode.
 - Arrow keys: **character movement is model-driven**
   (`moveCaretByCharacter`), stepping through Slate positions and skipping
   the interior of hidden markup leaves. This is deliberate: a ruby boundary
@@ -162,22 +183,37 @@ Both modes are owned by `app.tsx` state and rendered by
 ## Module map
 
 ```
-src/main/index.ts          Electron main; Wayland/IME Chromium switches
-src/preload/               contextBridge (electron-toolkit defaults)
+src/shared/ipc.ts          IPC contract (channels + VedApi) shared by all
+                           three processes
+src/main/index.ts          Electron main; Wayland/IME Chromium switches,
+                           mock keychain for unpackaged runs
+src/main/file-service.ts   open/save dialogs + file IO handlers
+                           (VED_SMOKE_* env stubs for e2e)
+src/main/fs-io.ts          plain-node read / atomic write (unit-tested)
+src/main/close-guard.ts    confirm-on-close for a dirty buffer
+src/preload/               contextBridge: electron-toolkit defaults +
+                           window.ved (the VedApi implementation)
 src/renderer/src/
-  app.tsx                  state owner: WritingMode + AppearPolicy
+  app.tsx                  state owner: document (path/dirty), WritingMode,
+                           AppearPolicy; file shortcuts (Ctrl+O/S/Shift+S)
+  file-commands.ts         save/save-as logic, chord matching, window title
+                           (pure over VedFileApi, unit-tested)
   parse.ts                 plaintext → format spans (syntax knowledge)
   components/
-    toolbar.tsx            writing-mode / view-mode button groups
-    editor.tsx             VedEditor: onChange → history + syncParagraphs
-    editor.module.scss     layout modes, toolbar, ruby classes
+    toolbar.tsx            writing-mode / ruby-display button groups
+    editor.tsx             VedEditor: onChange → history + syncParagraphs;
+                           renderPlaceholder; scroll preservation
+    editor.module.scss     page geometry, layout modes, toolbar, ruby
     editor/
       rich.tsx             AppearPolicy, node types, lineToChildren,
                            serialize, render components
       cursor-map.ts        plain offset ↔ point (generic accumulation)
       editor-core.ts       plugins, syncParagraphs, replaceContent,
                            PlainTextHistory
-test/e2e/                  Playwright smoke test against the built app
+      scroll-keep.ts       scroll offset ↔ line index per mode (unit-tested)
+test/e2e/                  Playwright tests against the built app, hidden
+                           windows (harness.ts; smoke.ts, placeholder.ts)
+docs/editor-ui-plan.md     editor UI shell plan + phase checklist
 docs/spikes/               spike findings + their experiment pages/drivers
 ```
 
