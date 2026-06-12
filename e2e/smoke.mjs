@@ -31,6 +31,8 @@ const app = await _electron.launch({
     GTK_IM_MODULE_FILE: '',
     VED_SMOKE_OPEN_PATH: openPath,
     VED_SMOKE_SAVE_PATH: saveAsPath,
+    // The dirty-close confirm dialog always answers "cancel" (keep window)
+    VED_SMOKE_CLOSE_RESPONSE: 'cancel',
   },
 });
 const page = await app.firstWindow();
@@ -206,6 +208,14 @@ try {
   assert.equal(await page.title(), '● save-as.txt — ved');
   step('editing shows the dirty marker in the title');
 
+  // A dirty window refuses to close (the stubbed confirm answers "cancel").
+  // The clean-close path is exercised by app.close() at the end of the run —
+  // if the guard wrongly blocked it, close() would time out and fail the test.
+  await app.evaluate(({ BrowserWindow }) => BrowserWindow.getAllWindows()[0]?.close());
+  await page.waitForTimeout(300);
+  assert.equal(await app.evaluate(({ BrowserWindow }) => BrowserWindow.getAllWindows().length), 1);
+  step('close is blocked while dirty');
+
   const expectedOnDisk = (await snap()).text;
   await pressMod('s');
   await page.waitForTimeout(300);
@@ -215,6 +225,13 @@ try {
 } catch (e) {
   fail(e.message);
 } finally {
+  // A failure can leave the buffer dirty, and the stubbed close guard would
+  // then block every close ("cancel") — drop the guard before closing.
+  try {
+    await page.evaluate(() => window.ved.setDirty(false));
+  } catch {
+    // page already gone
+  }
   await app.close();
   await rm(tmp, { recursive: true, force: true });
 }

@@ -2,11 +2,12 @@
 // Channel names and payload types are defined once here so the three
 // processes cannot drift apart.
 
-/** IPC channel names for the file service (see `src/main/file-service.ts`). */
+/** IPC channel names (handlers: `src/main/file-service.ts`, `close-guard.ts`). */
 export const IpcChannel = {
   OpenFile: 'ved:file:open',
   SaveFile: 'ved:file:save',
   SaveFileAs: 'ved:file:save-as',
+  SetDirty: 'ved:window:set-dirty',
 } as const;
 
 /** A file picked and read via the open dialog; `null` means canceled. */
@@ -20,7 +21,7 @@ export type SaveFileAsResult = {
   readonly path: string;
 } | null;
 
-/** The renderer-facing file API, exposed as `window.ved` by the preload. */
+/** The file portion of the renderer-facing API. */
 export type VedFileApi = {
   /** Shows an open dialog and reads the chosen file as UTF-8. */
   readonly openFile: () => Promise<OpenFileResult>;
@@ -28,4 +29,10 @@ export type VedFileApi = {
   readonly saveFile: (path: string, text: string) => Promise<void>;
   /** Shows a save dialog and writes text to the chosen path. */
   readonly saveFileAs: (text: string, defaultPath?: string) => Promise<SaveFileAsResult>;
+};
+
+/** The full renderer-facing API, exposed as `window.ved` by the preload. */
+export type VedApi = VedFileApi & {
+  /** Reports the buffer's dirty state; main consults it in the close guard. */
+  readonly setDirty: (dirty: boolean) => void;
 };

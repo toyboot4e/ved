@@ -32,6 +32,8 @@ export const App = (): React.JSX.Element => {
 
   useEffect(() => {
     document.title = windowTitle(doc.path, dirty);
+    // Keep main informed so its close guard can decide synchronously
+    window.ved.setDirty(dirty);
   }, [doc.path, dirty]);
 
   const handleOpen = useCallback(async () => {

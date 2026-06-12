@@ -1,16 +1,17 @@
 import { electronAPI } from '@electron-toolkit/preload';
 import { contextBridge, ipcRenderer } from 'electron';
-import { IpcChannel, type VedFileApi } from '../shared/ipc';
+import { IpcChannel, type VedApi } from '../shared/ipc';
 
 // Custom APIs for renderer
 const api = {};
 
-// The file API: contract in src/shared/ipc.ts, handlers in
-// src/main/file-service.ts.
-const ved: VedFileApi = {
+// The ved API: contract in src/shared/ipc.ts, handlers in
+// src/main/file-service.ts and close-guard.ts.
+const ved: VedApi = {
   openFile: () => ipcRenderer.invoke(IpcChannel.OpenFile),
   saveFile: (path, text) => ipcRenderer.invoke(IpcChannel.SaveFile, path, text),
   saveFileAs: (text, defaultPath) => ipcRenderer.invoke(IpcChannel.SaveFileAs, text, defaultPath),
+  setDirty: (dirty) => ipcRenderer.send(IpcChannel.SetDirty, dirty),
 };
 
 // Use `contextBridge` APIs to expose Electron APIs to

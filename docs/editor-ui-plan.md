@@ -1,9 +1,9 @@
 # Plan: editor UI (app shell)
 
-Status: **in progress** (2026-06) — see the phase 0 checklist below. Today
-the app is a single buffer with a toolbar and an empty footer; Ctrl+O /
-Ctrl+S / Ctrl+Shift+S work over the file IPC layer (`window.ved`), and the
-window title shows the file name. No dirty tracking or close guard yet.
+Status: **in progress** (2026-06) — phase 0 is complete; phase 1 (buffers
+and tab bar) is next. The app is a single buffer with open/save
+(Ctrl+O/S/Shift+S over the `window.ved` IPC layer), a dirty marker in the
+window title, and a dirty-close confirm guard.
 
 Goal: grow ved from "an editor surface" into "an editor app" — file open/save,
 a tab bar, a file-browser sidebar, Ctrl+P quick open, and configuration —
@@ -191,7 +191,7 @@ one optional prop (step 0.2).
   - Smoke: open a fixture via stubbed dialog → editor shows it → edit →
     save → assert on-disk content.
 
-- [ ] **Step 0.3 — dirty state and close guard.**
+- [x] **Step 0.3 — dirty state and close guard.** *(done 2026-06-13)*
   - Dirty ⇔ `text !== savedText`; title shows `● name`.
   - Confirm-on-close for a dirty buffer: `beforeunload` is unreliable in
     Electron, so main intercepts `window.on('close')`, asks the renderer

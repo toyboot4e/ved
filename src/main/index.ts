@@ -2,6 +2,7 @@ import { join } from 'node:path';
 import { electronApp, is, optimizer } from '@electron-toolkit/utils';
 import { app, BrowserWindow, shell } from 'electron';
 import icon from '../../resources/icon.png?asset';
+import { installCloseGuard, registerCloseGuard } from './close-guard';
 import { registerFileService } from './file-service';
 
 // IME (fcitx5/ibus + mozc) support on Linux. Without these switches Chromium
@@ -28,6 +29,8 @@ const createWindow = () => {
       sandbox: false,
     },
   });
+
+  installCloseGuard(mainWindow);
 
   mainWindow.on('ready-to-show', () => {
     mainWindow.show();
@@ -62,6 +65,7 @@ app.whenReady().then(() => {
   });
 
   registerFileService();
+  registerCloseGuard();
 
   createWindow();
 
