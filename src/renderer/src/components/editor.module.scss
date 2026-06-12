@@ -9,14 +9,25 @@ $footer-height: $font-size + $pad-y * 2;
   // Page geometry. The view is configured in characters: N characters per
   // line × M lines per page (counts are fullwidth 全角 characters; 1em ≈ 1
   // CJK character, so 40 zenkaku = 80 ASCII columns). The text area is a
-  // fixed page; overflow scrolls (continuous vertical) or stacks page rows
-  // (vertical columns). Custom properties, not SCSS constants: the future
-  // view configuration (editor-ui-plan phase 4) overrides them at runtime.
+  // fixed page; overflow scrolls (downwards in horizontal writing,
+  // leftwards in continuous vertical) or stacks page rows (vertical
+  // columns). Custom properties, not SCSS constants: the future view
+  // configuration (editor-ui-plan phase 4) overrides them at runtime.
   --page-line-chars: 40;
   --page-lines: 20;
-  // Vertical writing: line length runs vertically, lines stack horizontally
-  --page-height: calc(var(--page-line-chars) * #{$font-size});
-  --page-width: calc(var(--page-lines) * #{$line-pitch});
+  --line-length: calc(var(--page-line-chars) * #{$font-size});
+  --lines-extent: calc(var(--page-lines) * #{$line-pitch});
+
+  // Horizontal writing: lines run horizontally, stacking downwards
+  --page-width: var(--line-length);
+  --page-height: var(--lines-extent);
+
+  // Vertical writing transposes the page box
+  &.vertMode {
+    --page-width: var(--lines-extent);
+    --page-height: var(--line-length);
+  }
+
   --editor-width: calc(var(--page-width) + #{$pad-x * 2});
 
   width: var(--editor-width);
@@ -88,6 +99,9 @@ $footer-height: $font-size + $pad-y * 2;
 
 .editor {
   width: var(--editor-width);
+  // The border must not eat into the page: width is the content area, the
+  // border draws outside it (the global * rule sets border-box).
+  box-sizing: content-box;
   // Hug the content height; shrink (and scroll inside) when the window is
   // smaller than the content.
   flex: 0 1 auto;
@@ -105,10 +119,12 @@ $footer-height: $font-size + $pad-y * 2;
   -webkit-app-region: no-drag;
   -webkit-user-select: text;
 
-  // Horizontal writing
+  // Horizontal writing: a fixed page box; overflow lines scroll downwards
   &:not(.vertMode) {
     font-size: $font-size;
     line-height: $font-size + $line-space;
+    height: calc(var(--page-height) + #{$pad-y * 2});
+    box-sizing: border-box;
     padding: $pad-y $pad-x;
   }
 

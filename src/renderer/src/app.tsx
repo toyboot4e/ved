@@ -1,3 +1,4 @@
+import { clsx } from 'clsx';
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { AppearPolicy, VedEditor, WritingMode } from './components/editor';
 import styles from './components/editor.module.scss';
@@ -81,7 +82,8 @@ export const App = (): React.JSX.Element => {
   }, [handleOpen, handleSave]);
 
   return (
-    <div className={styles.root}>
+    // vertMode on the root transposes the page geometry (CSS custom props)
+    <div className={clsx(styles.root, writingMode !== WritingMode.Horizontal && styles.vertMode)}>
       {/* Also makes space for traffic lights (macOS only) */}
       <div className={styles.header}>
         <Toolbar
