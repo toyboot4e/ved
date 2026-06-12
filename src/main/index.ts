@@ -15,6 +15,15 @@ if (process.platform === 'linux') {
   app.commandLine.appendSwitch('wayland-text-input-version', '3');
 }
 
+// Unpackaged runs (dev server, e2e against out/) use an ad-hoc-signed
+// Electron binary, so macOS re-prompts for the "ved Safe Storage" Keychain
+// entry that Chromium creates for its cookie encryption — which ved never
+// needs (no secrets stored). Use Chromium's mock keychain instead;
+// packaged builds keep the real one.
+if (!app.isPackaged) {
+  app.commandLine.appendSwitch('use-mock-keychain');
+}
+
 const createWindow = () => {
   // Create the browser window.
   const mainWindow = new BrowserWindow({
