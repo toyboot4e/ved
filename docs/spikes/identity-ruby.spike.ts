@@ -1,10 +1,12 @@
 // Spike driver: measures CSS-ruby rendering and caret behavior over an
-// identity text model. Run from the repo root: node spikes/identity-ruby.spike.mjs
+// identity text model. Run from the repo root (after a build):
+// node docs/spikes/identity-ruby.spike.ts
+import electronPath from 'electron';
 import { _electron } from 'playwright';
 
 const app = await _electron.launch({
-  executablePath: new URL('../node_modules/electron/dist/electron', import.meta.url).pathname,
-  args: [new URL('../out/main/index.js', import.meta.url).pathname],
+  executablePath: electronPath,
+  args: [new URL('../../out/main/index.js', import.meta.url).pathname],
 });
 const page = await app.firstWindow();
 await page.goto(new URL('./identity-ruby.html', import.meta.url).href);

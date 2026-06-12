@@ -6,12 +6,12 @@ view modes, and produce the ruby rendering purely with CSS? If yes, plain
 offsets and rich offsets become identical, and tree rebuilds (the source of
 all cursor-mapping and IME complexity) largely disappear.
 
-**Setup.** `spikes/identity-ruby.html` + `spikes/identity-ruby.spike.mjs`
-(rendering, caret, and selection probes), `spikes/identity-anon.html` +
-`spikes/identity-anon.spike.mjs` (wrapper-free variant). Driven via
+**Setup.** `identity-ruby.html` + `identity-ruby.spike.ts`
+(rendering, caret, and selection probes), `identity-anon.html` +
+`identity-anon.spike.ts` (wrapper-free variant). Driven via
 Playwright's Electron driver against the real Electron build (Electron 42,
-Chromium 142 class). Screenshots: `spikes/identity-ruby.png`,
-`spikes/identity-anon.png`.
+Chromium 142 class). Screenshots: `identity-ruby.png`,
+`identity-anon.png`.
 
 ## Results
 
@@ -55,7 +55,7 @@ A `ruby-text` leaf placed as a plain sibling of inline leaves (no
 `display: ruby` ancestor) does **not** annotate the preceding text: Chromium
 wraps the lone `ruby-text` in an anonymous ruby container of its own, and the
 annotation renders *after* the base in its own inline slot
-(`spikes/identity-anon.png`). Consequence: a flat "one text node + leaf
+(`identity-anon.png`). Consequence: a flat "one text node + leaf
 decorations" structure cannot render ruby; the ruby must remain a Slate
 **element** so the renderer can emit the `display: ruby` wrapper.
 
