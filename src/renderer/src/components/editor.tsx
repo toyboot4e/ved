@@ -2,7 +2,15 @@ import { clsx } from 'clsx';
 import type React from 'react';
 import { useCallback, useLayoutEffect, useRef, useState } from 'react';
 import { createEditor, type Descendant, type Editor } from 'slate';
-import { Editable, ReactEditor, type RenderElementProps, type RenderLeafProps, Slate, withReact } from 'slate-react';
+import {
+  Editable,
+  ReactEditor,
+  type RenderElementProps,
+  type RenderLeafProps,
+  type RenderPlaceholderProps,
+  Slate,
+  withReact,
+} from 'slate-react';
 import {
   getCursorPlainOffset,
   type HistoryEntry,
@@ -216,6 +224,19 @@ export const VedEditor = ({
 
   const renderLeaf = useCallback((props: RenderLeafProps) => <VedText {...props} />, []);
   const renderElement = useCallback((props: RenderElementProps) => <VedElement {...props} />, []);
+
+  // Slate's default placeholder is absolutely positioned with horizontal
+  // assumptions (top: 0, width: 100%) and lands away from the text start —
+  // worse under vertical-rl. Render it in normal flow instead: it then sits
+  // exactly where the text will, in every writing mode.
+  const renderPlaceholder = useCallback(({ attributes, children }: RenderPlaceholderProps) => {
+    const { style: _defaultStyle, ...rest } = attributes;
+    return (
+      <span {...rest} className={styles.placeholder}>
+        {children}
+      </span>
+    );
+  }, []);
   const vert = writingMode !== WritingMode.Horizontal;
   const multiCol = writingMode === WritingMode.VerticalColumns;
 
@@ -311,6 +332,7 @@ export const VedEditor = ({
             className={clsx(styles.editorContent, vert && styles.vertMode, multiCol && styles.multiColMode)}
             renderLeaf={renderLeaf}
             renderElement={renderElement}
+            renderPlaceholder={renderPlaceholder}
             onKeyDown={onKeyDown}
           />
         </Slate>

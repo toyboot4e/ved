@@ -137,13 +137,24 @@ $footer-height: $font-size + $pad-y * 2;
     margin: 0;
     $space: calc($line-space / 2);
     padding: 0 $space 0 $space;
+    // Containing block for the placeholder (see .placeholder)
+    position: relative;
   }
 
-  // Placeholder
-  &[placeholder]:empty::before {
-    content: attr(placeholder);
-    color: #555;
-  }
+}
+
+// Placeholder (see renderPlaceholder in editor.tsx). Slate emits it after
+// the empty paragraph's <br> anchor, i.e. one line into the flow — pin it
+// to the paragraph's logical start corner instead; the logical insets
+// follow the writing mode.
+.placeholder {
+  position: absolute;
+  inset-block-start: 0;
+  inset-inline-start: 0;
+  opacity: 0.4;
+  pointer-events: none;
+  user-select: none;
+  -webkit-user-select: none;
 }
 
 .footer {
