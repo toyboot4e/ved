@@ -13,7 +13,11 @@ export type ToolbarProps = {
 const writingModeItems: { mode: WritingMode; label: string; title: string }[] = [
   { mode: WritingMode.Horizontal, label: 'Horizontal', title: 'Horizontal writing' },
   { mode: WritingMode.Vertical, label: 'Vertical', title: 'Vertical writing, one continuous flow' },
-  { mode: WritingMode.VerticalColumns, label: 'Columns', title: 'Vertical writing, multi-column layout' },
+  {
+    mode: WritingMode.VerticalColumns,
+    label: 'Vertical Columns',
+    title: 'Vertical writing, multi-column layout (dankumi)',
+  },
 ];
 
 const appearPolicyItems: { policy: AppearPolicy; label: string; title: string }[] = [
@@ -40,7 +44,10 @@ export const Toolbar = ({
 }: ToolbarProps): React.JSX.Element => {
   return (
     <div className={styles.toolbar}>
-      <fieldset className={styles.toolbarGroup} aria-label='Writing mode'>
+      <fieldset className={styles.toolbarGroup} aria-label='Writing mode' onMouseDown={keepEditorFocus}>
+        <span className={styles.toolbarGroupLabel} aria-hidden='true' title='Text direction and layout'>
+          Writing
+        </span>
         {writingModeItems.map(({ mode, label, title }) => (
           <button
             key={mode}
@@ -48,14 +55,20 @@ export const Toolbar = ({
             className={styles.toolbarButton}
             aria-pressed={writingMode === mode}
             title={title}
-            onMouseDown={keepEditorFocus}
             onClick={() => setWritingMode(mode)}
           >
             {label}
           </button>
         ))}
       </fieldset>
-      <fieldset className={styles.toolbarGroup} aria-label='View mode'>
+      <fieldset className={styles.toolbarGroup} aria-label='Ruby display' onMouseDown={keepEditorFocus}>
+        <span
+          className={styles.toolbarGroupLabel}
+          aria-hidden='true'
+          title='Where ruby annotations show as raw |…(…) syntax'
+        >
+          Ruby
+        </span>
         {appearPolicyItems.map(({ policy, label, title }) => (
           <button
             key={policy}
@@ -63,7 +76,6 @@ export const Toolbar = ({
             className={styles.toolbarButton}
             aria-pressed={appearPolicy === policy}
             title={title}
-            onMouseDown={keepEditorFocus}
             onClick={() => setAppearPolicy(policy)}
           >
             {label}
