@@ -3,69 +3,96 @@
 
   inputs = {
     nixpkgs.url = "github:NixOS/nixpkgs/nixpkgs-unstable";
+    treefmt-nix.url = "github:numtide/treefmt-nix";
+    treefmt-nix.inputs.nixpkgs.follows = "nixpkgs";
   };
 
   outputs =
-    { self, nixpkgs, ... }:
+    {
+      self,
+      nixpkgs,
+      treefmt-nix,
+      ...
+    }:
     let
       forAllSystems =
         f:
-        nixpkgs.lib.genAttrs nixpkgs.lib.systems.flakeExposed (
-          system: f nixpkgs.legacyPackages.${system}
-        );
-    in
-    {
-      packages = forAllSystems (pkgs: rec {
-        default = ved;
+        nixpkgs.lib.genAttrs nixpkgs.lib.systems.flakeExposed (system: f nixpkgs.legacyPackages.${system});
 
-        ved = pkgs.stdenv.mkDerivation (finalAttrs: {
+      # treefmt configuration (see ./treefmt.nix). The renderer's JS/TS is
+      # formatted by biome via `just check`, so treefmt only owns the Nix.
+      treefmtEval = forAllSystems (pkgs: treefmt-nix.lib.evalModule pkgs ./treefmt.nix);
+
+      version = (builtins.fromJSON (builtins.readFile ./package.json)).version;
+
+      # Offline pnpm store, shared by the package build and the node-based
+      # checks so there is a single hash to bump when the lockfile changes.
+      pnpmDepsFor =
+        pkgs:
+        pkgs.fetchPnpmDeps {
           pname = "ved";
-          version = (builtins.fromJSON (builtins.readFile ./package.json)).version;
+          inherit version;
           src = self;
+          pnpm = pkgs.pnpm_10;
+          fetcherVersion = 3;
+          hash = "sha256-FLhJ2VAS/xTdjRaO8cx+NfUCjAtBq//2czsM395irF8=";
+        };
 
-          # pnpm 10, not 11: pnpm 11's store writes a SQLite index whose file
-          # descriptor is guarded on macOS; pnpm's cleanup closes fds by number
-          # and gets SIGKILLed with EXC_GUARD inside the fetchDeps build.
-          # nodejs_24 matches the Node bundled in Electron 42 (24.15.0).
+      # A sandboxed check that runs a pnpm script against a node_modules
+      # materialized from the offline store (mirrors the package build's env).
+      nodeCheck =
+        pkgs: name: command:
+        pkgs.stdenv.mkDerivation {
+          name = "ved-${name}";
+          src = self;
           nativeBuildInputs = with pkgs; [
             nodejs_24
             pnpm_10
             pnpmConfigHook
-            makeWrapper
           ];
-
-          pnpmDeps = pkgs.fetchPnpmDeps {
-            inherit (finalAttrs) pname version src;
-            pnpm = pkgs.pnpm_10;
-            fetcherVersion = 3;
-            hash = "sha256-FLhJ2VAS/xTdjRaO8cx+NfUCjAtBq//2czsM395irF8=";
-          };
-
-          # The electron npm package's binary download is skipped; the wrapper
-          # below runs the app with the nixpkgs electron instead.
+          pnpmDeps = pnpmDepsFor pkgs;
           env.ELECTRON_SKIP_BINARY_DOWNLOAD = "1";
-
+          # vitest 4 starts a Vite server bound to localhost; the macOS build
+          # sandbox blocks loopback by default (Linux already allows it).
+          __darwinAllowLocalNetworking = true;
           buildPhase = ''
             runHook preBuild
-            pnpm exec electron-vite build
+            ${command}
             runHook postBuild
           '';
+          installPhase = "touch $out";
+        };
 
-          # electron-vite externalizes package.json `dependencies` in the
-          # main/preload bundles, so they need a node_modules at runtime —
-          # reshape it to production-only before shipping it.
-          installPhase = ''
-            runHook preInstall
-            pnpm install --offline --prod --frozen-lockfile --ignore-scripts
-            mkdir -p $out/share/ved $out/bin
-            cp -r out node_modules package.json $out/share/ved/
-            makeWrapper ${pkgs.lib.getExe pkgs.electron_42} $out/bin/ved \
-              --add-flags $out/share/ved
-            runHook postInstall
-          '';
+    in
+    {
+      checks = forAllSystems (pkgs: {
+        gha-lint =
+          pkgs.runCommand "ved-workflow-check"
+            {
+              nativeBuildInputs = with pkgs; [
+                zizmor
+              ];
+            }
+            ''
+              cd ${self}
+              zizmor --offline .
+              touch $out
+            '';
 
-          meta.mainProgram = "ved";
-        });
+        format = treefmtEval.${pkgs.stdenv.hostPlatform.system}.config.build.check self;
+
+        # biome is a standalone binary, so linting needs no node_modules.
+        lint = pkgs.runCommand "ved-lint" { nativeBuildInputs = [ pkgs.biome ]; } ''
+          cd ${self}
+          biome check
+          touch $out
+        '';
+
+        typecheck = nodeCheck pkgs "typecheck" "pnpm run typecheck";
+
+        test = nodeCheck pkgs "test" "pnpm run test";
+
+        build = self.packages.${pkgs.stdenv.hostPlatform.system}.ved;
       });
 
       devShells = forAllSystems (
@@ -118,17 +145,68 @@
               just
               nodejs_24
               pnpm
+              pinact
+              zizmor
             ];
 
-            shellHook =
-              pkgs.lib.optionalString pkgs.stdenvNoCC.isLinux ''
-                export LD_LIBRARY_PATH="$LD_LIBRARY_PATH:${pkgs.lib.makeLibraryPath deps}"
-                export GTK_IM_MODULE_FILE=${gtk3ImmodulesCache}
-              '';
+            shellHook = pkgs.lib.optionalString pkgs.stdenvNoCC.isLinux ''
+              export LD_LIBRARY_PATH="$LD_LIBRARY_PATH:${pkgs.lib.makeLibraryPath deps}"
+              export GTK_IM_MODULE_FILE=${gtk3ImmodulesCache}
+            '';
           };
         }
       );
 
-      formatter = forAllSystems (pkgs: pkgs.nixfmt-rfc-style);
+      formatter = forAllSystems (
+        pkgs: treefmtEval.${pkgs.stdenv.hostPlatform.system}.config.build.wrapper
+      );
+
+      packages = forAllSystems (pkgs: rec {
+        default = ved;
+
+        ved = pkgs.stdenv.mkDerivation {
+          pname = "ved";
+          inherit version;
+          src = self;
+
+          # pnpm 10, not 11: pnpm 11's store writes a SQLite index whose file
+          # descriptor is guarded on macOS; pnpm's cleanup closes fds by number
+          # and gets SIGKILLed with EXC_GUARD inside the fetchDeps build.
+          # nodejs_24 matches the Node bundled in Electron 42 (24.15.0).
+          nativeBuildInputs = with pkgs; [
+            nodejs_24
+            pnpm_10
+            pnpmConfigHook
+            makeWrapper
+          ];
+
+          pnpmDeps = pnpmDepsFor pkgs;
+
+          # The electron npm package's binary download is skipped; the wrapper
+          # below runs the app with the nixpkgs electron instead.
+          env.ELECTRON_SKIP_BINARY_DOWNLOAD = "1";
+
+          buildPhase = ''
+            runHook preBuild
+            pnpm exec electron-vite build
+            runHook postBuild
+          '';
+
+          # electron-vite externalizes package.json `dependencies` in the
+          # main/preload bundles, so they need a node_modules at runtime —
+          # reshape it to production-only before shipping it.
+          installPhase = ''
+            runHook preInstall
+            pnpm install --offline --prod --frozen-lockfile --ignore-scripts
+            mkdir -p $out/share/ved $out/bin
+            cp -r out node_modules package.json $out/share/ved/
+            makeWrapper ${pkgs.lib.getExe pkgs.electron_42} $out/bin/ved \
+              --add-flags $out/share/ved
+            runHook postInstall
+          '';
+
+          meta.mainProgram = "ved";
+        };
+      });
     };
 }

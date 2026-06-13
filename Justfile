@@ -1,9 +1,17 @@
-# Just a task runner
-# <https://github.com/casey/just>
+# Just a task runner:
+# https://github.com/casey/just
 
 # shows this help message
 help:
     @just -l
+
+# runs everything locally
+all:
+    nix flake check
+    just smoke
+
+[private]
+alias a := all
 
 # builds the app (typecheck + electron-vite build)
 build:
@@ -12,9 +20,7 @@ build:
 [private]
 alias b := build
 
-# the CI gate: typecheck, lint (no fix), unit tests, production build.
-# Display-free and deterministic — the e2e suite (`just smoke`) needs a
-# windowed Electron and runs separately / locally.
+# runs checks
 ci:
     pnpm run typecheck
     pnpm run check

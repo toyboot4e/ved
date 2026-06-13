@@ -29,10 +29,5 @@ jobs:
             experimental-features = nix-command flakes
             access-tokens = github.com=${{ secrets.GITHUB_TOKEN }}
 
-      # The dev shell (flake.nix) provides node, pnpm, biome, and just.
-      # ELECTRON_SKIP_BINARY_DOWNLOAD: `just ci` builds and type-checks but
-      # never launches Electron, so the ~100 MB binary is not needed here.
-      - name: just ci
-        run: nix develop --command bash -c "pnpm install --frozen-lockfile && just ci"
-        env:
-          ELECTRON_SKIP_BINARY_DOWNLOAD: "1"
+      - name: flake check
+        run: nix flake check
