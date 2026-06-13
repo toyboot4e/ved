@@ -32,6 +32,13 @@
         "noFloatingPromises": "error",
         "noMisusedPromises": "error"
       },
+      "style": {
+        // This project enables TS `noUncheckedIndexedAccess`, so every `arr[i]`
+        // is typed `T | undefined`. Non-null assertions on bounds-checked
+        // indexing are the idiomatic response; `noNonNullAssertion` only fights
+        // that stricter, more valuable rule. Off by design.
+        "noNonNullAssertion": "off"
+      },
       "recommended": true
     }
   },

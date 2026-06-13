@@ -235,7 +235,6 @@ export const plaintextToTree = (text: string): Descendant[] =>
 export const childrenEqual = (a: Descendant[], b: Descendant[]): boolean => {
   if (a.length !== b.length) return false;
   return a.every((x, i) => {
-    // biome-ignore lint/style/noNonNullAssertion: same length
     const y = b[i]!;
     if ('text' in x) return 'text' in y && x.type === y.type && x.text === y.text;
     if ('text' in y) return false;

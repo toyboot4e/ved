@@ -97,10 +97,7 @@ export const buffersReducer = (state: BuffersState, action: BuffersAction): Buff
       }
       // If the active tab closed, fall onto its right neighbor (or the new last)
       const activeId =
-        action.id === state.activeId
-          ? // biome-ignore lint/style/noNonNullAssertion: remaining is non-empty
-            remaining[Math.min(idx, remaining.length - 1)]!.id
-          : state.activeId;
+        action.id === state.activeId ? remaining[Math.min(idx, remaining.length - 1)]!.id : state.activeId;
       return { ...state, buffers: remaining, activeId };
     }
     case 'markSaved':

@@ -193,7 +193,6 @@ export const replaceContent = (editor: Editor, newChildren: Descendant[]): void 
     }
     // Insert new nodes
     for (let i = 0; i < newChildren.length; i++) {
-      // biome-ignore lint/style/noNonNullAssertion: safe
       Transforms.insertNodes(editor, newChildren[i]!, { at: [i] });
     }
   });
@@ -242,19 +241,16 @@ export class PlainTextHistory {
   undo(): HistoryEntry | null {
     if (this.pointer <= 0) return null;
     this.pointer--;
-    // biome-ignore lint/style/noNonNullAssertion: bounds checked
     return this.entries[this.pointer]!;
   }
 
   redo(): HistoryEntry | null {
     if (this.pointer >= this.entries.length - 1) return null;
     this.pointer++;
-    // biome-ignore lint/style/noNonNullAssertion: bounds checked
     return this.entries[this.pointer]!;
   }
 
   current(): HistoryEntry {
-    // biome-ignore lint/style/noNonNullAssertion: always at least one entry
     return this.entries[this.pointer]!;
   }
 }

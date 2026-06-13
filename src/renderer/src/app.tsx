@@ -1,5 +1,5 @@
 import { clsx } from 'clsx';
-import { useCallback, useEffect, useLayoutEffect, useReducer, useRef, useState } from 'react';
+import { useCallback, useEffect, useReducer, useRef, useState } from 'react';
 import { activeBuffer, type BufferId, buffersReducer, initBuffers, isDirty, someInactiveDirty } from './buffers';
 import { AppearPolicy, type EditorSnapshot, VedEditor, WritingMode } from './components/editor';
 import styles from './components/editor.module.scss';
@@ -37,13 +37,16 @@ export const App = (): React.JSX.Element => {
     setDirty(text !== savedTextRef.current);
   }, []);
 
-  // Switching to a buffer: adopt its committed text + dirtiness as the live
-  // baseline (its stored text is current on switch-in).
-  // biome-ignore lint/correctness/useExhaustiveDependencies: run on buffer switch only; text/savedText are read as the switch-in baseline
-  useLayoutEffect(() => {
+  // Switching to a buffer adopts its committed text + dirtiness as the live
+  // baseline (its stored text is current on switch-in). Done during render —
+  // React's "adjust state when a prop changes" pattern — so there is no
+  // post-paint flicker and no effect-dependency dance.
+  const [baselineId, setBaselineId] = useState(active.id);
+  if (baselineId !== active.id) {
+    setBaselineId(active.id);
     textRef.current = active.text;
     setDirty(active.text !== active.savedText);
-  }, [active.id]);
+  }
 
   // The window title and the close guard reflect the active buffer plus any
   // other dirty buffer.
@@ -80,7 +83,6 @@ export const App = (): React.JSX.Element => {
       const order = state.buffers;
       if (order.length < 2) return;
       const idx = order.findIndex((b) => b.id === active.id);
-      // biome-ignore lint/style/noNonNullAssertion: index is in range
       const next = order[(idx + delta + order.length) % order.length]!;
       dispatch({ type: 'setActive', id: next.id });
     },

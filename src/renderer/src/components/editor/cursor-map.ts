@@ -57,7 +57,6 @@ export const paraOffsetToPoint = (children: Descendant[], offset: number): { pat
   const entries = textEntries(children);
   let consumed = 0;
   for (let i = 0; i < entries.length; i++) {
-    // biome-ignore lint/style/noNonNullAssertion: bounds checked
     const entry = entries[i]!;
     const end = consumed + entry.text.length;
     if (offset < end) {

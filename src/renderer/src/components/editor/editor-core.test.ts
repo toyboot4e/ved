@@ -242,7 +242,6 @@ describe('cursor across syncParagraphs', () => {
     expect(cursor).toEqual({ para: 0, offset: 5 });
 
     syncParagraphs(editor);
-    // biome-ignore lint/style/noNonNullAssertion: asserted above
     restoreCursorSync(editor, cursor!);
 
     expect(getCursorPlainOffset(editor)).toEqual({ para: 0, offset: 5 });

@@ -105,7 +105,6 @@ describe('cursor-map PBT (identity mapping)', () => {
           );
           expect(leaf).toBeDefined();
           expect(point.offset).toBeGreaterThanOrEqual(0);
-          // biome-ignore lint/style/noNonNullAssertion: asserted above
           expect(point.offset).toBeLessThanOrEqual(leaf!.text.length);
         }
       }),

@@ -223,8 +223,13 @@ const useRevealCaretOnPolicyChange = (
   editor: Editor,
   appearPolicy: AppearPolicy,
 ): void => {
-  // biome-ignore lint/correctness/useExhaustiveDependencies(appearPolicy): the policy change is the trigger — the effect reads the reflowed layout, not the value
+  const prevPolicyRef = useRef(appearPolicy);
   useLayoutEffect(() => {
+    // Reveal only on an actual policy change (the reflow), not on mount —
+    // reading the policy here is also what makes it a genuine dependency.
+    if (prevPolicyRef.current === appearPolicy) return;
+    prevPolicyRef.current = appearPolicy;
+
     const scroller = scrollerRef.current;
     const selection = editor.selection;
     if (!scroller || !selection) return;
@@ -380,7 +385,10 @@ export const VedEditor = ({
   // down and re-run when the callback identity changes.
   const onSnapshotRef = useRef(onSnapshot);
   onSnapshotRef.current = onSnapshot;
-  // biome-ignore lint/correctness/useExhaustiveDependencies: mount/unmount only — refs carry the live values
+  // Runs once per mount: `editor` is from useState and the buffer's
+  // initialCursor/initialScroll are stable for a given key (they only change
+  // via a snapshot, which happens on unmount). Live values for the unmount
+  // snapshot are read through refs, not deps.
   useLayoutEffect(() => {
     const scroller = scrollerRef.current;
     if (scroller && initialScroll) {
@@ -405,7 +413,7 @@ export const VedEditor = ({
         scroll: { top: s?.scrollTop ?? 0, left: s?.scrollLeft ?? 0 },
       });
     };
-  }, [editor]);
+  }, [editor, initialCursor, initialScroll]);
 
   return (
     <div
