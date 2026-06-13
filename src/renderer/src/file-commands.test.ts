@@ -1,6 +1,13 @@
 import { describe, expect, it } from 'vitest';
 import type { VedFileApi } from '../../shared/ipc';
-import { type ChordEvent, fileName, matchFileCommand, saveOrSaveAs, windowTitle } from './file-commands';
+import {
+  type ChordEvent,
+  fileName,
+  matchFileCommand,
+  matchTabCommand,
+  saveOrSaveAs,
+  windowTitle,
+} from './file-commands';
 
 const fakeApi = (overrides: Partial<VedFileApi>): VedFileApi => ({
   openFile: () => Promise.resolve(null),
@@ -65,6 +72,40 @@ describe('matchFileCommand', () => {
   it('ignores unrelated keys and alt chords', () => {
     expect(matchFileCommand(chord({ key: 'p', ctrlKey: true }), false)).toBeNull();
     expect(matchFileCommand(chord({ ctrlKey: true, altKey: true }), false)).toBeNull();
+  });
+});
+
+describe('matchTabCommand', () => {
+  const chord = (overrides: Partial<ChordEvent>): ChordEvent => ({
+    key: 'n',
+    ctrlKey: false,
+    metaKey: false,
+    shiftKey: false,
+    altKey: false,
+    isComposing: false,
+    keyCode: 78,
+    ...overrides,
+  });
+
+  it('maps new/close on the platform mod key', () => {
+    expect(matchTabCommand(chord({ key: 'n', ctrlKey: true }), false)).toBe('new');
+    expect(matchTabCommand(chord({ key: 'n', metaKey: true }), true)).toBe('new');
+    expect(matchTabCommand(chord({ key: 'w', ctrlKey: true }), false)).toBe('close');
+    expect(matchTabCommand(chord({ key: 'w', metaKey: true }), true)).toBe('close');
+  });
+
+  it('cycles with Ctrl+Tab on both platforms, never Cmd', () => {
+    expect(matchTabCommand(chord({ key: 'Tab', ctrlKey: true }), false)).toBe('next');
+    expect(matchTabCommand(chord({ key: 'Tab', ctrlKey: true }), true)).toBe('next'); // mac too
+    expect(matchTabCommand(chord({ key: 'Tab', ctrlKey: true, shiftKey: true }), true)).toBe('prev');
+    // Cmd+Tab is the macOS app switcher — not ours
+    expect(matchTabCommand(chord({ key: 'Tab', metaKey: true }), true)).toBeNull();
+  });
+
+  it('ignores composition, alt, and unrelated keys', () => {
+    expect(matchTabCommand(chord({ key: 'n', ctrlKey: true, isComposing: true }), false)).toBeNull();
+    expect(matchTabCommand(chord({ key: 'n', ctrlKey: true, altKey: true }), false)).toBeNull();
+    expect(matchTabCommand(chord({ key: 'q', ctrlKey: true }), false)).toBeNull();
   });
 });
 

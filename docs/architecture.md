@@ -198,10 +198,14 @@ src/main/close-guard.ts    confirm-on-close for a dirty buffer
 src/preload/               contextBridge: electron-toolkit defaults +
                            window.ved (the VedApi implementation)
 src/renderer/src/
-  app.tsx                  state owner: document (path/dirty), WritingMode,
-                           AppearPolicy; file shortcuts (Ctrl+O/S/Shift+S)
-  file-commands.ts         save/save-as logic, chord matching, window title
-                           (pure over VedFileApi, unit-tested)
+  app.tsx                  state owner: buffers (useReducer), WritingMode,
+                           AppearPolicy; file + tab shortcuts
+  buffers.ts               multi-buffer model: pure reducer over plaintext +
+                           scalars; holds each buffer's PlainTextHistory
+                           (unit-tested)
+  file-commands.ts         save/save-as logic, file + tab chord matching,
+                           window title (pure over VedFileApi, unit-tested)
+  components/tab-bar.tsx    hand-rolled tab row (title, dirty dot, close)
   parse.ts                 plaintext → format spans (syntax knowledge)
   components/
     toolbar.tsx            writing-mode / ruby-display button groups

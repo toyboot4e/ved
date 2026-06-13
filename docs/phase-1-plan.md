@@ -130,7 +130,7 @@ above it.
 
 ## Steps
 
-- [ ] **Step 1.1 — buffer model + history lift (refactor, no UX change).**
+- [x] **Step 1.1 — buffer model + history lift (refactor, no UX change).** *(done 2026-06-13)*
   - `buffers.ts` + `buffers.test.ts`: the `Buffer`/`BuffersState` types and
     the pure reducer. Unit-tested with a fake/real `PlainTextHistory`.
   - `VedEditor`: accept `history` as a prop (remove the internal
@@ -144,7 +144,7 @@ above it.
     undo/redo smoke steps.
   - Done: `just test-all` green, smoke unchanged. **Stop.**
 
-- [ ] **Step 1.2 — tab bar + multiple buffers.**
+- [x] **Step 1.2 — tab bar + multiple buffers.** *(done 2026-06-13; `confirmDiscard` IPC brought forward here, since the tab close button needs it)*
   - `tab-bar.tsx` (+ styles): the row described above.
   - `app.tsx`: `Ctrl+O` now *adds* a tab (or focuses the path if already
     open) instead of replacing; switching tabs snapshots the active buffer
@@ -155,7 +155,7 @@ above it.
     cursors, and dirty states preserved; the inactive tab's edit is intact.
   - **Stop.**
 
-- [ ] **Step 1.3 — tab keyboard + close.**
+- [x] **Step 1.3 — tab keyboard + close.** *(done 2026-06-13)*
   - `Ctrl+N` new untitled, `Ctrl+W` close active (dirty → `confirmDiscard`),
     `Ctrl+Tab` / `Ctrl+Shift+Tab` cycle. Extend the command matcher in
     `file-commands.ts` (it already cleanly maps chords → commands) rather

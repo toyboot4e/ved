@@ -106,6 +106,21 @@ export const pressMod = async (page: Page, key: string, { shift = false } = {}):
 };
 
 /**
+ * Dispatches Ctrl+Tab (optionally with Shift) as a synthetic keydown. Tab
+ * cycling always uses Ctrl, never Cmd — Cmd+Tab is the macOS app switcher.
+ */
+export const pressCtrlTab = async (page: Page, { shift = false } = {}): Promise<void> => {
+  await page.evaluate((s) => {
+    document
+      .getElementById('editor-content')
+      ?.dispatchEvent(
+        new KeyboardEvent('keydown', { key: 'Tab', ctrlKey: true, shiftKey: s, bubbles: true, cancelable: true }),
+      );
+  }, shift);
+  await page.waitForTimeout(50);
+};
+
+/**
  * Collapses the selection to the document start, programmatically: visual
  * Home/End can land inside a ruby annotation box (known caret papercut,
  * see docs/architecture.md).

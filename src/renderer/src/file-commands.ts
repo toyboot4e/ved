@@ -50,6 +50,29 @@ export const matchFileCommand = (event: ChordEvent, isDarwin: boolean): FileComm
   return null;
 };
 
+export type TabCommand = 'new' | 'close' | 'next' | 'prev';
+
+/**
+ * Maps a keydown to a tab command. New/close use the platform mod (Cmd on
+ * macOS); cycling uses Ctrl on BOTH platforms because Cmd+Tab is the macOS
+ * application switcher. `null` when the event is not ours.
+ */
+export const matchTabCommand = (event: ChordEvent, isDarwin: boolean): TabCommand | null => {
+  if (event.isComposing || event.keyCode === 229 || event.altKey) return null;
+
+  // Ctrl+Tab / Ctrl+Shift+Tab cycle (Ctrl, never Cmd)
+  if (event.ctrlKey && !event.metaKey && event.key === 'Tab') {
+    return event.shiftKey ? 'prev' : 'next';
+  }
+
+  const mod = isDarwin ? event.metaKey : event.ctrlKey;
+  if (!mod || event.shiftKey) return null;
+  const key = event.key.toLowerCase();
+  if (key === 'n') return 'new';
+  if (key === 'w') return 'close';
+  return null;
+};
+
 /** The display name of a document: its base name, or a placeholder when untitled. */
 export const fileName = (path: string | null): string => path?.split(/[/\\]/).at(-1) ?? '無題';
 

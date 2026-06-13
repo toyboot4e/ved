@@ -5,7 +5,15 @@ import { AppearPolicy, type EditorSnapshot, VedEditor, WritingMode } from './com
 import styles from './components/editor.module.scss';
 import { TabBar } from './components/tab-bar';
 import { Toolbar } from './components/toolbar';
-import { matchFileCommand, saveOrSaveAs, saveViaDialog, windowTitle } from './file-commands';
+import {
+  type FileCommand,
+  matchFileCommand,
+  matchTabCommand,
+  saveOrSaveAs,
+  saveViaDialog,
+  type TabCommand,
+  windowTitle,
+} from './file-commands';
 
 const INITIAL_TEXT = '|ルビ(ruby)';
 
@@ -67,6 +75,18 @@ export const App = (): React.JSX.Element => {
     [state, active.id, dirty],
   );
 
+  const handleCycle = useCallback(
+    (delta: 1 | -1) => {
+      const order = state.buffers;
+      if (order.length < 2) return;
+      const idx = order.findIndex((b) => b.id === active.id);
+      // biome-ignore lint/style/noNonNullAssertion: index is in range
+      const next = order[(idx + delta + order.length) % order.length]!;
+      dispatch({ type: 'setActive', id: next.id });
+    },
+    [state.buffers, active.id],
+  );
+
   const handleOpen = useCallback(async () => {
     const opened = await window.ved.openFile();
     if (!opened) return;
@@ -85,24 +105,44 @@ export const App = (): React.JSX.Element => {
     [active.path, active.id],
   );
 
-  // File shortcuts work wherever the focus is, so they live on `window`.
-  // View-mode and caret shortcuts stay inside the editor (they need Slate
-  // context).
+  const runFileCommand = useCallback(
+    (command: FileCommand) => {
+      if (command === 'open') void handleOpen();
+      else void handleSave(command === 'saveAs');
+    },
+    [handleOpen, handleSave],
+  );
+
+  const runTabCommand = useCallback(
+    (command: TabCommand) => {
+      if (command === 'new') dispatch({ type: 'newUntitled' });
+      else if (command === 'close') void handleClose(active.id);
+      else handleCycle(command === 'next' ? 1 : -1);
+    },
+    [handleClose, handleCycle, active.id],
+  );
+
+  // File and tab shortcuts work wherever the focus is, so they live on
+  // `window`. View-mode and caret shortcuts stay inside the editor (they
+  // need Slate context).
   useEffect(() => {
     const isDarwin = window.electron.process.platform === 'darwin';
     const onKeyDown = (event: KeyboardEvent): void => {
-      const command = matchFileCommand(event, isDarwin);
-      if (!command) return;
-      event.preventDefault();
-      if (command === 'open') {
-        void handleOpen();
-      } else {
-        void handleSave(command === 'saveAs');
+      const fileCommand = matchFileCommand(event, isDarwin);
+      if (fileCommand) {
+        event.preventDefault();
+        runFileCommand(fileCommand);
+        return;
+      }
+      const tabCommand = matchTabCommand(event, isDarwin);
+      if (tabCommand) {
+        event.preventDefault();
+        runTabCommand(tabCommand);
       }
     };
     window.addEventListener('keydown', onKeyDown);
     return () => window.removeEventListener('keydown', onKeyDown);
-  }, [handleOpen, handleSave]);
+  }, [runFileCommand, runTabCommand]);
 
   return (
     // vertMode on the root transposes the page geometry (CSS custom props)
