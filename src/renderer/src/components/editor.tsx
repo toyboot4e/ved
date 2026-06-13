@@ -72,6 +72,83 @@ const moveCaretByLine = (alter: 'move' | 'extend', dir: 'forward' | 'backward'):
   });
 };
 
+// Digits, not letters: Ctrl+S/O are file shortcuts (handled app-level)
+const MODE_MAP: Record<string, AppearPolicy> = {
+  '1': AppearPolicy.ShowAll,
+  '2': AppearPolicy.ByParagraph,
+  '3': AppearPolicy.ByCharacter,
+  '4': AppearPolicy.Rich,
+};
+
+/** Intercept undo/redo before Slate handles it. Returns whether it consumed the event. */
+const tryUndoRedo = (
+  event: React.KeyboardEvent,
+  mod: boolean,
+  handleUndo: () => void,
+  handleRedo: () => void,
+): boolean => {
+  if (!mod || event.key !== 'z') return false;
+  event.preventDefault();
+  (event.shiftKey ? handleRedo : handleUndo)();
+  return true;
+};
+
+// Per writing mode, which axis each arrow key acts on and in which direction.
+// 'line' moves visually by line (needs the browser); 'char' steps the model.
+type ArrowAct = { axis: 'line' | 'char'; reverse: boolean };
+
+// Visual axes are rotated under vertical-rl: left/right = lines, up/down =
+// characters. Horizontal mode is the natural mapping.
+const VERT_ARROWS: Record<string, ArrowAct> = {
+  ArrowLeft: { axis: 'line', reverse: false }, // forward
+  ArrowRight: { axis: 'line', reverse: true }, // backward
+  ArrowUp: { axis: 'char', reverse: true },
+  ArrowDown: { axis: 'char', reverse: false },
+};
+const HORIZ_ARROWS: Record<string, ArrowAct> = {
+  ArrowLeft: { axis: 'char', reverse: true },
+  ArrowRight: { axis: 'char', reverse: false },
+  ArrowDown: { axis: 'line', reverse: false }, // forward
+  ArrowUp: { axis: 'line', reverse: true }, // backward
+};
+
+/** Arrow-key caret movement. Returns whether it consumed the event. */
+const tryArrowMove = (
+  event: React.KeyboardEvent,
+  editor: Editor,
+  vert: boolean,
+  mod: boolean,
+  appearPolicy: AppearPolicy,
+): boolean => {
+  // In horizontal mode, mod/alt arrows are left to the browser/Slate.
+  if (!vert && (mod || event.altKey)) return false;
+  const act = (vert ? VERT_ARROWS : HORIZ_ARROWS)[event.key];
+  if (!act) return false;
+
+  event.preventDefault();
+  const extend = event.shiftKey;
+  if (act.axis === 'line') {
+    moveCaretByLine(extend ? 'extend' : 'move', act.reverse ? 'backward' : 'forward');
+  } else {
+    moveCaretByCharacter(editor, appearPolicy, { reverse: act.reverse, extend });
+  }
+  return true;
+};
+
+/** Mod+digit view-mode shortcuts. Returns whether it consumed the event. */
+const tryModeShortcut = (
+  event: React.KeyboardEvent,
+  mod: boolean,
+  setMode: (policy: AppearPolicy) => void,
+): boolean => {
+  if (!mod) return false;
+  const policy = MODE_MAP[event.key];
+  if (policy === undefined) return false;
+  event.preventDefault();
+  setMode(policy);
+  return true;
+};
+
 const useOnKeyDown = (
   editor: Editor,
   vert: boolean,
@@ -83,64 +160,9 @@ const useOnKeyDown = (
   return useCallback(
     (event: React.KeyboardEvent) => {
       const mod = window.electron.process.platform === 'darwin' ? event.metaKey : event.ctrlKey;
-
-      // Intercept undo/redo before Slate handles it
-      if (mod && event.key === 'z') {
-        event.preventDefault();
-        if (event.shiftKey) {
-          handleRedo();
-        } else {
-          handleUndo();
-        }
-        return;
-      }
-
-      const alter = event.shiftKey ? 'extend' : 'move';
-      const extend = event.shiftKey;
-
-      if (vert) {
-        // Visual axes are rotated under vertical-rl: left/right = lines,
-        // up/down = characters.
-        if (event.key === 'ArrowRight' || event.key === 'ArrowLeft') {
-          event.preventDefault();
-          moveCaretByLine(alter, event.key === 'ArrowLeft' ? 'forward' : 'backward');
-          return;
-        }
-
-        if (event.key === 'ArrowDown' || event.key === 'ArrowUp') {
-          event.preventDefault();
-          moveCaretByCharacter(editor, appearPolicy, { reverse: event.key === 'ArrowUp', extend });
-          return;
-        }
-      } else if (!mod && !event.altKey) {
-        if (event.key === 'ArrowRight' || event.key === 'ArrowLeft') {
-          event.preventDefault();
-          moveCaretByCharacter(editor, appearPolicy, { reverse: event.key === 'ArrowLeft', extend });
-          return;
-        }
-
-        if (event.key === 'ArrowDown' || event.key === 'ArrowUp') {
-          event.preventDefault();
-          moveCaretByLine(alter, event.key === 'ArrowDown' ? 'forward' : 'backward');
-          return;
-        }
-      }
-
-      if (mod) {
-        // Digits, not letters: Ctrl+S/O are file shortcuts (handled app-level)
-        const modeMap: Record<string, AppearPolicy> = {
-          '1': AppearPolicy.ShowAll,
-          '2': AppearPolicy.ByParagraph,
-          '3': AppearPolicy.ByCharacter,
-          '4': AppearPolicy.Rich,
-        };
-        const policy = modeMap[event.key];
-        if (policy !== undefined) {
-          event.preventDefault();
-          setMode(policy);
-          return;
-        }
-      }
+      tryUndoRedo(event, mod, handleUndo, handleRedo) ||
+        tryArrowMove(event, editor, vert, mod, appearPolicy) ||
+        tryModeShortcut(event, mod, setMode);
     },
     [editor, vert, appearPolicy, setMode, handleUndo, handleRedo],
   );

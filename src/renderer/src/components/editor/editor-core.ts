@@ -85,6 +85,47 @@ const isJunctionDuplicate = (editor: Editor, point: Point, policy: AppearPolicy,
  * start, after `)` coming from the end) so continued movement walks the
  * expanded syntax naturally.
  */
+/**
+ * Step from `from` to the next model point that is actually rendered and not
+ * a duplicate leaf junction, skipping hidden markup and interior junctions.
+ * Returns null at the document edge.
+ */
+const nextVisiblePoint = (editor: Editor, policy: AppearPolicy, from: Point, reverse: boolean): Point | null => {
+  let point = from;
+  while (true) {
+    const next = reverse
+      ? Editor.before(editor, point, { unit: 'offset' })
+      : Editor.after(editor, point, { unit: 'offset' });
+    if (!next) return null; // document edge
+    point = next;
+    if (leafHiddenAt(editor, point, policy)) continue;
+    if (isJunctionDuplicate(editor, point, policy, reverse)) continue;
+    return point;
+  }
+};
+
+/**
+ * ByCharacter: when the landing point is inside a ruby that was collapsed at
+ * keypress time, snap to the entry-side edge of its syntax so continued
+ * movement walks the now-expanded syntax. Otherwise the point is unchanged.
+ */
+const rubyEntryPoint = (
+  editor: Editor,
+  sel: { anchor: Point },
+  point: Point,
+  policy: AppearPolicy,
+  reverse: boolean,
+): Point => {
+  if (policy !== AppearPolicy.ByCharacter || point.path.length !== 3) return point;
+  const rubyPath = Path.parent(point.path);
+  const node = Node.get(editor, rubyPath);
+  const wasCollapsed = !Path.isAncestor(rubyPath, sel.anchor.path);
+  if (wasCollapsed && Element.isElement(node) && node.type === 'ruby') {
+    return reverse ? Editor.end(editor, rubyPath) : Editor.start(editor, rubyPath);
+  }
+  return point;
+};
+
 export const moveCaretByCharacter = (
   editor: Editor,
   policy: AppearPolicy,
@@ -93,27 +134,9 @@ export const moveCaretByCharacter = (
   const sel = editor.selection;
   if (!sel) return;
 
-  let point = sel.focus;
-  while (true) {
-    const next = options.reverse
-      ? Editor.before(editor, point, { unit: 'offset' })
-      : Editor.after(editor, point, { unit: 'offset' });
-    if (!next) return; // document edge
-    point = next;
-    if (leafHiddenAt(editor, point, policy)) continue;
-    if (isJunctionDuplicate(editor, point, policy, options.reverse)) continue;
-    break;
-  }
-
-  // ByCharacter: entering a ruby that was collapsed at keypress time
-  if (policy === AppearPolicy.ByCharacter && point.path.length === 3) {
-    const rubyPath = Path.parent(point.path);
-    const node = Node.get(editor, rubyPath);
-    const wasCollapsed = !Path.isAncestor(rubyPath, sel.anchor.path);
-    if (wasCollapsed && Element.isElement(node) && node.type === 'ruby') {
-      point = options.reverse ? Editor.end(editor, rubyPath) : Editor.start(editor, rubyPath);
-    }
-  }
+  const landed = nextVisiblePoint(editor, policy, sel.focus, options.reverse);
+  if (!landed) return;
+  const point = rubyEntryPoint(editor, sel, landed, policy, options.reverse);
 
   if (options.extend) {
     Transforms.select(editor, { anchor: sel.anchor, focus: point });
