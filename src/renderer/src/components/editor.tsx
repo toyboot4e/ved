@@ -12,10 +12,11 @@ import {
   withReact,
 } from 'slate-react';
 import {
+  type CursorState,
   getCursorPlainOffset,
   type HistoryEntry,
   moveCaretByCharacter,
-  PlainTextHistory,
+  type PlainTextHistory,
   replaceContent,
   restoreCursorSync,
   syncParagraphs,
@@ -36,14 +37,28 @@ export enum WritingMode {
   VerticalColumns,
 }
 
+/** A buffer's editor state captured on unmount, to restore on switch-back. */
+export type EditorSnapshot = {
+  readonly text: string;
+  readonly cursor: CursorState | null;
+  readonly scroll: { top: number; left: number };
+};
+
 /** Properties of {@link VedEditor}. */
 export type VedEditorProps = {
   readonly initialText: string;
+  /** Undo history, owned by the buffer so it survives tab switches. */
+  readonly history: PlainTextHistory;
   readonly writingMode: WritingMode;
   readonly appearPolicy: AppearPolicy;
   readonly setAppearPolicy: (_: AppearPolicy) => void;
   /** Reports the current plaintext after every text change (including undo/redo). */
   readonly onTextChange?: (text: string) => void;
+  /** Caret/scroll to restore on mount (from the buffer's last snapshot). */
+  readonly initialCursor?: CursorState | null;
+  readonly initialScroll?: { top: number; left: number };
+  /** Reports {text, cursor, scroll} on unmount, to persist into the buffer. */
+  readonly onSnapshot?: (snapshot: EditorSnapshot) => void;
 };
 
 // ---------------------------------------------------------------------------
@@ -240,15 +255,18 @@ const useRevealCaretOnPolicyChange = (
 
 export const VedEditor = ({
   initialText,
+  history,
   writingMode,
   appearPolicy,
   setAppearPolicy,
   onTextChange,
+  initialCursor,
+  initialScroll,
+  onSnapshot,
 }: VedEditorProps): React.JSX.Element => {
   const [editor] = useState(() => withNormalizeText(withInlines(withReact(createEditor()))));
 
   const [initialValue] = useState(() => plaintextToTree(initialText));
-  const [history] = useState(() => new PlainTextHistory(initialText));
 
   // Track last known plaintext to detect changes
   const lastPlaintextRef = useRef(initialText);
@@ -355,6 +373,39 @@ export const VedEditor = ({
   const scrollerRef = useRef<HTMLDivElement>(null);
   const onScroll = useKeepScrollPosition(scrollerRef, writingMode);
   useRevealCaretOnPolicyChange(scrollerRef, editor, appearPolicy);
+
+  // Mount: restore the buffer's last caret + scroll (skipped for a fresh
+  // buffer). Unmount: hand {text, cursor, scroll} back so the buffer keeps
+  // them across a tab switch. Snapshot via a ref so the cleanup is not torn
+  // down and re-run when the callback identity changes.
+  const onSnapshotRef = useRef(onSnapshot);
+  onSnapshotRef.current = onSnapshot;
+  // biome-ignore lint/correctness/useExhaustiveDependencies: mount/unmount only — refs carry the live values
+  useLayoutEffect(() => {
+    const scroller = scrollerRef.current;
+    if (scroller && initialScroll) {
+      scroller.scrollTop = initialScroll.top;
+      scroller.scrollLeft = initialScroll.left;
+    }
+    if (initialCursor) {
+      requestAnimationFrame(() => {
+        try {
+          restoreCursorSync(editor, initialCursor);
+          ReactEditor.focus(editor);
+        } catch {
+          // selection not restorable (e.g. content shorter than expected)
+        }
+      });
+    }
+    return () => {
+      const s = scrollerRef.current;
+      onSnapshotRef.current?.({
+        text: lastPlaintextRef.current,
+        cursor: getCursorPlainOffset(editor),
+        scroll: { top: s?.scrollTop ?? 0, left: s?.scrollLeft ?? 0 },
+      });
+    };
+  }, [editor]);
 
   return (
     <div

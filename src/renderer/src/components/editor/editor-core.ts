@@ -203,9 +203,12 @@ export const replaceContent = (editor: Editor, newChildren: Descendant[]): void 
 // Custom plain-text history
 // ---------------------------------------------------------------------------
 
+/** A caret position in plain-offset terms: paragraph index + offset within it. */
+export type CursorState = { para: number; offset: number };
+
 export type HistoryEntry = {
   text: string;
-  cursor: { para: number; offset: number } | null;
+  cursor: CursorState | null;
 };
 
 export class PlainTextHistory {
