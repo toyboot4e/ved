@@ -200,13 +200,20 @@ one optional prop (step 0.2).
 
 ### Phase 1 — buffers and tab bar
 
-The `Buffer` store and the `VedEditor` refactor (history lifted out,
-`onTextChange` up). Tab bar: hand-rolled flex row — title, dirty dot, close
-button, middle-click close, `Ctrl+Tab` / `Ctrl+W`, horizontal scroll on
-overflow. No drag-reorder yet (add `dnd-kit` later only if it itches).
+**Detailed step breakdown: [phase-1-plan.md](phase-1-plan.md).**
+
+The `Buffer` store and the `VedEditor` refactor (history lifted out, cursor
+and scroll snapshotted on switch-away). Tab bar: hand-rolled flex row —
+title, dirty dot, close button, middle-click close, `Ctrl+Tab` / `Ctrl+W`,
+horizontal scroll on overflow. No drag-reorder yet (add `dnd-kit` later only
+if it itches).
 
 Vertical-writing consideration: tabs stay horizontal; titles are short so no
 tategaki treatment needed in the chrome.
+
+Refinement decided in the detailed plan: Phase 1 uses `useReducer` + a pure
+`buffers.ts`; **Zustand is deferred to Phase 2**, when the sidebar becomes a
+second out-of-tree consumer.
 
 ### Phase 2 — file browser sidebar
 
