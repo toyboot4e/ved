@@ -115,6 +115,7 @@
 
             packages = with pkgs; [
               biome
+              just
               nodejs_24
               pnpm
             ];

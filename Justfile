@@ -12,6 +12,15 @@ build:
 [private]
 alias b := build
 
+# the CI gate: typecheck, lint (no fix), unit tests, production build.
+# Display-free and deterministic — the e2e suite (`just smoke`) needs a
+# windowed Electron and runs separately / locally.
+ci:
+    pnpm run typecheck
+    pnpm run check
+    pnpm run test
+    pnpm run build
+
 # runs biome check --fix
 check:
     pnpm run check:fix
