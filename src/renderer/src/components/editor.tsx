@@ -407,16 +407,26 @@ export const VedEditor = ({
   // down and re-run when the callback identity changes.
   const onSnapshotRef = useRef(onSnapshot);
   onSnapshotRef.current = onSnapshot;
-  // Runs once per mount: `editor` is from useState and the buffer's
-  // initialCursor/initialScroll are stable for a given key (they only change
-  // via a snapshot, which happens on unmount). Live values for the unmount
-  // snapshot are read through refs, not deps.
+  // The restore targets are read only at mount, so keep them out of the
+  // dependency array via refs. As deps they self-trigger a loop: the unmount
+  // snapshot below writes cursor/scroll back to the buffer, those return as
+  // new prop identities, the effect re-runs on the live instance and snapshots
+  // again — and React StrictMode's mount-time remount makes that loop infinite
+  // (a blank window in `vite dev`).
+  const initialCursorRef = useRef(initialCursor);
+  const initialScrollRef = useRef(initialScroll);
+  // Runs once per mount: `editor` is from useState, stable until the buffer
+  // `key` changes. Mount: restore the buffer's last caret + scroll (skipped for
+  // a fresh buffer). Unmount: hand {text, cursor, scroll} back so the buffer
+  // keeps them across a tab switch. Live values are read through refs, not deps.
   useLayoutEffect(() => {
     const scroller = scrollerRef.current;
+    const initialScroll = initialScrollRef.current;
     if (scroller && initialScroll) {
       scroller.scrollTop = initialScroll.top;
       scroller.scrollLeft = initialScroll.left;
     }
+    const initialCursor = initialCursorRef.current;
     if (initialCursor) {
       requestAnimationFrame(() => {
         try {
@@ -435,7 +445,7 @@ export const VedEditor = ({
         scroll: { top: s?.scrollTop ?? 0, left: s?.scrollLeft ?? 0 },
       });
     };
-  }, [editor, initialCursor, initialScroll]);
+  }, [editor]);
 
   return (
     <div
