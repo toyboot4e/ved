@@ -1,8 +1,9 @@
 import { clsx } from 'clsx';
 import { useCallback, useEffect, useLayoutEffect, useReducer, useRef, useState } from 'react';
-import { activeBuffer, buffersReducer, initBuffers, someInactiveDirty } from './buffers';
+import { activeBuffer, type BufferId, buffersReducer, initBuffers, isDirty, someInactiveDirty } from './buffers';
 import { AppearPolicy, type EditorSnapshot, VedEditor, WritingMode } from './components/editor';
 import styles from './components/editor.module.scss';
+import { TabBar } from './components/tab-bar';
 import { Toolbar } from './components/toolbar';
 import { matchFileCommand, saveOrSaveAs, saveViaDialog, windowTitle } from './file-commands';
 
@@ -30,6 +31,7 @@ export const App = (): React.JSX.Element => {
 
   // Switching to a buffer: adopt its committed text + dirtiness as the live
   // baseline (its stored text is current on switch-in).
+  // biome-ignore lint/correctness/useExhaustiveDependencies: run on buffer switch only; text/savedText are read as the switch-in baseline
   useLayoutEffect(() => {
     textRef.current = active.text;
     setDirty(active.text !== active.savedText);
@@ -45,6 +47,24 @@ export const App = (): React.JSX.Element => {
   const handleSnapshot = useCallback(
     (id: number, snapshot: EditorSnapshot) => dispatch({ type: 'snapshot', id, ...snapshot }),
     [],
+  );
+
+  const handleSelect = useCallback(
+    (id: BufferId) => {
+      if (id !== active.id) dispatch({ type: 'setActive', id });
+    },
+    [active.id],
+  );
+
+  const handleClose = useCallback(
+    async (id: BufferId) => {
+      const buf = state.buffers.find((b) => b.id === id);
+      if (!buf) return;
+      const bufDirty = id === active.id ? dirty : isDirty(buf);
+      if (bufDirty && !(await window.ved.confirmDiscard())) return;
+      dispatch({ type: 'close', id });
+    },
+    [state, active.id, dirty],
   );
 
   const handleOpen = useCallback(async () => {
@@ -96,6 +116,16 @@ export const App = (): React.JSX.Element => {
           setAppearPolicy={setAppearPolicy}
         />
       </div>
+      <TabBar
+        tabs={state.buffers.map((b) => ({
+          id: b.id,
+          path: b.path,
+          dirty: b.id === active.id ? dirty : isDirty(b),
+        }))}
+        activeId={active.id}
+        onSelect={handleSelect}
+        onClose={handleClose}
+      />
       <VedEditor
         key={active.id}
         initialText={active.text}

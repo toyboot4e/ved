@@ -12,6 +12,7 @@ const ved: VedApi = {
   saveFile: (path, text) => ipcRenderer.invoke(IpcChannel.SaveFile, path, text),
   saveFileAs: (text, defaultPath) => ipcRenderer.invoke(IpcChannel.SaveFileAs, text, defaultPath),
   setDirty: (dirty) => ipcRenderer.send(IpcChannel.SetDirty, dirty),
+  confirmDiscard: () => ipcRenderer.invoke(IpcChannel.ConfirmDiscard),
 };
 
 // Use `contextBridge` APIs to expose Electron APIs to

@@ -1,4 +1,4 @@
-import { type BrowserWindow, dialog, ipcMain, type WebContents } from 'electron';
+import { BrowserWindow, dialog, ipcMain, type WebContents } from 'electron';
 import { IpcChannel } from '../shared/ipc';
 
 // The renderer pushes its dirty state proactively (window.ved.setDirty), so
@@ -6,10 +6,15 @@ import { IpcChannel } from '../shared/ipc';
 // (`beforeunload` is unreliable in Electron; this is the supported path.)
 const dirtyByContents = new WeakMap<WebContents, boolean>();
 
-/** Registers the dirty-state listener. Call once at startup. */
+/** Registers the dirty-state listener and the discard-confirm handler. */
 export const registerCloseGuard = (): void => {
   ipcMain.on(IpcChannel.SetDirty, (event, dirty: boolean) => {
     dirtyByContents.set(event.sender, dirty === true);
+  });
+  // The renderer asks before closing a dirty tab (window.ved.confirmDiscard)
+  ipcMain.handle(IpcChannel.ConfirmDiscard, (event): Promise<boolean> => {
+    const win = BrowserWindow.fromWebContents(event.sender);
+    return win ? confirmDiscard(win) : Promise.resolve(false);
   });
 };
 

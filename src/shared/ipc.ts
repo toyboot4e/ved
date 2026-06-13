@@ -8,6 +8,7 @@ export const IpcChannel = {
   SaveFile: 'ved:file:save',
   SaveFileAs: 'ved:file:save-as',
   SetDirty: 'ved:window:set-dirty',
+  ConfirmDiscard: 'ved:window:confirm-discard',
 } as const;
 
 /** A file picked and read via the open dialog; `null` means canceled. */
@@ -33,6 +34,8 @@ export type VedFileApi = {
 
 /** The full renderer-facing API, exposed as `window.ved` by the preload. */
 export type VedApi = VedFileApi & {
-  /** Reports the buffer's dirty state; main consults it in the close guard. */
+  /** Reports the aggregate dirty state; main consults it in the close guard. */
   readonly setDirty: (dirty: boolean) => void;
+  /** Native "discard unsaved changes?" confirm; `true` = discard, `false` = keep. */
+  readonly confirmDiscard: () => Promise<boolean>;
 };

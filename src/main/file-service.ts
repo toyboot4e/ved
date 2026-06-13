@@ -3,13 +3,21 @@ import { IpcChannel, type OpenFileResult, type SaveFileAsResult } from '../share
 import { readTextFile, writeTextFileAtomic } from './fs-io';
 
 // Native dialogs cannot be driven by Playwright, so the smoke test injects
-// fixed paths through these environment variables instead.
+// fixed paths through these environment variables instead. The open stub may
+// be a comma-separated list, consumed one path per call (clamped to the last)
+// so a test can open several distinct files.
 const SMOKE_OPEN_PATH = 'VED_SMOKE_OPEN_PATH';
 const SMOKE_SAVE_PATH = 'VED_SMOKE_SAVE_PATH';
+let openStubCall = 0;
 
 const pickOpenPath = async (sender: WebContents): Promise<string | null> => {
   const stub = process.env[SMOKE_OPEN_PATH];
-  if (stub) return stub;
+  if (stub) {
+    const paths = stub.split(',');
+    const path = paths[Math.min(openStubCall, paths.length - 1)] ?? null;
+    openStubCall++;
+    return path;
+  }
 
   const win = BrowserWindow.fromWebContents(sender);
   if (!win) return null;
