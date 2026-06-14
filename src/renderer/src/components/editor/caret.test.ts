@@ -116,6 +116,17 @@ describe('moveCaretByCharacter', () => {
     ]);
   });
 
+  it('Rich: backward from a normalized body-start point does not wrap to the end', () => {
+    // The live editor normalizes a body-start caret onto the preceding hidden
+    // delimiter, so the current point is not an exact stop. Backward from it
+    // must stay at the document start, not jump to the body end (regression:
+    // it used to wrap to ルビ@2).
+    const editor = makeEditor('|ルビ(ruby)');
+    setCaret(editor, 0, 1); // the leading `|` delimiter @1 (== body start)
+    moveCaretByCharacter(editor, 'rich', { reverse: true, extend: false });
+    expect(focusDesc(editor)).not.toBe('text:"ルビ"@2');
+  });
+
   it('ByCharacter: entering from the end lands after the whole syntax', () => {
     const editor = makeEditor('字は|漢(かん)字');
     setCaret(editor, 6, 0); // 字@0 (outside, after the ruby)

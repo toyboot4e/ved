@@ -25,29 +25,40 @@ import { RubyNode } from './nodes';
 
 export type Appear = 'rich' | 'showall' | 'paragraph' | 'char';
 
-type Leaf = { node: TextNode; paraKey: string; rubyKey: string | null; len: number };
-type Stop = { key: string; offset: number };
+type Leaf = { node: TextNode; paraKey: string; rubyKey: string | null; len: number; start: number };
+// `doc` is the offset over ALL leaf text (hidden included), so a stop and an
+// equivalent point on a hidden delimiter compare equal.
+type Stop = { key: string; offset: number; doc: number };
 
 const HIDDEN = new Set(['delim', 'rt']);
 
 /** All text leaves in document order, tagged with their paragraph and ruby. */
 const collectLeaves = (): Leaf[] => {
   const leaves: Leaf[] = [];
+  let start = 0;
+  const push = (node: TextNode, paraKey: string, rubyKey: string | null) => {
+    const len = node.getTextContentSize();
+    leaves.push({ node, paraKey, rubyKey, len, start });
+    start += len;
+  };
   for (const para of $getRoot().getChildren()) {
     if (!(para instanceof ParagraphNode)) continue;
     const paraKey = para.getKey();
     for (const child of para.getChildren()) {
       if (child instanceof RubyNode) {
-        const rubyKey = child.getKey();
-        for (const leaf of child.getChildren()) {
-          if (leaf instanceof TextNode) leaves.push({ node: leaf, paraKey, rubyKey, len: leaf.getTextContentSize() });
-        }
+        for (const leaf of child.getChildren()) if (leaf instanceof TextNode) push(leaf, paraKey, child.getKey());
       } else if (child instanceof TextNode) {
-        leaves.push({ node: child, paraKey, rubyKey: null, len: child.getTextContentSize() });
+        push(child, paraKey, null);
       }
     }
   }
   return leaves;
+};
+
+/** Document offset (over all leaf text) of a point, or -1 if its key is unknown. */
+const docOffsetOf = (leaves: Leaf[], key: string, offset: number): number => {
+  const leaf = leaves.find((l) => l.node.getKey() === key);
+  return leaf ? leaf.start + Math.min(offset, leaf.len) : -1;
 };
 
 /** Is this leaf rendered hidden, given the policy and the active para/ruby? */
@@ -68,10 +79,11 @@ const buildStops = (visible: Leaf[]): Stop[] => {
   let prev: Leaf | null = null;
   const parentOf = (l: Leaf) => l.rubyKey ?? l.paraKey;
   for (const leaf of visible) {
+    const key = leaf.node.getKey();
     if (prev === null || parentOf(prev) !== parentOf(leaf)) {
-      stops.push({ key: leaf.node.getKey(), offset: 0 });
+      stops.push({ key, offset: 0, doc: leaf.start });
     }
-    for (let o = 1; o <= leaf.len; o++) stops.push({ key: leaf.node.getKey(), offset: o });
+    for (let o = 1; o <= leaf.len; o++) stops.push({ key, offset: o, doc: leaf.start + o });
     prev = leaf;
   }
   return stops;
@@ -107,19 +119,21 @@ export const moveCaretByCharacter = (
       const stops = buildStops(visible);
       if (stops.length === 0) return;
 
-      // Locate the current stop (exact, else nearest by document order).
+      // Find the target stop. An exact (key, offset) match steps by index, so
+      // the paired stops at a ruby edge are both reachable. When the live
+      // editor has normalized the caret onto an equivalent hidden point (e.g.
+      // body@0 -> the preceding delimiter's end), exact match fails; fall back
+      // to the document offset and take the next stop strictly past it.
       const cur = sel.focus;
-      let idx = stops.findIndex((s) => s.key === cur.key && s.offset === cur.offset);
-      if (idx === -1) {
-        // anchor sits in a hidden leaf or off a stop: snap to a sensible one
-        idx = options.reverse ? stops.length : -1;
+      const idx = stops.findIndex((s) => s.key === cur.key && s.offset === cur.offset);
+      let target: Stop | undefined;
+      if (idx !== -1) {
+        target = stops[Math.min(Math.max(idx + (options.reverse ? -1 : 1), 0), stops.length - 1)];
+      } else {
+        const curDoc = docOffsetOf(leaves, cur.key, cur.offset);
+        target = options.reverse ? [...stops].reverse().find((s) => s.doc < curDoc) : stops.find((s) => s.doc > curDoc);
       }
-
-      let nextIdx = idx + (options.reverse ? -1 : 1);
-      if (nextIdx < 0) nextIdx = 0;
-      if (nextIdx >= stops.length) nextIdx = stops.length - 1;
-      let target = stops[nextIdx];
-      if (!target) return;
+      if (!target) return; // already at the document edge
 
       // ByCharacter: stepping into a ruby that was collapsed lands on its
       // entry-side edge (the now-expanded syntax), not mid-body.
@@ -129,7 +143,10 @@ export const moveCaretByCharacter = (
         if (leaf?.rubyKey && leaf.rubyKey !== activeRuby) {
           const rubyLeaves = leaves.filter((l) => l.rubyKey === leaf.rubyKey);
           const edge = options.reverse ? rubyLeaves[rubyLeaves.length - 1] : rubyLeaves[0];
-          if (edge) target = { key: edge.node.getKey(), offset: options.reverse ? edge.len : 0 };
+          if (edge) {
+            const offset = options.reverse ? edge.len : 0;
+            target = { key: edge.node.getKey(), offset, doc: edge.start + offset };
+          }
         }
       }
 
