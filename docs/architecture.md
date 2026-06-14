@@ -1,26 +1,31 @@
 # ved architecture
 
-ved is an Electron + React + Slate editor for Japanese vertical writing
+ved is an Electron + React + Lexical editor for Japanese vertical writing
 (tategaki). Two decisions define the design:
 
 1. **Plain text is the document model.** Lines are paragraphs; inline markup
    is lightweight syntax (today only ruby: `|身体(からだ)`).
-2. **Identity text model.** The Slate tree holds that plain text *character
+2. **Identity text model.** The Lexical tree holds that plain text *character
    for character* — including the markup characters `|`, `(`, `)` — in every
-   view mode. `Node.string(paragraph)` is the plain line. Everything visual
-   (annotations, hidden syntax, highlighting) is CSS over the same DOM text.
+   view mode. A paragraph's `getTextContent()` is the plain line. Everything
+   visual (annotations, hidden syntax, highlighting) is CSS over the same DOM
+   text.
 
 ```
-plaintext   "字は|漢(かん)字"
+plaintext     "字は|漢(かん)字"
    │   parse.ts → format spans
    ▼
-Slate tree  [ plaintext "字は",
-              ruby [ delim "|", body "漢", delim "(", rt "かん", delim ")" ],
-              plaintext "字" ]
-   │   Node.string
+Lexical tree  paragraph[ text "字は",
+                ruby[ delim "|", body "漢", delim "(", rt "かん", delim ")" ],
+                text "字" ]
+   │   serialize (per-paragraph getTextContent, joined by "\n")
    ▼
-plaintext   "字は|漢(かん)字"        (identical, by construction)
+plaintext     "字は|漢(かん)字"        (identical, by construction)
 ```
+
+(The editor was migrated from Slate to Lexical — see ADR 0002 and
+[lexical-migration-plan.md](lexical-migration-plan.md). Some choices below are
+clearest read as "what Lexical forced that Slate did differently".)
 
 ## Document model
 
@@ -29,35 +34,33 @@ offsets of each syntactic part. The syntax characters are defined once there
 (`RUBY_DELIM_FRONT` / `RUBY_SEP_MID` / `RUBY_DELIM_END`) and shared by the
 parser and the tree builder.
 
-A ruby is an inline element wrapping typed text leaves:
+A ruby is an inline `ElementNode` (`editor/nodes.ts`) wrapping typed text
+leaves — `DelimNode`, plain `TextNode` (body), `RtNode` — so the ruby
+contributes its exact source to `getTextContent`:
 
 ```
-|漢(かん)  →  { type: 'ruby', children: [
-                { type: 'delim', text: '|'  },
-                { type: 'body',  text: '漢'  },
-                { type: 'delim', text: '('  },
-                { type: 'rt',    text: 'かん' },
-                { type: 'delim', text: ')'  } ] }
+|漢(かん)  →  RubyNode[ delim "|", text "漢", delim "(", rt "かん", delim ")" ]
 ```
 
-The wrapper element is required: a lone `display: ruby-text` span does not
-annotate its preceding siblings (Chromium gives it an anonymous ruby
-container of its own) — see
-[spikes/identity-text-model.md](spikes/identity-text-model.md).
+`RubyNode` also carries the reading on the node (`__reading`) for a read-only
+duplicate `<rt>` annotation it renders in `createDOM`; the structure transform
+keeps it in sync. The wrapper element is required: a lone `display: ruby-text`
+span does not annotate its preceding siblings (Chromium gives it an anonymous
+ruby container) — see [spikes/identity-text-model.md](spikes/identity-text-model.md).
 
-The canonical paragraph shape (`rich.tsx lineToChildren`) is Slate-normal by
-construction so that structure repair converges:
-
-- text leaves surround every inline ruby (empty `plaintext` if needed);
-- empty `body`/`rt` pieces are dropped and adjacent delimiters merged
-  (Slate would merge empty text leaves into neighbors otherwise).
+`model.ts lineNodes` builds a line's canonical nodes (plaintext runs +
+inline rubies). Unlike Slate, **Lexical strips empty text nodes**, so there
+is no text node *between* two adjacent rubies — the caret addressing at ruby
+boundaries is handled by CSS (`font-size: 0`, below) and the cursor map, not
+by anchor nodes.
 
 ## Rendering: view modes (`AppearPolicy`)
 
 The tree and the text are identical in all modes; only CSS classes change.
-The mode flows through `AppearPolicyContext`; each ruby element decides per
-render whether it is "expanded" (shown as syntax) using the mode and the
-current selection:
+The policy is a class on the editor root (`appear-rich|showall|paragraph|char`);
+`editor/appearance.ts registerAppearance` marks `.activePara` on the caret's
+paragraph and `.rubyActive` on the caret's ruby (selection-driven, no tree
+mutation). CSS in `editor/lexical.css` then decides which rubies expand:
 
 | Mode | Shortcut | Expanded rubies |
 |---|---|---|
@@ -67,72 +70,88 @@ current selection:
 | `Rich` | Ctrl+4 | none |
 
 (The mod key is Cmd on macOS. Letter chords are reserved for file shortcuts
-— Ctrl+O open, Ctrl+S save, Ctrl+Shift+S save as — which live at the app
-level, not in the editor; see `src/renderer/src/app.tsx`.)
+— Ctrl+O/S/Shift+S — handled at the app level; see `app.tsx`.)
 
-Collapsed rendering (`.rubyWrap`): a native `<ruby>` element whose
-annotation is a **read-only duplicate** of the rt leaf
-(`<rt contentEditable={false}>`), while the in-flow markup leaves
-(`delim`/`rt`) are `display: none` — so the caret skips the markup entirely
-and can never wander into the annotation. Expanded rendering
-(`.rubyExpanded`): ruby layout neutralized, leaves render as plain syntax in
-gray, the duplicate annotation hidden. The duplication is presentation-only;
-the model text remains the single source of truth.
+Collapsed rendering: a native `<ruby>` whose annotation is a **read-only
+duplicate** of the rt leaf (`<rt contentEditable={false}>` added in
+`createDOM`, kept outside the child slot via `getDOMSlot().withBefore`). The
+in-flow markup leaves (`delim`/`rt`) are hidden with **`font-size: 0`, not
+`display: none`** — `display: none` removes their caret positions, making it
+impossible to place the caret before a ruby or between two adjacent ones;
+`font-size: 0` keeps them caret-addressable while invisible, and arrow
+movement skips them anyway (see Cursor mapping). Expanded rendering shows the
+markup leaves (gray) and hides the duplicate annotation. The duplication is
+presentation-only; the model text is the single source of truth.
 
-Why not CSS-only ruby over the leaves (the spike's original idea): Chromium
-mis-pairs anonymous ruby bases across slate-react's nested leaf spans — the
-annotation aligns with a zero-width delimiter instead of spanning the base.
+Why not CSS-only ruby over the leaves (the spike's first idea): Chromium
+mis-pairs anonymous ruby bases across the editor's nested leaf spans — the
+annotation aligns with a zero-width delimiter instead of the base.
 
-Because expansion is a render-time decision, cursor movement and mode
-switches never touch the tree: no rebuild, no cursor restore, no IME hazard.
+Because expansion is a class switch, cursor movement and mode changes never
+touch the tree: no rebuild, no cursor restore, no IME hazard.
 
-## Structure repair (`editor-core.ts syncParagraphs`)
+## Structure repair (`model.ts $syncParagraphs`)
 
-The one structural job left: when typing completes or breaks ruby syntax,
-the node structure must follow the text. On every text change (detected by
-comparing `serialize(value)` with the last known plaintext):
+The one structural job: when typing completes or breaks ruby syntax, the node
+structure must follow the text. The editor's `onChange`
+(`registerUpdateListener`) detects a text change (vs the last known
+plaintext), pushes history, then runs a **separate, post-commit**
+`editor.update(() => $syncParagraphs())`:
 
-1. For each paragraph, compute `lineToChildren(Node.string(paragraph))`.
-2. If the actual children differ structurally (`childrenEqual`), replace
-   them. The text is unchanged by construction; only node boundaries move.
-3. Restore the cursor from its plain offset (saved before the repair).
+1. Capture the caret as a document-level plain offset (`$getCursorState`).
+2. For each paragraph, if its children differ from `lineNodes(getTextContent)`
+   (a structural signature compare), replace them — text preserved, only node
+   boundaries move.
+3. Restore the caret from the plain offset (`$restoreCursor`).
 
-The repair is deferred while `ReactEditor.isComposing(editor)` — replacing
-nodes mid-composition cancels the IME session — and runs on the next change
-after the composition ends (`pendingSyncRef`).
+Running the repair in its own update (rather than a Lexical node transform) is
+what makes the caret capture/restore deterministic — a transform fires
+mid-cycle and sees a stale selection. The repair is skipped while
+`editor.isComposing()` (restructuring cancels the IME session); the
+composition-end update repairs.
 
 ## Cursor mapping (`cursor-map.ts`)
 
-With the identity model this is generic accumulation over text leaves, with
-zero format knowledge:
+The identity model makes this generic accumulation over text leaves, with one
+Lexical-specific wrinkle. `ParaPoint` is a resolved point: a text-leaf offset,
+or an element child index.
 
-- `pointToParaOffset(children, relativePath, offset)` — sum the text lengths
-  of leaves before the point.
-- `paraOffsetToPoint(children, offset)` — first leaf reaching the offset;
-  boundary offsets map to the *end* of the earlier leaf, so a cursor right
-  before a ruby stays outside it — except after `delim`/`rt` leaves, where
-  the next leaf's start is preferred so restored carets land on visible
-  text (those leaves render `display: none` in collapsed rubies).
+- `$plainOffsetOfPoint(para, point)` — plain offset of a Lexical point (text
+  or element) within its paragraph.
+- `$pointInParaAtOffset(para, plain)` — the inverse. Inside a text run or a
+  ruby's leaves it returns a text point (preferring the next *visible* leaf
+  after a hidden delim/rt). **At a ruby edge it returns a text point on the
+  ruby's edge delimiter** (`|` for "before", `)` for "after"), not an element
+  point: Lexical's `insertText` at an element point between two inline rubies
+  inserts *into* the next ruby, whereas inserting at the edge delimiter lands
+  inside this ruby and the structure-repair re-parse moves the new text out to
+  its correct place.
 
-Used only around structure repair and history restore. Round-trip properties
-are fast-check-tested in `cursor-map.test.ts`.
+Used around structure repair, history restore, and tab snapshot/restore.
 
-## History (`editor-core.ts PlainTextHistory`)
+Character caret movement (`caret.ts moveCaretByCharacter`) is model-driven:
+it walks the *visible* leaves, deduping same-parent junctions but keeping both
+stops at a ruby element boundary (outside vs inside — one extra press tells you
+which side you are on), and lands on a ruby's entry edge in ByCharacter. Line
+movement stays visual (`Selection.modify`). In vertical modes the axes rotate
+(`ArrowUp/Down` → character, `ArrowLeft/Right` → line).
 
-`slate-history` is not used: operation-level undo is meaningless across
-structure repair. Instead `{ plaintext, cursor }` snapshots with a 500 ms
-debounce. Undo/redo rebuilds the whole tree from text (`plaintextToTree` +
-`replaceContent`) and re-resolves the cursor. A debounced push only replaces
-the newest entry; after an undo it truncates the redo tail.
+## History (`editor/history.ts PlainTextHistory`)
+
+No framework history: operation-level undo is meaningless across structure
+repair, and it is backend-neutral (a document is a string, a caret is
+`{para, offset}`). `{ plaintext, cursor }` snapshots with a 500 ms debounce;
+undo/redo rebuilds the tree from text (`$buildFromText`) and re-resolves the
+caret. A debounced push replaces the newest entry; after an undo it truncates
+the redo tail.
 
 ## Layout: writing modes (`WritingMode`) and the page
 
 The text area is a **page**: N characters per line × M lines, counted in
 fullwidth characters ("80 characters" means 80 ASCII columns = 40 zenkaku).
 The geometry lives in CSS custom properties on the app root
-(`--page-line-chars`, `--page-lines` in `editor.module.scss`) so the future
-configuration sets it at runtime; everything else derives via `calc()`. A
-`vertMode` class on the root transposes the page box for vertical writing.
+(`--page-line-chars`, `--page-lines` in `editor.module.scss`); everything else
+derives via `calc()`. A `vertMode` class on the root transposes the page box.
 
 Orthogonal to view modes; pure CSS:
 
@@ -147,112 +166,87 @@ Notes that took debugging to learn:
 - The percentage height chain must be anchored at `#root` (the React mount
   point), or flex items size to content.
 - The editor box is `box-sizing: content-box`: its 2px borders must not eat
-  into the page (they shaved 4px off the line length with border-box).
-- In `Vertical`, the *scroll container* itself is `vertical-rl`, so the
-  first line starts at the right edge and leftward overflow is scrollable.
-- In `Columns`, the separator lines are a background gradient on the scroll
+  into the page.
+- In `Vertical`, the *scroll container* itself is `vertical-rl`, so the first
+  line starts at the right edge and leftward overflow is scrollable.
+- In `Columns`, the separators are a background gradient on the scroll
   container (`background-attachment: local`): Chromium does not paint
-  `column-rule` between overflow columns. The gradient must be a finite
-  tile under `background-size` + `repeat-y`, NOT `repeating-linear-gradient`
-  — Chromium's compositor drops tiles of attachment-local repeating
-  gradients depending on the scroll position.
-- Switching modes keeps the reading position (`editor/scroll-keep.ts`):
-  all modes wrap at the same character count, so the first visible line
-  index maps 1:1; it is captured on scroll and restored in a layout effect.
-  Scroll anchoring is disabled (`overflow-anchor: none`) so Chromium does
-  not fight the restore.
-- Switching the ruby display (`AppearPolicy`) reflows rubied text; best
-  effort, Typora-style: if the reflow pushed the caret out of view, it is
-  scrolled back to the nearest viewport edge — and never moved otherwise
-  (`useRevealCaretOnPolicyChange`).
-- Slate's default placeholder assumes horizontal writing (absolute,
-  `top: 0`, `width: 100%`); `renderPlaceholder` (editor.tsx) instead pins
-  it to the paragraph's logical start corner via `inset-block-start` /
-  `inset-inline-start`, which follow the writing mode.
-- Arrow keys: **character movement is model-driven**
-  (`moveCaretByCharacter`), stepping through Slate positions and skipping
-  the interior of hidden markup leaves. This is deliberate: a ruby boundary
-  has two distinct positions — "outside the ruby" and "inside, at the
-  body edge" — that render at the same pixel; visual movement collapses
-  them, model movement keeps both as stops (one extra press tells you which
-  side you are on, symmetric on both sides). It also never parks on
-  slate-react's zero-width anchors. Line movement stays visual
-  (`Selection.modify`) since line geometry needs the browser. In the
-  vertical modes the axes are rotated (`ArrowUp/Down` → character,
-  `ArrowLeft/Right` → line).
+  `column-rule` between overflow columns. Use a finite tile with
+  `background-size` + `repeat-y`, NOT `repeating-linear-gradient`.
+- Switching modes keeps the reading position (`editor/scroll-keep.ts`): all
+  modes wrap at the same character count, so the first visible line index maps
+  1:1; captured on scroll, restored in a layout effect. `overflow-anchor:
+  none` keeps Chromium from fighting the restore.
+- Switching the ruby display reflows rubied text; Typora-style, if the reflow
+  pushed the caret out of view it is scrolled to the nearest edge and never
+  moved otherwise (`useRevealCaretOnPolicyChange`, via the native selection
+  rect).
+- The placeholder is a CSS `::before` on the empty paragraph
+  (`#editor-content > p:only-child:has(> br:only-child)`), so it sits in
+  normal flow at the first character's position in every writing mode —
+  Lexical's default placeholder is absolutely positioned and lands a page away
+  under vertical-rl.
 
-Both modes are owned by `app.tsx` state and rendered by
+Writing mode and view mode are owned by `app.tsx` state and rendered by
 `components/toolbar.tsx`; keyboard shortcuts call the same state setters.
 
 ## Module map
 
 ```
-src/shared/ipc.ts          IPC contract (channels + VedApi) shared by all
-                           three processes
-src/main/index.ts          Electron main; Wayland/IME Chromium switches,
-                           mock keychain for unpackaged runs
-src/main/file-service.ts   open/save dialogs + file IO handlers
-                           (VED_SMOKE_* env stubs for e2e)
+src/shared/ipc.ts          IPC contract (channels + VedApi) shared by all three processes
+src/main/index.ts          Electron main; Wayland/IME Chromium switches
+src/main/file-service.ts   open/save dialogs + file IO handlers (VED_SMOKE_* env stubs)
 src/main/fs-io.ts          plain-node read / atomic write (unit-tested)
 src/main/close-guard.ts    confirm-on-close for a dirty buffer
-src/preload/               contextBridge: electron-toolkit defaults +
-                           window.ved (the VedApi implementation)
+src/preload/               contextBridge: electron-toolkit defaults + window.ved
 src/renderer/src/
-  app.tsx                  state owner: buffers (useReducer), WritingMode,
-                           AppearPolicy; file + tab shortcuts
-  buffers.ts               multi-buffer model: pure reducer over plaintext +
-                           scalars; holds each buffer's PlainTextHistory
-                           (unit-tested)
-  file-commands.ts         save/save-as logic, file + tab chord matching,
-                           window title (pure over VedFileApi, unit-tested)
-  components/tab-bar.tsx    hand-rolled tab row (title, dirty dot, close)
-  parse.ts                 plaintext → format spans (syntax knowledge)
+  app.tsx                  state owner: buffers (useReducer), WritingMode, AppearPolicy; file + tab shortcuts
+  buffers.ts               multi-buffer model: pure reducer over plaintext + scalars; per-buffer PlainTextHistory
+  file-commands.ts         save/save-as logic, chord matching, window title (pure, unit-tested)
+  parse.ts                 plaintext → format spans (the only syntax knowledge)
   components/
+    tab-bar.tsx            hand-rolled tab row
     toolbar.tsx            writing-mode / ruby-display button groups
-    editor.tsx             VedEditor: onChange → history + syncParagraphs;
-                           renderPlaceholder; scroll preservation
-    editor.module.scss     page geometry, layout modes, toolbar, ruby
+    editor.tsx             VedEditor (Lexical): onChange → history + $syncParagraphs,
+                           keys, scroll preservation, snapshot/restore
+    editor.module.scss     page geometry, layout modes, toolbar
     editor/
-      rich.tsx             AppearPolicy, node types, lineToChildren,
-                           serialize, render components
-      cursor-map.ts        plain offset ↔ point (generic accumulation)
-      editor-core.ts       plugins, syncParagraphs, replaceContent,
-                           PlainTextHistory
+      nodes.ts             RubyNode / DelimNode / RtNode (identity node schema)
+      model.ts             lineNodes, $buildFromText, serialize, $syncParagraphs
+      cursor-map.ts        plain offset ↔ Lexical point ($getCursorState / $restoreCursor)
+      caret.ts             moveCaretByCharacter (model-driven char movement)
+      appearance.ts        registerAppearance (selection → .activePara / .rubyActive)
+      lexical.css          ruby + appear-policy styles + placeholder (raw class names)
+      history.ts           PlainTextHistory (backend-neutral, unit-tested)
       scroll-keep.ts       scroll offset ↔ line index per mode (unit-tested)
-test/e2e/                  Playwright tests against the built app, hidden
-                           windows (harness.ts; smoke.ts, placeholder.ts)
+test/e2e/                  Playwright tests against the built app, hidden windows
 docs/editor-ui-plan.md     editor UI shell plan + phase checklist
-docs/spikes/               spike findings + their experiment pages/drivers
+docs/lexical-migration-plan.md   the Slate → Lexical migration
+docs/spikes/               spike findings
 ```
 
 NixOS specifics live in `flake.nix`: Electron's runtime libraries via
-`LD_LIBRARY_PATH`, plus a generated GTK immodules cache
-(`GTK_IM_MODULE_FILE`) so the prebuilt Electron's gtk3 can load the fcitx5
-IM module on X11. The main process also sets `ozone-platform-hint=auto`,
-`enable-wayland-ime` and `wayland-text-input-version=3` for Wayland
-sessions.
+`LD_LIBRARY_PATH`, plus a generated GTK immodules cache (`GTK_IM_MODULE_FILE`)
+so the prebuilt Electron's gtk3 can load the fcitx5 IM module on X11. The main
+process also sets `ozone-platform-hint=auto`, `enable-wayland-ime` and
+`wayland-text-input-version=3` for Wayland sessions.
 
-Tooling: the package manager is **pnpm** (`packageManager` pin in
-`package.json`; dependency build scripts acknowledged in
-`pnpm-workspace.yaml`). electron@42 no longer ships its own postinstall, so
-this project's `postinstall` runs `node node_modules/electron/install.js`
-to download the binary.
+Tooling: the package manager is **pnpm** (`packageManager` pin; dependency
+build scripts acknowledged in `pnpm-workspace.yaml`). electron@42 no longer
+ships its own postinstall, so this project's `postinstall` runs
+`node node_modules/electron/install.js` to download the binary.
 
 ## Known papercuts / future work
 
-- Around collapsed rubies, several model positions render at the same
-  visual spot (the hidden markup characters have zero width). Chromium may
-  snap the DOM caret within such a cluster when *clicking*; arrow movement
-  is model-driven and unaffected. Mitigations: the parser keeps
-  partially-typed syntax plain (no mid-typing restructuring), and cursor
-  restoration prefers visible leaves at boundaries.
+- **Real mozc IME typing is unverified by automation** (Playwright detaches
+  the IME; synthetic Japanese gets garbled, so the e2e types ASCII ruby
+  syntax). The `isComposing` guard is in place; verify composition around a
+  ruby by hand when touching the editor core.
 - Automated input needs care: synthetic key events are subject to keyboard
-  layout and the system IME, and sub-60 ms bursts right after a
-  programmatic selection change can race slate's DOM→model selection sync.
-  `test/e2e/smoke.ts` therefore inserts text via `beforeinput` with human-ish
-  timing and detaches the IME. Real typing and IME commits are unaffected.
-- `syncParagraphs` compares every paragraph on every change; fine at current
-  sizes, trivially limitable to dirty paragraphs if it ever shows up in
-  profiles.
+  layout and the IME, and sub-60 ms bursts after a programmatic selection
+  change can race the DOM→model selection sync. `test/e2e/smoke.ts` inserts
+  via `beforeinput` with human-ish timing and detaches the IME.
+- `$syncParagraphs` compares every paragraph on every change; fine at current
+  sizes, trivially limitable to dirty paragraphs if profiling ever flags it.
 - The annotation (`ruby-text`) can overflow the fixed `line-height` in
   vertical mode; needs visual tuning.

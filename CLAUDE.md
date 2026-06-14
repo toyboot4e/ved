@@ -1,12 +1,13 @@
 # ved — agent context
 
-Electron + React + Slate editor for Japanese vertical writing (tategaki) with
-ruby annotations. **Read `docs/architecture.md` before touching the editor
-core** (`src/renderer/src/components/editor/`).
+Electron + React + Lexical editor for Japanese vertical writing (tategaki)
+with ruby annotations. **Read `docs/architecture.md` before touching the
+editor core** (`src/renderer/src/components/editor/`).
 
 - `CONTEXT.md` — project glossary (the words to use, and the ones to avoid).
 - `docs/adr/` — architecture decisions and *why* (e.g. browser engine over a
-  custom one; Slate now with Lexical as the migration target).
+  custom one; the editor framework — migrated from Slate to Lexical, see
+  `docs/lexical-migration-plan.md`).
 
 ## Commands
 
@@ -23,13 +24,17 @@ Task runner is `just`:
 
 ## Invariants
 
-- **Identity text model.** The Slate tree holds the plaintext character for
-  character; `Node.string(paragraph)` IS the plain line. Never add state
+- **Identity text model.** The Lexical tree holds the plaintext character for
+  character (markup `|`,`(`,`)` included); a paragraph's `getTextContent()`
+  IS the plain line, and `serialize()` joins them with `\n`. Never add state
   where displayed text and model text can diverge. Outside the editor core,
-  a document is always a plain string.
+  a document is always a plain string. Collapsed-ruby markup is hidden with
+  `font-size: 0` (NOT `display: none`) so the caret stays addressable at ruby
+  boundaries; arrow movement skips it via `moveCaretByCharacter`.
 - **IME safety.** Never repair structure, steal focus, or remount the editor
-  during an IME composition (`ReactEditor.isComposing`, `event.isComposing`).
-  Shortcuts must ignore key events with `keyCode === 229`.
+  during an IME composition (`editor.isComposing()`, `event.isComposing`).
+  `$syncParagraphs` (structure repair) is skipped while composing. (Real mozc
+  typing is not covered by automation — verify by hand when touching this.)
 - **Process boundaries.** All fs and dialog access lives in the main process
   behind the typed IPC contract in `src/shared/ipc.ts` (exposed to the
   renderer as `window.ved` by the preload). The renderer never touches Node.
@@ -54,7 +59,7 @@ Working agreement for this effort:
    first. Do exactly one step, then **stop for user review** — do not start
    the next step unasked.
 2. Keep shell code decoupled from the editor core: plaintext strings cross
-   the boundary, never Slate values. Prefer new modules over edits to
+   the boundary, never Lexical values. Prefer new modules over edits to
    existing ones; when an editor-core edit is unavoidable, keep it to a
    minimal, optional surface (e.g. one optional prop).
 3. A step is done when `just test-all` passes and the smoke test exercises

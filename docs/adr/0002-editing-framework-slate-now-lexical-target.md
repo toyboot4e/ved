@@ -1,16 +1,19 @@
 # Editing framework: stay on Slate now, Lexical as the migration target
 
 ---
-status: superseded — migration to Lexical greenlit 2026-06-14, see
+status: superseded — migrated to Lexical 2026-06-15, see
 docs/lexical-migration-plan.md
 ---
 
-> **Update (2026-06-14).** The feasibility spike passed
-> ([../spikes/lexical-ruby.md](../spikes/lexical-ruby.md)) and the migration
-> to Lexical is now underway in slices
-> ([../lexical-migration-plan.md](../lexical-migration-plan.md)). The analysis
-> below — why Lexical over TipTap/ProseMirror/CodeMirror, and why vertical-rl
-> is not a differentiator — still holds and is the rationale for that move.
+> **Update (2026-06-15).** The migration is **complete**: the app runs on
+> Lexical and Slate is removed. The feasibility spike
+> ([../spikes/lexical-ruby.md](../spikes/lexical-ruby.md)) and the slice plan
+> ([../lexical-migration-plan.md](../lexical-migration-plan.md)) record how.
+> The analysis below — why Lexical over TipTap/ProseMirror/CodeMirror, and why
+> vertical-rl is not a differentiator — is the rationale for the move. One
+> caveat surfaced in execution: collapsed-ruby markup must be hidden with
+> `font-size: 0`, not `display: none`, to keep the caret addressable at ruby
+> boundaries (Lexical strips the empty text nodes Slate used as caret anchors).
 
 ved is built on Slate. Slate's longevity is a real concern (0.x for years,
 thin maintenance), so the alternatives were weighed. Decision: **keep Slate

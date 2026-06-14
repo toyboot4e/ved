@@ -1,9 +1,13 @@
 # Plan: migrate the editor core from Slate to Lexical
 
-Status: **in progress** (2026-06-14). Greenlit after the feasibility spike
-([spikes/lexical-ruby.md](spikes/lexical-ruby.md)) retired the ADR-0002 risks.
-This supersedes ADR 0002's "stay on Slate now" posture; Lexical remains the
-target, and we are now executing the move.
+Status: **complete** (2026-06-15). Greenlit after the feasibility spike
+([spikes/lexical-ruby.md](spikes/lexical-ruby.md)) retired the ADR-0002 risks;
+the app now runs on Lexical and Slate is removed. All steps below are done;
+the editor-lexical/ module was folded into editor/. The one execution caveat:
+collapsed-ruby markup is hidden with `font-size: 0`, not `display: none`, so
+the caret stays addressable at ruby boundaries (Lexical strips empty text
+nodes, which Slate used as caret anchors). Real mozc IME typing remains
+unverified by automation.
 
 ## Strategy: build in parallel, flip at the end
 
@@ -85,15 +89,22 @@ Each step ends with `just test-all` green and **stop for review**.
     [spikes/lexical-editor.md](spikes/lexical-editor.md).
   - **Owed:** real mozc typing (automation garbles Japanese; ASCII used).
 
-- [ ] **Step 5b — scroll + snapshot parity.** Port scroll-keep across
-  writing-mode switches, reveal-on-policy-change, and tab snapshot/restore
-  (`onSnapshot` / `initialCursor` / `initialScroll`) into `VedEditorLexical`,
-  so it is a true `VedEditorProps` drop-in.
-
-- [ ] **Step 6 — flip and delete Slate.** Point `app.tsx` at the Lexical
-  editor; remove `slate`/`slate-react` and `components/editor/`; fold
-  `editor-lexical/` into `editor/`. Update `docs/architecture.md`, `CLAUDE.md`,
-  `CONTEXT.md`, and close out ADR 0002.
+- [x] **Step 5b + 6 — full parity, flip, delete Slate.** *(done 2026-06-15)*
+  - `components/editor.tsx` is the production Lexical `VedEditor`, exporting
+    the same `AppearPolicy`/`WritingMode` enums, `EditorSnapshot`, and
+    `VedEditorProps` — so `app.tsx`/`toolbar.tsx`/`buffers.ts` are unchanged.
+    Adds scroll-keep across writing modes, reveal-on-policy-change (native
+    selection rect), tab snapshot/restore, and `RichTextPlugin` (Enter = new
+    paragraph). Structure repair runs as a post-commit `$syncParagraphs`
+    (deterministic caret capture/restore), not a node transform.
+  - `editor-lexical/` folded into `editor/`; `PlainTextHistory` lives in
+    `editor/history.ts`. Deleted the Slate core + stepping-stone components +
+    spike harnesses; removed `slate`/`slate-react`.
+  - Caret fix: delimiters use `font-size: 0`, not `display: none`.
+  - The full e2e suite (smoke, placeholder, ruby-reveal, tabs, tab-keys,
+    tab-close-cancel) + 60 unit tests pass. Docs/CLAUDE.md/CONTEXT.md/ADR
+    updated.
+  - **Owed:** real mozc typing (automation garbles Japanese; ASCII used).
 
 ## Risks / watch list
 

@@ -55,9 +55,9 @@ _Avoid_: ruby text (collides with **ruby**), furigana.
 
 **Identity text model**:
 The invariant that the editor tree holds the document character for
-character — including the markup characters `|`, `(`, `)` — so
-`Node.string(paragraph)` *is* the plain line. Displayed text and model text
-can never diverge.
+character — including the markup characters `|`, `(`, `)` — so a paragraph's
+`getTextContent()` *is* the plain line. Displayed text and model text can
+never diverge.
 _Avoid_: source model, WYSIWYG (it is explicitly not WYSIWYG).
 
 **Appear policy**:

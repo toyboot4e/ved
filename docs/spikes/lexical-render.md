@@ -58,3 +58,7 @@ the app; 81 unit tests + full e2e green.
   impose its own model" risk is only retired once editing runs (step 3+).
 - **Caret movement** (boundary stops, ByCharacter entry edge) — step 3.
 - **IME** — step 4 (still the highest risk; the spike detaches it).
+
+> **Superseded (2026-06-15).** The migration is complete; the production
+> editor is `components/editor.tsx`. The throwaway harness/driver files this
+> doc references were removed at cutover — these findings are kept as a record.

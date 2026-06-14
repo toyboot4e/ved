@@ -49,3 +49,7 @@ green on Lexical, in parallel — the app is still Slate and untouched (build +
 full e2e green; no Lexical in the app bundle). Remaining: step 5b (scroll /
 snapshot parity), then step 6 (flip `app.tsx`, delete Slate) — which should
 follow a manual mozc IME pass.
+
+> **Superseded (2026-06-15).** The migration is complete; the production
+> editor is `components/editor.tsx`. The throwaway harness/driver files this
+> doc references were removed at cutover — these findings are kept as a record.
