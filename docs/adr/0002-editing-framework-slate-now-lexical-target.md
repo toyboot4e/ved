@@ -1,5 +1,17 @@
 # Editing framework: stay on Slate now, Lexical as the migration target
 
+---
+status: superseded — migration to Lexical greenlit 2026-06-14, see
+docs/lexical-migration-plan.md
+---
+
+> **Update (2026-06-14).** The feasibility spike passed
+> ([../spikes/lexical-ruby.md](../spikes/lexical-ruby.md)) and the migration
+> to Lexical is now underway in slices
+> ([../lexical-migration-plan.md](../lexical-migration-plan.md)). The analysis
+> below — why Lexical over TipTap/ProseMirror/CodeMirror, and why vertical-rl
+> is not a differentiator — still holds and is the rationale for that move.
+
 ved is built on Slate. Slate's longevity is a real concern (0.x for years,
 thin maintenance), so the alternatives were weighed. Decision: **keep Slate
 for now** — it works, the editor surface is nearly complete, ved uses only a
