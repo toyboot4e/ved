@@ -48,10 +48,14 @@ Each step ends with `just test-all` green and **stop for review**.
     in [spikes/lexical-render.md](spikes/lexical-render.md).
   - App untouched (no Lexical in the app bundle); 81 unit + full e2e green.
 
-- [ ] **Step 3 — caret movement.** Port `moveCaretByCharacter` and the
-  boundary-stop / ByCharacter entry-edge semantics to Lexical's selection API
-  (`$createRangeSelection` + `$setSelection`); line movement stays visual.
-  e2e: the caret-walk assertions from `smoke.ts`.
+- [x] **Step 3 — caret movement.** *(done 2026-06-15)*
+  - `editor-lexical/caret.ts`: `moveCaretByCharacter` over Lexical's selection
+    API — visible-leaf stops with same-parent junction dedup, ruby-edge
+    boundary pairs kept, and the ByCharacter entry-edge landing. Line movement
+    stays visual.
+  - `caret.test.ts`: the Slate caret spec ported (Rich both-sides boundary
+    stops, reverse symmetry, ShowAll dedup, ByCharacter entry from both ends,
+    extend). 87 unit tests pass; app untouched.
 
 - [ ] **Step 4 — IME + structure-repair selection.** Verify composition
   around a ruby by hand (mozc) and in the harness; make `registerRubySync`
