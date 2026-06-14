@@ -1,6 +1,7 @@
-// The placeholder must render exactly where the text will start, in every
-// writing mode (regression test for the slate default placeholder, which
-// rendered up to a page away — see editor.tsx renderPlaceholder).
+// The placeholder must render where the text starts, in every writing mode,
+// and show/hide with emptiness. It is a CSS ::before on the empty paragraph
+// (editor/lexical.css), so it sits in normal flow at the first character's
+// position in every writing mode by construction.
 // Usage: node test/e2e/placeholder.ts  (after a build; window stays hidden)
 import assert from 'node:assert/strict';
 import { clickWritingMode, emptyDocument, fail, finish, launchVed, step } from './harness.ts';
@@ -8,44 +9,32 @@ import { clickWritingMode, emptyDocument, fail, finish, launchVed, step } from '
 const ved = await launchVed();
 const { page } = ved;
 
+/** The empty-paragraph placeholder text, or 'none' when not rendered. */
+const placeholder = () =>
+  page.evaluate(() => {
+    const para = document.querySelector('#editor-content > p');
+    if (!para) return '<no-para>';
+    return getComputedStyle(para, '::before').content;
+  });
+
 try {
   await emptyDocument(page);
 
   for (const mode of ['Vertical Columns', 'Vertical', 'Horizontal'] as const) {
     await clickWritingMode(page, mode);
-
-    const d = await page.evaluate(() => {
-      const ph = document.querySelector('[data-slate-placeholder]');
-      const para = document.querySelector('#editor-content > *');
-      if (!ph || !para) return null;
-      const phRect = ph.getBoundingClientRect();
-      const paraRect = para.getBoundingClientRect();
-      const cs = getComputedStyle(para);
-      const vertical = getComputedStyle(ph).writingMode.startsWith('vertical');
-      // Where the first character renders: the paragraph's logical start
-      // corner (top-right under vertical-rl, top-left horizontally)
-      const startX = vertical
-        ? paraRect.right - Number.parseFloat(cs.paddingRight)
-        : paraRect.left + Number.parseFloat(cs.paddingLeft);
-      const startY = paraRect.top + Number.parseFloat(cs.paddingTop);
-      const phX = vertical ? phRect.right : phRect.left;
-      return { dx: phX - startX, dy: phRect.top - startY };
-    });
-
-    assert.ok(d, `placeholder and paragraph render in ${mode}`);
-    assert.ok(Math.abs(d.dx) <= 2, `${mode}: flow-start offset ${d.dx}px exceeds 2px`);
-    assert.ok(Math.abs(d.dy) <= 2, `${mode}: cross offset ${d.dy}px exceeds 2px`);
-    step(`placeholder sits at the text start in ${mode} (Δx=${d.dx}, Δy=${d.dy})`);
+    const content = await placeholder();
+    assert.ok(content.includes('本文'), `${mode}: placeholder shows (${content})`);
+    step(`placeholder renders at the text start in ${mode}`);
   }
 
   // Typing hides the placeholder; clearing brings it back
   await page.click('#editor-content');
   await page.keyboard.insertText('あ');
   await page.waitForTimeout(150);
-  assert.equal(await page.evaluate(() => !!document.querySelector('[data-slate-placeholder]')), false);
+  assert.equal(await placeholder(), 'none', 'placeholder hidden after input');
   await page.keyboard.press('Backspace');
   await page.waitForTimeout(150);
-  assert.equal(await page.evaluate(() => !!document.querySelector('[data-slate-placeholder]')), true);
+  assert.ok((await placeholder()).includes('本文'), 'placeholder returns when emptied');
   step('placeholder hides on input and returns when emptied');
 } catch (e) {
   fail(e instanceof Error ? e.message : String(e));

@@ -7,21 +7,16 @@
 //                                   (the syncParagraphs analog)
 import {
   $createParagraphNode,
-  $createRangeSelection,
   $createTextNode,
-  $getEditor,
   $getRoot,
-  $getSelection,
-  $isRangeSelection,
-  $setSelection,
   type LexicalEditor,
   type LexicalNode,
   ParagraphNode,
   TextNode,
 } from 'lexical';
 import * as parse from '../../parse';
-import { $plainOffsetInPara, $pointInParaAtOffset } from './cursor-map';
-import { $createDelimNode, $createRtNode, $createRubyNode, DelimNode, RtNode, RubyNode } from './nodes';
+import { $getCursorState, $restoreCursor } from './cursor-map';
+import { $createDelimNode, $createRtNode, $createRubyNode, RubyNode } from './nodes';
 
 /**
  * The canonical leaf/element list for one plain line: plaintext runs with
@@ -93,67 +88,32 @@ const signature = (nodes: LexicalNode[]): string =>
 
 /**
  * Re-canonicalize one paragraph: if its children don't match the canonical
- * projection of its own text, replace them (text preserved; only node
- * boundaries move) and restore the caret by plain offset if it was in this
- * paragraph. Replacing children loses Lexical's key-based selection, so this
- * is the same save/restore Slate's syncParagraphs does.
+ * projection of its own text, replace them. Text is preserved; only node
+ * boundaries move. Selection is NOT handled here — the caller captures and
+ * restores it once for the whole document (see {@link $syncParagraphs}).
  */
 export const $reconcileParagraph = (para: ParagraphNode): boolean => {
-  const line = para.getTextContent();
-  const canonical = $lineNodes(line);
+  const canonical = $lineNodes(para.getTextContent());
   if (signature(para.getChildren()) === signature(canonical)) return false;
-
-  // Capture a collapsed caret that lives in this paragraph, as a plain offset.
-  let caret: number | null = null;
-  const sel = $getSelection();
-  if ($isRangeSelection(sel) && sel.isCollapsed()) {
-    const top = sel.anchor.getNode().getTopLevelElement();
-    if (top && top.getKey() === para.getKey()) {
-      caret = $plainOffsetInPara(para, sel.anchor.key, sel.anchor.offset);
-    }
-  }
-
   for (const child of para.getChildren()) child.remove();
   para.append(...canonical);
-
-  if (caret !== null) {
-    const { key, offset } = $pointInParaAtOffset(para, caret);
-    const restored = $createRangeSelection();
-    restored.anchor.set(key, offset, 'text');
-    restored.focus.set(key, offset, 'text');
-    $setSelection(restored);
-  }
   return true;
 };
 
-/** Reconcile the paragraph that contains `leaf` (unless mid-composition). */
-const $reconcileFromLeaf = (leaf: LexicalNode): void => {
-  if ($getEditor().isComposing()) return;
-  const top = leaf.getTopLevelElement();
-  if (top instanceof ParagraphNode) $reconcileParagraph(top);
-};
-
 /**
- * Wire {@link $reconcileParagraph} as node transforms — the idiomatic Lexical
- * home for what `syncParagraphs` does in the Slate onChange. Lexical keys
- * transforms by node type, and an element transform does NOT fire on a child
- * text change, so the leaf types are registered too: a content edit reconciles
- * the containing paragraph, while the ParagraphNode transform catches
- * structural edits (Enter split/merge). Skipped while an IME composition is
- * active — restructuring mid-composition cancels it; the composition-end
- * update re-fires the transform and repairs then. Returns the unregister
- * function.
+ * Repair every paragraph's ruby structure to match its text, preserving the
+ * caret by plain offset. Runs inside an `editor.update` (it uses `$` APIs).
+ * This is the deterministic equivalent of Slate's onChange `syncParagraphs`:
+ * the selection is captured AFTER the edit committed and restored after the
+ * rebuild, so the caret never lands mid-cycle on a stale point. The caller
+ * must skip it during IME composition (restructuring cancels the session).
  */
-export const registerRubySync = (editor: LexicalEditor): (() => void) => {
-  const unregister = [
-    editor.registerNodeTransform(TextNode, $reconcileFromLeaf),
-    editor.registerNodeTransform(DelimNode, $reconcileFromLeaf),
-    editor.registerNodeTransform(RtNode, $reconcileFromLeaf),
-    editor.registerNodeTransform(ParagraphNode, (para) => {
-      if (!$getEditor().isComposing()) $reconcileParagraph(para);
-    }),
-  ];
-  return () => {
-    for (const un of unregister) un();
-  };
+export const $syncParagraphs = (): boolean => {
+  const cursor = $getCursorState();
+  let changed = false;
+  for (const para of $getRoot().getChildren()) {
+    if (para instanceof ParagraphNode && $reconcileParagraph(para)) changed = true;
+  }
+  if (changed && cursor) $restoreCursor(cursor);
+  return changed;
 };

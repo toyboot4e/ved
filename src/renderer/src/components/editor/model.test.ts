@@ -4,16 +4,14 @@ import {
   $createTextNode,
   $getRoot,
   $getSelection,
-  $setCompositionKey,
   $setSelection,
   createEditor,
   type LexicalEditor,
   ParagraphNode,
-  TextNode,
 } from 'lexical';
 import { describe, expect, it } from 'vitest';
-import { $plainOffsetInPara } from './cursor-map';
-import { $buildFromText, $reconcileParagraph, registerRubySync, serialize } from './model';
+import { $plainOffsetOfPoint } from './cursor-map';
+import { $buildFromText, $reconcileParagraph, $syncParagraphs, serialize } from './model';
 import { DelimNode, RtNode, RubyNode } from './nodes';
 
 const makeEditor = (): LexicalEditor =>
@@ -109,8 +107,10 @@ describe('$reconcileParagraph (syncParagraphs analog)', () => {
     expect(serialize(editor)).toBe('|漢(かん字');
     expect(firstParaSig(editor)).toBe('text:|漢(かん字');
   });
+});
 
-  it('preserves the caret by plain offset across the rebuild', () => {
+describe('$syncParagraphs', () => {
+  it('repairs structure and preserves the caret by plain offset', () => {
     const editor = makeEditor();
     editor.update(
       () => {
@@ -124,52 +124,24 @@ describe('$reconcileParagraph (syncParagraphs analog)', () => {
         sel.anchor.set(text.getKey(), 7, 'text');
         sel.focus.set(text.getKey(), 7, 'text');
         $setSelection(sel);
-        $reconcileParagraph(para);
+        expect($syncParagraphs()).toBe(true);
       },
       { discrete: true },
     );
+    expect(firstParaSig(editor)).toBe('ruby[delim:| text:漢 delim:( rt:かん delim:)] text:字');
     // the caret survives at the same plain offset in the new ruby structure
     const plain = editor.getEditorState().read(() => {
       const sel = $getSelection() as ReturnType<typeof $createRangeSelection>;
       const para = $getRoot().getFirstChild();
       if (!(para instanceof ParagraphNode)) return -1;
-      return $plainOffsetInPara(para, sel.anchor.key, sel.anchor.offset);
+      return $plainOffsetOfPoint(para, sel.anchor);
     });
     expect(plain).toBe(7);
   });
-});
 
-describe('registerRubySync (composition guard)', () => {
-  it('skips repair while composing, then repairs after composition ends', () => {
+  it('is a no-op (returns false) when already canonical', () => {
     const editor = makeEditor();
-    const un = registerRubySync(editor);
-    editor.update(() => $buildFromText('plain'), { discrete: true });
-
-    // type ruby syntax WHILE composing → transform must skip
-    editor.update(
-      () => {
-        const para = $getRoot().getFirstChild();
-        const leaf = para instanceof ParagraphNode ? para.getFirstChild() : null;
-        if (leaf instanceof TextNode) {
-          $setCompositionKey(leaf.getKey());
-          leaf.setTextContent('|漢(かん)');
-        }
-      },
-      { discrete: true },
-    );
-    expect(firstParaSig(editor)).toBe('text:|漢(かん)'); // still raw
-
-    // composition ends and the user keeps typing (a real change) → repair runs
-    editor.update(
-      () => {
-        $setCompositionKey(null);
-        const para = $getRoot().getFirstChild();
-        const leaf = para instanceof ParagraphNode ? para.getFirstChild() : null;
-        if (leaf instanceof TextNode) leaf.setTextContent('|漢(かん)。');
-      },
-      { discrete: true },
-    );
-    expect(firstParaSig(editor)).toBe('ruby[delim:| text:漢 delim:( rt:かん delim:)] text:。');
-    un();
+    editor.update(() => $buildFromText('|漢(かん)字'), { discrete: true });
+    editor.update(() => expect($syncParagraphs()).toBe(false), { discrete: true });
   });
 });

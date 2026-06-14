@@ -22,15 +22,22 @@ await writeFile(openPath, '|空(そら)は青い', 'utf-8');
 
 const snap = () =>
   page.evaluate(() => {
-    const el = document.getElementById('editor-content').cloneNode(true);
+    const root = document.getElementById('editor-content');
+    const clone = root.cloneNode(true) as HTMLElement;
     // Drop the read-only duplicated annotations — they are presentation,
     // not model text
-    for (const rt of el.querySelectorAll('rt[contenteditable=false]')) rt.remove();
+    for (const rt of clone.querySelectorAll('rt[contenteditable=false]')) rt.remove();
+    const rubies = [...root.querySelectorAll('.rubyWrap')];
+    // Expansion is CSS-driven (the appear-policy class on the root); a collapsed
+    // ruby hides its delimiters with font-size: 0, an expanded one shows them.
+    const collapsed = rubies.filter((r) => {
+      const d = r.querySelector('.delim');
+      return !d || getComputedStyle(d).fontSize === '0px';
+    }).length;
     return {
-      // ﻿ anchors come from slate-react's empty-leaf rendering
-      text: (el.textContent ?? '').replaceAll('﻿', ''),
-      rubies: el.querySelectorAll('[class*=rubyWrap],[class*=rubyExpanded]').length,
-      collapsed: el.querySelectorAll('[class*=rubyWrap]').length,
+      text: (clone.textContent ?? '').replaceAll('﻿', ''),
+      rubies: rubies.length,
+      collapsed,
     };
   });
 
@@ -45,7 +52,7 @@ try {
   await page.click('#editor-content');
   await pressMod(page, '4'); // Rich
   await caretToStart(page);
-  // Let slate sync the programmatic DOM selection into its model, then
+  // Let the editor sync the programmatic DOM selection into its model, then
   // insert per character (same beforeinput path as typing, but immune to
   // keyboard-layout/IME key synthesis) with human-ish timing.
   await page.waitForTimeout(150);
