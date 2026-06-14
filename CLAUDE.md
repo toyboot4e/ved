@@ -4,6 +4,10 @@ Electron + React + Slate editor for Japanese vertical writing (tategaki) with
 ruby annotations. **Read `docs/architecture.md` before touching the editor
 core** (`src/renderer/src/components/editor/`).
 
+- `CONTEXT.md` — project glossary (the words to use, and the ones to avoid).
+- `docs/adr/` — architecture decisions and *why* (e.g. browser engine over a
+  custom one; Slate now with Lexical as the migration target).
+
 ## Commands
 
 Task runner is `just`:
