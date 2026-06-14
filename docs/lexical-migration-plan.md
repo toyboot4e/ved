@@ -37,11 +37,16 @@ Each step ends with `just test-all` green and **stop for review**.
   - `model.test.ts`: identity round-trip, canonical shape, transform
     builds/idempotent/flattens. All headless (no DOM). App untouched.
 
-- [ ] **Step 2 — rendering + view modes (e2e).** A React mount
-  (`@lexical/react` `LexicalComposer` + a plain-text/rich content plugin) in a
-  throwaway harness route; render collapsed/expanded ruby via the
-  `AppearPolicy` context (CSS classes only, as today). e2e: ruby geometry +
-  the four appear policies, mirroring `ruby-reveal.ts`.
+- [x] **Step 2 — rendering + view modes (e2e).** *(done 2026-06-14)*
+  - `editor-lexical/LexicalRubyEditor.tsx` (`@lexical/react` `LexicalComposer`
+    + `PlainTextPlugin` + `ContentEditable`), `editor-lexical/appearance.ts`
+    (`registerAppearance`: selection → `.activePara` / `.rubyActive`). The
+    policy is a class on the wrapper; CSS expands the right rubies — no tree
+    mutation, so IME/structure-repair safe. Added an `onReady(editor)` seam.
+  - Throwaway harness + driver (`docs/spikes/lexical-render.*`): asserts ruby
+    geometry and all four policies (`rich/showall/paragraph/char`). Findings
+    in [spikes/lexical-render.md](spikes/lexical-render.md).
+  - App untouched (no Lexical in the app bundle); 81 unit + full e2e green.
 
 - [ ] **Step 3 — caret movement.** Port `moveCaretByCharacter` and the
   boundary-stop / ByCharacter entry-edge semantics to Lexical's selection API
