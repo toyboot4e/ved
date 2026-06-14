@@ -1,0 +1,32 @@
+<!doctype html>
+<html lang="ja">
+<head>
+<meta charset="utf-8">
+<title>Lexical thin-slice spike: identity ruby model in vertical-rl</title>
+<style>
+  body { font-family: serif; margin: 16px; }
+
+  #editor {
+    writing-mode: vertical-rl;
+    height: 300px;
+    width: 200px;
+    border: 1px solid #999;
+    padding: 8px;
+    font-size: 24px;
+    line-height: 1.8;
+    outline: none;
+  }
+
+  /* Identity-model ruby: native <ruby> default display is `ruby`.
+     The in-flow markup leaves are hidden; a read-only duplicate <rt>
+     (added by RubyNode.createDOM) renders the annotation. */
+  .rubyWrap .delim,
+  .rubyWrap span.rt { display: none; }
+  .rubyWrap > rt.dup { font-size: 0.5em; }
+</style>
+</head>
+<body>
+  <div id="editor" contenteditable="true"></div>
+  <script type="module" src="./lexical-ruby.bundle.js"></script>
+</body>
+</html>

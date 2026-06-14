@@ -41,6 +41,11 @@ provides. So Slate, Lexical, and TipTap are equal on verticality.
   a ruby node collapsed + expanded, `vertical-rl`, IME typing, Playwright
   caret-walk + geometry across a ruby boundary). The selection round-trip
   through Lexical's DOM-selection reconciliation is the main risk to retire.
+  **Run 2026-06-14 — all three risks (identity round-trip, ruby DOM +
+  reconciliation survival, selection round-trip) retired green; IME and the
+  typing pipeline remain unproven. See
+  [../spikes/lexical-ruby.md](../spikes/lexical-ruby.md).** This validates
+  Lexical as the target; it does not trigger a migration — Slate stays.
 - **Revisit (tripwire) when:** Slate is archived or hits an unpatched CVE; ved
   needs a feature Slate cannot do (realistically collaborative editing, where
   Yjs binds to ProseMirror/CodeMirror, not Slate); or editor-core work keeps
