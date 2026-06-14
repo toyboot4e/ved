@@ -57,10 +57,20 @@ Each step ends with `just test-all` green and **stop for review**.
     stops, reverse symmetry, ShowAll dedup, ByCharacter entry from both ends,
     extend). 87 unit tests pass; app untouched.
 
-- [ ] **Step 4 — IME + structure-repair selection.** Verify composition
-  around a ruby by hand (mozc) and in the harness; make `registerRubySync`
-  preserve the caret across a rebuild (the plain-offset save/restore, ported).
-  This is the highest-risk step — the spike explicitly did **not** cover IME.
+- [x] **Step 4 — IME guard + structure-repair caret.** *(done 2026-06-15)*
+  - `editor-lexical/cursor-map.ts`: `$plainOffsetInPara` / `$pointInParaAtOffset`
+    (boundary prefers visible leaf) + document-level `$getCursorState` /
+    `$restoreCursor` for step 5.
+  - `$reconcileParagraph` now saves the caret as a plain offset and restores it
+    after the rebuild (Lexical loses key-based selection on child replacement,
+    like Slate). `registerRubySync` is guarded by `$getEditor().isComposing()`
+    and — since Lexical keys transforms by type — registered on the leaf types
+    too (an element transform doesn't fire on a child text change).
+  - Tests: cursor-map round-trip + boundary preference; caret preserved across
+    reconcile; composition skips repair then repairs after it ends. 91 unit
+    tests pass.
+  - **Still owed: real mozc verification by hand** (automation detaches IME);
+    deferred to the step-5 e2e / manual pass.
 
 - [ ] **Step 5 — `VedEditor` parity + history.** Wrap the Lexical core in the
   `VedEditorProps` interface (`initialText`, `writingMode`, `appearPolicy`,
