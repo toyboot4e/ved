@@ -72,11 +72,23 @@ Each step ends with `just test-all` green and **stop for review**.
   - **Still owed: real mozc verification by hand** (automation detaches IME);
     deferred to the step-5 e2e / manual pass.
 
-- [ ] **Step 5 — `VedEditor` parity + history.** Wrap the Lexical core in the
-  `VedEditorProps` interface (`initialText`, `writingMode`, `appearPolicy`,
-  `onTextChange`, `onSnapshot`, injected `PlainTextHistory`). Undo/redo via
-  the existing plaintext history (not Lexical's). Run the full e2e suite
-  against the Lexical editor behind a build flag.
+- [x] **Step 5 — editing assembly (real DOM).** *(done 2026-06-15)*
+  - `editor-lexical/VedEditorLexical.tsx`: history-backed onChange (push on
+    text change, skip composition/undo), undo/redo (rebuild + caret restore),
+    the four appear policies, and `KEY_DOWN_COMMAND` for Ctrl+Z / Ctrl+1–4 /
+    arrow caret movement. `editor-lexical/lexical.css` (global, since
+    `createDOM` emits raw class names).
+  - `PlainTextHistory` extracted to `editor/history.ts` (backend-neutral;
+    re-exported from `editor-core` so Slate imports are unchanged).
+  - Harness + driver (`docs/spikes/lexical-editor.*`): typing creates a ruby,
+    Ctrl+1/4 switch modes, Ctrl+Z undoes — 3/3 runs. Findings in
+    [spikes/lexical-editor.md](spikes/lexical-editor.md).
+  - **Owed:** real mozc typing (automation garbles Japanese; ASCII used).
+
+- [ ] **Step 5b — scroll + snapshot parity.** Port scroll-keep across
+  writing-mode switches, reveal-on-policy-change, and tab snapshot/restore
+  (`onSnapshot` / `initialCursor` / `initialScroll`) into `VedEditorLexical`,
+  so it is a true `VedEditorProps` drop-in.
 
 - [ ] **Step 6 — flip and delete Slate.** Point `app.tsx` at the Lexical
   editor; remove `slate`/`slate-react` and `components/editor/`; fold
