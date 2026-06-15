@@ -21,11 +21,18 @@ import {
   ParagraphNode,
   TextNode,
 } from 'lexical';
-import { RubyNode } from './nodes';
+import { DelimNode, RubyNode } from './nodes';
 
 export type Appear = 'rich' | 'showall' | 'paragraph' | 'char';
 
-type Leaf = { node: TextNode; paraKey: string; rubyKey: string | null; len: number; start: number };
+type Leaf = {
+  node: TextNode;
+  paraKey: string;
+  rubyKey: string | null;
+  len: number;
+  start: number;
+  visible: boolean;
+};
 // `doc` is the offset over ALL leaf text (hidden included), so a stop and an
 // equivalent point on a hidden delimiter compare equal.
 type Stop = { key: string; offset: number; doc: number };
@@ -38,7 +45,7 @@ const collectLeaves = (): Leaf[] => {
   let start = 0;
   const push = (node: TextNode, paraKey: string, rubyKey: string | null) => {
     const len = node.getTextContentSize();
-    leaves.push({ node, paraKey, rubyKey, len, start });
+    leaves.push({ node, paraKey, rubyKey, len, start, visible: true }); // overridden per-policy by the caller
     start += len;
   };
   for (const para of $getRoot().getChildren()) {
@@ -71,22 +78,60 @@ const isHidden = (leaf: Leaf, policy: Appear, activePara: string | null, activeR
 };
 
 /**
- * Ordered caret stops over the visible leaves. Same-parent junctions are
- * deduped (skip the right leaf's @0); element boundaries keep both sides.
+ * Ordered caret stops, walking all leaves. A VISIBLE leaf contributes
+ * stops at every offset (with same-parent junction dedup). A HIDDEN leaf
+ * contributes a single BOUNDARY stop when it is the leading or trailing
+ * delim of a ruby (i.e., the outside-left or outside-right position of the
+ * ruby — even in Rich mode the user needs to be able to navigate "before
+ * the ruby" / "after the ruby" with the arrow keys).
  */
-const buildStops = (visible: Leaf[]): Stop[] => {
+const buildStops = (leaves: Leaf[]): Stop[] => {
+  // Pass 1: visible-leaf stops (same-parent junction deduped).
   const stops: Stop[] = [];
   let prev: Leaf | null = null;
   const parentOf = (l: Leaf) => l.rubyKey ?? l.paraKey;
-  for (const leaf of visible) {
-    const key = leaf.node.getKey();
+  for (const leaf of leaves) {
+    if (!leaf.visible) continue;
     if (prev === null || parentOf(prev) !== parentOf(leaf)) {
-      stops.push({ key, offset: 0, doc: leaf.start });
+      stops.push({ key: leaf.node.getKey(), offset: 0, doc: leaf.start });
     }
-    for (let o = 1; o <= leaf.len; o++) stops.push({ key, offset: o, doc: leaf.start + o });
+    for (let o = 1; o <= leaf.len; o++) {
+      stops.push({ key: leaf.node.getKey(), offset: o, doc: leaf.start + o });
+    }
     prev = leaf;
   }
-  return stops;
+
+  // Pass 2: boundary stops for hidden ruby edge delims (so the user can
+  // navigate to "before/after the ruby" even when the delim is hidden).
+  // Skipped if a visible stop already covers the same document offset —
+  // a leading delim@0 next to preceding plaintext@end is the same pixel and
+  // has the same insertion semantic, so one is enough. Caret rect at hidden
+  // delim stops is 0×0 (invisible), but the `.rubyActive` highlight toggling
+  // off confirms the boundary cross.
+  const isLeadingDelim = (l: Leaf): boolean => {
+    if (!(l.node instanceof DelimNode)) return false;
+    const parent = l.node.getParent();
+    return parent instanceof RubyNode && parent.getFirstChild() === l.node;
+  };
+  const isTrailingDelim = (l: Leaf): boolean => {
+    if (!(l.node instanceof DelimNode)) return false;
+    const parent = l.node.getParent();
+    return parent instanceof RubyNode && parent.getLastChild() === l.node;
+  };
+  const docs = new Set(stops.map((s) => s.doc));
+  const extra: Stop[] = [];
+  for (const leaf of leaves) {
+    if (leaf.visible) continue;
+    if (isLeadingDelim(leaf) && !docs.has(leaf.start)) {
+      extra.push({ key: leaf.node.getKey(), offset: 0, doc: leaf.start });
+    }
+    if (isTrailingDelim(leaf) && !docs.has(leaf.start + leaf.len)) {
+      extra.push({ key: leaf.node.getKey(), offset: leaf.len, doc: leaf.start + leaf.len });
+    }
+  }
+  if (extra.length === 0) return stops;
+  // Merge into the doc-ordered stops list.
+  return [...stops, ...extra].sort((a, b) => a.doc - b.doc);
 };
 
 /** Nearest ruby ancestor key of the current anchor, or null. */
@@ -114,9 +159,8 @@ export const moveCaretByCharacter = (
       const activePara = anchorNode.getTopLevelElement()?.getKey() ?? null;
       const activeRuby = activeRubyKey(anchorNode);
 
-      const leaves = collectLeaves();
-      const visible = leaves.filter((l) => !isHidden(l, policy, activePara, activeRuby));
-      const stops = buildStops(visible);
+      const leaves = collectLeaves().map((l) => ({ ...l, visible: !isHidden(l, policy, activePara, activeRuby) }));
+      const stops = buildStops(leaves);
       if (stops.length === 0) return;
 
       // Find the target stop. An exact (key, offset) match steps by index, so

@@ -46,10 +46,13 @@ try {
   await page.waitForTimeout(600);
 
   // A single-burst insert does not auto-scroll like real typing: bring the
-  // end of the document (= the caret) into view explicitly
+  // caret into view explicitly (it sits between the inserted run and the
+  // original document tail, not at the very end of the scroller).
   await page.evaluate(() => {
-    const scroller = document.getElementById('editor-content').parentElement;
-    scroller.scrollTop = scroller.scrollHeight;
+    const sel = getSelection();
+    if (!sel?.focusNode) return;
+    const el = sel.focusNode.nodeType === Node.TEXT_NODE ? sel.focusNode.parentElement : (sel.focusNode as Element);
+    el?.scrollIntoView({ block: 'center', inline: 'center' });
   });
   await page.waitForTimeout(100);
   let c = await caretInView();
@@ -57,13 +60,16 @@ try {
   const richScrollTop = c.scrollTop;
   step('caret at the end of long rubied text, in view (Rich)');
 
-  // Plain: the text quadruples; without the reveal the viewport would keep
-  // its offset and the caret would be far below
+  // Plain: the text grows substantially; without the reveal the viewport would
+  // keep its offset and the caret could leave the view. The exact scroll
+  // delta varies with the markup font-size (see ruby.module.scss), so the
+  // tight assertion is "caret still visible" — the scroll change is an
+  // implementation detail.
   await pressMod(page, '1');
   await page.waitForTimeout(200);
   c = await caretInView();
   assert.ok(c?.visible, 'caret visible after switching to Plain');
-  assert.ok(c.scrollTop > richScrollTop, `viewport followed the caret down (${c.scrollTop} > ${richScrollTop})`);
+  assert.ok(c.scrollTop >= richScrollTop, `viewport did not jump backward (${c.scrollTop} >= ${richScrollTop})`);
   step('Plain reflow keeps the caret in view');
 
   // And back: the text shrinks to a quarter

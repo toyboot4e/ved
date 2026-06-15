@@ -12,6 +12,7 @@ import {
   type SerializedTextNode,
   TextNode,
 } from 'lexical';
+import styles from './ruby.module.scss';
 
 // --- hidden markup leaves -------------------------------------------------
 
@@ -31,7 +32,8 @@ export class DelimNode extends TextNode {
   }
   override createDOM(config: EditorConfig, editor?: LexicalEditor): HTMLElement {
     const dom = super.createDOM(config, editor);
-    dom.className = 'delim';
+    // biome-ignore lint/style/noNonNullAssertion: key defined in ruby.module.scss
+    dom.className = styles.delim!;
     return dom;
   }
 }
@@ -53,7 +55,8 @@ export class RtNode extends TextNode {
   }
   override createDOM(config: EditorConfig, editor?: LexicalEditor): HTMLElement {
     const dom = super.createDOM(config, editor);
-    dom.className = 'rt';
+    // biome-ignore lint/style/noNonNullAssertion: key defined in ruby.module.scss
+    dom.className = styles.rt!;
     return dom;
   }
 }
@@ -110,10 +113,18 @@ export class RubyNode extends ElementNode {
 
   override createDOM(): HTMLElement {
     const ruby = document.createElement('ruby');
-    ruby.className = 'rubyWrap';
+    // biome-ignore lint/style/noNonNullAssertion: key defined in ruby.module.scss
+    ruby.className = styles.rubyWrap!;
     const rt = document.createElement('rt');
     rt.className = 'dup';
+    // The visible annotation is structural, not editable content: clicks must
+    // not place the caret inside it, and the user must not be able to select
+    // or type into it. (The model's `rt` text lives in a sibling span and is
+    // changed by editing the source syntax, not the annotation.)
     rt.contentEditable = 'false';
+    rt.setAttribute('aria-hidden', 'true');
+    rt.style.userSelect = 'none';
+    rt.style.pointerEvents = 'none';
     rt.textContent = this.__reading;
     ruby.appendChild(rt);
     return ruby;

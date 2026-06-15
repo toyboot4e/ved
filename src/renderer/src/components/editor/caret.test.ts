@@ -116,6 +116,30 @@ describe('moveCaretByCharacter', () => {
     ]);
   });
 
+  it('Rich: ruby at doc start — arrow back from body@0 reaches the OUTSIDE boundary (leading delim @0)', () => {
+    // User reported: "when the rubied text is at the beginning of document,
+    // I cannot move the cursor before that with keyboard". The leading delim
+    // is hidden in Rich mode, so it was excluded from the stops list; the
+    // boundary stop fixes that.
+    const editor = makeEditor('|ルビ(ruby)');
+    setCaret(editor, 1, 0); // body ルビ @0 (inside, just after the | boundary)
+    moveCaretByCharacter(editor, 'rich', { reverse: true, extend: false });
+    expect(focusDesc(editor)).toBe('delim:"|"@0'); // OUTSIDE the ruby
+    // and from here, one more reverse stays put (we're at the document edge)
+    moveCaretByCharacter(editor, 'rich', { reverse: true, extend: false });
+    expect(focusDesc(editor)).toBe('delim:"|"@0');
+  });
+
+  it('Rich: ruby at doc end — arrow forward from body@end reaches the OUTSIDE boundary (trailing delim @end)', () => {
+    // Symmetric to the above. `(|漢(かん))` is contrived; `|漢(かん)` ends the
+    // doc with the trailing `)` delim. After body@end, forward must land at
+    // the trailing delim @ end (outside the ruby, right edge).
+    const editor = makeEditor('|漢(かん)');
+    setCaret(editor, 1, 1); // body 漢 @1 (= end of body, just before the closing boundary)
+    moveCaretByCharacter(editor, 'rich', { reverse: false, extend: false });
+    expect(focusDesc(editor)).toBe('delim:")"@1');
+  });
+
   it('Rich: backward from a normalized body-start point does not wrap to the end', () => {
     // The live editor normalizes a body-start caret onto the preceding hidden
     // delimiter, so the current point is not an exact stop. Backward from it

@@ -13,9 +13,9 @@ import { $getCursorState, $restoreCursor, type CursorState } from './editor/curs
 import type { PlainTextHistory } from './editor/history';
 import { $buildFromText, $syncParagraphs, serialize } from './editor/model';
 import { DelimNode, RtNode, RubyNode } from './editor/nodes';
+import rubyStyles from './editor/ruby.module.scss';
 import { lineToScroll, type ScrollGeom, type ScrollMode, scrollToLine } from './editor/scroll-keep';
 import styles from './editor.module.scss';
-import './editor/lexical.css';
 
 export enum WritingMode {
   Horizontal,
@@ -37,6 +37,17 @@ const APPEAR_CLASS: Record<AppearPolicy, Appear> = {
   [AppearPolicy.ByParagraph]: 'paragraph',
   [AppearPolicy.ByCharacter]: 'char',
   [AppearPolicy.Rich]: 'rich',
+};
+
+/** The CSS-module class on the ContentEditable that triggers expansion rules. */
+const APPEAR_STYLE: Record<AppearPolicy, string> = {
+  // biome-ignore lint/style/noNonNullAssertion: keys defined in ruby.module.scss
+  [AppearPolicy.ShowAll]: rubyStyles.appearShowall!,
+  // biome-ignore lint/style/noNonNullAssertion: keys defined in ruby.module.scss
+  [AppearPolicy.ByParagraph]: rubyStyles.appearParagraph!,
+  // biome-ignore lint/style/noNonNullAssertion: keys defined in ruby.module.scss
+  [AppearPolicy.ByCharacter]: rubyStyles.appearChar!,
+  [AppearPolicy.Rich]: '',
 };
 
 /** A buffer's editor state captured on unmount, to restore on switch-back. */
@@ -326,7 +337,7 @@ export const VedEditor = (props: VedEditorProps): React.JSX.Element => {
                 styles.editorContent,
                 vert && styles.vertMode,
                 multiCol && styles.multiColMode,
-                `appear-${APPEAR_CLASS[appearPolicy]}`,
+                APPEAR_STYLE[appearPolicy],
               )}
             />
           }

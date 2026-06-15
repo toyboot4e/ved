@@ -1,0 +1,106 @@
+// Ruby + appear-policy + placeholder styling (CSS module).
+//
+// The class names defined here are the contract between three places:
+//   - `nodes.ts` (RubyNode/DelimNode/RtNode `createDOM`) emits the elements
+//     with `styles.rubyWrap` / `styles.delim` / `styles.rt`;
+//   - `appearance.ts` toggles `styles.rubyActive` / `styles.activePara`
+//     as the selection moves;
+//   - `editor.tsx` puts `styles.appearRich|Showall|Paragraph|Char` on the
+//     ContentEditable root according to the active AppearPolicy.
+// Importing the styles object in each keeps them in sync.
+//
+// Layout (vertical-rl, page geometry) lives in editor.module.scss; this
+// file is only ruby rendering, the four appear policies, and the placeholder.
+
+// Markup leaves (`|`, `(`, `)`, in-flow rt) are hidden, NOT via display:none,
+// so they remain caret-addressable at ruby boundaries. Two strategies:
+//   - The LEADING delim of each ruby has a tiny font (and transparent text),
+//     so the caret BEFORE the ruby has visible geometry — without this, the
+//     caret at the document start is invisible (rect = 0×0).
+//   - All other markup leaves are font-size: 0 so they add no visible space
+//     to the rubied text. The caret rect there is 0×0 (invisible) but the
+//     `.rubyActive` highlight toggling off tells the user they've exited the
+//     ruby — that's the UX cue for the boundary-pair semantics.
+$leading-markup-size: 6px;
+
+.rubyWrap {
+  // The annotation duplicate <rt> (rendered by RubyNode.createDOM); the
+  // in-flow rt leaf below is for the model text only.
+  > rt {
+    font-size: 0.5em;
+  }
+
+  // Wrapped in :where() so the collapsed-state rules have ZERO specificity.
+  // The view-mode expansion rules below (.appearShowall etc.) need to win
+  // without piling on selectors; without :where() the position-specific
+  // rules outweigh them and the markup stays small in expanded modes.
+  :where(& > .delim:first-child) {
+    font-size: $leading-markup-size;
+    color: transparent;
+    user-select: none;
+  }
+  :where(& > .delim:not(:first-child), & > .rt) {
+    font-size: 0;
+    user-select: none;
+  }
+}
+
+// The caret is on a content leaf of THIS ruby — its body or rt (NOT a delim).
+// `appearance.ts registerAppearance` manages this class. Distinguishes
+// "inside the rubied text" (highlight) from "on the ruby boundary"
+// (no highlight) — the visual cue for the boundary-pair semantics.
+.rubyActive {
+  background-color: rgba(255, 200, 50, 0.25);
+}
+
+// --- view modes: which rubies render expanded ----------------------------
+// `editor.tsx` sets one of appearRich/appearShowall/appearParagraph/appearChar
+// on the ContentEditable root; CSS combines it with .activePara / .rubyActive
+// (cursor state) to decide which rubies show their syntax.
+
+@mixin expanded {
+  font-size: 1em;
+  color: #808080;
+}
+
+.appearShowall {
+  .delim,
+  .rt {
+    @include expanded;
+  }
+  .rubyWrap > rt {
+    display: none;
+  }
+}
+
+.appearParagraph .activePara {
+  .delim,
+  .rt {
+    @include expanded;
+  }
+  .rubyWrap > rt {
+    display: none;
+  }
+}
+
+.appearChar .rubyActive {
+  .delim,
+  .rt {
+    @include expanded;
+  }
+  > rt {
+    display: none;
+  }
+}
+
+// --- placeholder ---------------------------------------------------------
+
+// An empty document is a single <p> holding only a <br>; render the
+// placeholder in normal flow inside it so it sits exactly where the first
+// character will, in every writing mode (Lexical's default placeholder is
+// absolutely positioned and lands a page away under vertical-rl).
+:global(#editor-content) > p:only-child:has(> br:only-child)::before {
+  content: '本文';
+  color: #555;
+  pointer-events: none;
+}

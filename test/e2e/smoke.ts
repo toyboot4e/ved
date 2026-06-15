@@ -27,12 +27,15 @@ const snap = () =>
     // Drop the read-only duplicated annotations — they are presentation,
     // not model text
     for (const rt of clone.querySelectorAll('rt[contenteditable=false]')) rt.remove();
-    const rubies = [...root.querySelectorAll('.rubyWrap')];
+    // The model class names are CSS-module-scoped (ruby.module.scss), so the
+    // actual class is `_rubyWrap_<hash>`/`_delim_<hash>` — use a substring match.
+    const rubies = [...root.querySelectorAll('[class*=rubyWrap]')];
     // Expansion is CSS-driven (the appear-policy class on the root); a collapsed
-    // ruby hides its delimiters with font-size: 0, an expanded one shows them.
+    // ruby hides delims with the small markup font-size, an expanded one shows
+    // them at the inherited 1em (= the editor's font-size, 18px).
     const collapsed = rubies.filter((r) => {
-      const d = r.querySelector('.delim');
-      return !d || getComputedStyle(d).fontSize === '0px';
+      const d = r.querySelector('[class*=delim]');
+      return !d || Number.parseFloat(getComputedStyle(d).fontSize) < 12;
     }).length;
     return {
       text: (clone.textContent ?? '').replaceAll('﻿', ''),
