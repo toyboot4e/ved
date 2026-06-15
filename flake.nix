@@ -126,6 +126,10 @@
               alsa-lib
               libdrm
               libGL
+              # libudev.so.1 — Electron 42 dynamically links it (was loaded via
+              # NixOS' /run/current-system on host setups; explicit here so
+              # `LD_LIBRARY_PATH` from `nix develop` is enough on its own).
+              udev
             ];
 
           # IM module cache so the prebuilt Electron's gtk3 can resolve

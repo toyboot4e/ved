@@ -3,6 +3,10 @@ $line-space: 2px;
 $line-pitch: $font-size + $line-space;
 $pad-x: 20px;
 $pad-y: 10px;
+// Breathing room at the line start so the caret at the document start has a
+// visible position (without it, it renders right on the editor's edge and
+// looks gone — see editor.module.scss `.multiColMode`).
+$caret-margin: 6px;
 $footer-height: $font-size + $pad-y * 2;
 
 .root {
@@ -230,13 +234,17 @@ $col-gap: $pad-y * 2;
     }
 
     // Column rows: each row is a page (--page-line-chars × --page-lines).
-    // No vertical padding inside the fixed height — it would eat into the
-    // line length (the gap between rows provides the breathing room).
+    // A small inline-start padding (top, in vertical-rl) gives the caret a
+    // visible home at the line start — without it the caret at the document
+    // start renders right on the editor's top edge and disappears.
+    // The height is increased by the same amount so the line still fits the
+    // configured character count.
     &.multiColMode {
       width: var(--page-width);
-      height: var(--page-height);
+      height: calc(var(--page-height) + #{$caret-margin});
       margin: $pad-y $pad-x $footer-height $pad-x;
-      padding: 0;
+      padding: $caret-margin 0 0 0;
+      box-sizing: border-box;
       column-width: var(--page-height);
       column-gap: $col-gap;
     }
