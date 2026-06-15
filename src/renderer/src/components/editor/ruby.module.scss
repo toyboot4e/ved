@@ -13,15 +13,22 @@
 // file is only ruby rendering, the four appear policies, and the placeholder.
 
 // Markup leaves (`|`, `(`, `)`, in-flow rt) are hidden, NOT via display:none,
-// so they remain caret-addressable at ruby boundaries. Two strategies:
-//   - The LEADING delim of each ruby has a tiny font (and transparent text),
-//     so the caret BEFORE the ruby has visible geometry — without this, the
-//     caret at the document start is invisible (rect = 0×0).
-//   - All other markup leaves are font-size: 0 so they add no visible space
-//     to the rubied text. The caret rect there is 0×0 (invisible) but the
-//     `.rubyActive` highlight toggling off tells the user they've exited the
-//     ruby — that's the UX cue for the boundary-pair semantics.
-$leading-markup-size: 6px;
+// so they remain caret-addressable at ruby boundaries.
+//
+// Caret VISIBILITY trade-off (font-size: 0 collapses the caret rect to 0×0):
+//   - LEADING delim of every ruby: tiny font ($markup-size), transparent text
+//     → the caret BEFORE any ruby has visible geometry.
+//   - TRAILING delim of a ruby that is the LAST child of its paragraph:
+//     same — without it, backspace from end-of-paragraph after a ruby would
+//     leave the caret at an invisible position (user complaint: "the cursor
+//     jumps to the ruby's position"). Only "trailing AND last-child of <p>"
+//     gets this; mid-document trailing delims stay at 0 so successive rubies
+//     pack together with no visible gap.
+//   - All other markup leaves are font-size: 0 (no inline space). The caret
+//     rect there is 0×0 (invisible), but the `.rubyActive` highlight toggling
+//     off tells the user they've exited the ruby — the UX cue for the
+//     boundary-pair semantics.
+$markup-size: 6px;
 
 .rubyWrap {
   // The annotation duplicate <rt> (rendered by RubyNode.createDOM); the
@@ -35,7 +42,7 @@ $leading-markup-size: 6px;
   // without piling on selectors; without :where() the position-specific
   // rules outweigh them and the markup stays small in expanded modes.
   :where(& > .delim:first-child) {
-    font-size: $leading-markup-size;
+    font-size: $markup-size;
     color: transparent;
     user-select: none;
   }
@@ -43,6 +50,13 @@ $leading-markup-size: 6px;
     font-size: 0;
     user-select: none;
   }
+}
+
+// Visible trailing delim only when the ruby is at the END of its paragraph
+// (otherwise mid-text rubies pack with no visible inter-ruby gap).
+:where(p > .rubyWrap:last-child > .delim:last-of-type) {
+  font-size: $markup-size;
+  color: transparent;
 }
 
 // The caret is on a content leaf of THIS ruby — its body or rt (NOT a delim).

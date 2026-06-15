@@ -10,6 +10,7 @@ import { useCallback, useEffect, useLayoutEffect, useRef } from 'react';
 import { registerAppearance } from './editor/appearance';
 import { type Appear, moveCaretByCharacter } from './editor/caret';
 import { $getCursorState, $restoreCursor, type CursorState } from './editor/cursor-map';
+import { registerElementPointNormalizer } from './editor/element-point-normalize';
 import type { PlainTextHistory } from './editor/history';
 import { $buildFromText, $syncParagraphs, serialize } from './editor/model';
 import { DelimNode, RtNode, RubyNode } from './editor/nodes';
@@ -93,8 +94,64 @@ const HORIZ_ARROWS: Record<string, ArrowAct> = {
   ArrowDown: { axis: 'line', reverse: false },
 };
 
+/**
+ * Move the caret by a visual line, crossing paragraph boundaries when the
+ * browser's `Selection.modify('line')` is stuck (it confines itself to the
+ * current paragraph). After the modify, if the selection didn't change, jump
+ * to the next/previous paragraph's edge.
+ */
 const moveCaretByLine = (alter: 'move' | 'extend', dir: 'forward' | 'backward'): void => {
-  requestAnimationFrame(() => window.getSelection()?.modify(alter, dir, 'line'));
+  requestAnimationFrame(() => {
+    const sel = window.getSelection();
+    if (!sel || sel.rangeCount === 0) return;
+    const before = sel.getRangeAt(0).cloneRange();
+    sel.modify(alter, dir, 'line');
+    const after = sel.getRangeAt(0);
+    if (
+      before.startContainer === after.startContainer &&
+      before.startOffset === after.startOffset &&
+      before.endContainer === after.endContainer &&
+      before.endOffset === after.endOffset
+    ) {
+      // Stuck at a paragraph boundary — hop to the next/previous paragraph.
+      const focus = sel.focusNode;
+      const p =
+        focus && focus.nodeType === Node.TEXT_NODE
+          ? focus.parentElement?.closest('p')
+          : (focus as Element | null)?.closest('p');
+      if (!p) return;
+      const sibling =
+        dir === 'forward'
+          ? (p.nextElementSibling as HTMLElement | null)
+          : (p.previousElementSibling as HTMLElement | null);
+      if (!sibling || sibling.tagName !== 'P') return;
+      // Skip non-editable subtrees (the read-only dup <rt> annotation).
+      const walker = document.createTreeWalker(sibling, NodeFilter.SHOW_TEXT | NodeFilter.SHOW_ELEMENT, {
+        acceptNode(n) {
+          if (n.nodeType === Node.ELEMENT_NODE && (n as HTMLElement).getAttribute('contenteditable') === 'false') {
+            return NodeFilter.FILTER_REJECT;
+          }
+          return n.nodeType === Node.TEXT_NODE ? NodeFilter.FILTER_ACCEPT : NodeFilter.FILTER_SKIP;
+        },
+      });
+      const target =
+        dir === 'forward'
+          ? walker.nextNode()
+          : (() => {
+              let last: Node | null = null;
+              let n: Node | null;
+              while ((n = walker.nextNode())) last = n;
+              return last;
+            })();
+      if (!target) return;
+      const offset = dir === 'forward' ? 0 : (target.textContent ?? '').length;
+      if (alter === 'extend') {
+        sel.extend(target, offset);
+      } else {
+        sel.collapse(target, offset);
+      }
+    }
+  });
 };
 
 // ---------------------------------------------------------------------------
@@ -204,6 +261,7 @@ const CorePlugin = ({
   useEffect(() => {
     const { initialText, history, initialCursor, initialScroll } = live.current;
     const unAppear = registerAppearance(editor);
+    const unElementPoint = registerElementPointNormalizer(editor);
 
     editor.update(
       () => {
@@ -293,6 +351,7 @@ const CorePlugin = ({
         scroll: { top: s?.scrollTop ?? 0, left: s?.scrollLeft ?? 0 },
       });
       unAppear();
+      unElementPoint();
       unChange();
       unKeys();
     };
