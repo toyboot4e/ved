@@ -10,6 +10,7 @@ import { useCallback, useEffect, useLayoutEffect, useRef } from 'react';
 import { registerAppearance } from './editor/appearance';
 import { type Appear, moveCaretByCharacter } from './editor/caret';
 import { $getCursorState, $restoreCursor, type CursorState } from './editor/cursor-map';
+import { firstEditableText, lastEditableText } from './editor/dom-walk';
 import { registerElementPointNormalizer } from './editor/element-point-normalize';
 import type { PlainTextHistory } from './editor/history';
 import { $buildFromText, $syncParagraphs, serialize } from './editor/model';
@@ -125,24 +126,9 @@ const moveCaretByLine = (alter: 'move' | 'extend', dir: 'forward' | 'backward'):
           ? (p.nextElementSibling as HTMLElement | null)
           : (p.previousElementSibling as HTMLElement | null);
       if (!sibling || sibling.tagName !== 'P') return;
-      // Skip non-editable subtrees (the read-only dup <rt> annotation).
-      const walker = document.createTreeWalker(sibling, NodeFilter.SHOW_TEXT | NodeFilter.SHOW_ELEMENT, {
-        acceptNode(n) {
-          if (n.nodeType === Node.ELEMENT_NODE && (n as HTMLElement).getAttribute('contenteditable') === 'false') {
-            return NodeFilter.FILTER_REJECT;
-          }
-          return n.nodeType === Node.TEXT_NODE ? NodeFilter.FILTER_ACCEPT : NodeFilter.FILTER_SKIP;
-        },
-      });
-      const target =
-        dir === 'forward'
-          ? walker.nextNode()
-          : (() => {
-              let last: Node | null = null;
-              let n: Node | null;
-              while ((n = walker.nextNode())) last = n;
-              return last;
-            })();
+      // Land at the first / last editable text in the target paragraph; the
+      // walker skips the read-only dup <rt> annotation.
+      const target = dir === 'forward' ? firstEditableText(sibling) : lastEditableText(sibling);
       if (!target) return;
       const offset = dir === 'forward' ? 0 : (target.textContent ?? '').length;
       if (alter === 'extend') {

@@ -125,6 +125,15 @@ $footer-height: $font-size + $pad-y * 2;
 .editorContent {
   -webkit-app-region: no-drag;
   -webkit-user-select: text;
+  // Ruby markup leaves use `color: transparent` to hide the |,(,) glyphs;
+  // with the default `caret-color: auto` Chromium inherits transparent and
+  // the caret disappears at ruby boundaries. Pin caret-color to a visible
+  // value so the caret renders everywhere — including at hidden markup.
+  caret-color: black;
+  // Used by the leading-delim overlay caret (ruby.module.scss
+  // .rubyLeadActive::before): the body font-size, as an absolute pixel
+  // value so the overlay's `1em` doesn't shrink to the delim's $markup-size.
+  --ved-caret-extent: #{$font-size};
 
   // Horizontal writing: a fixed page box; overflow lines scroll downwards
   &:not(.vertMode) {

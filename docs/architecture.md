@@ -60,7 +60,7 @@ The tree and the text are identical in all modes; only CSS classes change.
 The policy is a class on the editor root (`appear-rich|showall|paragraph|char`);
 `editor/appearance.ts registerAppearance` marks `.activePara` on the caret's
 paragraph and `.rubyActive` on the caret's ruby (selection-driven, no tree
-mutation). CSS in `editor/lexical.css` then decides which rubies expand:
+mutation). CSS in `editor/ruby.module.scss` then decides which rubies expand:
 
 | Mode | Shortcut | Expanded rubies |
 |---|---|---|
@@ -135,6 +135,45 @@ stops at a ruby element boundary (outside vs inside — one extra press tells yo
 which side you are on), and lands on a ruby's entry edge in ByCharacter. Line
 movement stays visual (`Selection.modify`). In vertical modes the axes rotate
 (`ArrowUp/Down` → character, `ArrowLeft/Right` → line).
+
+## Caret at ruby boundaries
+
+Three issues conspire to make the caret invisible (or render at a few pixels)
+at a ruby boundary. The fixes are in `appearance.ts`,
+`element-point-normalize.ts`, and `ruby.module.scss`:
+
+- **Element-point selections collapse to a (0,0) caret rect.** A click on
+  a `<p>` empty edge, or a model state at `paragraph @N` after a deletion,
+  leaves Lexical with an element-point anchor. Chromium draws no caret for
+  that rect. `element-point-normalize.ts $normalizeElementPoint` rewrites
+  such a selection to the equivalent text-point on the same paragraph.
+- **Click at a ruby boundary hit-tests to the small-font delim.** Inside
+  the ruby, the EARLIER node at a boundary pixel is the delim text (`|`,
+  `(`, `)`) which is rendered with `$markup-size` (a few px) — Chromium
+  then draws the caret at the delim's metrics. The same module reroutes
+  boundary-text focus to the next/previous sibling (body or rt @ same
+  pixel), where the font is 1em. The reroute is skipped at the ruby's
+  OUTSIDE edge (no sibling).
+- **OUTSIDE positions of a paragraph-edge ruby have no body to reroute to.**
+  At the leading delim @0 of a first-child ruby (and trailing delim @end
+  of a last-child ruby), the native caret really does sit on the small-
+  font delim and there is no sibling to redirect to. `appearance.ts` flags
+  these positions (plus the INSIDE-side partners of the boundary pair) by
+  setting `.rubyLeadActive` / `.rubyTrailActive` on the ruby element;
+  `ruby.module.scss` hides the native caret (`caret-color: transparent`)
+  on those positions and renders an absolutely-positioned 1em pseudo-
+  element as an overlay caret. Absolute positioning means **zero layout
+  effect** — an earlier fix expanded the delim's font from $markup-size to
+  1em, which shifted the body forward and back as the caret entered and
+  left the position; the user found that jarring. Anchoring the overlay on
+  the `<ruby>` element (not the delim) keeps it inside the column box —
+  the delim's text is centered within the column, so an overlay anchored
+  on the delim extended past the column edge.
+
+The four positions are tested end-to-end (`test/e2e/caret-boundary.ts`)
+plus the boundary classification ($computeAppearKeys) in
+`appearance.test.ts`. The shared DOM walker that skips the read-only `<rt>`
+annotation lives in `editor/dom-walk.ts`.
 
 ## History (`editor/history.ts PlainTextHistory`)
 
@@ -211,14 +250,17 @@ src/renderer/src/
                            keys, scroll preservation, snapshot/restore
     editor.module.scss     page geometry, layout modes, toolbar
     editor/
-      nodes.ts             RubyNode / DelimNode / RtNode (identity node schema)
-      model.ts             lineNodes, $buildFromText, serialize, $syncParagraphs
-      cursor-map.ts        plain offset ↔ Lexical point ($getCursorState / $restoreCursor)
-      caret.ts             moveCaretByCharacter (model-driven char movement)
-      appearance.ts        registerAppearance (selection → .activePara / .rubyActive)
-      lexical.css          ruby + appear-policy styles + placeholder (raw class names)
-      history.ts           PlainTextHistory (backend-neutral, unit-tested)
-      scroll-keep.ts       scroll offset ↔ line index per mode (unit-tested)
+      nodes.ts                       RubyNode / DelimNode / RtNode (identity node schema)
+      model.ts                       lineNodes, $buildFromText, serialize, $syncParagraphs
+      cursor-map.ts                  plain offset ↔ Lexical point ($getCursorState / $restoreCursor)
+      caret.ts                       moveCaretByCharacter (model-driven char movement)
+      appearance.ts                  registerAppearance: selection → .activePara / .rubyActive /
+                                     .rubyLeadActive / .rubyTrailActive
+      element-point-normalize.ts     element-point → text-point + boundary-delim → body reroute
+      dom-walk.ts                    editable text walkers (skip the read-only dup <rt>)
+      ruby.module.scss               ruby + appear-policy + boundary-caret overlay + placeholder
+      history.ts                     PlainTextHistory (backend-neutral, unit-tested)
+      scroll-keep.ts                 scroll offset ↔ line index per mode (unit-tested)
 test/e2e/                  Playwright tests against the built app, hidden windows
 docs/editor-ui-plan.md     editor UI shell plan + phase checklist
 docs/lexical-migration-plan.md   the Slate → Lexical migration

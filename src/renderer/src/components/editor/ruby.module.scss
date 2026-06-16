@@ -1,10 +1,10 @@
 // Ruby + appear-policy + placeholder styling (CSS module).
 //
-// The class names defined here are the contract between three places:
+// The class names defined here are the contract with three callers:
 //   - `nodes.ts` (RubyNode/DelimNode/RtNode `createDOM`) emits the elements
 //     with `styles.rubyWrap` / `styles.delim` / `styles.rt`;
-//   - `appearance.ts` toggles `styles.rubyActive` / `styles.activePara`
-//     as the selection moves;
+//   - `appearance.ts` toggles `styles.activePara`, `styles.rubyActive`,
+//     `styles.rubyLeadActive`, `styles.rubyTrailActive` as the caret moves;
 //   - `editor.tsx` puts `styles.appearRich|Showall|Paragraph|Char` on the
 //     ContentEditable root according to the active AppearPolicy.
 // Importing the styles object in each keeps them in sync.
@@ -12,22 +12,18 @@
 // Layout (vertical-rl, page geometry) lives in editor.module.scss; this
 // file is only ruby rendering, the four appear policies, and the placeholder.
 
-// Markup leaves (`|`, `(`, `)`, in-flow rt) are hidden, NOT via display:none,
-// so they remain caret-addressable at ruby boundaries.
+// --- collapsed (Rich) markup: hidden but caret-addressable ---------------
 //
-// Caret VISIBILITY trade-off (font-size: 0 collapses the caret rect to 0×0):
-//   - LEADING delim of every ruby: tiny font ($markup-size), transparent text
-//     → the caret BEFORE any ruby has visible geometry.
-//   - TRAILING delim of a ruby that is the LAST child of its paragraph:
-//     same — without it, backspace from end-of-paragraph after a ruby would
-//     leave the caret at an invisible position (user complaint: "the cursor
-//     jumps to the ruby's position"). Only "trailing AND last-child of <p>"
-//     gets this; mid-document trailing delims stay at 0 so successive rubies
-//     pack together with no visible gap.
-//   - All other markup leaves are font-size: 0 (no inline space). The caret
-//     rect there is 0×0 (invisible), but the `.rubyActive` highlight toggling
-//     off tells the user they've exited the ruby — the UX cue for the
-//     boundary-pair semantics.
+// `font-size: 0`, NOT `display: none`: a display:none leaf has no caret
+// position, so the caret could not sit between two adjacent rubies. With
+// font-size 0 the leaves occupy no inline space but remain text-points the
+// model can address. Where the caret renders AT a hidden delim, the overlay
+// caret takes over (see "boundary caret" section below).
+//
+// The leading delim gets a tiny non-zero size historically — kept so the
+// native caret BEFORE a mid-paragraph ruby has somewhere to live. At a
+// FIRST/LAST-child ruby's boundary the overlay caret renders instead and the
+// native one is suppressed via `caret-color: transparent`.
 $markup-size: 6px;
 
 .rubyWrap {
@@ -37,10 +33,8 @@ $markup-size: 6px;
     font-size: 0.5em;
   }
 
-  // Wrapped in :where() so the collapsed-state rules have ZERO specificity.
-  // The view-mode expansion rules below (.appearShowall etc.) need to win
-  // without piling on selectors; without :where() the position-specific
-  // rules outweigh them and the markup stays small in expanded modes.
+  // :where() keeps these at zero specificity so the view-mode expansion
+  // rules below (.appearShowall etc.) can win without piling on selectors.
   :where(& > .delim:first-child) {
     font-size: $markup-size;
     color: transparent;
@@ -52,17 +46,67 @@ $markup-size: 6px;
   }
 }
 
-// Visible trailing delim only when the ruby is at the END of its paragraph
-// (otherwise mid-text rubies pack with no visible inter-ruby gap).
-:where(p > .rubyWrap:last-child > .delim:last-of-type) {
-  font-size: $markup-size;
-  color: transparent;
+// --- boundary caret (overlay) --------------------------------------------
+//
+// At a paragraph-edge ruby boundary, Chromium renders the native caret with
+// the small-font delim's metrics — a few-pixel mark instead of the body's
+// 1em. (At INSIDE-left the model holds either `delim @end` or `body @0`;
+// either way, Chromium picks up the small-font delim adjacent to the gap.)
+//
+// Fix: hide the native caret at all four boundary positions, and render a
+// 1em pseudo-element "caret" anchored to the RUBY element (the column-width
+// box — anchoring on the delim's text doesn't work because the delim text is
+// centered within the column). The pseudo-element costs no layout — earlier
+// attempts to expand the delim's font shifted the body around the caret,
+// which the user found jarring. Boundary detection lives in appearance.ts.
+:where(.rubyLeadActive, .rubyTrailActive) {
+  position: relative;
+
+  // Hide native caret on BOTH halves of the boundary pair: the delim (at
+  // first-child / last-of-type) AND the body span (the 2nd child of the
+  // ruby). Body @0/@end is the OTHER position that pairs to the same pixel
+  // — without this rule, focus on the body re-introduces the small native
+  // caret on top of our overlay.
+  > .delim:first-child,
+  > .delim:last-of-type,
+  > :nth-child(2) {
+    caret-color: transparent;
+  }
+
+  &::before {
+    content: '';
+    position: absolute;
+    inset-block-start: 0;
+    // The native caret is a thin line PERPENDICULAR to the inline (text-
+    // flow) axis, the length of the line-height. inline-size = caret stroke
+    // (1px); block-size = caret length (1em via --ved-caret-extent — using
+    // raw `1em` here would resolve to the delim's tiny font, not the body's
+    // 1em). Logical properties give us horizontal-text and vertical-rl in
+    // one rule: horizontal = 1px wide × 1em tall vertical line; vertical-rl
+    // = 1em wide × 1px tall horizontal line.
+    inline-size: 1px;
+    block-size: var(--ved-caret-extent);
+    background: black;
+    pointer-events: none;
+    animation: caret-blink 1s step-end infinite;
+  }
+}
+:where(.rubyLeadActive)::before {
+  inset-inline-start: 0;
+}
+:where(.rubyTrailActive)::before {
+  inset-inline-end: 0;
 }
 
-// The caret is on a content leaf of THIS ruby — its body or rt (NOT a delim).
-// `appearance.ts registerAppearance` manages this class. Distinguishes
-// "inside the rubied text" (highlight) from "on the ruby boundary"
-// (no highlight) — the visual cue for the boundary-pair semantics.
+@keyframes caret-blink {
+  50% {
+    opacity: 0;
+  }
+}
+
+// The caret is on a content leaf of THIS ruby — its body or rt (NOT a
+// boundary delim). The yellow highlight distinguishes the two model
+// positions at a boundary (same pixel, visually identical otherwise).
 .rubyActive {
   background-color: rgba(255, 200, 50, 0.25);
 }

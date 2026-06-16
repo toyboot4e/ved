@@ -31,6 +31,14 @@ Task runner is `just`:
   a document is always a plain string. Collapsed-ruby markup is hidden with
   `font-size: 0` (NOT `display: none`) so the caret stays addressable at ruby
   boundaries; arrow movement skips it via `moveCaretByCharacter`.
+- **Caret at ruby boundaries renders via an overlay, not delim font.** At a
+  paragraph-edge ruby boundary, Chromium would draw the native caret using
+  the small-font delim's metrics — a tiny mark. `appearance.ts` sets
+  `.rubyLeadActive` / `.rubyTrailActive` on the ruby; `ruby.module.scss`
+  hides the native caret (`caret-color: transparent`) and renders an
+  absolutely-positioned 1em pseudo-element. Don't try to fix caret size by
+  expanding the delim's font — it shifts the body around the caret. See
+  `docs/architecture.md` § "Caret at ruby boundaries".
 - **IME safety.** Never repair structure, steal focus, or remount the editor
   during an IME composition (`editor.isComposing()`, `event.isComposing`).
   `$syncParagraphs` (structure repair) is skipped while composing. (Real mozc
