@@ -11,12 +11,15 @@ describe('scrollToLine', () => {
     expect(scrollToLine('vertical', geom, 0, -1200)).toBe(60);
     // columns: row 3 starts at line 60
     expect(scrollToLine('columns', geom, 2220, 0)).toBe(60);
+    // rows: page 3 (lines 60..) starts at scrollLeft = -3 × rowPitch
+    expect(scrollToLine('rows', geom, 0, -2220)).toBe(60);
   });
 
   it('rounds to the nearest line / row', () => {
     expect(scrollToLine('horizontal', geom, 1209, 0)).toBe(60);
     expect(scrollToLine('horizontal', geom, 1211, 0)).toBe(61);
     expect(scrollToLine('columns', geom, 2500, 0)).toBe(60);
+    expect(scrollToLine('rows', geom, 0, -2500)).toBe(60);
   });
 });
 
@@ -25,18 +28,21 @@ describe('lineToScroll', () => {
     expect(lineToScroll('horizontal', geom, 60)).toEqual({ top: 1200, left: 0 });
     expect(lineToScroll('vertical', geom, 60)).toEqual({ top: 0, left: -1200 });
     expect(lineToScroll('columns', geom, 60)).toEqual({ top: 2220, left: 0 });
+    expect(lineToScroll('rows', geom, 60)).toEqual({ top: 0, left: -2220 });
   });
 
-  it('snaps columns mode to the containing page row', () => {
-    // line 70 lives in row 3 (lines 60..79)
+  it('snaps the paged modes to the containing page', () => {
+    // line 70 lives in page 3 (lines 60..79)
     expect(lineToScroll('columns', geom, 70)).toEqual({ top: 2220, left: 0 });
+    expect(lineToScroll('rows', geom, 70)).toEqual({ top: 0, left: -2220 });
   });
 
   it('round-trips across mode pairs', () => {
-    for (const from of ['horizontal', 'vertical', 'columns'] as const) {
+    const modes = ['horizontal', 'vertical', 'columns', 'rows'] as const;
+    for (const from of modes) {
       const start = lineToScroll(from, geom, 80);
       const line = scrollToLine(from, geom, start.top, start.left);
-      for (const to of ['horizontal', 'vertical', 'columns'] as const) {
+      for (const to of modes) {
         const dest = lineToScroll(to, geom, line);
         expect(scrollToLine(to, geom, dest.top, dest.left)).toBe(80);
       }

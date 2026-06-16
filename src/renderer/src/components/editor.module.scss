@@ -101,6 +101,29 @@ $footer-height: $font-size + $pad-y * 2;
   }
 }
 
+// Icon-only variant of toolbarButton, for the writing-mode row. Shares the
+// pressed/border styling; just swaps the padding and cursor target around
+// an SVG glyph. Native `title` attribute carries the hover description.
+.toolbarIconButton {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  padding: 4px 6px;
+  border: none;
+  background: transparent;
+  cursor: pointer;
+  color: #333;
+
+  &:not(:last-child) {
+    border-right: 1px solid #808080;
+  }
+
+  &[aria-pressed='true'] {
+    background: #c0b18b;
+    color: #fff;
+  }
+}
+
 .editor {
   width: var(--editor-width);
   // The border must not eat into the page: width is the content area, the
@@ -191,7 +214,7 @@ $col-gap: $pad-y * 2;
 
 .vertMode {
   &.editor {
-    &:not(.multiColMode) {
+    &:not(.multiColMode):not(.rowsMode) {
       // Fixed page box: lines beyond the page overflow leftwards and
       // scroll; the fixed line length overflows the viewport vertically.
       overflow: auto;
@@ -224,6 +247,28 @@ $col-gap: $pad-y * 2;
       background-attachment: local;
       background-position: 0 $pad-y;
     }
+
+    // VerticalRows — the leftward-tiled mirror of multiColMode.
+    // Pages tile horizontally (leftward in vertical-rl); the user scrolls
+    // along the horizontal axis to read further. Separator gradient runs
+    // along the horizontal axis between pages. See ADR 0004 + the spike.
+    &.rowsMode {
+      flex: 1 1 auto;
+      overflow-x: scroll;
+      writing-mode: vertical-rl;
+      -webkit-writing-mode: vertical-rl;
+      background-image: linear-gradient(
+        to right,
+        transparent calc(var(--page-width) + #{$pad-x - 0.5px}),
+        #808080 calc(var(--page-width) + #{$pad-x - 0.5px}),
+        #808080 calc(var(--page-width) + #{$pad-x + 0.5px}),
+        transparent calc(var(--page-width) + #{$pad-x + 0.5px})
+      );
+      background-size: calc(var(--page-width) + #{$col-gap}) 100%;
+      background-repeat: repeat-x;
+      background-attachment: local;
+      background-position: $pad-x 0;
+    }
   }
 
   &.editorContent {
@@ -236,7 +281,7 @@ $col-gap: $pad-y * 2;
     -ms-writing-mode: tb-rl;
 
     // Continuous flow: one fixed page box (--page-line-chars per line)
-    &:not(.multiColMode) {
+    &:not(.multiColMode):not(.rowsMode) {
       height: calc(var(--page-height) + #{$pad-y * 2});
       box-sizing: border-box;
       padding: $pad-y $pad-x;
@@ -253,6 +298,20 @@ $col-gap: $pad-y * 2;
       height: calc(var(--page-height) + #{$caret-margin});
       margin: $pad-y $pad-x $footer-height $pad-x;
       padding: $caret-margin 0 0 0;
+      box-sizing: border-box;
+      column-width: var(--page-height);
+      column-gap: $col-gap;
+    }
+
+    // VerticalRows — pages tile leftward, the editor scrolls horizontally.
+    // Mirror of multiColMode on the other axis: the content is one page
+    // TALL (= page-height), and CSS multi-column stacks columns along the
+    // block axis (= horizontal in vertical-rl) so additional pages appear
+    // to the left as text is added.
+    &.rowsMode {
+      height: var(--page-height);
+      margin: $pad-y $pad-x;
+      padding: 0 $caret-margin 0 0;
       box-sizing: border-box;
       column-width: var(--page-height);
       column-gap: $col-gap;

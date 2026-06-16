@@ -23,8 +23,15 @@ export enum WritingMode {
   Horizontal,
   /** Vertical (vertical-rl), one continuous flow with horizontal scroll. */
   Vertical,
-  /** Vertical (vertical-rl) split into columns (dankumi) with vertical scroll. */
+  /** Vertical (vertical-rl) dankumi — pages tile DOWNWARD (vertical scroll).
+   *  One page per row of the layout. The 2D generalization (N pages per
+   *  row) is deferred; see docs/adr/0004-vertical-page-layouts.md and
+   *  docs/spikes/vertical-2d-pagination.md. */
   VerticalColumns,
+  /** Vertical (vertical-rl) dankumi — pages tile LEFTWARD (horizontal
+   *  scroll), like turning the pages of a Japanese book. One page per
+   *  column of the layout. Same deferral note as `VerticalColumns`. */
+  VerticalRows,
 }
 
 export enum AppearPolicy {
@@ -182,8 +189,18 @@ const moveCaretByLine = (alter: 'move' | 'extend', dir: 'forward' | 'backward'):
 // Scroll preservation across writing modes (ported, backend-agnostic)
 // ---------------------------------------------------------------------------
 
-const toScrollMode = (mode: WritingMode): ScrollMode =>
-  mode === WritingMode.Horizontal ? 'horizontal' : mode === WritingMode.Vertical ? 'vertical' : 'columns';
+const toScrollMode = (mode: WritingMode): ScrollMode => {
+  switch (mode) {
+    case WritingMode.Horizontal:
+      return 'horizontal';
+    case WritingMode.Vertical:
+      return 'vertical';
+    case WritingMode.VerticalColumns:
+      return 'columns';
+    case WritingMode.VerticalRows:
+      return 'rows';
+  }
+};
 
 const measureGeom = (scroller: HTMLElement): ScrollGeom => {
   const cs = getComputedStyle(scroller);
@@ -392,6 +409,7 @@ export const VedEditor = (props: VedEditorProps): React.JSX.Element => {
   const { writingMode, appearPolicy } = props;
   const vert = writingMode !== WritingMode.Horizontal;
   const multiCol = writingMode === WritingMode.VerticalColumns;
+  const rows = writingMode === WritingMode.VerticalRows;
 
   const scrollerRef = useRef<HTMLDivElement>(null);
   const onScroll = useKeepScrollPosition(scrollerRef, writingMode);
@@ -401,7 +419,7 @@ export const VedEditor = (props: VedEditorProps): React.JSX.Element => {
     <div
       ref={scrollerRef}
       onScroll={onScroll}
-      className={clsx(styles.editor, vert && styles.vertMode, multiCol && styles.multiColMode)}
+      className={clsx(styles.editor, vert && styles.vertMode, multiCol && styles.multiColMode, rows && styles.rowsMode)}
     >
       <LexicalComposer
         initialConfig={{
@@ -420,6 +438,7 @@ export const VedEditor = (props: VedEditorProps): React.JSX.Element => {
                 styles.editorContent,
                 vert && styles.vertMode,
                 multiCol && styles.multiColMode,
+                rows && styles.rowsMode,
                 APPEAR_STYLE[appearPolicy],
               )}
             />

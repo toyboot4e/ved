@@ -216,7 +216,15 @@ Orthogonal to view modes; pure CSS:
 |---|---|---|---|
 | `Horizontal` | normal flow | line-length wide × lines tall | vertical |
 | `Vertical` | `vertical-rl` | transposed, one fixed page box | both axes |
-| `VerticalColumns` | `vertical-rl` + CSS multi-column (*dankumi*) | page rows stack downward | vertical |
+| `VerticalColumns` | `vertical-rl` + CSS multi-column (*dankumi*) | pages tile DOWNWARD; one page per row | vertical |
+| `VerticalRows` | `vertical-rl` + CSS multi-column (*dankumi*) | pages tile LEFTWARD; one page per column | horizontal |
+
+Both paged modes (`VerticalColumns`, `VerticalRows`) are 1D arrangements
+— there is no CSS primitive that wraps multi-column into a 2D grid over
+one contenteditable. The 2D generalization (N pages per row OR per
+column) is deferred to a future spike; see [ADR
+0004](adr/0004-vertical-page-layouts.md) and
+[spikes/vertical-2d-pagination.md](spikes/vertical-2d-pagination.md).
 
 Notes that took debugging to learn:
 
