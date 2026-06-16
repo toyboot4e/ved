@@ -285,16 +285,6 @@ $col-gap: $pad-y * 2;
     -webkit-writing-mode: vertical-rl;
     -ms-writing-mode: tb-rl;
 
-    // Current-line highlight (background set in pm/ruby.css): in vertical-rl a
-    // paragraph's inline-size defaults to the full container height, so the
-    // tint would run the entire column past the text. fit-content shrinks the
-    // box to the text it holds; the text stays anchored at the column start, so
-    // only the occupied length is highlighted. (Horizontal keeps the full-width
-    // bar — that rule lives outside .vertMode.)
-    :global(p.currentLine) {
-      inline-size: fit-content;
-    }
-
     // Continuous flow: one fixed page box (--page-line-chars per line)
     &:not(.multiColMode):not(.rowsMode) {
       // height grows by the gutter so the line still fits --page-line-chars.
