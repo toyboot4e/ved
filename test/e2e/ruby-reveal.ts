@@ -45,16 +45,10 @@ try {
   await page.keyboard.insertText('|漢(かん)字'.repeat(420));
   await page.waitForTimeout(600);
 
-  // A single-burst insert does not auto-scroll like real typing: bring the
-  // caret into view explicitly (it sits between the inserted run and the
-  // original document tail, not at the very end of the scroller).
-  await page.evaluate(() => {
-    const sel = getSelection();
-    if (!sel?.focusNode) return;
-    const el = sel.focusNode.nodeType === Node.TEXT_NODE ? sel.focusNode.parentElement : (sel.focusNode as Element);
-    el?.scrollIntoView({ block: 'center', inline: 'center' });
-  });
-  await page.waitForTimeout(100);
+  // The editor reveals the caret after a doc change (editor.tsx
+  // revealCaretInScroller), so even a single-burst insert leaves the caret in
+  // view — no manual scroll needed.
+  await page.waitForTimeout(150);
   let c = await caretInView();
   assert.ok(c?.visible, 'caret visible at the end of the text');
   const richScrollTop = c.scrollTop;

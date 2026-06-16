@@ -231,32 +231,28 @@ const revealDelta = (lo: number, hi: number, viewLo: number, viewHi: number, cus
   return 0;
 };
 
-const useRevealCaretOnPolicyChange = (
-  scrollerRef: React.RefObject<HTMLDivElement | null>,
-  appearPolicy: AppearPolicy,
-): void => {
-  const prevPolicyRef = useRef(appearPolicy);
-  useLayoutEffect(() => {
-    if (prevPolicyRef.current === appearPolicy) return;
-    prevPolicyRef.current = appearPolicy;
-    const scroller = scrollerRef.current;
-    const sel = window.getSelection();
-    if (!scroller || !sel || sel.rangeCount === 0) return;
-    const range = sel.getRangeAt(0);
-    let rect = range.getClientRects()[0] ?? range.getBoundingClientRect();
-    if (!rect || (rect.top === 0 && rect.bottom === 0 && rect.left === 0 && rect.right === 0)) {
-      const node = sel.focusNode;
-      const el = node && node.nodeType === Node.TEXT_NODE ? node.parentElement : (node as Element | null);
-      if (!el) return;
-      rect = el.getBoundingClientRect();
-    }
-    const view = scroller.getBoundingClientRect();
-    const top = view.top + scroller.clientTop;
-    const left = view.left + scroller.clientLeft;
-    const cushion = 8;
-    scroller.scrollTop += revealDelta(rect.top, rect.bottom, top, top + scroller.clientHeight, cushion);
-    scroller.scrollLeft += revealDelta(rect.left, rect.right, left, left + scroller.clientWidth, cushion);
-  }, [appearPolicy, scrollerRef]);
+/** Scroll the scroller minimally so the caret is within view on BOTH axes, in
+ *  every writing mode (multicol included). A no-op when the caret is already
+ *  visible. Used after edits and on a policy-change reflow — PM's own
+ *  scrollIntoView doesn't survive the post-commit ruby repair, and doesn't
+ *  reliably handle the vertical-rl multi-column page layouts. */
+const revealCaretInScroller = (scroller: HTMLElement): void => {
+  const sel = window.getSelection();
+  if (!sel || sel.rangeCount === 0) return;
+  const range = sel.getRangeAt(0);
+  let rect = range.getClientRects()[0] ?? range.getBoundingClientRect();
+  if (!rect || (rect.top === 0 && rect.bottom === 0 && rect.left === 0 && rect.right === 0)) {
+    const node = sel.focusNode;
+    const el = node && node.nodeType === Node.TEXT_NODE ? node.parentElement : (node as Element | null);
+    if (!el) return;
+    rect = el.getBoundingClientRect();
+  }
+  const view = scroller.getBoundingClientRect();
+  const top = view.top + scroller.clientTop;
+  const left = view.left + scroller.clientLeft;
+  const cushion = 8;
+  scroller.scrollTop += revealDelta(rect.top, rect.bottom, top, top + scroller.clientHeight, cushion);
+  scroller.scrollLeft += revealDelta(rect.left, rect.right, left, left + scroller.clientWidth, cushion);
 };
 
 // ---------------------------------------------------------------------------
@@ -283,7 +279,6 @@ export const VedEditor = (props: VedEditorProps): React.JSX.Element => {
   const rebuildingRef = useRef(false);
 
   const onScroll = useKeepScrollPosition(scrollerRef, writingMode);
-  useRevealCaretOnPolicyChange(scrollerRef, appearPolicy);
 
   // Mount the ProseMirror view once.
   // biome-ignore lint/correctness/useExhaustiveDependencies: mount-once; props read via `live`
@@ -319,6 +314,14 @@ export const VedEditor = (props: VedEditorProps): React.JSX.Element => {
           if (fix) next = next.apply(fix);
         }
         view.updateState(next);
+        // Keep the caret in view after edits — PM's scrollIntoView doesn't
+        // survive the post-commit repair, nor handle vertical-rl multicol.
+        if (tr.docChanged && !view.composing) {
+          requestAnimationFrame(() => {
+            const s = scrollerRef.current;
+            if (s) revealCaretInScroller(s);
+          });
+        }
         if (tr.docChanged && !view.composing && !rebuildingRef.current) {
           const text = serialize(next.doc);
           if (text !== lastTextRef.current) {
@@ -395,6 +398,7 @@ export const VedEditor = (props: VedEditorProps): React.JSX.Element => {
   }, []);
 
   // Appear-policy change: update the root class and re-run decorations.
+  const prevRevealPolicyRef = useRef(appearPolicy);
   useEffect(() => {
     policyClassRef.current = APPEAR_CLASS[appearPolicy];
     const view = viewRef.current;
@@ -402,6 +406,15 @@ export const VedEditor = (props: VedEditorProps): React.JSX.Element => {
     view.dom.className = '';
     view.dom.classList.add(...CONTENT_CLASS(vert, multiCol, rows).split(' ').filter(Boolean));
     view.dispatch(view.state.tr.setMeta('redecorate', true));
+    // After the re-decoration reflow (ShowAll can grow the text ~4×), reveal
+    // the caret if the POLICY changed — measured SYNCHRONOUSLY here (a forced
+    // layout) so we don't race the reflow as an rAF would. Writing-mode changes
+    // keep their own scroll (useKeepScrollPosition).
+    if (prevRevealPolicyRef.current !== appearPolicy) {
+      prevRevealPolicyRef.current = appearPolicy;
+      const s = scrollerRef.current;
+      if (s) revealCaretInScroller(s);
+    }
   }, [appearPolicy, vert, multiCol, rows]);
 
   return (
