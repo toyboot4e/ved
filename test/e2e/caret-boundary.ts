@@ -217,6 +217,54 @@ try {
     `ArrowLeft from body @${beforeArrow.off} must not change offset (got @${afterArrow.off})`,
   );
   step('ArrowLeft inside ruby in a single-line doc keeps the caret put');
+
+  // --- Regression: ArrowLeft across paragraphs lands at the NEAR edge ---
+  // In multi-paragraph VRL, Chromium's `modify('line', 'forward')` can drop
+  // the cursor at the FAR END of the next paragraph (= end of document if
+  // it's the last paragraph). The user perceives this as "ArrowLeft jumps
+  // to end of document". moveCaretByLine detects the fall-to-far-end and
+  // lands at the target paragraph's near edge instead.
+  await page.evaluate(() => getSelection()!.selectAllChildren(document.getElementById('editor-content')!));
+  await page.keyboard.press('Backspace');
+  await page.waitForTimeout(100);
+  await page.keyboard.insertText('first');
+  await page.keyboard.press('Enter');
+  await page.keyboard.insertText('|ルビ(ruby)');
+  await page.keyboard.press('Enter');
+  await page.keyboard.insertText('third paragraph');
+  await page.waitForTimeout(300);
+
+  // Click into P2's ruby body (between ル and ビ).
+  const p2BodyRect = await page.evaluate(() => {
+    const ruby = document.querySelector('[class*="rubyWrap"]') as HTMLElement;
+    const body = Array.from(ruby.querySelectorAll(':scope > [data-lexical-text]')).find(
+      (s) => !(s as HTMLElement).className.includes('delim') && !(s as HTMLElement).className.includes('rt'),
+    ) as HTMLElement;
+    return body.getBoundingClientRect();
+  });
+  await page.mouse.click(p2BodyRect.left + p2BodyRect.width / 2, p2BodyRect.top + p2BodyRect.height / 2);
+  await page.waitForTimeout(300);
+  await page.keyboard.press('ArrowLeft');
+  await page.waitForTimeout(300);
+  const afterCross = await page.evaluate(() => {
+    const f = getSelection()!.focusNode;
+    return {
+      text: f?.nodeType === Node.TEXT_NODE ? (f as Text).data : (f as HTMLElement)?.tagName,
+      off: getSelection()!.focusOffset,
+    };
+  });
+  // The bug landed the caret at "third paragraph" @15 (= end of document).
+  // The fix lands it at @0 of P3 (near edge of the target column).
+  assert.equal(
+    afterCross.text,
+    'third paragraph',
+    `ArrowLeft from P2 body should cross to P3, got "${afterCross.text}"`,
+  );
+  assert.ok(
+    afterCross.off < 5,
+    `ArrowLeft must land at the NEAR edge of P3 (not @end = jumped to doc-end); got @${afterCross.off}`,
+  );
+  step('ArrowLeft across paragraphs lands at the target paragraph’s near edge');
 } catch (e) {
   fail(e instanceof Error ? e.message : String(e));
 } finally {
