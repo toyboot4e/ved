@@ -1,8 +1,9 @@
 # Editing framework: stay on Slate now, Lexical as the migration target
 
 ---
-status: superseded — migrated to Lexical 2026-06-15, see
-docs/lexical-migration-plan.md
+status: superseded — migrated to Lexical 2026-06-15 (see
+docs/lexical-migration-plan.md); later superseded again by ADR-0005, which
+moves the editor to ProseMirror for the rich-syntax roadmap.
 ---
 
 > **Update (2026-06-15).** The migration is **complete**: the app runs on

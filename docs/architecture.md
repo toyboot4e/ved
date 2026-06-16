@@ -1,42 +1,66 @@
 # ved architecture
 
-ved is an Electron + React + Lexical editor for Japanese vertical writing
-(tategaki). Two decisions define the design:
+ved is an Electron + React + **ProseMirror** editor for Japanese vertical
+writing (tategaki). Two decisions define the design:
 
 1. **Plain text is the document model.** Lines are paragraphs; inline markup
-   is lightweight syntax (today only ruby: `|身体(からだ)`).
-2. **Identity text model.** The Lexical tree holds that plain text *character
-   for character* — including the markup characters `|`, `(`, `)` — in every
-   view mode. A paragraph's `getTextContent()` is the plain line. Everything
-   visual (annotations, hidden syntax, highlighting) is CSS over the same DOM
-   text.
+   is lightweight syntax (ruby `|身体(からだ)`, and the planned `*bold*`,
+   `/italic/`, 縦中横, …).
+2. **Identity text model.** The document is plaintext *character for character*
+   — including the markup characters — in every view mode. `serialize`
+   (`doc.textBetween(…, '\n')`) reproduces the source exactly. Everything
+   visual (annotations, hidden syntax, highlighting, bold/italic) is CSS over
+   the same text, driven by decorations.
 
 ```
-plaintext     "字は|漢(かん)字"
-   │   parse.ts → format spans
+plaintext   "字は|漢(かん)字"
+   │   parse.ts → format spans (per line)
    ▼
-Lexical tree  paragraph[ text "字は",
-                ruby[ delim "|", body "漢", delim "(", rt "かん", delim ")" ],
-                text "字" ]
-   │   serialize (per-paragraph getTextContent, joined by "\n")
+PM doc      paragraph[ text "字は", ruby("|漢(かん)"), text "字" ]
+   │   ruby is ONE inline node whose text content IS the literal markup;
+   │   a node view renders <ruby>漢<rt>かん</rt></ruby>. Everything else
+   │   (bold/italic/縦中横) is a view-only DECORATION, never a node.
    ▼
-plaintext     "字は|漢(かん)字"        (identical, by construction)
+plaintext   "字は|漢(かん)字"        (identical, by construction)
 ```
 
-(The editor was migrated from Slate to Lexical — see ADR 0002 and
-[lexical-migration-plan.md](lexical-migration-plan.md). Some choices below are
-clearest read as "what Lexical forced that Slate did differently".)
+The editor went Slate → Lexical → **ProseMirror** (ADR-0005 + the spikes
+`docs/spikes/pm-*.md`). The driver was the rich-syntax roadmap: ProseMirror has
+view-only decorations, so a new inline format is a parse rule + a CSS class
+with no per-format structure repair (Lexical, being node-only, paid that cost
+per format); and ProseMirror renders the whole document to the DOM, so the
+CSS-multicol page layouts (ADR-0004) keep working (CodeMirror's virtualization
+could not — see `docs/spikes/cm-multicol.md`).
+
+## The ProseMirror core (`editor/pm/`)
+
+| module | role |
+|---|---|
+| `model.ts` | the schema (`doc`/`paragraph`/`text` + the `ruby` inline node), `docFromText` / `serialize` (identity round-trip), and `offsetToPos`/`posToOffset` mapping plain document offsets ↔ PM positions (which count node boundaries) |
+| `ruby-view.ts` | the `ruby` node view: `<ruby>` with the editable base + a read-only `<rt>` annotation parsed from the node's content |
+| `decorations.ts` | view-only decorations: hide ruby markup per the appear policy, render bold/italic/縦中横 (one `RULES` entry per format), and the ruby highlight + boundary overlay-caret classes |
+| `structure.ts` | `repair` — the IME-safe ruby reconcile (the only structure repair left), run from `dispatchTransaction`, skipped while composing |
+| `leaves.ts` / `caret-model.ts` / `cursor.ts` | backend-neutral plain-offset logic: the leaf model, `nextCaretOffset` (model-driven character movement), and the `{para,offset}` cursor map |
+| `ruby.css` | global ruby/syntax styles (decorations emit literal class names a CSS module can't match) |
+
+`editor.tsx` wires these into an `EditorView`: `baseKeymap` (Enter splits a
+paragraph, Backspace/Delete), a `handleKeyDown` for arrows + Ctrl chords, the
+decoration plugin, `dispatchTransaction` (apply → ruby repair → history push +
+`onTextChange`), and the React shell (writing-mode classes, scroll-keep,
+reveal-on-policy, tab snapshot/restore). It mounts directly into the scroller
+so the contenteditable is `#editor-content`, a direct child of the scroll box.
 
 ## Document model
 
 `src/renderer/src/parse.ts` scans a line and returns `Format` spans with the
 offsets of each syntactic part. The syntax characters are defined once there
 (`RUBY_DELIM_FRONT` / `RUBY_SEP_MID` / `RUBY_DELIM_END`) and shared by the
-parser and the tree builder.
+parser, `docFromText`, and the structure-repair reconcile.
 
-A ruby is an inline `ElementNode` (`editor/nodes.ts`) wrapping typed text
-leaves — `DelimNode`, plain `TextNode` (body), `RtNode` — so the ruby
-contributes its exact source to `getTextContent`:
+A ruby is a single inline **node** (`editor/pm/model.ts`) whose text content is
+the literal markup `|漢(かん)`, so the ruby contributes its exact source to
+`textBetween`. (Historically, the Lexical core split a ruby across typed text
+leaves — DelimNode/RtNode/TextNode — for the same identity guarantee:)
 
 ```
 |漢(かん)  →  RubyNode[ delim "|", text "漢", delim "(", rt "かん", delim ")" ]
@@ -272,21 +296,19 @@ src/renderer/src/
   components/
     tab-bar.tsx            hand-rolled tab row
     toolbar.tsx            writing-mode / ruby-display button groups
-    editor.tsx             VedEditor (Lexical): onChange → history + $syncParagraphs,
-                           keys, scroll preservation, snapshot/restore
+    editor.tsx             VedEditor (ProseMirror): EditorView + baseKeymap, dispatchTransaction
+                           → ruby repair + history + onTextChange, keys, scroll, snapshot/restore
     editor.module.scss     page geometry, layout modes, toolbar
     editor/
-      nodes.ts                       RubyNode / DelimNode / RtNode (identity node schema)
-      model.ts                       lineNodes, $buildFromText, serialize, $syncParagraphs
-      cursor-map.ts                  plain offset ↔ Lexical point ($getCursorState / $restoreCursor)
-      caret.ts                       moveCaretByCharacter (model-driven char movement)
-      appearance.ts                  registerAppearance: selection → .activePara / .rubyActive /
-                                     .rubyLeadActive / .rubyTrailActive
-      element-point-normalize.ts     element-point → text-point + boundary-delim → body reroute
-      dom-walk.ts                    editable text walkers (skip the read-only dup <rt>)
-      ruby.module.scss               ruby + appear-policy + boundary-caret overlay + placeholder
       history.ts                     PlainTextHistory (backend-neutral, unit-tested)
       scroll-keep.ts                 scroll offset ↔ line index per mode (unit-tested)
+      pm/
+        model.ts                     schema (+ ruby node), docFromText, serialize, offset ↔ PM position
+        ruby-view.ts                 ruby node view: <ruby> base + read-only <rt> annotation
+        decorations.ts               markup hide/show per policy + bold/italic/縦中横 + boundary classes
+        structure.ts                 repair: the IME-safe ruby reconcile (the only structure repair)
+        leaves.ts / caret-model.ts / cursor.ts   plain-offset leaf model, char movement, {para,offset}
+        ruby.css                     global ruby + inline-syntax styles + boundary-caret overlay
 test/e2e/                  Playwright tests against the built app, hidden windows
 docs/editor-ui-plan.md     editor UI shell plan + phase checklist
 docs/lexical-migration-plan.md   the Slate → Lexical migration

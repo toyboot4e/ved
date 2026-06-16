@@ -1,13 +1,13 @@
 # ved — agent context
 
-Electron + React + Lexical editor for Japanese vertical writing (tategaki)
+Electron + React + ProseMirror editor for Japanese vertical writing (tategaki)
 with ruby annotations. **Read `docs/architecture.md` before touching the
-editor core** (`src/renderer/src/components/editor/`).
+editor core** (`src/renderer/src/components/editor/`, mainly `editor/pm/`).
 
 - `CONTEXT.md` — project glossary (the words to use, and the ones to avoid).
 - `docs/adr/` — architecture decisions and *why* (e.g. browser engine over a
-  custom one; the editor framework — migrated from Slate to Lexical, see
-  `docs/lexical-migration-plan.md`).
+  custom one; the editor framework — Slate → Lexical → **ProseMirror** for the
+  rich-syntax roadmap, see ADR-0005 + `docs/prosemirror-migration-plan.md`).
 
 ## Commands
 
@@ -24,27 +24,32 @@ Task runner is `just`:
 
 ## Invariants
 
-- **Identity text model.** The Lexical tree holds the plaintext character for
-  character (markup `|`,`(`,`)` included); a paragraph's `getTextContent()`
-  IS the plain line, and `serialize()` joins them with `\n`. Never add state
-  where displayed text and model text can diverge. Outside the editor core,
-  a document is always a plain string. Collapsed-ruby markup is hidden with
-  `font-size: 0` (NOT `display: none`) so the caret stays addressable at ruby
-  boundaries; arrow movement skips it via `moveCaretByCharacter`.
+- **Identity text model.** The document is plaintext: ruby is the one inline
+  NODE, and its text content holds the literal markup (`|漢(かん)`), so
+  `serialize` (`doc.textBetween(…, '\n')`) is identity-exact, character for
+  character. Every other inline format (bold/italic/縦中横, …) is a view-only
+  **decoration**, not a node — adding one is a parse rule + a CSS class, no
+  structure repair. Never add state where displayed text and model text can
+  diverge. Outside the editor core, a document is always a plain string.
+  Collapsed markup is hidden with `font-size: 0` (NOT `display: none`) so the
+  caret stays addressable; arrow movement skips it via `nextCaretOffset`.
+- **Ruby outer boundaries map OUTSIDE the node.** `pm/model.ts offsetToPos`
+  maps a caret at a ruby's start/end to the position *before/after* the ruby
+  node, not its interior — otherwise IME and typing land inside the ruby.
 - **Caret at ruby boundaries renders via an overlay, not delim font.** At a
-  ruby boundary Chromium would draw the native caret using the small-font
-  delim's metrics — a tiny mark. `appearance.ts` sets `.rubyLeadActive` /
-  `.rubyTrailActive` on the ruby; `ruby.module.scss` hides the native caret
-  (`caret-color: transparent`) and renders an absolutely-positioned 1em
-  pseudo-element. Don't try to fix caret size by expanding the delim's font
-  — it shifts the body around the caret. The overlay fires on every ruby
-  (not just paragraph-edge ones) for visual consistency; absolute
-  positioning means zero layout cost. See `docs/architecture.md` § "Caret
-  at ruby boundaries".
+  boundary the native caret takes the font-size:0 delimiter's tiny metrics.
+  `pm/decorations.ts` flips `rubyActive` (highlight, strictly inside only) and
+  `rubyLeadActive`/`rubyTrailActive` (the positions where the native caret is
+  invisible — just inside after `|`, before the ruby when nothing visible
+  precedes it, and after the collapsed `)`); `pm/ruby.css` hides the native
+  caret and draws an absolutely-positioned 1em `::before`. Don't fix caret
+  size by expanding the delim's font — it shifts the body. See
+  `docs/architecture.md` § "Caret at ruby boundaries".
 - **IME safety.** Never repair structure, steal focus, or remount the editor
-  during an IME composition (`editor.isComposing()`, `event.isComposing`).
-  `$syncParagraphs` (structure repair) is skipped while composing. (Real mozc
-  typing is not covered by automation — verify by hand when touching this.)
+  during an IME composition (`view.composing`, `event.isComposing`). Ruby
+  structure repair (`pm/structure.ts repair`, run from `dispatchTransaction`)
+  is skipped while composing. (Real mozc typing is not covered by automation —
+  verify by hand when touching this.)
 - **Process boundaries.** All fs and dialog access lives in the main process
   behind the typed IPC contract in `src/shared/ipc.ts` (exposed to the
   renderer as `window.ved` by the preload). The renderer never touches Node.
