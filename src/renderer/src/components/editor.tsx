@@ -1,36 +1,32 @@
-import { LexicalComposer } from '@lexical/react/LexicalComposer';
-import { useLexicalComposerContext } from '@lexical/react/LexicalComposerContext';
-import { ContentEditable } from '@lexical/react/LexicalContentEditable';
-import { LexicalErrorBoundary } from '@lexical/react/LexicalErrorBoundary';
-import { RichTextPlugin } from '@lexical/react/LexicalRichTextPlugin';
 import { clsx } from 'clsx';
-import { COMMAND_PRIORITY_LOW, KEY_DOWN_COMMAND } from 'lexical';
+import { baseKeymap } from 'prosemirror-commands';
+import { keymap } from 'prosemirror-keymap';
+import { EditorState, Plugin, TextSelection } from 'prosemirror-state';
+import { EditorView } from 'prosemirror-view';
 import type React from 'react';
 import { useCallback, useEffect, useLayoutEffect, useRef } from 'react';
-import { registerAppearance } from './editor/appearance';
-import { type Appear, moveCaretByCharacter } from './editor/caret';
-import { $getCursorState, $restoreCursor, type CursorState } from './editor/cursor-map';
-import { firstEditableText, lastEditableText } from './editor/dom-walk';
-import { registerElementPointNormalizer } from './editor/element-point-normalize';
 import type { PlainTextHistory } from './editor/history';
-import { $buildFromText, $syncParagraphs, serialize } from './editor/model';
-import { DelimNode, RtNode, RubyNode } from './editor/nodes';
-import rubyStyles from './editor/ruby.module.scss';
+import { nextCaretOffset } from './editor/pm/caret-model';
+import { type CursorState, cursorToOffset, offsetToCursor } from './editor/pm/cursor';
+import { buildDecorations } from './editor/pm/decorations';
+import type { Appear } from './editor/pm/leaves';
+import { docFromText, offsetToPos, posToOffset, serialize } from './editor/pm/model';
+import { RubyView } from './editor/pm/ruby-view';
+import { repair } from './editor/pm/structure';
 import { lineToScroll, type ScrollGeom, type ScrollMode, scrollToLine } from './editor/scroll-keep';
 import styles from './editor.module.scss';
+// ProseMirror's required base styles, then ved's GLOBAL ruby/syntax styles
+// (decorations + the node view emit literal class names a CSS module can't match).
+import 'prosemirror-view/style/prosemirror.css';
+import './editor/pm/ruby.css';
 
 export enum WritingMode {
   Horizontal,
   /** Vertical (vertical-rl), one continuous flow with horizontal scroll. */
   Vertical,
-  /** Vertical (vertical-rl) dankumi — pages tile DOWNWARD (vertical scroll).
-   *  One page per row of the layout. The 2D generalization (N pages per
-   *  row) is deferred; see docs/adr/0004-vertical-page-layouts.md and
-   *  docs/spikes/vertical-2d-pagination.md. */
+  /** Vertical dankumi — pages tile DOWNWARD (vertical scroll). */
   VerticalColumns,
-  /** Vertical (vertical-rl) dankumi — pages tile LEFTWARD (horizontal
-   *  scroll), like turning the pages of a Japanese book. One page per
-   *  column of the layout. Same deferral note as `VerticalColumns`. */
+  /** Vertical dankumi — pages tile LEFTWARD (horizontal scroll). */
   VerticalRows,
 }
 
@@ -48,17 +44,6 @@ const APPEAR_CLASS: Record<AppearPolicy, Appear> = {
   [AppearPolicy.Rich]: 'rich',
 };
 
-/** The CSS-module class on the ContentEditable that triggers expansion rules. */
-const APPEAR_STYLE: Record<AppearPolicy, string> = {
-  // biome-ignore lint/style/noNonNullAssertion: keys defined in ruby.module.scss
-  [AppearPolicy.ShowAll]: rubyStyles.appearShowall!,
-  // biome-ignore lint/style/noNonNullAssertion: keys defined in ruby.module.scss
-  [AppearPolicy.ByParagraph]: rubyStyles.appearParagraph!,
-  // biome-ignore lint/style/noNonNullAssertion: keys defined in ruby.module.scss
-  [AppearPolicy.ByCharacter]: rubyStyles.appearChar!,
-  [AppearPolicy.Rich]: '',
-};
-
 /** A buffer's editor state captured on unmount, to restore on switch-back. */
 export type EditorSnapshot = {
   readonly text: string;
@@ -68,7 +53,6 @@ export type EditorSnapshot = {
 
 export type VedEditorProps = {
   readonly initialText: string;
-  /** Undo history, owned by the buffer so it survives tab switches. */
   readonly history: PlainTextHistory;
   readonly writingMode: WritingMode;
   readonly appearPolicy: AppearPolicy;
@@ -87,7 +71,6 @@ const MODE_KEYS: Record<string, AppearPolicy> = {
   '4': AppearPolicy.Rich,
 };
 
-// Arrow → axis/direction per writing mode (visual axes rotate under vertical).
 type ArrowAct = { axis: 'line' | 'char'; reverse: boolean };
 const VERT_ARROWS: Record<string, ArrowAct> = {
   ArrowLeft: { axis: 'line', reverse: false },
@@ -102,91 +85,88 @@ const HORIZ_ARROWS: Record<string, ArrowAct> = {
   ArrowDown: { axis: 'line', reverse: false },
 };
 
+// ---------------------------------------------------------------------------
+// Caret movement
+// ---------------------------------------------------------------------------
+
+/** Move the caret one model character (skips hidden markup, keeps ruby
+ *  boundary stops). Pure offsets via `nextCaretOffset`, mapped to PM. */
+const moveChar = (view: EditorView, policy: Appear, reverse: boolean, extend: boolean): void => {
+  const { doc, selection } = view.state;
+  const head = posToOffset(doc, selection.head);
+  const target = nextCaretOffset(serialize(doc), head, policy, reverse);
+  if (target === head && !extend) return;
+  const pos = offsetToPos(doc, target);
+  const sel = extend ? TextSelection.create(doc, selection.anchor, pos) : TextSelection.create(doc, pos);
+  view.dispatch(view.state.tr.setSelection(sel).scrollIntoView());
+};
+
+const closestPara = (root: HTMLElement, n: Node | null): HTMLElement | null => {
+  if (!n) return null;
+  const el = n.nodeType === Node.TEXT_NODE ? n.parentElement : (n as Element);
+  const p = el?.closest('p') as HTMLElement | null;
+  return p && root.contains(p) ? p : null;
+};
+
 /**
- * Move the caret by a visual line, crossing paragraph boundaries when
- * `Selection.modify('line')` falls short. In vertical-rl, modify is
- * unreliable across paragraphs (lands at the FAR end of the target column
- * instead of preserving the inline-axis position), so we cross paragraphs
- * ourselves: take the caret's current inline-axis coordinate and find the
- * matching text-point inside the adjacent paragraph's column using
- * `caretPositionFromPoint`. In horizontal text and within a single
- * paragraph (line wrap), modify is reliable and we use its result.
+ * Move the caret by a visual line, crossing paragraphs when
+ * `Selection.modify('line')` falls short. In vertical-rl, modify lands at the
+ * FAR end of the target column instead of preserving the inline-axis
+ * coordinate (the "jumped to end of previous line" bug), so on a
+ * cross-paragraph move we hit-test the adjacent paragraph's column at the
+ * caret's original inline-axis position — keeping the column.
  */
-const moveCaretByLine = (alter: 'move' | 'extend', dir: 'forward' | 'backward'): void => {
+const moveCaretByLine = (view: EditorView, extend: boolean, reverse: boolean): void => {
   requestAnimationFrame(() => {
     const sel = window.getSelection();
     if (!sel || sel.rangeCount === 0) return;
     const before = sel.getRangeAt(0).cloneRange();
     const beforeRect = before.getBoundingClientRect();
-    sel.modify(alter, dir, 'line');
+    sel.modify(extend ? 'extend' : 'move', reverse ? 'backward' : 'forward', 'line');
     const after = sel.getRangeAt(0);
 
-    const sameSelection =
+    const same =
       before.startContainer === after.startContainer &&
       before.startOffset === after.startOffset &&
       before.endContainer === after.endContainer &&
       before.endOffset === after.endOffset;
     const landedOnElement = after.startContainer.nodeType === Node.ELEMENT_NODE;
+    const content = view.dom as HTMLElement;
+    const isVertical = getComputedStyle(content).writingMode.startsWith('vertical');
+    const beforeP = closestPara(content, before.startContainer);
+    const afterP = closestPara(content, after.startContainer);
 
-    const root = document.getElementById('editor-content');
-    const cs = root ? getComputedStyle(root) : null;
-    const isVertical = cs?.writingMode.startsWith('vertical') ?? false;
-
-    const closestP = (n: Node | null): HTMLParagraphElement | null => {
-      if (!n) return null;
-      const el = n.nodeType === Node.TEXT_NODE ? n.parentElement : (n as Element);
-      return (el?.closest('p') as HTMLParagraphElement | null) ?? null;
+    const commit = (pos: number): void => {
+      const anchor = extend ? view.state.selection.anchor : pos;
+      view.dispatch(view.state.tr.setSelection(TextSelection.create(view.state.doc, anchor, pos)).scrollIntoView());
     };
-    const beforeP = closestP(before.startContainer);
-    const afterP = closestP(after.startContainer);
+    const revert = (): void => {
+      const pos = view.posAtDOM(before.startContainer, before.startOffset);
+      commit(pos);
+    };
 
-    // If modify reliably moved within the SAME paragraph (line wrap inside
-    // a long paragraph, or no movement at all because we were at an edge —
-    // both fine), accept its result. We only override when modify crossed
-    // paragraphs (where Chromium drops the cursor at the wrong inline
-    // coordinate) or got stuck on an element-point fallback.
-    const stayedInSameP = !sameSelection && !landedOnElement && beforeP === afterP;
-    if (stayedInSameP) return;
-
-    // Cross-paragraph (or stuck). Find the target paragraph: in writing
-    // direction order, the adjacent <p>.
-    const targetP = dir === 'forward' ? beforeP?.nextElementSibling : beforeP?.previousElementSibling;
-    if (!targetP || targetP.tagName !== 'P') {
-      // At the document edge — revert so the caret doesn't sit at
-      // Chromium's end-of-line fallback (reads as "jumped to end of doc").
-      sel.collapse(before.startContainer, before.startOffset);
+    // modify moved reliably within ONE paragraph (line wrap) — accept it.
+    if (!same && !landedOnElement && beforeP === afterP) {
+      const r = sel.getRangeAt(0);
+      commit(view.posAtDOM(r.endContainer, r.endOffset));
       return;
     }
 
-    // Use the BEFORE rect's inline-axis coordinate (y in VRL, x in
-    // horizontal) and the TARGET column's block-axis center to caret-hit
-    // the y-matched position in that column. This is the line-by-line
-    // movement the user expects (preserves the column position).
-    const targetR = (targetP as HTMLElement).getBoundingClientRect();
-    const inlineCoord = isVertical ? beforeRect.top + beforeRect.height / 2 : beforeRect.left + beforeRect.width / 2;
-    const blockCoord = isVertical ? targetR.left + targetR.width / 2 : targetR.top + targetR.height / 2;
-    const hitX = isVertical ? blockCoord : inlineCoord;
-    const hitY = isVertical ? inlineCoord : blockCoord;
-    const pos = document.caretPositionFromPoint(hitX, hitY);
-    let target: Node | null = pos?.offsetNode ?? null;
-    let offset = pos?.offset ?? 0;
-    // Fall back to the target paragraph's near edge if the hit-test missed
-    // (e.g. point falls outside the column box).
-    if (!target || !targetP.contains(target)) {
-      target = dir === 'forward' ? firstEditableText(targetP) : lastEditableText(targetP);
-      offset = target && dir === 'backward' ? (target.textContent ?? '').length : 0;
-    }
-    if (!target) {
-      sel.collapse(before.startContainer, before.startOffset);
-      return;
-    }
-    if (alter === 'extend') sel.extend(target, offset);
-    else sel.collapse(target, offset);
+    // Cross-paragraph (or stuck on an element edge): find the adjacent column.
+    const targetP = (reverse ? beforeP?.previousElementSibling : beforeP?.nextElementSibling) as HTMLElement | null;
+    if (!targetP || targetP.tagName !== 'P') return revert(); // document edge: stay put
+
+    const tr = targetP.getBoundingClientRect();
+    const inline = isVertical ? beforeRect.top + beforeRect.height / 2 : beforeRect.left + beforeRect.width / 2;
+    const block = isVertical ? tr.left + tr.width / 2 : tr.top + tr.height / 2;
+    const hit = view.posAtCoords({ left: isVertical ? block : inline, top: isVertical ? inline : block });
+    if (hit) commit(hit.pos);
+    else revert();
   });
 };
 
 // ---------------------------------------------------------------------------
-// Scroll preservation across writing modes (ported, backend-agnostic)
+// Scroll preservation across writing modes (backend-agnostic, ported)
 // ---------------------------------------------------------------------------
 
 const toScrollMode = (mode: WritingMode): ScrollMode => {
@@ -251,7 +231,6 @@ const revealDelta = (lo: number, hi: number, viewLo: number, viewHi: number, cus
   return 0;
 };
 
-/** After a ruby-display reflow, scroll the caret back into view if it left it. */
 const useRevealCaretOnPolicyChange = (
   scrollerRef: React.RefObject<HTMLDivElement | null>,
   appearPolicy: AppearPolicy,
@@ -263,7 +242,6 @@ const useRevealCaretOnPolicyChange = (
     const scroller = scrollerRef.current;
     const sel = window.getSelection();
     if (!scroller || !sel || sel.rangeCount === 0) return;
-
     const range = sel.getRangeAt(0);
     let rect = range.getClientRects()[0] ?? range.getBoundingClientRect();
     if (!rect || (rect.top === 0 && rect.bottom === 0 && rect.left === 0 && rect.right === 0)) {
@@ -282,128 +260,13 @@ const useRevealCaretOnPolicyChange = (
 };
 
 // ---------------------------------------------------------------------------
-// Core plugin: structure repair, appearance, history, keys, snapshot/restore
+// The editor component
 // ---------------------------------------------------------------------------
 
-const CorePlugin = ({
-  props,
-  scrollerRef,
-}: {
-  props: VedEditorProps;
-  scrollerRef: React.RefObject<HTMLDivElement | null>;
-}): null => {
-  const [editor] = useLexicalComposerContext();
-  const live = useRef(props);
-  live.current = props;
-  const lastTextRef = useRef(props.initialText);
-  const rebuildingRef = useRef(false);
-
-  // biome-ignore lint/correctness/useExhaustiveDependencies: editor stable; props read via ref
-  useEffect(() => {
-    const { initialText, history, initialCursor, initialScroll } = live.current;
-    const unAppear = registerAppearance(editor);
-    const unElementPoint = registerElementPointNormalizer(editor);
-
-    editor.update(
-      () => {
-        $buildFromText(initialText);
-        if (initialCursor) $restoreCursor(initialCursor);
-      },
-      { discrete: true },
-    );
-    const scroller = scrollerRef.current;
-    if (scroller && initialScroll) {
-      scroller.scrollTop = initialScroll.top;
-      scroller.scrollLeft = initialScroll.left;
-    }
-    if (initialCursor) requestAnimationFrame(() => editor.focus());
-
-    const restore = (entry: ReturnType<PlainTextHistory['undo']>): void => {
-      if (!entry) return;
-      rebuildingRef.current = true;
-      editor.update(
-        () => {
-          $buildFromText(entry.text);
-          if (entry.cursor) $restoreCursor(entry.cursor);
-        },
-        { discrete: true },
-      );
-      rebuildingRef.current = false;
-      lastTextRef.current = entry.text;
-      live.current.onTextChange?.(entry.text);
-      requestAnimationFrame(() => editor.focus());
-    };
-
-    const unChange = editor.registerUpdateListener(({ editorState }) => {
-      if (rebuildingRef.current || editor.isComposing()) return;
-      const text = serialize(editor);
-      if (text === lastTextRef.current) return;
-      lastTextRef.current = text;
-      const cursor = editorState.read(() => $getCursorState());
-      live.current.history.push({ text, cursor });
-      live.current.onTextChange?.(text);
-
-      // Repair ruby structure in a separate, post-commit update so the caret
-      // is captured/restored deterministically (not mid-cycle). Text is
-      // unchanged by the repair, so this re-entry is guarded and idempotent.
-      rebuildingRef.current = true;
-      editor.update(() => $syncParagraphs(), { discrete: true });
-      rebuildingRef.current = false;
-    });
-
-    const unKeys = editor.registerCommand(
-      KEY_DOWN_COMMAND,
-      (event: KeyboardEvent) => {
-        const mod = window.electron?.process.platform === 'darwin' ? event.metaKey : event.ctrlKey;
-        if (mod && event.key === 'z') {
-          event.preventDefault();
-          restore(event.shiftKey ? history.redo() : history.undo());
-          return true;
-        }
-        const mode = mod ? MODE_KEYS[event.key] : undefined;
-        if (mode !== undefined) {
-          event.preventDefault();
-          live.current.setAppearPolicy(mode);
-          return true;
-        }
-        const vert = live.current.writingMode !== WritingMode.Horizontal;
-        if (!vert && (mod || event.altKey)) return false;
-        const act = (vert ? VERT_ARROWS : HORIZ_ARROWS)[event.key];
-        if (!act) return false;
-        event.preventDefault();
-        if (act.axis === 'char') {
-          moveCaretByCharacter(editor, APPEAR_CLASS[live.current.appearPolicy], {
-            reverse: act.reverse,
-            extend: event.shiftKey,
-          });
-        } else {
-          moveCaretByLine(event.shiftKey ? 'extend' : 'move', act.reverse ? 'backward' : 'forward');
-        }
-        return true;
-      },
-      COMMAND_PRIORITY_LOW,
-    );
-
-    return () => {
-      const s = scrollerRef.current;
-      live.current.onSnapshot?.({
-        text: lastTextRef.current,
-        cursor: editor.getEditorState().read(() => $getCursorState()),
-        scroll: { top: s?.scrollTop ?? 0, left: s?.scrollLeft ?? 0 },
-      });
-      unAppear();
-      unElementPoint();
-      unChange();
-      unKeys();
-    };
-  }, [editor]);
-
-  return null;
-};
-
-// ---------------------------------------------------------------------------
-// Main editor component
-// ---------------------------------------------------------------------------
+// Layout classes for the contenteditable. Ruby visibility is decoration-driven
+// (no appear root class needed — pm/decorations decides per leaf).
+const CONTENT_CLASS = (vert: boolean, multiCol: boolean, rows: boolean): string =>
+  clsx(styles.editorContent, vert && styles.vertMode, multiCol && styles.multiColMode, rows && styles.rowsMode);
 
 export const VedEditor = (props: VedEditorProps): React.JSX.Element => {
   const { writingMode, appearPolicy } = props;
@@ -412,41 +275,140 @@ export const VedEditor = (props: VedEditorProps): React.JSX.Element => {
   const rows = writingMode === WritingMode.VerticalRows;
 
   const scrollerRef = useRef<HTMLDivElement>(null);
+  const viewRef = useRef<EditorView | null>(null);
+  const live = useRef(props);
+  live.current = props;
+  const policyClassRef = useRef<Appear>(APPEAR_CLASS[appearPolicy]);
+  const lastTextRef = useRef(props.initialText);
+  const rebuildingRef = useRef(false);
+
   const onScroll = useKeepScrollPosition(scrollerRef, writingMode);
   useRevealCaretOnPolicyChange(scrollerRef, appearPolicy);
+
+  // Mount the ProseMirror view once.
+  // biome-ignore lint/correctness/useExhaustiveDependencies: mount-once; props read via `live`
+  useEffect(() => {
+    // Mount ProseMirror directly into the scroller so the contenteditable is a
+    // direct child (scroller → #editor-content), matching the scroll-keep and
+    // measurement assumptions.
+    const mount = scrollerRef.current;
+    if (!mount) return;
+    const { initialText, initialCursor, initialScroll } = live.current;
+
+    const decoPlugin = new Plugin({
+      props: { decorations: (state) => buildDecorations(state.doc, policyClassRef.current, state.selection.head) },
+    });
+
+    // baseKeymap supplies Enter (split paragraph), Backspace/Delete (join,
+    // delete), etc. Arrow keys and Ctrl chords are handled by handleKeyDown
+    // below (which runs first); baseKeymap doesn't bind arrows, so no conflict.
+    let state = EditorState.create({ doc: docFromText(initialText), plugins: [keymap(baseKeymap), decoPlugin] });
+    if (initialCursor) {
+      const pos = offsetToPos(state.doc, cursorToOffset(initialText, initialCursor));
+      state = state.apply(state.tr.setSelection(TextSelection.create(state.doc, pos)));
+    }
+
+    const view = new EditorView(mount, {
+      state,
+      nodeViews: { ruby: (node) => new RubyView(node) },
+      dispatchTransaction(tr) {
+        let next = view.state.apply(tr);
+        // Ruby structure repair in the same flush, skipped during IME.
+        if (tr.docChanged && !view.composing && !rebuildingRef.current) {
+          const fix = repair(next);
+          if (fix) next = next.apply(fix);
+        }
+        view.updateState(next);
+        if (tr.docChanged && !view.composing && !rebuildingRef.current) {
+          const text = serialize(next.doc);
+          if (text !== lastTextRef.current) {
+            lastTextRef.current = text;
+            const cursor = offsetToCursor(text, posToOffset(next.doc, next.selection.head));
+            live.current.history.push({ text, cursor });
+            live.current.onTextChange?.(text);
+          }
+        }
+      },
+      handleKeyDown: (v, event) => handleKeyDown(v, event),
+    });
+    viewRef.current = view;
+    view.dom.id = 'editor-content';
+    view.dom.classList.add(...CONTENT_CLASS(vert, multiCol, rows).split(' ').filter(Boolean));
+
+    const scroller = scrollerRef.current;
+    if (scroller && initialScroll) {
+      scroller.scrollTop = initialScroll.top;
+      scroller.scrollLeft = initialScroll.left;
+    }
+    requestAnimationFrame(() => view.focus());
+
+    const restore = (entry: ReturnType<PlainTextHistory['undo']>): void => {
+      if (!entry) return;
+      rebuildingRef.current = true;
+      const doc = docFromText(entry.text);
+      const tr = view.state.tr.replaceWith(0, view.state.doc.content.size, doc.content);
+      const pos = offsetToPos(tr.doc, entry.cursor ? cursorToOffset(entry.text, entry.cursor) : 0);
+      tr.setSelection(TextSelection.create(tr.doc, pos));
+      view.dispatch(tr);
+      rebuildingRef.current = false;
+      lastTextRef.current = entry.text;
+      live.current.onTextChange?.(entry.text);
+      requestAnimationFrame(() => view.focus());
+    };
+
+    const handleKeyDown = (v: EditorView, event: KeyboardEvent): boolean => {
+      const mod = window.electron?.process.platform === 'darwin' ? event.metaKey : event.ctrlKey;
+      if (mod && event.key === 'z') {
+        event.preventDefault();
+        restore(event.shiftKey ? live.current.history.redo() : live.current.history.undo());
+        return true;
+      }
+      const mode = mod ? MODE_KEYS[event.key] : undefined;
+      if (mode !== undefined) {
+        event.preventDefault();
+        live.current.setAppearPolicy(mode);
+        return true;
+      }
+      const isVert = live.current.writingMode !== WritingMode.Horizontal;
+      if (!isVert && (mod || event.altKey)) return false;
+      const act = (isVert ? VERT_ARROWS : HORIZ_ARROWS)[event.key];
+      if (!act) return false;
+      event.preventDefault();
+      if (act.axis === 'char') {
+        moveChar(v, policyClassRef.current, act.reverse, event.shiftKey);
+      } else {
+        moveCaretByLine(v, event.shiftKey, act.reverse);
+      }
+      return true;
+    };
+
+    return () => {
+      const s = scrollerRef.current;
+      live.current.onSnapshot?.({
+        text: lastTextRef.current,
+        cursor: offsetToCursor(lastTextRef.current, posToOffset(view.state.doc, view.state.selection.head)),
+        scroll: { top: s?.scrollTop ?? 0, left: s?.scrollLeft ?? 0 },
+      });
+      view.destroy();
+      viewRef.current = null;
+    };
+  }, []);
+
+  // Appear-policy change: update the root class and re-run decorations.
+  useEffect(() => {
+    policyClassRef.current = APPEAR_CLASS[appearPolicy];
+    const view = viewRef.current;
+    if (!view) return;
+    view.dom.className = '';
+    view.dom.classList.add(...CONTENT_CLASS(vert, multiCol, rows).split(' ').filter(Boolean));
+    view.dispatch(view.state.tr.setMeta('redecorate', true));
+  }, [appearPolicy, vert, multiCol, rows]);
 
   return (
     <div
       ref={scrollerRef}
       onScroll={onScroll}
       className={clsx(styles.editor, vert && styles.vertMode, multiCol && styles.multiColMode, rows && styles.rowsMode)}
-    >
-      <LexicalComposer
-        initialConfig={{
-          namespace: 'ved',
-          nodes: [DelimNode, RtNode, RubyNode],
-          onError: (e) => {
-            throw e;
-          },
-        }}
-      >
-        <RichTextPlugin
-          contentEditable={
-            <ContentEditable
-              id='editor-content'
-              className={clsx(
-                styles.editorContent,
-                vert && styles.vertMode,
-                multiCol && styles.multiColMode,
-                rows && styles.rowsMode,
-                APPEAR_STYLE[appearPolicy],
-              )}
-            />
-          }
-          ErrorBoundary={LexicalErrorBoundary}
-        />
-        <CorePlugin props={props} scrollerRef={scrollerRef} />
-      </LexicalComposer>
-    </div>
+    />
   );
 };

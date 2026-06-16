@@ -1,0 +1,111 @@
+/* Global ruby + inline-syntax styles for the ProseMirror editor. These class
+ * names are emitted as LITERALS by pm/decorations (Decoration.inline/node) and
+ * the pm/ruby-view node view, so they cannot live in a hashed CSS module.
+ *
+ * The page layout (writing modes, multi-column pages) stays in
+ * editor.module.scss on the contenteditable; this file is only ruby and the
+ * inline formats. */
+
+.ProseMirror:focus {
+  outline: none;
+}
+.ProseMirror p {
+  margin: 0;
+  padding: 0;
+}
+
+/* Placeholder: an empty document is a single <p> holding only a <br>. Render
+ * the hint in normal flow inside it so it sits exactly where the first
+ * character will, in every writing mode (an absolutely-positioned placeholder
+ * lands a page away under vertical-rl). */
+#editor-content > p:only-child:has(> br:only-child)::before {
+  content: "本文";
+  color: #555;
+  pointer-events: none;
+}
+
+/* Hidden-but-caret-addressable markup: the |,(,) delimiters, the in-flow ruby
+ * reading, and the *,/ syntax markers. font-size:0 (NOT display:none) keeps the
+ * caret able to sit at every character. */
+.delim,
+.syn {
+  font-size: 0;
+}
+
+/* Shown ruby markup (ShowAll / the expanded paragraph or ruby): gray syntax. */
+.delimShown {
+  color: #808080;
+}
+
+/* Inline formats — each is one decoration class. */
+.bold {
+  font-weight: 700;
+}
+.italic {
+  font-style: italic;
+}
+.tcy {
+  text-combine-upright: all;
+}
+
+/* Ruby node view: <ruby class="rubyWrap"><span class="rubyBase">|漢(かん)</span>
+ * <rt class="dup">かん</rt></ruby>. The base markup is hidden by .delim above;
+ * the read-only <rt> renders the annotation. */
+ruby.rubyWrap > rt.dup {
+  font-size: 0.5em;
+  user-select: none;
+  -webkit-user-select: none;
+}
+
+/* When the markup is shown (expanded), neutralise the ruby layout and drop the
+ * duplicate annotation — the in-flow reading renders instead. */
+ruby.rubyExpanded {
+  display: inline;
+}
+ruby.rubyExpanded > rt.dup {
+  display: none;
+}
+
+/* The ruby holding the caret (distinguishes the two boundary positions).
+ * Strictly inside only — a caret resting at the outer boundary (outside the
+ * ruby) does not highlight it. */
+ruby.rubyActive {
+  background-color: rgba(255, 200, 50, 0.25);
+}
+
+/* Boundary overlay caret. At the base's start/end the caret sits next to a
+ * font-size:0 delimiter, so Chromium draws it with the delimiter's tiny metrics
+ * (a few px, effectively invisible). Hide that native caret and draw a 1em
+ * overlay pinned to the column edge — the caret length comes from
+ * --ved-caret-extent (the body font size, set in editor.module.scss), since a
+ * raw 1em here would resolve to the delimiter's size. */
+ruby.rubyLeadActive,
+ruby.rubyTrailActive {
+  position: relative;
+}
+ruby.rubyLeadActive > .rubyBase,
+ruby.rubyTrailActive > .rubyBase {
+  caret-color: transparent;
+}
+ruby.rubyLeadActive::before,
+ruby.rubyTrailActive::before {
+  content: "";
+  position: absolute;
+  inset-block-start: 0;
+  inline-size: 1px;
+  block-size: var(--ved-caret-extent, 1em);
+  background: black;
+  pointer-events: none;
+  animation: caret-blink 1s step-end infinite;
+}
+ruby.rubyLeadActive::before {
+  inset-inline-start: 0;
+}
+ruby.rubyTrailActive::before {
+  inset-inline-end: 0;
+}
+@keyframes caret-blink {
+  50% {
+    opacity: 0;
+  }
+}
