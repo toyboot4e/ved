@@ -1,6 +1,7 @@
 import { clsx } from 'clsx';
 import { baseKeymap } from 'prosemirror-commands';
 import { keymap } from 'prosemirror-keymap';
+import { Fragment, Slice } from 'prosemirror-model';
 import { EditorState, Plugin, TextSelection } from 'prosemirror-state';
 import { EditorView } from 'prosemirror-view';
 import type React from 'react';
@@ -10,7 +11,7 @@ import { nextCaretOffset } from './editor/pm/caret-model';
 import { type CursorState, cursorToOffset, offsetToCursor } from './editor/pm/cursor';
 import { buildDecorations } from './editor/pm/decorations';
 import type { Appear } from './editor/pm/leaves';
-import { docFromText, offsetToPos, posToOffset, serialize } from './editor/pm/model';
+import { docFromText, offsetToPos, posToOffset, schema, serialize } from './editor/pm/model';
 import { RubyView } from './editor/pm/ruby-view';
 import { repair } from './editor/pm/structure';
 import { lineToScroll, type ScrollGeom, type ScrollMode, scrollToLine } from './editor/scroll-keep';
@@ -333,6 +334,17 @@ export const VedEditor = (props: VedEditorProps): React.JSX.Element => {
         }
       },
       handleKeyDown: (v, event) => handleKeyDown(v, event),
+      // Paste as PLAIN TEXT (the identity model): split on newlines into
+      // paragraphs of text, never the copied ruby NODES — pasting a ruby node
+      // into another ruby's content violates the schema and PM drops the caret
+      // to the document start. Structure repair then re-forms the rubies.
+      handlePaste: (v, event) => {
+        const text = event.clipboardData?.getData('text/plain');
+        if (!text) return false;
+        const paras = text.split('\n').map((line) => schema.node('paragraph', null, line ? [schema.text(line)] : []));
+        v.dispatch(v.state.tr.replaceSelection(new Slice(Fragment.fromArray(paras), 1, 1)).scrollIntoView());
+        return true;
+      },
     });
     viewRef.current = view;
     view.dom.id = 'editor-content';
@@ -385,6 +397,19 @@ export const VedEditor = (props: VedEditorProps): React.JSX.Element => {
       return true;
     };
 
+    // In the horizontally-scrolling vertical modes (continuous Vertical and
+    // VerticalRows) there is no vertical overflow, so a plain mouse wheel does
+    // nothing — map its vertical delta to horizontal scroll so the user can
+    // read on without holding Shift. vertical-rl scrolls left as you advance,
+    // so wheel-down (deltaY > 0) decreases scrollLeft.
+    const onWheel = (e: WheelEvent): void => {
+      const wm = live.current.writingMode;
+      if ((wm !== WritingMode.Vertical && wm !== WritingMode.VerticalRows) || e.shiftKey || e.deltaY === 0) return;
+      mount.scrollLeft -= e.deltaY;
+      e.preventDefault();
+    };
+    mount.addEventListener('wheel', onWheel, { passive: false });
+
     return () => {
       const s = scrollerRef.current;
       live.current.onSnapshot?.({
@@ -392,30 +417,34 @@ export const VedEditor = (props: VedEditorProps): React.JSX.Element => {
         cursor: offsetToCursor(lastTextRef.current, posToOffset(view.state.doc, view.state.selection.head)),
         scroll: { top: s?.scrollTop ?? 0, left: s?.scrollLeft ?? 0 },
       });
+      mount.removeEventListener('wheel', onWheel);
       view.destroy();
       viewRef.current = null;
     };
   }, []);
 
-  // Appear-policy change: update the root class and re-run decorations.
-  const prevRevealPolicyRef = useRef(appearPolicy);
+  // Appear-policy / writing-mode change: update the root class and re-run
+  // decorations, then keep the CURSOR's line in view (the scroll-keep above
+  // restores the reading position; this reveal is a no-op unless the cursor
+  // went off-screen — e.g. a mode switch that moved its line out of view).
+  const prevRevealRef = useRef({ policy: appearPolicy, mode: writingMode });
   useEffect(() => {
     policyClassRef.current = APPEAR_CLASS[appearPolicy];
     const view = viewRef.current;
     if (!view) return;
+    // Keep PM's own `ProseMirror` class (its base styles + ved's `.ProseMirror`
+    // rules — line numbers, current-line highlight — depend on it); only swap
+    // the layout/writing-mode classes.
     view.dom.className = '';
-    view.dom.classList.add(...CONTENT_CLASS(vert, multiCol, rows).split(' ').filter(Boolean));
+    view.dom.classList.add('ProseMirror', ...CONTENT_CLASS(vert, multiCol, rows).split(' ').filter(Boolean));
     view.dispatch(view.state.tr.setMeta('redecorate', true));
-    // After the re-decoration reflow (ShowAll can grow the text ~4×), reveal
-    // the caret if the POLICY changed — measured SYNCHRONOUSLY here (a forced
-    // layout) so we don't race the reflow as an rAF would. Writing-mode changes
-    // keep their own scroll (useKeepScrollPosition).
-    if (prevRevealPolicyRef.current !== appearPolicy) {
-      prevRevealPolicyRef.current = appearPolicy;
+    // Synchronously (a forced layout), so we don't race the reflow as rAF would.
+    if (prevRevealRef.current.policy !== appearPolicy || prevRevealRef.current.mode !== writingMode) {
+      prevRevealRef.current = { policy: appearPolicy, mode: writingMode };
       const s = scrollerRef.current;
       if (s) revealCaretInScroller(s);
     }
-  }, [appearPolicy, vert, multiCol, rows]);
+  }, [appearPolicy, vert, multiCol, rows, writingMode]);
 
   return (
     <div
