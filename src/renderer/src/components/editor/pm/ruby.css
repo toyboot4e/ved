@@ -29,20 +29,23 @@
 .ProseMirror {
   counter-reset: vedline;
 }
-/* ::after (not ::before — the placeholder owns ::before). */
+/* ::after (not ::before — the placeholder owns ::before). The number is
+ * anchored just before the line's inline-start (its inline-END sits at the
+ * line start, with a small gap), aligned to the line's block-start. NOT a
+ * writing-mode override — that fights the logical insets across modes; instead
+ * `text-combine-upright` keeps the digits horizontal inside vertical text. */
 .ProseMirror p::after {
   counter-increment: vedline;
   content: counter(vedline);
   position: absolute;
-  inset-inline-start: -2.2em;
+  inset-inline-end: 100%; /* the number's inline-end at the line's inline-start */
   inset-block-start: 0;
-  writing-mode: horizontal-tb;
-  text-orientation: mixed;
-  font-size: 0.55em;
-  line-height: 1.7;
-  color: #b3b3b3;
-  width: 2.4em;
-  text-align: end;
+  margin-inline-end: 0.5em; /* gap between the number and the text */
+  text-combine-upright: all; /* digits stay horizontal in vertical-rl */
+  font-size: 0.6em;
+  line-height: 1.5;
+  color: #aaa;
+  white-space: nowrap;
   user-select: none;
   -webkit-user-select: none;
   pointer-events: none;
