@@ -57,34 +57,32 @@ offsets of each syntactic part. The syntax characters are defined once there
 (`RUBY_DELIM_FRONT` / `RUBY_SEP_MID` / `RUBY_DELIM_END`) and shared by the
 parser, `docFromText`, and the structure-repair reconcile.
 
-A ruby is a single inline **node** (`editor/pm/model.ts`) whose text content is
-the literal markup `|漢(かん)`, so the ruby contributes its exact source to
-`textBetween`. (Historically, the Lexical core split a ruby across typed text
-leaves — DelimNode/RtNode/TextNode — for the same identity guarantee:)
+A ruby is a single inline **node** (`editor/pm/model.ts schema`) whose text
+content is the literal markup `|漢(かん)`, so the ruby contributes its exact
+source to `textBetween` and `serialize` is identity-exact. `inlineNodesFor(line)`
+builds a line's canonical inline content (plain text-node runs + ruby nodes);
+`docFromText` uses it to build the document and the structure-repair reconcile
+uses it to fix up after edits.
 
-```
-|漢(かん)  →  RubyNode[ delim "|", text "漢", delim "(", rt "かん", delim ")" ]
-```
-
-`RubyNode` also carries the reading on the node (`__reading`) for a read-only
-duplicate `<rt>` annotation it renders in `createDOM`; the structure transform
-keeps it in sync. The wrapper element is required: a lone `display: ruby-text`
-span does not annotate its preceding siblings (Chromium gives it an anonymous
-ruby container) — see [spikes/identity-text-model.md](spikes/identity-text-model.md).
-
-`model.ts lineNodes` builds a line's canonical nodes (plaintext runs +
-inline rubies). Unlike Slate, **Lexical strips empty text nodes**, so there
-is no text node *between* two adjacent rubies — the caret addressing at ruby
-boundaries is handled by CSS (`font-size: 0`, below) and the cursor map, not
-by anchor nodes.
+The ruby **node view** (`pm/ruby-view.ts`) renders `<ruby class="rubyWrap">`
+with the editable base content in a `<span class="rubyBase">` and a read-only
+`<rt class="dup">` annotation (the reading, parsed from the node's content).
+The wrapper is required: a lone `display: ruby-text` span doesn't annotate its
+siblings (Chromium gives it an anonymous container) — see
+[spikes/identity-text-model.md](spikes/identity-text-model.md). PM decorations
+can't nest an `<rt>` inside a `<ruby>` (widgets render as siblings), which is
+exactly why ruby is a node with this view; see
+[spikes/pm-ruby.md](spikes/pm-ruby.md).
 
 ## Rendering: view modes (`AppearPolicy`)
 
-The tree and the text are identical in all modes; only CSS classes change.
-The policy is a class on the editor root (`appear-rich|showall|paragraph|char`);
-`editor/appearance.ts registerAppearance` marks `.activePara` on the caret's
-paragraph and `.rubyActive` on the caret's ruby (selection-driven, no tree
-mutation). CSS in `editor/ruby.module.scss` then decides which rubies expand:
+The text is identical in all modes; only decorations change. `pm/decorations.ts
+buildDecorations` runs on every doc/selection/policy change and emits, per
+parsed leaf, whether the markup is hidden (`delim`/`syn`, `font-size: 0`) or
+shown (`delimShown`, gray) — decided by `pm/leaves.ts isHidden(leaf, policy,
+activeLine, activeRuby)`. (Unlike Lexical's root-class + descendant-CSS, this is
+per-leaf because PM's flat DOM puts the markup spans as siblings of the
+`<ruby>`, not children.)
 
 | Mode | Shortcut | Expanded rubies |
 |---|---|---|
@@ -96,135 +94,132 @@ mutation). CSS in `editor/ruby.module.scss` then decides which rubies expand:
 (The mod key is Cmd on macOS. Letter chords are reserved for file shortcuts
 — Ctrl+O/S/Shift+S — handled at the app level; see `app.tsx`.)
 
-Collapsed rendering: a native `<ruby>` whose annotation is a **read-only
-duplicate** of the rt leaf (`<rt contentEditable={false}>` added in
-`createDOM`, kept outside the child slot via `getDOMSlot().withBefore`). The
-in-flow markup leaves (`delim`/`rt`) are hidden with **`font-size: 0`, not
-`display: none`** — `display: none` removes their caret positions, making it
+Collapsed: the base shows with the read-only `<rt>` annotation; the in-flow
+markup (`|`,`(`, the inline reading, `)`) is hidden with **`font-size: 0`, not
+`display: none`** — `display: none` removes the caret positions, making it
 impossible to place the caret before a ruby or between two adjacent ones;
-`font-size: 0` keeps them caret-addressable while invisible, and arrow
-movement skips them anyway (see Cursor mapping). Expanded rendering shows the
-markup leaves (gray) and hides the duplicate annotation. The duplication is
-presentation-only; the model text is the single source of truth.
+`font-size: 0` keeps them caret-addressable while invisible, and arrow movement
+skips them (see Cursor mapping). Expanded: a node decoration adds `rubyExpanded`
+(CSS hides the dup annotation and neutralises the ruby layout) and the markup
+shows gray. The annotation is presentation-only; the node's text is the source
+of truth. Every OTHER inline format (bold/italic/縦中横, planned Hameln syntax)
+is just an inline decoration class — one `RULES` entry in `decorations.ts`, no
+node, no structure repair.
 
-Why not CSS-only ruby over the leaves (the spike's first idea): Chromium
-mis-pairs anonymous ruby bases across the editor's nested leaf spans — the
-annotation aligns with a zero-width delimiter instead of the base.
+Because rendering is decoration-only, switching modes never touches the
+document: no rebuild, no cursor restore, no IME hazard.
 
-Because expansion is a class switch, cursor movement and mode changes never
-touch the tree: no rebuild, no cursor restore, no IME hazard.
+## Structure repair (`pm/structure.ts repair`)
 
-## Structure repair (`model.ts $syncParagraphs`)
+The one structural job, and the only place structure repair survives: when
+typing completes or breaks ruby syntax, the ruby nodes must follow the text.
+`editor.tsx dispatchTransaction` applies the edit, then — in the SAME flush,
+before `updateState` — runs `repair(state)`:
 
-The one structural job: when typing completes or breaks ruby syntax, the node
-structure must follow the text. The editor's `onChange`
-(`registerUpdateListener`) detects a text change (vs the last known
-plaintext), pushes history, then runs a **separate, post-commit**
-`editor.update(() => $syncParagraphs())`:
+1. Capture the caret as a plain document offset (`posToOffset`).
+2. For each paragraph whose inline content differs from `inlineNodesFor(line)`
+   (the canonical text-nodes-and-ruby-nodes projection of its own text),
+   replace its content. Text is preserved; only node boundaries move.
+   Rewritten LAST→FIRST so earlier positions stay valid.
+3. Restore the caret at the same plain offset (`offsetToPos`).
 
-1. Capture the caret as a document-level plain offset (`$getCursorState`).
-2. For each paragraph, if its children differ from `lineNodes(getTextContent)`
-   (a structural signature compare), replace them — text preserved, only node
-   boundaries move.
-3. Restore the caret from the plain offset (`$restoreCursor`).
+The repair is **skipped while `view.composing`** (restructuring would cancel
+the IME session); the composition-end transaction repairs. Bold/italic/縦中横
+and every other format are decorations, so they need none of this — repair is
+ruby-only.
 
-Running the repair in its own update (rather than a Lexical node transform) is
-what makes the caret capture/restore deterministic — a transform fires
-mid-cycle and sees a stale selection. The repair is skipped while
-`editor.isComposing()` (restructuring cancels the IME session); the
-composition-end update repairs.
+## Cursor mapping (`pm/model.ts`, `pm/cursor.ts`)
 
-## Cursor mapping (`cursor-map.ts`)
+ProseMirror positions count node boundaries, so they are not plain string
+offsets; the editor speaks plain offsets and converts at the edges:
 
-The identity model makes this generic accumulation over text leaves, with one
-Lexical-specific wrinkle. `ParaPoint` is a resolved point: a text-leaf offset,
-or an element child index.
+- `posToOffset(doc, pos)` = `doc.textBetween(0, pos, '\n').length`.
+- `offsetToPos(doc, offset)` — the inverse, walking paragraphs and into ruby
+  nodes. **A ruby boundary maps to the text position just INSIDE the node**
+  (the edge `|` / `)` leaf), not the paragraph *element* boundary — see "Caret
+  at ruby boundaries". A boundary with visible text on the outside is resolved
+  by that text node instead (first child to cover the offset wins).
+- `buildPosMap(doc)` — the O(n) batch form of `offsetToPos` (an `offset → pos`
+  array), used by the decoration pass so it isn't O(n²). A unit test pins it to
+  `offsetToPos` for every offset.
+- `pm/cursor.ts` — `offsetToCursor` / `cursorToOffset` map a plain offset to the
+  backend-neutral `{para, offset}` the history and tab snapshots speak.
 
-- `$plainOffsetOfPoint(para, point)` — plain offset of a Lexical point (text
-  or element) within its paragraph.
-- `$pointInParaAtOffset(para, plain)` — the inverse. Inside a text run or a
-  ruby's leaves it returns a text point (preferring the next *visible* leaf
-  after a hidden delim/rt). **At a ruby edge it returns a text point on the
-  ruby's edge delimiter** (`|` for "before", `)` for "after"), not an element
-  point: Lexical's `insertText` at an element point between two inline rubies
-  inserts *into* the next ruby, whereas inserting at the edge delimiter lands
-  inside this ruby and the structure-repair re-parse moves the new text out to
-  its correct place.
-
-Used around structure repair, history restore, and tab snapshot/restore.
-
-Character caret movement (`caret.ts moveCaretByCharacter`) is model-driven:
-it walks the *visible* leaves, deduping same-parent junctions but keeping both
-stops at a ruby element boundary (outside vs inside — one extra press tells you
-which side you are on), and lands on a ruby's entry edge in ByCharacter. In
-vertical modes the axes rotate (`ArrowUp/Down` → character, `ArrowLeft/Right`
-→ line).
+Character caret movement (`pm/caret-model.ts nextCaretOffset`, dispatched by
+`editor.tsx moveChar`) is model-driven and pure: over the plain text + parsed
+leaves + appear policy it returns the next stop offset, skipping hidden markup
+but keeping the ruby boundary stops (the hidden delimiter is a real zero-width
+char, so the offsets either side of it are two real stops). In vertical modes
+the axes rotate (`ArrowUp/Down` → character, `ArrowLeft/Right` → line).
 
 Line movement (`editor.tsx moveCaretByLine`) starts with `Selection.modify
-('line')` — the browser handles wrap-within-paragraph correctly — but
-post-processes its result for two failure modes specific to vertical-rl:
+('line')` over the contenteditable — the browser handles wrap-within-paragraph
+— but post-processes its result for two vertical-rl failure modes:
 
-- modify is a **no-op or lands on a `<p>` element-point** (the document
-  edge or a single-line paragraph with nowhere to go). The cursor would
-  otherwise sit at Chromium's end-of-line fallback, which the user reads
-  as "ArrowLeft jumped to end of doc". When there's no adjacent paragraph
-  we revert; when there is, we hop ourselves.
+- modify is a **no-op or lands on an element point** (document edge / a
+  single-line paragraph). The cursor would otherwise sit at Chromium's
+  end-of-line fallback ("ArrowLeft jumped to end of doc"); with no adjacent
+  paragraph we revert.
 - modify **crossed paragraphs but landed at the FAR end** of the target
-  column. Chromium's `modify('line')` in CSS multi-column vertical-rl
-  doesn't reliably preserve the inline-axis coordinate, so the cursor
-  drops at `@end` (forward) or `@0` (backward). When we detect a cross-
-  paragraph move, we re-hit-test with `caretPositionFromPoint` at the
-  caret's original inline-axis center against the target column's
-  block-axis center — that returns the text position at the matching y
-  in the next column.
+  column. Chromium's `modify('line')` in CSS multi-column vertical-rl doesn't
+  preserve the inline-axis coordinate, so the cursor drops at the column end.
+  We re-hit-test with `view.posAtCoords` at the caret's original inline-axis
+  center against the target column's block-axis center — the text position at
+  the matching y in the next column (keeping the column position).
 
 ## Caret at ruby boundaries
 
-Three issues conspire to make the caret invisible (or render at a few pixels)
-at a ruby boundary. The fixes are in `appearance.ts`,
-`element-point-normalize.ts`, and `ruby.module.scss`:
+At a ruby boundary the caret sits next to a `font-size: 0` delimiter, so the
+NATIVE caret is invisible (the delimiter's tiny metrics) or, worse,
+mis-positioned. Two mechanisms in `pm/model.ts`, `pm/decorations.ts`, and
+`pm/ruby.css`:
 
-- **Element-point selections collapse to a (0,0) caret rect.** A click on
-  a `<p>` empty edge, or a model state at `paragraph @N` after a deletion,
-  leaves Lexical with an element-point anchor. Chromium draws no caret for
-  that rect. `element-point-normalize.ts $normalizeElementPoint` rewrites
-  such a selection to the equivalent text-point on the same paragraph.
-- **Click at a ruby boundary hit-tests to the small-font delim.** Inside
-  the ruby, the EARLIER node at a boundary pixel is the delim text (`|`,
-  `(`, `)`) which is rendered with `$markup-size` (a few px) — Chromium
-  then draws the caret at the delim's metrics. The same module reroutes
-  boundary-text focus to the next/previous sibling (body or rt @ same
-  pixel), where the font is 1em. The reroute is skipped at the ruby's
-  OUTSIDE edge (no sibling).
-- **The overlay caret covers BOTH halves of every ruby boundary pair.** At
-  any ruby boundary (paragraph-edge or mid-paragraph), `appearance.ts`
-  flags BOTH the OUTSIDE and INSIDE positions by setting `.rubyLeadActive`
-  / `.rubyTrailActive` on the ruby element; `ruby.module.scss` hides the
-  native caret (`caret-color: transparent`) on those positions and renders
-  an absolutely-positioned 1em pseudo-element as an overlay caret. Absolute
-  positioning means **zero layout effect** — an earlier fix expanded the
-  delim's font from $markup-size to 1em, which shifted the body forward
-  and back as the caret entered and left the position; the user found that
-  jarring. Anchoring the overlay on the `<ruby>` element (not the delim)
-  keeps it inside the column box — the delim's text is centered within the
-  column, so an overlay anchored on the delim extended past the column
-  edge. (The OUTSIDE positions of a mid-paragraph ruby focus on adjacent
-  text *outside* the ruby — no ruby ancestor, no overlay; the adjacent
-  text's 1em font gives the native caret a normal size there.)
+- **The boundary maps to the INSIDE text edge, not the element boundary.** A
+  caret at a ruby's start/end placed at the paragraph element boundary (before
+  `<ruby>` / after it) gets a DEGENERATE rect (0×0 — no adjacent text), so the
+  native caret and the **IME composition box** jump to the viewport's top-left.
+  `offsetToPos` maps the boundary to the `|` / `)` text leaf inside the node,
+  which has a real rect at the column edge; typing/IME there still lands
+  outside the ruby (structure repair re-parses, e.g. `X` at the `|` edge →
+  `X|漢(かん)` → plain `X` + ruby). A boundary preceded/followed by visible
+  text resolves to that text instead, so this only bites the doc/line-edge and
+  adjacent-ruby cases.
+- **An overlay caret where the native one is still invisible.** The decoration
+  pass flags the ruby with `rubyLeadActive` / `rubyTrailActive` at exactly the
+  positions where the native caret has no visible character to its left — just
+  inside after `|`, before the ruby when nothing visible precedes it (doc/line
+  start, adjacent ruby), and after the collapsed `)`. `pm/ruby.css` hides the
+  native caret there (`caret-color: transparent`) and draws an
+  absolutely-positioned 1em `::before` at the column edge (length from
+  `--ved-caret-extent`, the body font size — a raw `1em` would resolve to the
+  delimiter's size). Absolute positioning = zero layout cost; don't fix the
+  size by expanding the delimiter's font, which shifts the body. The
+  `rubyActive` highlight (the caret-is-inside cue) is set strictly inside only,
+  so a caret resting at the outer boundary doesn't highlight the ruby.
 
-The four positions are tested end-to-end (`test/e2e/caret-boundary.ts`)
-plus the boundary classification ($computeAppearKeys) in
-`appearance.test.ts`. The shared DOM walker that skips the read-only `<rt>`
-annotation lives in `editor/dom-walk.ts`.
+The boundary classes and overlay extent are tested end-to-end in
+`test/e2e/caret-boundary.ts` (the native caret can't be queried, so the test
+asserts the mechanism — class + `::before` size).
+
+## Keeping the caret in view (`editor.tsx revealCaretInScroller`)
+
+PM's own `scrollIntoView` doesn't survive the post-commit ruby repair (a second
+transaction drops the scroll flag) and doesn't handle the vertical-rl
+multi-column page layouts, so the editor scrolls the caret back into view
+itself: minimal adjustment on both axes (`revealDelta`, a no-op when already
+visible), run after every doc change, and — synchronously, after the
+re-decoration reflow (ShowAll can grow the text ~4×) — on an appear-policy
+change. The single-burst-insert and reflow cases are covered by
+`test/e2e/ruby-reveal.ts`.
 
 ## History (`editor/history.ts PlainTextHistory`)
 
 No framework history: operation-level undo is meaningless across structure
 repair, and it is backend-neutral (a document is a string, a caret is
 `{para, offset}`). `{ plaintext, cursor }` snapshots with a 500 ms debounce;
-undo/redo rebuilds the tree from text (`$buildFromText`) and re-resolves the
-caret. A debounced push replaces the newest entry; after an undo it truncates
-the redo tail.
+undo/redo rebuilds the document from text (`docFromText`) and re-resolves the
+caret (`offsetToPos`). A debounced push replaces the newest entry; after an undo
+it truncates the redo tail.
 
 ## Layout: writing modes (`WritingMode`) and the page
 
@@ -272,9 +267,8 @@ Notes that took debugging to learn:
   rect).
 - The placeholder is a CSS `::before` on the empty paragraph
   (`#editor-content > p:only-child:has(> br:only-child)`), so it sits in
-  normal flow at the first character's position in every writing mode —
-  Lexical's default placeholder is absolutely positioned and lands a page away
-  under vertical-rl.
+  normal flow at the first character's position in every writing mode (an
+  absolutely-positioned placeholder lands a page away under vertical-rl).
 
 Writing mode and view mode are owned by `app.tsx` state and rendered by
 `components/toolbar.tsx`; keyboard shortcuts call the same state setters.
@@ -345,7 +339,8 @@ ships its own postinstall, so this project's `postinstall` runs
   didn't jump" can falsely pass. When adding/changing RAF-deferred logic,
   drop `VED_SMOKE_HIDDEN` for the relevant probe and assert the EXPECTED
   destination rather than just "stayed put".
-- `$syncParagraphs` compares every paragraph on every change; fine at current
-  sizes, trivially limitable to dirty paragraphs if profiling ever flags it.
-- The annotation (`ruby-text`) can overflow the fixed `line-height` in
-  vertical mode; needs visual tuning.
+- `pm/structure.ts repair` compares every paragraph on every change; fine at
+  current sizes, trivially limitable to dirty paragraphs if profiling flags it.
+  (The decoration pass is already O(n) via `buildPosMap`.)
+- The annotation (`<rt>`) can overflow the fixed `line-height` in vertical
+  mode; needs visual tuning.

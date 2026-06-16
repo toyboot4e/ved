@@ -1,14 +1,24 @@
 # Plan: migrate the editor core from Lexical to ProseMirror
 
-Status: **flipped** (2026-06-16, decision: ADR-0005). The app runs on
-ProseMirror; Lexical is removed. Unit tests (61) + typecheck + biome + the Nix
-build are green, and 7 of 8 e2e suites pass (smoke, placeholder, caret-boundary,
-writing-mode-rows, tabs, tab-keys, tab-close-cancel). **Known gap:** the
-`ruby-reveal` e2e (a 420-ruby stress doc) — the caret is correctly at the end,
-but `scrollIntoView` on the focus node's parent (the whole `<p>`, spanning all
-pages in multicol) doesn't scroll the caret into view; scroll-to-caret in a
-huge multicol document needs follow-up. Decorations also call `offsetToPos` per
-leaf (O(n²) for large docs) — fine in practice, worth a one-pass map later.
+Status: **done** (flipped 2026-06-16, polished 2026-06-17; decision: ADR-0005).
+The app runs on ProseMirror; Lexical is removed. **`just test-all` is fully
+green** — 62 unit tests, typecheck, biome, `pnpm build`, the Nix build, and all
+8 e2e suites (smoke, placeholder, ruby-reveal, caret-boundary,
+writing-mode-rows, tabs, tab-keys, tab-close-cancel).
+
+Post-flip fixes (see the details in `architecture.md`):
+
+- **Ruby boundary caret/IME rect.** A caret at a ruby's outer boundary mapped
+  to the paragraph element boundary, whose rect is degenerate (0×0) → the IME
+  box jumped to the viewport corner. `offsetToPos` now maps the boundary to the
+  text leaf just inside the node (real rect); typing/IME still lands outside via
+  the repair re-parse.
+- **Keep the caret in view.** `revealCaretInScroller` scrolls the caret back in
+  after edits and (synchronously, post-reflow) on policy change — PM's
+  scrollIntoView doesn't survive the ruby repair or multicol. This retired the
+  `ruby-reveal` gap.
+- **O(n) decorations.** `buildPosMap` replaces the per-leaf `offsetToPos`
+  (was O(n²)); pinned to `offsetToPos` by a unit test.
 
 ## Architecture (why this shrinks per-format cost)
 

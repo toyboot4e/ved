@@ -33,9 +33,23 @@ Task runner is `just`:
   diverge. Outside the editor core, a document is always a plain string.
   Collapsed markup is hidden with `font-size: 0` (NOT `display: none`) so the
   caret stays addressable; arrow movement skips it via `nextCaretOffset`.
-- **Ruby outer boundaries map OUTSIDE the node.** `pm/model.ts offsetToPos`
-  maps a caret at a ruby's start/end to the position *before/after* the ruby
-  node, not its interior — otherwise IME and typing land inside the ruby.
+- **Ruby boundaries map to the INSIDE text edge (for a real caret/IME rect).**
+  `pm/model.ts offsetToPos` maps a caret at a ruby's start/end to the text
+  position just *inside* the node (the edge `|` / `)` leaf), NOT the paragraph
+  *element* boundary before/after it. The element boundary has a DEGENERATE
+  caret rect (0×0, no adjacent text), so the native caret — and the IME
+  composition box — would jump to the viewport's top-left. The inside edge has a
+  real rect; typing/IME there still lands *outside* the ruby because the
+  structure repair re-parses (e.g. `X` typed at the `|` edge → `X|漢(かん)`,
+  re-parsed to plain `X` + ruby). `pm/decorations.ts` uses `buildPosMap` (the
+  O(n) batch form of `offsetToPos`, pinned to it by a unit test) so the
+  decoration pass isn't O(n²).
+- **Keep the caret in view after edits.** PM's `scrollIntoView` doesn't survive
+  the post-commit ruby repair (a second transaction) or the vertical-rl
+  multi-column page layouts, so `editor.tsx revealCaretInScroller` scrolls the
+  caret back into view after every doc change and — synchronously, after the
+  re-decoration reflow — on an appear-policy change. It is a no-op when the
+  caret is already visible.
 - **Caret at ruby boundaries renders via an overlay, not delim font.** At a
   boundary the native caret takes the font-size:0 delimiter's tiny metrics.
   `pm/decorations.ts` flips `rubyActive` (highlight, strictly inside only) and
