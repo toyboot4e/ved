@@ -14,6 +14,40 @@
   padding: 0;
 }
 
+/* Current-line highlight: the cursor's paragraph (a logical line) — a subtle
+ * tint of the whole line/column, in every writing mode. */
+.ProseMirror p.currentLine {
+  background-color: rgba(120, 170, 255, 0.12);
+}
+
+/* Line numbers: a paragraph IS a logical line, so number the <p>s with a CSS
+ * counter (no JS, stable across edits). The number is an absolutely-positioned
+ * ::before pinned to the line's inline-START edge (left in horizontal, TOP in
+ * vertical-rl) and forced horizontal so digits never stack; it sits in the
+ * gutter reserved by editor.module.scss ($line-gutter), so it never shifts the
+ * text. Works the same in every appear policy (it counts lines, not ruby). */
+.ProseMirror {
+  counter-reset: vedline;
+}
+/* ::after (not ::before — the placeholder owns ::before). */
+.ProseMirror p::after {
+  counter-increment: vedline;
+  content: counter(vedline);
+  position: absolute;
+  inset-inline-start: -2.2em;
+  inset-block-start: 0;
+  writing-mode: horizontal-tb;
+  text-orientation: mixed;
+  font-size: 0.55em;
+  line-height: 1.7;
+  color: #b3b3b3;
+  width: 2.4em;
+  text-align: end;
+  user-select: none;
+  -webkit-user-select: none;
+  pointer-events: none;
+}
+
 /* Placeholder: an empty document is a single <p> holding only a <br>. Render
  * the hint in normal flow inside it so it sits exactly where the first
  * character will, in every writing mode (an absolutely-positioned placeholder

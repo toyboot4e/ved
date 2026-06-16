@@ -36,6 +36,14 @@ export const buildDecorations = (doc: PMNode, policy: Appear, head: number): Dec
   const posMap = buildPosMap(doc);
   const at = (o: number) => posMap[o]!;
 
+  // Highlight the cursor's paragraph (the current line; in ved a paragraph IS
+  // a logical line). A node decoration adds the class to the line's <p>.
+  const $head = doc.resolve(Math.min(Math.max(head, 0), doc.content.size));
+  if ($head.depth >= 1) {
+    const lineStart = $head.before(1);
+    decos.push(Decoration.node(lineStart, lineStart + $head.node(1).nodeSize, { class: 'currentLine' }));
+  }
+
   // Ruby markup: hidden (`delim`, font-size 0, caret-addressable) or shown
   // (`delimShown`, gray) per the policy.
   for (const leaf of leaves) {
