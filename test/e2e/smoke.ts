@@ -161,6 +161,9 @@ try {
 
   // --- Dirty state ---
   await page.click('#editor-content');
+  // Let the click's selection sync to the editor before typing — in the hidden
+  // smoke window the contenteditable selection settles a tick after the click.
+  await page.waitForTimeout(60);
   await page.keyboard.insertText('や');
   await page.waitForTimeout(100);
   assert.equal(await page.title(), '● save-as.txt — ved');
