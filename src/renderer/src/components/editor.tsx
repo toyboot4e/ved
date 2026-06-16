@@ -97,84 +97,84 @@ const HORIZ_ARROWS: Record<string, ArrowAct> = {
 
 /**
  * Move the caret by a visual line, crossing paragraph boundaries when
- * `Selection.modify('line')` falls short. Two failure modes to handle:
- *
- * 1. Modify is a no-op (selection unchanged) — usually because the caret is
- *    already at the document edge.
- * 2. Modify "moves" but only within the current line — Chromium falls back
- *    to the line's end/start when there's no next line in the requested
- *    direction (e.g. ArrowLeft in VRL from body @0 of a single-line doc
- *    lands on the trailing edge instead of staying put). The cursor looks
- *    like it jumped to the document end.
- *
- * In both cases, hop to the next/previous paragraph; if none, revert.
+ * `Selection.modify('line')` falls short. In vertical-rl, modify is
+ * unreliable across paragraphs (lands at the FAR end of the target column
+ * instead of preserving the inline-axis position), so we cross paragraphs
+ * ourselves: take the caret's current inline-axis coordinate and find the
+ * matching text-point inside the adjacent paragraph's column using
+ * `caretPositionFromPoint`. In horizontal text and within a single
+ * paragraph (line wrap), modify is reliable and we use its result.
  */
 const moveCaretByLine = (alter: 'move' | 'extend', dir: 'forward' | 'backward'): void => {
   requestAnimationFrame(() => {
     const sel = window.getSelection();
     if (!sel || sel.rangeCount === 0) return;
     const before = sel.getRangeAt(0).cloneRange();
+    const beforeRect = before.getBoundingClientRect();
     sel.modify(alter, dir, 'line');
     const after = sel.getRangeAt(0);
 
-    // Did modify actually move the cursor to a different visual line?
-    // Three failure modes that all read as "stuck at the paragraph edge":
-    //   - the selection is unchanged (cursor was already at document edge);
-    //   - the range startContainer is now an ELEMENT (the <p> or root) —
-    //     modify "fell back" to an element-point at the paragraph boundary
-    //     (the element-point-normalizer rewrites this to a text-point
-    //     later, which the user perceives as a jump to end-of-line);
-    //   - the range is still inside the same paragraph but the BLOCK-axis
-    //     coordinate didn't change (= same visual line — Chromium's
-    //     "fall back to line end when there is no next line" quirk).
     const sameSelection =
       before.startContainer === after.startContainer &&
       before.startOffset === after.startOffset &&
       before.endContainer === after.endContainer &&
       before.endOffset === after.endOffset;
     const landedOnElement = after.startContainer.nodeType === Node.ELEMENT_NODE;
-    let sameLine = false;
-    if (!sameSelection && !landedOnElement) {
-      const root = document.getElementById('editor-content');
-      const cs = root ? getComputedStyle(root) : null;
-      const isVertical = cs?.writingMode.startsWith('vertical') ?? false;
-      const beforeR = before.getBoundingClientRect();
-      const afterR = after.getBoundingClientRect();
-      const blockDelta = isVertical ? Math.abs(afterR.left - beforeR.left) : Math.abs(afterR.top - beforeR.top);
-      sameLine = blockDelta < 1;
-    }
-    if (!sameSelection && !landedOnElement && !sameLine) return; // real line move
 
-    // Stuck. Hop to the next/previous paragraph, or revert if there isn't
-    // one (otherwise the cursor would be left at Chromium's end-of-line
-    // fallback, which reads as "jumped to end of document").
-    const focus = sel.focusNode;
-    const p =
-      focus && focus.nodeType === Node.TEXT_NODE
-        ? focus.parentElement?.closest('p')
-        : (focus as Element | null)?.closest('p');
-    const sibling =
-      dir === 'forward'
-        ? (p?.nextElementSibling as HTMLElement | null)
-        : (p?.previousElementSibling as HTMLElement | null);
-    if (!sibling || sibling.tagName !== 'P') {
-      // Revert: re-collapse to where we started so the caret doesn't jump.
+    const root = document.getElementById('editor-content');
+    const cs = root ? getComputedStyle(root) : null;
+    const isVertical = cs?.writingMode.startsWith('vertical') ?? false;
+
+    const closestP = (n: Node | null): HTMLParagraphElement | null => {
+      if (!n) return null;
+      const el = n.nodeType === Node.TEXT_NODE ? n.parentElement : (n as Element);
+      return (el?.closest('p') as HTMLParagraphElement | null) ?? null;
+    };
+    const beforeP = closestP(before.startContainer);
+    const afterP = closestP(after.startContainer);
+
+    // If modify reliably moved within the SAME paragraph (line wrap inside
+    // a long paragraph, or no movement at all because we were at an edge —
+    // both fine), accept its result. We only override when modify crossed
+    // paragraphs (where Chromium drops the cursor at the wrong inline
+    // coordinate) or got stuck on an element-point fallback.
+    const stayedInSameP = !sameSelection && !landedOnElement && beforeP === afterP;
+    if (stayedInSameP) return;
+
+    // Cross-paragraph (or stuck). Find the target paragraph: in writing
+    // direction order, the adjacent <p>.
+    const targetP = dir === 'forward' ? beforeP?.nextElementSibling : beforeP?.previousElementSibling;
+    if (!targetP || targetP.tagName !== 'P') {
+      // At the document edge — revert so the caret doesn't sit at
+      // Chromium's end-of-line fallback (reads as "jumped to end of doc").
       sel.collapse(before.startContainer, before.startOffset);
       return;
     }
-    // Land at the first / last editable text in the target paragraph; the
-    // walker skips the read-only dup <rt> annotation.
-    const target = dir === 'forward' ? firstEditableText(sibling) : lastEditableText(sibling);
+
+    // Use the BEFORE rect's inline-axis coordinate (y in VRL, x in
+    // horizontal) and the TARGET column's block-axis center to caret-hit
+    // the y-matched position in that column. This is the line-by-line
+    // movement the user expects (preserves the column position).
+    const targetR = (targetP as HTMLElement).getBoundingClientRect();
+    const inlineCoord = isVertical ? beforeRect.top + beforeRect.height / 2 : beforeRect.left + beforeRect.width / 2;
+    const blockCoord = isVertical ? targetR.left + targetR.width / 2 : targetR.top + targetR.height / 2;
+    const hitX = isVertical ? blockCoord : inlineCoord;
+    const hitY = isVertical ? inlineCoord : blockCoord;
+    const pos = document.caretPositionFromPoint(hitX, hitY);
+    let target: Node | null = pos?.offsetNode ?? null;
+    let offset = pos?.offset ?? 0;
+    // Fall back to the target paragraph's near edge if the hit-test missed
+    // (e.g. point falls outside the column box).
+    if (!target || !targetP.contains(target)) {
+      target = dir === 'forward' ? firstEditableText(targetP) : lastEditableText(targetP);
+      offset = target && dir === 'backward' ? (target.textContent ?? '').length : 0;
+    }
     if (!target) {
       sel.collapse(before.startContainer, before.startOffset);
       return;
     }
-    const offset = dir === 'forward' ? 0 : (target.textContent ?? '').length;
-    if (alter === 'extend') {
-      sel.extend(target, offset);
-    } else {
-      sel.collapse(target, offset);
-    }
+    if (alter === 'extend') sel.extend(target, offset);
+    else sel.collapse(target, offset);
   });
 };
 

@@ -217,6 +217,64 @@ try {
     `ArrowLeft from body @${beforeArrow.off} must not change offset (got @${afterArrow.off})`,
   );
   step('ArrowLeft inside ruby in a single-line doc keeps the caret put');
+
+  // --- Regression: ArrowLeft across paragraphs preserves the inline coord
+  //
+  // In multi-paragraph VRL, the original bug landed the cursor at the end
+  // of the next paragraph (= end of doc when it was the last). The fix
+  // preserves the inline-axis coordinate (y in VRL): the cursor lands at
+  // the y-matched position in the adjacent column.
+  await page.evaluate(() => getSelection()!.selectAllChildren(document.getElementById('editor-content')!));
+  await page.keyboard.press('Backspace');
+  await page.waitForTimeout(100);
+  await page.keyboard.insertText('first paragraph');
+  await page.keyboard.press('Enter');
+  await page.keyboard.insertText('|ルビ(ruby)');
+  await page.keyboard.press('Enter');
+  await page.keyboard.insertText('third paragraph long');
+  await page.waitForTimeout(300);
+
+  // Click into P2's ruby body around the middle (between ル and ビ).
+  const p2BodyRect = await page.evaluate(() => {
+    const ruby = document.querySelector('[class*="rubyWrap"]') as HTMLElement;
+    const body = Array.from(ruby.querySelectorAll(':scope > [data-lexical-text]')).find(
+      (s) => !(s as HTMLElement).className.includes('delim') && !(s as HTMLElement).className.includes('rt'),
+    ) as HTMLElement;
+    return body.getBoundingClientRect();
+  });
+  await page.mouse.click(p2BodyRect.left + p2BodyRect.width / 2, p2BodyRect.top + p2BodyRect.height / 2);
+  await page.waitForTimeout(300);
+  const beforeY = await page.evaluate(() => getSelection()!.getRangeAt(0).getBoundingClientRect().y);
+  await page.keyboard.press('ArrowLeft');
+  await page.waitForTimeout(300);
+  const afterCross = await page.evaluate(() => {
+    const sel = getSelection()!;
+    const f = sel.focusNode;
+    const r = sel.getRangeAt(0).getBoundingClientRect();
+    return {
+      text: f?.nodeType === Node.TEXT_NODE ? (f as Text).data : (f as HTMLElement)?.tagName,
+      off: sel.focusOffset,
+      y: r.y,
+    };
+  });
+  // The bug landed the caret at the end of P3 (= end of doc). The fix
+  // lands it at the Y-MATCHED position in P3.
+  assert.equal(
+    afterCross.text,
+    'third paragraph long',
+    `ArrowLeft from P2 body should cross to P3, got "${afterCross.text}"`,
+  );
+  // y should be within ~one line-pitch of before.
+  assert.ok(
+    Math.abs(afterCross.y - beforeY) < 24,
+    `ArrowLeft must preserve inline-axis (y) within a line-pitch: before y=${beforeY}, after y=${afterCross.y}`,
+  );
+  // And NOT at the @end of P3 (that was the bug).
+  assert.ok(
+    afterCross.off < 'third paragraph long'.length,
+    `ArrowLeft must not land at @end of P3 (was the original bug); got @${afterCross.off}`,
+  );
+  step('ArrowLeft across paragraphs preserves the inline-axis coordinate');
 } catch (e) {
   fail(e instanceof Error ? e.message : String(e));
 } finally {
