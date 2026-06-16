@@ -133,92 +133,48 @@ const moveCaretByLine = (alter: 'move' | 'extend', dir: 'forward' | 'backward'):
       before.endContainer === after.endContainer &&
       before.endOffset === after.endOffset;
     const landedOnElement = after.startContainer.nodeType === Node.ELEMENT_NODE;
-    const root = document.getElementById('editor-content');
-    const cs = root ? getComputedStyle(root) : null;
-    const isVertical = cs?.writingMode.startsWith('vertical') ?? false;
     let sameLine = false;
     if (!sameSelection && !landedOnElement) {
+      const root = document.getElementById('editor-content');
+      const cs = root ? getComputedStyle(root) : null;
+      const isVertical = cs?.writingMode.startsWith('vertical') ?? false;
       const beforeR = before.getBoundingClientRect();
       const afterR = after.getBoundingClientRect();
       const blockDelta = isVertical ? Math.abs(afterR.left - beforeR.left) : Math.abs(afterR.top - beforeR.top);
       sameLine = blockDelta < 1;
     }
-    const closestP = (n: Node | null): HTMLParagraphElement | null => {
-      if (!n) return null;
-      const el = n.nodeType === Node.TEXT_NODE ? n.parentElement : (n as Element);
-      return (el?.closest('p') as HTMLParagraphElement | null) ?? null;
-    };
-    const beforeP = closestP(before.startContainer);
+    if (!sameSelection && !landedOnElement && !sameLine) return; // real line move
 
-    // Real line move (different block-axis coord, text-point landing). One
-    // more failure mode to override even in this case: in vertical-rl,
-    // `modify('line', dir)` can land on the FAR END of an adjacent
-    // paragraph instead of the inline-axis-matched position. The user sees
-    // "ArrowLeft jumps to end of document". Detect: forward landed at
-    // @end of next paragraph's last text, or backward at @0 of previous
-    // paragraph's first text — that's the fallback. Reposition to the
-    // paragraph's NEAR edge so the cursor lands at the intuitive spot.
-    if (!sameSelection && !landedOnElement && !sameLine) {
-      if (isVertical) {
-        const afterP = closestP(after.startContainer);
-        if (afterP && afterP !== beforeP) {
-          const lastText = lastEditableText(afterP);
-          const firstText = firstEditableText(afterP);
-          const atFarEnd =
-            dir === 'forward' &&
-            after.startContainer === lastText &&
-            after.startOffset === (lastText?.textContent?.length ?? 0);
-          const atFarStart = dir === 'backward' && after.startContainer === firstText && after.startOffset === 0;
-          if (atFarEnd && firstText) {
-            if (alter === 'extend') sel.extend(firstText, 0);
-            else sel.collapse(firstText, 0);
-          } else if (atFarStart && lastText) {
-            const end = lastText.textContent?.length ?? 0;
-            if (alter === 'extend') sel.extend(lastText, end);
-            else sel.collapse(lastText, end);
-          }
-        }
-      }
-      return;
-    }
-
-    // Stuck OR landed on an element-point fallback. Figure out the target
-    // paragraph:
-    //   - landedOnElement: modify dropped on a <p>'s element-point — that
-    //     element-point's paragraph IS the target (Chromium's hint that
-    //     it tried to cross the boundary but couldn't pick a text-point).
-    //   - otherwise: hop to the structural next/previous paragraph
-    //     ourselves; modify didn't get anywhere useful.
-    let targetP: HTMLParagraphElement | null = null;
-    if (landedOnElement) {
-      const el = after.startContainer as Element;
-      const p = el.tagName === 'P' ? (el as HTMLParagraphElement) : (el.closest('p') as HTMLParagraphElement | null);
-      if (p && p !== beforeP) targetP = p;
-    }
-    if (!targetP) {
-      const sibling =
-        dir === 'forward'
-          ? (beforeP?.nextElementSibling as HTMLElement | null)
-          : (beforeP?.previousElementSibling as HTMLElement | null);
-      if (sibling?.tagName === 'P') targetP = sibling as HTMLParagraphElement;
-    }
-    if (!targetP) {
-      // Truly stuck — at the document edge. Revert so the caret doesn't
-      // sit at Chromium's end-of-line fallback (which reads as "jumped to
-      // end of document").
+    // Stuck. Hop to the next/previous paragraph, or revert if there isn't
+    // one (otherwise the cursor would be left at Chromium's end-of-line
+    // fallback, which reads as "jumped to end of document").
+    const focus = sel.focusNode;
+    const p =
+      focus && focus.nodeType === Node.TEXT_NODE
+        ? focus.parentElement?.closest('p')
+        : (focus as Element | null)?.closest('p');
+    const sibling =
+      dir === 'forward'
+        ? (p?.nextElementSibling as HTMLElement | null)
+        : (p?.previousElementSibling as HTMLElement | null);
+    if (!sibling || sibling.tagName !== 'P') {
+      // Revert: re-collapse to where we started so the caret doesn't jump.
       sel.collapse(before.startContainer, before.startOffset);
       return;
     }
     // Land at the first / last editable text in the target paragraph; the
     // walker skips the read-only dup <rt> annotation.
-    const target = dir === 'forward' ? firstEditableText(targetP) : lastEditableText(targetP);
+    const target = dir === 'forward' ? firstEditableText(sibling) : lastEditableText(sibling);
     if (!target) {
       sel.collapse(before.startContainer, before.startOffset);
       return;
     }
     const offset = dir === 'forward' ? 0 : (target.textContent ?? '').length;
-    if (alter === 'extend') sel.extend(target, offset);
-    else sel.collapse(target, offset);
+    if (alter === 'extend') {
+      sel.extend(target, offset);
+    } else {
+      sel.collapse(target, offset);
+    }
   });
 };
 
