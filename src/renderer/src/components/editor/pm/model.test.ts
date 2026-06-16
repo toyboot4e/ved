@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { docFromText, offsetToPos, posToOffset, serialize } from './model';
+import { buildPosMap, docFromText, offsetToPos, posToOffset, serialize } from './model';
 
 describe('ProseMirror identity model', () => {
   const CASES = [
@@ -34,17 +34,24 @@ describe('ProseMirror identity model', () => {
     }
   });
 
-  it('maps a ruby outer boundary OUTSIDE the node (caret/IME sits before/after, not inside)', () => {
-    // |漢(かん) is a single ruby node; offset 0 (before it) must be the
-    // paragraph-content position BEFORE the node, not its interior.
+  it('maps a doc-start ruby boundary to the inside edge (a real caret rect, not the degenerate element boundary)', () => {
+    // |漢(かん) is a single ruby node with no text before it. Offset 0 must map
+    // to a TEXT position inside the ruby (the leading `|` leaf), NOT the <p>
+    // element boundary (pos 1) — that boundary has a degenerate caret rect, so
+    // the IME box would jump to the viewport corner. Typing there still lands
+    // before the ruby (structure repair re-parses).
     const doc = docFromText('|漢(かん)');
-    expect(offsetToPos(doc, 0)).toBe(1); // <p> opens at 0; content (before ruby) at 1
-    expect(doc.resolve(offsetToPos(doc, 0)).parent.type.name).toBe('paragraph'); // outside the ruby
-    // After the ruby (offset = its plain length) is also outside.
-    const end = '|漢(かん)'.length;
-    expect(doc.resolve(offsetToPos(doc, end)).parent.type.name).toBe('paragraph');
-    // A strictly interior offset resolves inside the ruby node.
-    expect(doc.resolve(offsetToPos(doc, 2)).parent.type.name).toBe('ruby');
+    const p0 = offsetToPos(doc, 0);
+    expect(doc.resolve(p0).parent.type.name).toBe('ruby'); // inside, on a text leaf
+    expect(doc.resolve(p0).textOffset).toBe(0); // at the start of the `|` leaf
+  });
+
+  it('buildPosMap equals offsetToPos for every offset (the decoration fast path)', () => {
+    for (const t of CASES) {
+      const doc = docFromText(t);
+      const map = buildPosMap(doc);
+      for (let o = 0; o <= t.length; o++) expect(map[o]).toBe(offsetToPos(doc, o));
+    }
   });
 
   it('maps offsets across a ruby node boundary', () => {

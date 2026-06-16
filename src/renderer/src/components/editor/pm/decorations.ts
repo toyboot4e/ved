@@ -6,7 +6,7 @@
 import type { Node as PMNode } from 'prosemirror-model';
 import { Decoration, DecorationSet } from 'prosemirror-view';
 import { type Appear, activeRuby, docLeaves, isHidden, lineOf } from './leaves';
-import { offsetToPos, posToOffset, serialize } from './model';
+import { buildPosMap, posToOffset, serialize } from './model';
 
 /** Each inline format = one rule. Markers are hidden (`syn`), inner text gets
  *  the class. Add a format by adding a line. */
@@ -33,7 +33,8 @@ export const buildDecorations = (doc: PMNode, policy: Appear, head: number): Dec
   }
 
   const decos: Decoration[] = [];
-  const at = (o: number) => offsetToPos(doc, o);
+  const posMap = buildPosMap(doc);
+  const at = (o: number) => posMap[o]!;
 
   // Ruby markup: hidden (`delim`, font-size 0, caret-addressable) or shown
   // (`delimShown`, gray) per the policy.

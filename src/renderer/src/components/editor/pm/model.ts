@@ -66,6 +66,33 @@ export const serialize = (doc: PMNode): string => doc.textBetween(0, doc.content
  *  before `pos`, with `\n` between paragraphs). */
 export const posToOffset = (doc: PMNode, pos: number): number => doc.textBetween(0, pos, '\n').length;
 
+/** The O(n) batch form of `offsetToPos`: an array where `map[o]` is the PM
+ *  position for plain offset `o`, for the whole document. Built once so the
+ *  decoration pass is O(n) rather than O(n²). MUST equal `offsetToPos(o)` for
+ *  every `o` (asserted in model.test). Like `offsetToPos`, the first child to
+ *  cover a boundary offset wins (so a boundary with text on the outside maps
+ *  there; a ruby with no outside text maps to its inside edge). */
+export const buildPosMap = (doc: PMNode): number[] => {
+  const map: number[] = [];
+  let off = 0;
+  doc.forEach((para, paraPos) => {
+    let childPos = paraPos + 1;
+    para.forEach((child) => {
+      const len = child.textContent.length;
+      const shift = child.type.name === 'ruby' ? 1 : 0;
+      for (let i = 0; i <= len; i++) {
+        if (i === 0 && map[off] !== undefined) continue; // boundary set by the previous child
+        map[off + i] = childPos + shift + i;
+      }
+      off += len;
+      childPos += child.nodeSize;
+    });
+    if (map[off] === undefined) map[off] = childPos; // empty paragraph's caret
+    off += 1; // the newline between paragraphs (its caret = the last child's end)
+  });
+  return map;
+};
+
 /** ProseMirror position for a plain document offset (the inverse of
  *  `posToOffset`), walking paragraphs and into ruby nodes. */
 export const offsetToPos = (doc: PMNode, offset: number): number => {
@@ -83,12 +110,15 @@ export const offsetToPos = (doc: PMNode, offset: number): number => {
         if (remaining <= consumed + len) {
           const within = remaining - consumed;
           if (child.type.name !== 'ruby') return inner + within;
-          // A ruby's OUTER boundaries map OUTSIDE the node (so a caret there
-          // — and IME composition / typing — sits before/after the ruby, not
-          // inside it); only a strictly-interior offset enters the node.
-          if (within === 0) return inner; // before the ruby
-          if (within >= len) return inner + child.nodeSize; // after the ruby
-          return inner + 1 + within; // strictly inside
+          // Map a ruby boundary to the text position just INSIDE the node (the
+          // edge `|` / `)` leaf), NOT the element boundary before/after it. The
+          // element boundary has a DEGENERATE caret rect (no adjacent text), so
+          // the native caret — and the IME composition box — would land at the
+          // viewport's top-left. The inside edge has a real rect; typing there
+          // lands at the ruby's edge and the structure-repair re-parse moves
+          // the new text out to its correct place. (A boundary that has visible
+          // text on the outside is resolved by that text node, before this.)
+          return inner + 1 + within;
         }
         consumed += len;
         inner += child.nodeSize;
