@@ -154,21 +154,21 @@ at a ruby boundary. The fixes are in `appearance.ts`,
   boundary-text focus to the next/previous sibling (body or rt @ same
   pixel), where the font is 1em. The reroute is skipped at the ruby's
   OUTSIDE edge (no sibling).
-- **OUTSIDE positions of a paragraph-edge ruby have no body to reroute to.**
-  At the leading delim @0 of a first-child ruby (and trailing delim @end
-  of a last-child ruby), the native caret really does sit on the small-
-  font delim and there is no sibling to redirect to. `appearance.ts` flags
-  these positions (plus the INSIDE-side partners of the boundary pair) by
-  setting `.rubyLeadActive` / `.rubyTrailActive` on the ruby element;
-  `ruby.module.scss` hides the native caret (`caret-color: transparent`)
-  on those positions and renders an absolutely-positioned 1em pseudo-
-  element as an overlay caret. Absolute positioning means **zero layout
-  effect** — an earlier fix expanded the delim's font from $markup-size to
-  1em, which shifted the body forward and back as the caret entered and
-  left the position; the user found that jarring. Anchoring the overlay on
-  the `<ruby>` element (not the delim) keeps it inside the column box —
-  the delim's text is centered within the column, so an overlay anchored
-  on the delim extended past the column edge.
+- **The overlay caret covers BOTH halves of every ruby boundary pair.** At
+  any ruby boundary (paragraph-edge or mid-paragraph), `appearance.ts`
+  flags BOTH the OUTSIDE and INSIDE positions by setting `.rubyLeadActive`
+  / `.rubyTrailActive` on the ruby element; `ruby.module.scss` hides the
+  native caret (`caret-color: transparent`) on those positions and renders
+  an absolutely-positioned 1em pseudo-element as an overlay caret. Absolute
+  positioning means **zero layout effect** — an earlier fix expanded the
+  delim's font from $markup-size to 1em, which shifted the body forward
+  and back as the caret entered and left the position; the user found that
+  jarring. Anchoring the overlay on the `<ruby>` element (not the delim)
+  keeps it inside the column box — the delim's text is centered within the
+  column, so an overlay anchored on the delim extended past the column
+  edge. (The OUTSIDE positions of a mid-paragraph ruby focus on adjacent
+  text *outside* the ruby — no ruby ancestor, no overlay; the adjacent
+  text's 1em font gives the native caret a normal size there.)
 
 The four positions are tested end-to-end (`test/e2e/caret-boundary.ts`)
 plus the boundary classification ($computeAppearKeys) in

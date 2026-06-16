@@ -102,11 +102,14 @@ export const $computeAppearKeys = (anchor: PointType): AppearKeys => {
   if (!ruby) return { ...EMPTY, paraKey };
 
   const b = $boundaryAt(ruby, node, anchor.offset);
-  // The overlay caret fires at first-child rubies for the leading boundary
-  // and last-child rubies for the trailing boundary — mid-paragraph rubies
-  // get the native caret (the adjacent text node has a normal 1em font).
-  const rubyLeadKey = b.leading && ruby.getPreviousSibling() === null ? ruby.getKey() : null;
-  const rubyTrailKey = b.trailing && ruby.getNextSibling() === null ? ruby.getKey() : null;
+  // The overlay caret fires at EVERY ruby boundary, not just paragraph-edge
+  // rubies. Originally gated on first/last-child to limit layout effects,
+  // but the overlay is absolutely positioned (zero layout cost) and the
+  // user wants the same visual at mid-paragraph boundaries as at paragraph
+  // edges. (Mid-paragraph OUTSIDE positions land on adjacent text nodes
+  // outside the ruby, so they're unaffected: no ruby ancestor → no flag.)
+  const rubyLeadKey = b.leading ? ruby.getKey() : null;
+  const rubyTrailKey = b.trailing ? ruby.getKey() : null;
   // The .rubyActive "inside the rubied text" highlight is off only at the
   // OUTSIDE positions — that no-highlight cue is what distinguishes the
   // boundary pair visually.

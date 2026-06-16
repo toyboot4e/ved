@@ -132,10 +132,14 @@ describe('appearance / ruby boundary', () => {
       expect(at(editor, leadDelim, 0).rubyLeadKey).toBe(ruby.getKey());
     });
 
-    it('is null at leading delim @0 when the ruby is NOT the first child', () => {
+    it('also fires for mid-paragraph rubies (overlay is zero layout cost)', () => {
+      // Even with text "字は" preceding the ruby, the leading boundary fires
+      // the overlay class — the absolutely-positioned pseudo-element costs
+      // no layout, and visual consistency across all boundaries matters more
+      // than the original first/last-child gate.
       const editor = makeEditor('字は|漢(かん)');
-      const { leadDelim } = layout(editor);
-      expect(at(editor, leadDelim, 0).rubyLeadKey).toBeNull();
+      const { leadDelim, ruby } = layout(editor);
+      expect(at(editor, leadDelim, 0).rubyLeadKey).toBe(ruby.getKey());
     });
 
     it('is the ruby key at leading delim @end (the INSIDE-left pair partner)', () => {
@@ -165,11 +169,12 @@ describe('appearance / ruby boundary', () => {
       expect(at(editor, trailDelim, trailDelimLen).rubyTrailKey).toBe(ruby.getKey());
     });
 
-    it('is null at trailing delim @end when the ruby is NOT the last child', () => {
-      // `|漢(かん)字` — text node `字` follows the ruby.
+    it('also fires for mid-paragraph rubies', () => {
+      // `|漢(かん)字` — text node `字` follows the ruby. The trailing
+      // boundary still gets the overlay; the gate was removed.
       const editor = makeEditor('|漢(かん)字');
-      const { trailDelim, trailDelimLen } = layout(editor);
-      expect(at(editor, trailDelim, trailDelimLen).rubyTrailKey).toBeNull();
+      const { trailDelim, trailDelimLen, ruby } = layout(editor);
+      expect(at(editor, trailDelim, trailDelimLen).rubyTrailKey).toBe(ruby.getKey());
     });
 
     it('is the ruby key at body @end of a last-child ruby (INSIDE-right pair)', () => {

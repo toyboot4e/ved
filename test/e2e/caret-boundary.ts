@@ -133,29 +133,46 @@ try {
   }
   step('no layout shift across the four boundary positions');
 
-  // --- Mid-paragraph ruby: NO overlay (the adjacent text has 1em font) -
-  // Insert text after the ruby so it's no longer the last child.
+  // --- Mid-paragraph ruby: overlay still fires at INSIDE boundaries ----
+  // The overlay is absolutely positioned (zero layout cost), so it's worth
+  // the visual consistency to fire on every ruby boundary, not just
+  // paragraph-edge ones. OUTSIDE positions of a mid-paragraph ruby focus on
+  // adjacent text outside the ruby — those keep the native caret.
   await page.evaluate(() => getSelection()!.selectAllChildren(document.getElementById('editor-content')!));
   await page.keyboard.press('Backspace');
   await page.waitForTimeout(100);
   await page.keyboard.insertText('あ|ルビ(ruby)い');
   await page.waitForTimeout(200);
 
-  // ArrowDown to the trailing-outside position of the (now-mid-paragraph) ruby.
+  // Place caret at body @0 of the (mid-paragraph) ruby — INSIDE-left.
+  await page.evaluate(() => {
+    const ruby = document.querySelector('[class*="rubyWrap"]') as HTMLElement;
+    const spans = Array.from(ruby.querySelectorAll(':scope > [data-lexical-text]'));
+    const body = spans.find(
+      (s) => !(s as HTMLElement).className.includes('delim') && !(s as HTMLElement).className.includes('rt'),
+    ) as HTMLElement;
+    getSelection()!.collapse(body.firstChild as Text, 0);
+  });
+  await page.waitForTimeout(200);
+  const fMidIn = await rubyFlags();
+  assert.ok(fMidIn.hasLeadActive, `mid-paragraph INSIDE-left: rubyLeadActive ON (got "${fMidIn.classes}")`);
+  step('mid-paragraph INSIDE-left: overlay fires');
+
+  // OUTSIDE-left (focus on the preceding text "あ") keeps the native caret —
+  // no ruby ancestor, no overlay.
   await page.evaluate(() => {
     const root = document.getElementById('editor-content')!;
-    const first = document.createTreeWalker(root, NodeFilter.SHOW_TEXT).nextNode();
-    getSelection()!.collapse(first, 0);
+    const aText = document.createTreeWalker(root, NodeFilter.SHOW_TEXT).nextNode() as Text;
+    getSelection()!.collapse(aText, aText.length); // "あ" @end (OUTSIDE-left of ruby)
   });
-  // walk forward: 'あ'@0, 'あ'@1, |@0 (OUTSIDE-left of ruby — but NOT first-child),
-  // body@0, body@1, body@end, )@end, … In Rich mode the boundary-pair stops on
-  // both sides of the ruby; 6 presses lands past the trailing edge.
-  for (let i = 0; i < 6; i++) await page.keyboard.press('ArrowDown');
-  await page.waitForTimeout(150);
-  const fMid = await rubyFlags();
-  assert.ok(!fMid.hasLeadActive, `mid-paragraph: rubyLeadActive OFF (got "${fMid.classes}")`);
-  assert.ok(!fMid.hasTrailActive, `mid-paragraph: rubyTrailActive OFF (got "${fMid.classes}")`);
-  step('mid-paragraph ruby has no overlay (native caret on adjacent text)');
+  await page.waitForTimeout(200);
+  const fMidOut = await rubyFlags();
+  assert.ok(
+    !fMidOut.hasLeadActive,
+    `mid-paragraph OUTSIDE-left (focus on prev text): rubyLeadActive OFF (got "${fMidOut.classes}")`,
+  );
+  assert.ok(!fMidOut.hasTrailActive, `mid-paragraph OUTSIDE-left: rubyTrailActive OFF (got "${fMidOut.classes}")`);
+  step('mid-paragraph OUTSIDE position has no overlay (native caret on adjacent text)');
 } catch (e) {
   fail(e instanceof Error ? e.message : String(e));
 } finally {
