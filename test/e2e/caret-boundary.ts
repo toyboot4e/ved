@@ -173,6 +173,50 @@ try {
   );
   assert.ok(!fMidOut.hasTrailActive, `mid-paragraph OUTSIDE-left: rubyTrailActive OFF (got "${fMidOut.classes}")`);
   step('mid-paragraph OUTSIDE position has no overlay (native caret on adjacent text)');
+
+  // --- Regression: ArrowLeft inside rubied text must not jump to doc end -
+  // In vertical-rl, ArrowLeft = line forward. Single-line documents have no
+  // next line; Chromium's `Selection.modify('line')` falls back to end-of-
+  // line, which placed the caret on the trailing-edge delim — looked like a
+  // jump to the document end. moveCaretByLine now detects that fallback.
+  await page.evaluate(() => getSelection()!.selectAllChildren(document.getElementById('editor-content')!));
+  await page.keyboard.press('Backspace');
+  await page.waitForTimeout(100);
+  await page.keyboard.insertText('|ルビ(ruby)');
+  await page.waitForTimeout(200);
+  // Put cursor at body @1 (between ル and ビ) — well inside the body.
+  await page.evaluate(() => {
+    const ruby = document.querySelector('[class*="rubyWrap"]') as HTMLElement;
+    const body = Array.from(ruby.querySelectorAll(':scope > [data-lexical-text]')).find(
+      (s) => !(s as HTMLElement).className.includes('delim') && !(s as HTMLElement).className.includes('rt'),
+    ) as HTMLElement;
+    getSelection()!.collapse(body.firstChild as Text, 1);
+  });
+  await page.waitForTimeout(300);
+  const beforeArrow = await page.evaluate(() => {
+    const f = getSelection()!.focusNode;
+    return { node: (f as Text).data, off: getSelection()!.focusOffset };
+  });
+  await page.keyboard.press('ArrowLeft');
+  await page.waitForTimeout(300);
+  const afterArrow = await page.evaluate(() => {
+    const f = getSelection()!.focusNode;
+    return {
+      node: f?.nodeType === Node.TEXT_NODE ? (f as Text).data : (f as HTMLElement)?.tagName,
+      off: getSelection()!.focusOffset,
+    };
+  });
+  assert.equal(
+    afterArrow.node,
+    beforeArrow.node,
+    `ArrowLeft from body @${beforeArrow.off} must not jump: stayed on "${afterArrow.node}", was "${beforeArrow.node}"`,
+  );
+  assert.equal(
+    afterArrow.off,
+    beforeArrow.off,
+    `ArrowLeft from body @${beforeArrow.off} must not change offset (got @${afterArrow.off})`,
+  );
+  step('ArrowLeft inside ruby in a single-line doc keeps the caret put');
 } catch (e) {
   fail(e instanceof Error ? e.message : String(e));
 } finally {

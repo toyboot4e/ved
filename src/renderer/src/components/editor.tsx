@@ -96,10 +96,18 @@ const HORIZ_ARROWS: Record<string, ArrowAct> = {
 };
 
 /**
- * Move the caret by a visual line, crossing paragraph boundaries when the
- * browser's `Selection.modify('line')` is stuck (it confines itself to the
- * current paragraph). After the modify, if the selection didn't change, jump
- * to the next/previous paragraph's edge.
+ * Move the caret by a visual line, crossing paragraph boundaries when
+ * `Selection.modify('line')` falls short. Two failure modes to handle:
+ *
+ * 1. Modify is a no-op (selection unchanged) — usually because the caret is
+ *    already at the document edge.
+ * 2. Modify "moves" but only within the current line — Chromium falls back
+ *    to the line's end/start when there's no next line in the requested
+ *    direction (e.g. ArrowLeft in VRL from body @0 of a single-line doc
+ *    lands on the trailing edge instead of staying put). The cursor looks
+ *    like it jumped to the document end.
+ *
+ * In both cases, hop to the next/previous paragraph; if none, revert.
  */
 const moveCaretByLine = (alter: 'move' | 'extend', dir: 'forward' | 'backward'): void => {
   requestAnimationFrame(() => {
@@ -108,34 +116,64 @@ const moveCaretByLine = (alter: 'move' | 'extend', dir: 'forward' | 'backward'):
     const before = sel.getRangeAt(0).cloneRange();
     sel.modify(alter, dir, 'line');
     const after = sel.getRangeAt(0);
-    if (
+
+    // Did modify actually move the cursor to a different visual line?
+    // Three failure modes that all read as "stuck at the paragraph edge":
+    //   - the selection is unchanged (cursor was already at document edge);
+    //   - the range startContainer is now an ELEMENT (the <p> or root) —
+    //     modify "fell back" to an element-point at the paragraph boundary
+    //     (the element-point-normalizer rewrites this to a text-point
+    //     later, which the user perceives as a jump to end-of-line);
+    //   - the range is still inside the same paragraph but the BLOCK-axis
+    //     coordinate didn't change (= same visual line — Chromium's
+    //     "fall back to line end when there is no next line" quirk).
+    const sameSelection =
       before.startContainer === after.startContainer &&
       before.startOffset === after.startOffset &&
       before.endContainer === after.endContainer &&
-      before.endOffset === after.endOffset
-    ) {
-      // Stuck at a paragraph boundary — hop to the next/previous paragraph.
-      const focus = sel.focusNode;
-      const p =
-        focus && focus.nodeType === Node.TEXT_NODE
-          ? focus.parentElement?.closest('p')
-          : (focus as Element | null)?.closest('p');
-      if (!p) return;
-      const sibling =
-        dir === 'forward'
-          ? (p.nextElementSibling as HTMLElement | null)
-          : (p.previousElementSibling as HTMLElement | null);
-      if (!sibling || sibling.tagName !== 'P') return;
-      // Land at the first / last editable text in the target paragraph; the
-      // walker skips the read-only dup <rt> annotation.
-      const target = dir === 'forward' ? firstEditableText(sibling) : lastEditableText(sibling);
-      if (!target) return;
-      const offset = dir === 'forward' ? 0 : (target.textContent ?? '').length;
-      if (alter === 'extend') {
-        sel.extend(target, offset);
-      } else {
-        sel.collapse(target, offset);
-      }
+      before.endOffset === after.endOffset;
+    const landedOnElement = after.startContainer.nodeType === Node.ELEMENT_NODE;
+    let sameLine = false;
+    if (!sameSelection && !landedOnElement) {
+      const root = document.getElementById('editor-content');
+      const cs = root ? getComputedStyle(root) : null;
+      const isVertical = cs?.writingMode.startsWith('vertical') ?? false;
+      const beforeR = before.getBoundingClientRect();
+      const afterR = after.getBoundingClientRect();
+      const blockDelta = isVertical ? Math.abs(afterR.left - beforeR.left) : Math.abs(afterR.top - beforeR.top);
+      sameLine = blockDelta < 1;
+    }
+    if (!sameSelection && !landedOnElement && !sameLine) return; // real line move
+
+    // Stuck. Hop to the next/previous paragraph, or revert if there isn't
+    // one (otherwise the cursor would be left at Chromium's end-of-line
+    // fallback, which reads as "jumped to end of document").
+    const focus = sel.focusNode;
+    const p =
+      focus && focus.nodeType === Node.TEXT_NODE
+        ? focus.parentElement?.closest('p')
+        : (focus as Element | null)?.closest('p');
+    const sibling =
+      dir === 'forward'
+        ? (p?.nextElementSibling as HTMLElement | null)
+        : (p?.previousElementSibling as HTMLElement | null);
+    if (!sibling || sibling.tagName !== 'P') {
+      // Revert: re-collapse to where we started so the caret doesn't jump.
+      sel.collapse(before.startContainer, before.startOffset);
+      return;
+    }
+    // Land at the first / last editable text in the target paragraph; the
+    // walker skips the read-only dup <rt> annotation.
+    const target = dir === 'forward' ? firstEditableText(sibling) : lastEditableText(sibling);
+    if (!target) {
+      sel.collapse(before.startContainer, before.startOffset);
+      return;
+    }
+    const offset = dir === 'forward' ? 0 : (target.textContent ?? '').length;
+    if (alter === 'extend') {
+      sel.extend(target, offset);
+    } else {
+      sel.collapse(target, offset);
     }
   });
 };
