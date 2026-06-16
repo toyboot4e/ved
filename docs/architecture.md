@@ -132,9 +132,27 @@ Used around structure repair, history restore, and tab snapshot/restore.
 Character caret movement (`caret.ts moveCaretByCharacter`) is model-driven:
 it walks the *visible* leaves, deduping same-parent junctions but keeping both
 stops at a ruby element boundary (outside vs inside — one extra press tells you
-which side you are on), and lands on a ruby's entry edge in ByCharacter. Line
-movement stays visual (`Selection.modify`). In vertical modes the axes rotate
-(`ArrowUp/Down` → character, `ArrowLeft/Right` → line).
+which side you are on), and lands on a ruby's entry edge in ByCharacter. In
+vertical modes the axes rotate (`ArrowUp/Down` → character, `ArrowLeft/Right`
+→ line).
+
+Line movement (`editor.tsx moveCaretByLine`) starts with `Selection.modify
+('line')` — the browser handles wrap-within-paragraph correctly — but
+post-processes its result for two failure modes specific to vertical-rl:
+
+- modify is a **no-op or lands on a `<p>` element-point** (the document
+  edge or a single-line paragraph with nowhere to go). The cursor would
+  otherwise sit at Chromium's end-of-line fallback, which the user reads
+  as "ArrowLeft jumped to end of doc". When there's no adjacent paragraph
+  we revert; when there is, we hop ourselves.
+- modify **crossed paragraphs but landed at the FAR end** of the target
+  column. Chromium's `modify('line')` in CSS multi-column vertical-rl
+  doesn't reliably preserve the inline-axis coordinate, so the cursor
+  drops at `@end` (forward) or `@0` (backward). When we detect a cross-
+  paragraph move, we re-hit-test with `caretPositionFromPoint` at the
+  caret's original inline-axis center against the target column's
+  block-axis center — that returns the text position at the matching y
+  in the next column.
 
 ## Caret at ruby boundaries
 
@@ -288,6 +306,15 @@ ships its own postinstall, so this project's `postinstall` runs
   layout and the IME, and sub-60 ms bursts after a programmatic selection
   change can race the DOM→model selection sync. `test/e2e/smoke.ts` inserts
   via `beforeinput` with human-ish timing and detaches the IME.
+- **Hidden Electron windows throttle `requestAnimationFrame`.** The e2e
+  harness sets `VED_SMOKE_HIDDEN=1` by default, which makes Chromium
+  treat the window as backgrounded and stall RAF callbacks. Code paths
+  that defer work via RAF (`editor.tsx moveCaretByLine` uses one to wait
+  for the keydown event to settle before calling `Selection.modify`)
+  silently no-op under that flag, and tests that only assert "the caret
+  didn't jump" can falsely pass. When adding/changing RAF-deferred logic,
+  drop `VED_SMOKE_HIDDEN` for the relevant probe and assert the EXPECTED
+  destination rather than just "stayed put".
 - `$syncParagraphs` compares every paragraph on every change; fine at current
   sizes, trivially limitable to dirty paragraphs if profiling ever flags it.
 - The annotation (`ruby-text`) can overflow the fixed `line-height` in
