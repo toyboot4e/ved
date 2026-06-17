@@ -350,6 +350,27 @@ export const VedEditor = (props: VedEditorProps): React.JSX.Element => {
     view.dom.id = 'editor-content';
     view.dom.classList.add(...CONTENT_CLASS(vert, multiCol, rows).split(' ').filter(Boolean));
 
+    // Size the page to N REAL characters. The page length is N × --char-size
+    // (editor.module.scss); measure the running font's fullwidth advance and
+    // publish it, so a line holds exactly --page-line-chars zenkaku instead of
+    // N × font-size (the "1 全角 = 1em" guess, which over/underflows the page
+    // border when the font's CJK advance isn't 1em). A horizontal-tb probe
+    // inheriting the content font gives the per-glyph advance; re-measure once
+    // webfonts settle. The $font-size fallback in CSS holds until then.
+    const sizeToChar = (): void => {
+      const probe = document.createElement('span');
+      probe.textContent = '永'.repeat(20);
+      probe.style.cssText =
+        'position:absolute;visibility:hidden;white-space:nowrap;writing-mode:horizontal-tb;pointer-events:none';
+      view.dom.appendChild(probe);
+      const advance = probe.getBoundingClientRect().width / 20;
+      probe.remove();
+      const root = mount.closest<HTMLElement>(`.${styles.root}`);
+      if (advance > 0 && root) root.style.setProperty('--char-size', `${advance}px`);
+    };
+    sizeToChar();
+    document.fonts?.ready.then(sizeToChar);
+
     const scroller = scrollerRef.current;
     if (scroller && initialScroll) {
       scroller.scrollTop = initialScroll.top;

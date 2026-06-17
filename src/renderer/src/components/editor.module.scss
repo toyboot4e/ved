@@ -15,15 +15,20 @@ $footer-height: $font-size + $pad-y * 2;
 
 .root {
   // Page geometry. The view is configured in characters: N characters per
-  // line × M lines per page (counts are fullwidth 全角 characters; 1em ≈ 1
-  // CJK character, so 40 zenkaku = 80 ASCII columns). The text area is a
-  // fixed page; overflow scrolls (downwards in horizontal writing,
+  // line × M lines per page (counts are fullwidth 全角 characters). The text
+  // area is a fixed page; overflow scrolls (downwards in horizontal writing,
   // leftwards in continuous vertical) or stacks page rows (vertical
   // columns). Custom properties, not SCSS constants: the future view
   // configuration (editor-ui-plan phase 4) overrides them at runtime.
   --page-line-chars: 40;
   --page-lines: 20;
-  --line-length: calc(var(--page-line-chars) * #{$font-size});
+  // The line length is N × the REAL fullwidth-character advance, not
+  // N × font-size: "1 全角 = 1em" is only an approximation, and a font whose
+  // CJK advance differs from 1em makes the line over/underflow the page.
+  // editor.tsx measures the running font and sets --char-size (px); the
+  // $font-size fallback holds until that first measurement lands.
+  --char-size: #{$font-size};
+  --line-length: calc(var(--page-line-chars) * var(--char-size));
   --lines-extent: calc(var(--page-lines) * #{$line-pitch});
 
   // Horizontal writing: lines run horizontally, stacking downwards
