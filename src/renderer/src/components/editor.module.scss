@@ -191,7 +191,10 @@ $footer-height: $font-size + $pad-y * 2;
     // The line wraps at exactly --page-line-chars cells in every mode, so it
     // can never spill past the page border — independent of the font's glyph
     // advance, and without growing the page/separators to chase the text.
+    // overflow-wrap lets even an unbreakable run (a long Latin word / URL, where
+    // there is no break-all) break at the cap instead of overflowing it.
     inline-size: var(--line-length);
+    overflow-wrap: anywhere;
   }
 
 }
