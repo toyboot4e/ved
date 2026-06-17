@@ -8,7 +8,7 @@ help:
 # runs everything locally
 all:
     nix flake check
-    just smoke
+    just test-all
 
 [private]
 alias a := all

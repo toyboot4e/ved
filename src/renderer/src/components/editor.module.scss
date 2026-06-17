@@ -3,19 +3,28 @@ $line-space: 2px;
 $line-pitch: $font-size + $line-space;
 $pad-x: 20px;
 $pad-y: 10px;
+// Breathing room at the line start so the caret at the document start has a
+// visible position (without it, it renders right on the editor's edge and
+// looks gone — see editor.module.scss `.multiColMode`).
+$caret-margin: 6px;
+// Gutter reserved at each line's inline-start (left in horizontal, top in
+// vertical-rl) for the line number (pm/ruby.css). Logical, so it's correct in
+// every writing mode.
+$line-gutter: 2.2em;
 $footer-height: $font-size + $pad-y * 2;
 
 .root {
   // Page geometry. The view is configured in characters: N characters per
-  // line × M lines per page (counts are fullwidth 全角 characters; 1em ≈ 1
-  // CJK character, so 40 zenkaku = 80 ASCII columns). The text area is a
-  // fixed page; overflow scrolls (downwards in horizontal writing,
+  // line × M lines per page (counts are fullwidth 全角 characters). The text
+  // area is a fixed page; overflow scrolls (downwards in horizontal writing,
   // leftwards in continuous vertical) or stacks page rows (vertical
   // columns). Custom properties, not SCSS constants: the future view
   // configuration (editor-ui-plan phase 4) overrides them at runtime.
   --page-line-chars: 40;
   --page-lines: 20;
-  --line-length: calc(var(--page-line-chars) * #{$font-size});
+  // One zenkaku cell = $font-size (1em); the line is a fixed N cells long.
+  --cell-size: #{$font-size};
+  --line-length: calc(var(--page-line-chars) * var(--cell-size));
   --lines-extent: calc(var(--page-lines) * #{$line-pitch});
 
   // Horizontal writing: lines run horizontally, stacking downwards
@@ -26,9 +35,15 @@ $footer-height: $font-size + $pad-y * 2;
   &.vertMode {
     --page-width: var(--lines-extent);
     --page-height: var(--line-length);
+    // Vertical's line-number gutter sits on the line-length axis (folded into
+    // the content height per mode below), not on this one.
+    --editor-width: calc(var(--page-width) + #{$pad-x * 2});
   }
 
-  --editor-width: calc(var(--page-width) + #{$pad-x * 2});
+  // Horizontal: reserve the line-number gutter BESIDE the text column, so the
+  // text area stays the full --line-length (N cells) and a capped line fits
+  // exactly instead of being squeezed by the gutter padding.
+  --editor-width: calc(var(--page-width) + #{$pad-x * 2} + #{$line-gutter});
 
   width: var(--editor-width);
   height: 100%;
@@ -97,6 +112,29 @@ $footer-height: $font-size + $pad-y * 2;
   }
 }
 
+// Icon-only variant of toolbarButton, for the writing-mode row. Shares the
+// pressed/border styling; just swaps the padding and cursor target around
+// an SVG glyph. Native `title` attribute carries the hover description.
+.toolbarIconButton {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  padding: 4px 6px;
+  border: none;
+  background: transparent;
+  cursor: pointer;
+  color: #333;
+
+  &:not(:last-child) {
+    border-right: 1px solid #808080;
+  }
+
+  &[aria-pressed='true'] {
+    background: #c0b18b;
+    color: #fff;
+  }
+}
+
 .editor {
   width: var(--editor-width);
   // The border must not eat into the page: width is the content area, the
@@ -121,6 +159,15 @@ $footer-height: $font-size + $pad-y * 2;
 .editorContent {
   -webkit-app-region: no-drag;
   -webkit-user-select: text;
+  // Ruby markup leaves use `color: transparent` to hide the |,(,) glyphs;
+  // with the default `caret-color: auto` Chromium inherits transparent and
+  // the caret disappears at ruby boundaries. Pin caret-color to a visible
+  // value so the caret renders everywhere — including at hidden markup.
+  caret-color: black;
+  // Used by the leading-delim overlay caret (ruby.module.scss
+  // .rubyLeadActive::before): the body font-size, as an absolute pixel
+  // value so the overlay's `1em` doesn't shrink to the delim's $markup-size.
+  --ved-caret-extent: #{$font-size};
 
   // Horizontal writing: a fixed page box; overflow lines scroll downwards
   &:not(.vertMode) {
@@ -129,6 +176,7 @@ $footer-height: $font-size + $pad-y * 2;
     height: calc(var(--page-height) + #{$pad-y * 2});
     box-sizing: border-box;
     padding: $pad-y $pad-x;
+    padding-inline-start: calc(#{$pad-x} + #{$line-gutter}); // line-number gutter
   }
 
   > * {
@@ -139,6 +187,14 @@ $footer-height: $font-size + $pad-y * 2;
     padding: 0 $space 0 $space;
     // Containing block for the placeholder (see .placeholder)
     position: relative;
+    // Cap every line to a fixed N-cell length (--line-length px = N × cell).
+    // The line wraps at exactly --page-line-chars cells in every mode, so it
+    // can never spill past the page border — independent of the font's glyph
+    // advance, and without growing the page/separators to chase the text.
+    // overflow-wrap lets even an unbreakable run (a long Latin word / URL, where
+    // there is no break-all) break at the cap instead of overflowing it.
+    inline-size: var(--line-length);
+    overflow-wrap: anywhere;
   }
 
 }
@@ -178,7 +234,7 @@ $col-gap: $pad-y * 2;
 
 .vertMode {
   &.editor {
-    &:not(.multiColMode) {
+    &:not(.multiColMode):not(.rowsMode) {
       // Fixed page box: lines beyond the page overflow leftwards and
       // scroll; the fixed line length overflows the viewport vertically.
       overflow: auto;
@@ -211,6 +267,28 @@ $col-gap: $pad-y * 2;
       background-attachment: local;
       background-position: 0 $pad-y;
     }
+
+    // VerticalRows — the leftward-tiled mirror of multiColMode.
+    // Pages tile horizontally (leftward in vertical-rl); the user scrolls
+    // along the horizontal axis to read further. Separator gradient runs
+    // along the horizontal axis between pages. See ADR 0004 + the spike.
+    &.rowsMode {
+      flex: 1 1 auto;
+      overflow-x: scroll;
+      writing-mode: vertical-rl;
+      -webkit-writing-mode: vertical-rl;
+      background-image: linear-gradient(
+        to right,
+        transparent calc(var(--page-width) + #{$pad-x - 0.5px}),
+        #808080 calc(var(--page-width) + #{$pad-x - 0.5px}),
+        #808080 calc(var(--page-width) + #{$pad-x + 0.5px}),
+        transparent calc(var(--page-width) + #{$pad-x + 0.5px})
+      );
+      background-size: calc(var(--page-width) + #{$col-gap}) 100%;
+      background-repeat: repeat-x;
+      background-attachment: local;
+      background-position: $pad-x 0;
+    }
   }
 
   &.editorContent {
@@ -223,21 +301,43 @@ $col-gap: $pad-y * 2;
     -ms-writing-mode: tb-rl;
 
     // Continuous flow: one fixed page box (--page-line-chars per line)
-    &:not(.multiColMode) {
-      height: calc(var(--page-height) + #{$pad-y * 2});
+    &:not(.multiColMode):not(.rowsMode) {
+      // height grows by the gutter so the line still fits --page-line-chars.
+      height: calc(var(--page-height) + #{$pad-y * 2} + #{$line-gutter});
       box-sizing: border-box;
       padding: $pad-y $pad-x;
+      padding-inline-start: calc(#{$pad-y} + #{$line-gutter}); // line-number gutter (top)
     }
 
     // Column rows: each row is a page (--page-line-chars × --page-lines).
-    // No vertical padding inside the fixed height — it would eat into the
-    // line length (the gap between rows provides the breathing room).
+    // A small inline-start padding (top, in vertical-rl) gives the caret a
+    // visible home at the line start — without it the caret at the document
+    // start renders right on the editor's top edge and disappears.
+    // The height is increased by the same amount so the line still fits the
+    // configured character count.
     &.multiColMode {
       width: var(--page-width);
-      height: var(--page-height);
+      height: calc(var(--page-height) + #{$caret-margin} + #{$line-gutter});
       margin: $pad-y $pad-x $footer-height $pad-x;
-      padding: 0;
-      column-width: var(--page-height);
+      padding: $caret-margin 0 0 0;
+      padding-inline-start: calc(#{$caret-margin} + #{$line-gutter}); // line-number gutter (top)
+      box-sizing: border-box;
+      column-width: calc(var(--page-height) + #{$line-gutter});
+      column-gap: $col-gap;
+    }
+
+    // VerticalRows — pages tile leftward, the editor scrolls horizontally.
+    // Mirror of multiColMode on the other axis: the content is one page
+    // TALL (= page-height), and CSS multi-column stacks columns along the
+    // block axis (= horizontal in vertical-rl) so additional pages appear
+    // to the left as text is added.
+    &.rowsMode {
+      height: calc(var(--page-height) + #{$line-gutter});
+      margin: $pad-y $pad-x;
+      padding: 0 $caret-margin 0 0;
+      padding-inline-start: $line-gutter; // line-number gutter (top)
+      box-sizing: border-box;
+      column-width: calc(var(--page-height) + #{$line-gutter});
       column-gap: $col-gap;
     }
   }

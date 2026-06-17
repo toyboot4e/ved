@@ -269,6 +269,45 @@ A single `config.json` in `app.getPath('userData')`, owned by main:
 what main already does, minus zod validation. A settings GUI panel is
 explicitly out of scope until the schema stops churning.
 
+### Phase 6 — vertical page layouts (`VerticalRows`)
+
+Add the leftward-tiled "book-style" page layout as a sibling of today's
+downward-tiled `VerticalColumns`, exposed in the toolbar with a four-mode
+SVG icon row. Design recorded in [ADR 0004](adr/0004-vertical-page-layouts.md)
+and the supporting [spike](spikes/vertical-2d-pagination.md); this phase
+is the implementation. The 2D generalization (N pages per row / M rows
+per column) is **not** part of this phase — it stays in the spike.
+
+Each step lands an independently-shippable change with `just test-all`
+green.
+
+- **6a. Generalize `scroll-keep` to two paged axes.** Extend `ScrollMode`
+  with a `'rows'` value (mirror of the existing `'columns'`); add the
+  scroll-offset ↔ line-index math for the horizontal axis. Pure unit
+  refactor — no UI yet. (`scroll-keep.ts` + `scroll-keep.test.ts`.)
+- **6b. Add the `VerticalRows` writing-mode value and its CSS.** New
+  enum value in `editor.tsx`; new `.rowsMode` SCSS rules mirroring
+  `.multiColMode` but with `overflow-x: scroll` and a vertical-divider
+  background gradient. `toScrollMode` learns the new mapping. Toolbar
+  not yet updated — the mode is reachable only via direct enum if you
+  hack at it (kept dormant for the next step).
+- **6c. Icon toolbar.** Four custom inline SVG components in
+  `src/renderer/src/components/icons/`, one per writing mode (frame +
+  text-stroke content + divider perpendicular to the scroll axis for
+  the two paged modes). `toolbar.tsx` switches from text labels to
+  icons; each button keeps a `title` for the native hover tooltip.
+- **6d. Smoke test and architecture.** A new `test/e2e/writing-mode-rows.ts`
+  exercises `VerticalRows`: enter the mode, type past one page, confirm
+  horizontal scroll appears, switch back to `VerticalColumns` and
+  confirm the line index is preserved (scroll-keep extension actually
+  works end-to-end). `docs/architecture.md` writing-mode table grows a
+  fourth row, and the `CONTEXT.md` entry for the new mode gets
+  cross-referenced.
+
+The spike-deferred 2D case is referenced in `editor.tsx` next to the new
+CSS, so a future contributor who wants N≥2 pages per row finds the
+spike rather than re-deriving the constraint.
+
 ### Phase 5 — polish (each independent, grab as needed)
 
 - status bar: character count (the `#counter` placeholder exists), cursor

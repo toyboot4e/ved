@@ -2,15 +2,19 @@
 // same character count, so line breaks are identical and the first visible
 // line index maps 1:1 between modes. Pure math over measured geometry.
 
-/** Scroll-relevant flavor of the writing mode (no dependency on editor.tsx). */
-export type ScrollMode = 'horizontal' | 'vertical' | 'columns';
+/** Scroll-relevant flavor of the writing mode (no dependency on editor.tsx).
+ *  - `columns` = `VerticalColumns` (paged, vertical scroll, pages tile down);
+ *  - `rows`    = `VerticalRows`    (paged, horizontal scroll, pages tile leftward). */
+export type ScrollMode = 'horizontal' | 'vertical' | 'columns' | 'rows';
 
 export type ScrollGeom = {
   /** Distance between line starts (font size + line spacing), px. */
   readonly linePitch: number;
-  /** Distance between page-row starts in columns mode (page height + gap), px. */
+  /** Distance between page-row starts (page height + gap), px. Used by both
+   *  `columns` (pages tile down — pitch is along scrollTop) and `rows`
+   *  (pages tile left — pitch is along scrollLeft, in absolute pixels). */
   readonly rowPitch: number;
-  /** Lines per page row in columns mode. */
+  /** Lines per page in the paged modes. */
   readonly linesPerRow: number;
 };
 
@@ -26,6 +30,10 @@ export const scrollToLine = (mode: ScrollMode, geom: ScrollGeom, scrollTop: numb
       return Math.round(Math.abs(scrollLeft) / geom.linePitch);
     case 'columns':
       return Math.round(scrollTop / geom.rowPitch) * geom.linesPerRow;
+    case 'rows':
+      // Pages tile leftward (vertical-rl); scrollLeft is negative, so use
+      // the absolute distance from the right edge as the "page index".
+      return Math.round(Math.abs(scrollLeft) / geom.rowPitch) * geom.linesPerRow;
   }
 };
 
@@ -42,8 +50,9 @@ export const revealDelta = (lo: number, hi: number, viewLo: number, viewHi: numb
 };
 
 /**
- * Scroll offsets that bring a line to the viewport start. Columns mode snaps
- * to the containing page row. The browser clamps out-of-range values.
+ * Scroll offsets that bring a line to the viewport start. The paged modes
+ * (`columns`, `rows`) snap to the containing page. The browser clamps
+ * out-of-range values.
  */
 export const lineToScroll = (mode: ScrollMode, geom: ScrollGeom, line: number): { top: number; left: number } => {
   switch (mode) {
@@ -53,5 +62,8 @@ export const lineToScroll = (mode: ScrollMode, geom: ScrollGeom, line: number): 
       return { top: 0, left: -(line * geom.linePitch) };
     case 'columns':
       return { top: Math.floor(line / geom.linesPerRow) * geom.rowPitch, left: 0 };
+    case 'rows':
+      // Pages tile leftward — scrollLeft grows negative as you scroll farther.
+      return { top: 0, left: -(Math.floor(line / geom.linesPerRow) * geom.rowPitch) };
   }
 };

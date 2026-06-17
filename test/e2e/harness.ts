@@ -144,10 +144,12 @@ export const emptyDocument = async (page: Page): Promise<void> => {
   await page.waitForTimeout(250);
 };
 
-/** Clicks a writing-mode toolbar button by its label. */
-export const clickWritingMode = async (page: Page, label: 'Horizontal' | 'Vertical' | 'Vertical Columns') => {
-  const selector =
-    label === 'Vertical' ? 'button:has-text("Vertical"):not(:has-text("Columns"))' : `button:has-text("${label}")`;
-  await page.click(selector);
+/** Clicks a writing-mode toolbar button. Buttons are icon-only; the aria-label
+ *  carries the mode name (see toolbar.tsx). */
+export const clickWritingMode = async (
+  page: Page,
+  label: 'Horizontal' | 'Vertical' | 'Vertical Columns' | 'Vertical Rows',
+) => {
+  await page.click(`button[aria-label="${label}"]`);
   await page.waitForTimeout(150);
 };

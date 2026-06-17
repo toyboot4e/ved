@@ -1,0 +1,23 @@
+<!doctype html>
+<html lang="ja">
+<head>
+<meta charset="utf-8">
+<title>ProseMirror spike: rich syntax (bold/italic/縦中横) as decorations</title>
+<style>
+  body { font-family: serif; margin: 16px; }
+  #editor { border: 1px solid #999; width: 240px; height: 420px; }
+  .ProseMirror { outline: none; font-family: serif; }
+  .ProseMirror p { margin: 0; }
+
+  /* rich syntax = pure inline decorations over the plaintext */
+  .syn { font-size: 0; }                        /* hide the *, / markers */
+  .bold { font-weight: 700; }
+  .italic { font-style: italic; }
+  .tcy { text-combine-upright: all; }           /* 縦中横 */
+</style>
+</head>
+<body>
+  <div id="editor"></div>
+  <script type="module" src="./pm-syntax.bundle.js"></script>
+</body>
+</html>

@@ -1,6 +1,7 @@
 import type React from 'react';
 import { AppearPolicy, WritingMode } from './editor';
 import styles from './editor.module.scss';
+import { HorizontalIcon, VerticalColumnsIcon, VerticalIcon, VerticalRowsIcon } from './icons/WritingModeIcons';
 
 /** Properties of {@link Toolbar}. */
 export type ToolbarProps = {
@@ -10,13 +11,30 @@ export type ToolbarProps = {
   readonly setAppearPolicy: (_: AppearPolicy) => void;
 };
 
-const writingModeItems: { mode: WritingMode; label: string; title: string }[] = [
-  { mode: WritingMode.Horizontal, label: 'Horizontal', title: 'Horizontal writing' },
-  { mode: WritingMode.Vertical, label: 'Vertical', title: 'Vertical writing, one continuous flow' },
+const writingModeItems: {
+  mode: WritingMode;
+  label: string;
+  title: string;
+  Icon: React.ComponentType<{ className?: string }>;
+}[] = [
+  { mode: WritingMode.Horizontal, label: 'Horizontal', title: 'Horizontal writing', Icon: HorizontalIcon },
+  {
+    mode: WritingMode.Vertical,
+    label: 'Vertical',
+    title: 'Vertical writing — one continuous flow, both axes scroll',
+    Icon: VerticalIcon,
+  },
   {
     mode: WritingMode.VerticalColumns,
     label: 'Vertical Columns',
-    title: 'Vertical writing, multi-column layout (dankumi)',
+    title: 'Vertical writing — pages stack downward (dankumi, vertical scroll)',
+    Icon: VerticalColumnsIcon,
+  },
+  {
+    mode: WritingMode.VerticalRows,
+    label: 'Vertical Rows',
+    title: 'Vertical writing — pages tile leftward like a book (dankumi, horizontal scroll)',
+    Icon: VerticalRowsIcon,
   },
 ];
 
@@ -48,16 +66,17 @@ export const Toolbar = ({
         <span className={styles.toolbarGroupLabel} aria-hidden='true' title='Text direction and layout'>
           Writing
         </span>
-        {writingModeItems.map(({ mode, label, title }) => (
+        {writingModeItems.map(({ mode, label, title, Icon }) => (
           <button
             key={mode}
             type='button'
-            className={styles.toolbarButton}
+            className={styles.toolbarIconButton}
             aria-pressed={writingMode === mode}
+            aria-label={label}
             title={title}
             onClick={() => setWritingMode(mode)}
           >
-            {label}
+            <Icon />
           </button>
         ))}
       </fieldset>

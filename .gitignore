@@ -2,6 +2,10 @@ node_modules
 dist
 out
 .DS_Store
+
+# generated spike bundles (regenerate with esbuild; see the spike's header)
+docs/spikes/*.bundle.js
+docs/spikes/*.bundle.css
 .eslintcache
 *.log*
 

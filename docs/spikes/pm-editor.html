@@ -1,0 +1,25 @@
+<!doctype html>
+<html lang="ja">
+<head>
+<meta charset="utf-8">
+<title>ProseMirror spike: full ved assembly (ruby node + syntax decorations)</title>
+<style>
+  body { font-family: serif; margin: 16px; }
+  #editor { border: 1px solid #999; width: 240px; height: 420px; }
+  .ProseMirror { outline: none; font-family: serif; font-size: 28px; line-height: 1.8; }
+  .ProseMirror p { margin: 0; }
+
+  /* hidden-but-caret-addressable syntax */
+  .delim, .syn { font-size: 0; }
+  .bold { font-weight: 700; }
+  .italic { font-style: italic; }
+  .tcy { text-combine-upright: all; }
+  /* ruby: node view gives <ruby class=rubyWrap><span class=rubyBase>…</span><rt class=dup>…</rt></ruby> */
+  .rubyWrap > rt.dup { font-size: 0.5em; color: #444; }
+</style>
+</head>
+<body>
+  <div id="editor"></div>
+  <script type="module" src="./pm-editor.bundle.js"></script>
+</body>
+</html>

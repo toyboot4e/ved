@@ -1,5 +1,21 @@
 # Editing framework: stay on Slate now, Lexical as the migration target
 
+---
+status: superseded — migrated to Lexical 2026-06-15 (see
+docs/lexical-migration-plan.md); later superseded again by ADR-0005, which
+moves the editor to ProseMirror for the rich-syntax roadmap.
+---
+
+> **Update (2026-06-15).** The migration is **complete**: the app runs on
+> Lexical and Slate is removed. The feasibility spike
+> ([../spikes/lexical-ruby.md](../spikes/lexical-ruby.md)) and the slice plan
+> ([../lexical-migration-plan.md](../lexical-migration-plan.md)) record how.
+> The analysis below — why Lexical over TipTap/ProseMirror/CodeMirror, and why
+> vertical-rl is not a differentiator — is the rationale for the move. One
+> caveat surfaced in execution: collapsed-ruby markup must be hidden with
+> `font-size: 0`, not `display: none`, to keep the caret addressable at ruby
+> boundaries (Lexical strips the empty text nodes Slate used as caret anchors).
+
 ved is built on Slate. Slate's longevity is a real concern (0.x for years,
 thin maintenance), so the alternatives were weighed. Decision: **keep Slate
 for now** — it works, the editor surface is nearly complete, ved uses only a
@@ -41,6 +57,11 @@ provides. So Slate, Lexical, and TipTap are equal on verticality.
   a ruby node collapsed + expanded, `vertical-rl`, IME typing, Playwright
   caret-walk + geometry across a ruby boundary). The selection round-trip
   through Lexical's DOM-selection reconciliation is the main risk to retire.
+  **Run 2026-06-14 — all three risks (identity round-trip, ruby DOM +
+  reconciliation survival, selection round-trip) retired green; IME and the
+  typing pipeline remain unproven. See
+  [../spikes/lexical-ruby.md](../spikes/lexical-ruby.md).** This validates
+  Lexical as the target; it does not trigger a migration — Slate stays.
 - **Revisit (tripwire) when:** Slate is archived or hits an unpatched CVE; ved
   needs a feature Slate cannot do (realistically collaborative editing, where
   Yjs binds to ProseMirror/CodeMirror, not Slate); or editor-core work keeps

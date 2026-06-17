@@ -35,7 +35,7 @@
           src = self;
           pnpm = pkgs.pnpm_10;
           fetcherVersion = 3;
-          hash = "sha256-25qXJfi7jptWAf++WU5tLaA+xJ6KvcAlLJPqly0f/1g=";
+          hash = "sha256-jPOM83wWaU5ZVTyE+kbVEtiVrEZQ1oqdr0ky962JvKo=";
         };
 
       # A sandboxed check that runs a pnpm script against a node_modules
@@ -109,6 +109,12 @@
               atk
               cups
               gtk3
+              # GSettings schemas: GTK's file/print dialogs abort at runtime
+              # ("No GSettings schemas are installed") unless the default
+              # schema source can find a gschemas.compiled. gtk3 provides
+              # org.gtk.Settings.FileChooser; gsettings-desktop-schemas the
+              # org.gnome.desktop.* set. Wired onto XDG_DATA_DIRS in shellHook.
+              gsettings-desktop-schemas
               pango
               cairo
               # Wayland (required for native Wayland and its text-input IME protocol)
@@ -126,6 +132,10 @@
               alsa-lib
               libdrm
               libGL
+              # libudev.so.1 — Electron 42 dynamically links it (was loaded via
+              # NixOS' /run/current-system on host setups; explicit here so
+              # `LD_LIBRARY_PATH` from `nix develop` is enough on its own).
+              udev
             ];
 
           # IM module cache so the prebuilt Electron's gtk3 can resolve
@@ -152,6 +162,8 @@
             shellHook = pkgs.lib.optionalString pkgs.stdenvNoCC.isLinux ''
               export LD_LIBRARY_PATH="$LD_LIBRARY_PATH:${pkgs.lib.makeLibraryPath deps}"
               export GTK_IM_MODULE_FILE=${gtk3ImmodulesCache}
+              # Expose compiled GSettings schemas to GLib (see deps note above).
+              export XDG_DATA_DIRS="${pkgs.gtk3}/share/gsettings-schemas/${pkgs.gtk3.name}:${pkgs.gsettings-desktop-schemas}/share/gsettings-schemas/${pkgs.gsettings-desktop-schemas.name}:$XDG_DATA_DIRS"
             '';
           };
         }
@@ -178,7 +190,25 @@
             pnpm_10
             pnpmConfigHook
             makeWrapper
+            # Collects GSettings schemas (and GIO modules) from buildInputs into
+            # $gappsWrapperArgs so the shipped wrapper can find a
+            # gschemas.compiled — without it GTK's file dialog aborts at runtime
+            # with "No GSettings schemas are installed". gtk3 variant (gtk3).
+            wrapGAppsHook3
           ];
+
+          # Provide the schema sets the wrapper hook collects: gtk3 for
+          # org.gtk.Settings.FileChooser, gsettings-desktop-schemas for the
+          # org.gnome.desktop.* set.
+          buildInputs = with pkgs; [
+            gtk3
+            gsettings-desktop-schemas
+          ];
+
+          # We build the launcher wrapper by hand below (it needs --add-flags
+          # for the app dir), so suppress wrapGAppsHook's automatic wrapping and
+          # splice its $gappsWrapperArgs into our makeWrapper call instead.
+          dontWrapGApps = true;
 
           pnpmDeps = pnpmDepsFor pkgs;
 
@@ -200,9 +230,15 @@
             pnpm install --offline --prod --frozen-lockfile --ignore-scripts
             mkdir -p $out/share/ved $out/bin
             cp -r out node_modules package.json $out/share/ved/
-            makeWrapper ${pkgs.lib.getExe pkgs.electron_42} $out/bin/ved \
-              --add-flags $out/share/ved
             runHook postInstall
+          '';
+
+          # Wrap in preFixup: wrapGAppsHook3 populates $gappsWrapperArgs in its
+          # own preFixup hook, so the array is ready by the time this runs.
+          preFixup = ''
+            makeWrapper ${pkgs.lib.getExe pkgs.electron_42} $out/bin/ved \
+              "''${gappsWrapperArgs[@]}" \
+              --add-flags $out/share/ved
           '';
 
           meta.mainProgram = "ved";

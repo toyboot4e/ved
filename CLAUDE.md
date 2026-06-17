@@ -1,12 +1,13 @@
 # ved — agent context
 
-Electron + React + Slate editor for Japanese vertical writing (tategaki) with
-ruby annotations. **Read `docs/architecture.md` before touching the editor
-core** (`src/renderer/src/components/editor/`).
+Electron + React + ProseMirror editor for Japanese vertical writing (tategaki)
+with ruby annotations. **Read `docs/architecture.md` before touching the
+editor core** (`src/renderer/src/components/editor/`, mainly `editor/pm/`).
 
 - `CONTEXT.md` — project glossary (the words to use, and the ones to avoid).
 - `docs/adr/` — architecture decisions and *why* (e.g. browser engine over a
-  custom one; Slate now with Lexical as the migration target).
+  custom one; the editor framework — Slate → Lexical → **ProseMirror** for the
+  rich-syntax roadmap, see ADR-0005 + `docs/prosemirror-migration-plan.md`).
 
 ## Commands
 
@@ -23,13 +24,46 @@ Task runner is `just`:
 
 ## Invariants
 
-- **Identity text model.** The Slate tree holds the plaintext character for
-  character; `Node.string(paragraph)` IS the plain line. Never add state
-  where displayed text and model text can diverge. Outside the editor core,
-  a document is always a plain string.
+- **Identity text model.** The document is plaintext: ruby is the one inline
+  NODE, and its text content holds the literal markup (`|漢(かん)`), so
+  `serialize` (`doc.textBetween(…, '\n')`) is identity-exact, character for
+  character. Every other inline format (bold/italic/縦中横, …) is a view-only
+  **decoration**, not a node — adding one is a parse rule + a CSS class, no
+  structure repair. Never add state where displayed text and model text can
+  diverge. Outside the editor core, a document is always a plain string.
+  Collapsed markup is hidden with `font-size: 0` (NOT `display: none`) so the
+  caret stays addressable; arrow movement skips it via `nextCaretOffset`.
+- **Ruby boundaries map to the INSIDE text edge (for a real caret/IME rect).**
+  `pm/model.ts offsetToPos` maps a caret at a ruby's start/end to the text
+  position just *inside* the node (the edge `|` / `)` leaf), NOT the paragraph
+  *element* boundary before/after it. The element boundary has a DEGENERATE
+  caret rect (0×0, no adjacent text), so the native caret — and the IME
+  composition box — would jump to the viewport's top-left. The inside edge has a
+  real rect; typing/IME there still lands *outside* the ruby because the
+  structure repair re-parses (e.g. `X` typed at the `|` edge → `X|漢(かん)`,
+  re-parsed to plain `X` + ruby). `pm/decorations.ts` uses `buildPosMap` (the
+  O(n) batch form of `offsetToPos`, pinned to it by a unit test) so the
+  decoration pass isn't O(n²).
+- **Keep the caret in view after edits.** PM's `scrollIntoView` doesn't survive
+  the post-commit ruby repair (a second transaction) or the vertical-rl
+  multi-column page layouts, so `editor.tsx revealCaretInScroller` scrolls the
+  caret back into view after every doc change and — synchronously, after the
+  re-decoration reflow — on an appear-policy change. It is a no-op when the
+  caret is already visible.
+- **Caret at ruby boundaries renders via an overlay, not delim font.** At a
+  boundary the native caret takes the font-size:0 delimiter's tiny metrics.
+  `pm/decorations.ts` flips `rubyActive` (highlight, strictly inside only) and
+  `rubyLeadActive`/`rubyTrailActive` (the positions where the native caret is
+  invisible — just inside after `|`, before the ruby when nothing visible
+  precedes it, and after the collapsed `)`); `pm/ruby.css` hides the native
+  caret and draws an absolutely-positioned 1em `::before`. Don't fix caret
+  size by expanding the delim's font — it shifts the body. See
+  `docs/architecture.md` § "Caret at ruby boundaries".
 - **IME safety.** Never repair structure, steal focus, or remount the editor
-  during an IME composition (`ReactEditor.isComposing`, `event.isComposing`).
-  Shortcuts must ignore key events with `keyCode === 229`.
+  during an IME composition (`view.composing`, `event.isComposing`). Ruby
+  structure repair (`pm/structure.ts repair`, run from `dispatchTransaction`)
+  is skipped while composing. (Real mozc typing is not covered by automation —
+  verify by hand when touching this.)
 - **Process boundaries.** All fs and dialog access lives in the main process
   behind the typed IPC contract in `src/shared/ipc.ts` (exposed to the
   renderer as `window.ved` by the preload). The renderer never touches Node.
@@ -54,7 +88,7 @@ Working agreement for this effort:
    first. Do exactly one step, then **stop for user review** — do not start
    the next step unasked.
 2. Keep shell code decoupled from the editor core: plaintext strings cross
-   the boundary, never Slate values. Prefer new modules over edits to
+   the boundary, never Lexical values. Prefer new modules over edits to
    existing ones; when an editor-core edit is unavoidable, keep it to a
    minimal, optional surface (e.g. one optional prop).
 3. A step is done when `just test-all` passes and the smoke test exercises

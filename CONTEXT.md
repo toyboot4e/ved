@@ -15,13 +15,27 @@ _Avoid_: tategaki (use in prose, not in identifiers), TTB, RTL.
 
 **Writing mode**:
 The page layout axis, independent of how ruby is shown: `Horizontal`,
-`Vertical` (one continuous flow), or `VerticalColumns`.
+`Vertical` (one continuous flow), `VerticalColumns`, or `VerticalRows`.
 _Avoid_: orientation, direction.
 
 **Dankumi**:
-The multi-column vertical layout (`VerticalColumns`) — vertical lines wrapped
-into stacked column rows, like a printed novel page.
+The multi-page vertical layout family (`VerticalColumns` and `VerticalRows`)
+— vertical lines packed into fixed pages, with the pages tiled across the
+viewport. The two modes differ in how the pages tile.
 _Avoid_: columns (ambiguous with CSS columns), 段組み in identifiers.
+
+**VerticalColumns**:
+A dankumi mode: pages tile into a vertical COLUMN (stack downward), so the
+major scroll axis is vertical. One page per row; rows accumulate as the
+document grows.
+_Avoid_: down-dankumi (use the canonical name in identifiers).
+
+**VerticalRows**:
+A dankumi mode: pages tile into a horizontal ROW (extend leftward in
+vertical-rl), so the major scroll axis is horizontal — like turning the
+pages of a Japanese book. One page per column; columns accumulate leftward
+as the document grows.
+_Avoid_: left-dankumi, book-mode.
 
 **Page**:
 The text area's character geometry: N fullwidth characters per line × M lines.
@@ -55,9 +69,9 @@ _Avoid_: ruby text (collides with **ruby**), furigana.
 
 **Identity text model**:
 The invariant that the editor tree holds the document character for
-character — including the markup characters `|`, `(`, `)` — so
-`Node.string(paragraph)` *is* the plain line. Displayed text and model text
-can never diverge.
+character — including the markup characters `|`, `(`, `)` — so a paragraph's
+`getTextContent()` *is* the plain line. Displayed text and model text can
+never diverge.
 _Avoid_: source model, WYSIWYG (it is explicitly not WYSIWYG).
 
 **Appear policy**:
