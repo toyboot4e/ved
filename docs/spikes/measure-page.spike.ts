@@ -1,6 +1,5 @@
-// Stress the N-cell line cap with a font WIDER than the cell (simulated via
-// letter-spacing): does the row wrap and stay within the page border, or
-// overflow it? Screenshots Vertical for visual confirm.
+// Reproduce a.png: a long single line in VerticalColumns runs past the page
+// separator. Inspect the paragraph's computed size and actual column length.
 //   node docs/spikes/measure-page.spike.ts
 import { writeFile } from 'node:fs/promises';
 import electronPath from 'electron';
@@ -16,54 +15,49 @@ const page = await app.firstWindow();
 await page.waitForSelector('#editor-content');
 await page.click('#editor-content');
 
-const full40 = '一二三四五六七八九十' + '壱弐参四五六七八九拾' + '甲乙丙丁戊己庚辛壬癸' + '子丑寅卯辰巳午未申酉';
-await page.keyboard.insertText('短い行');
-await page.keyboard.press('Enter');
-await page.keyboard.insertText(full40);
+// Reproduce a.png exactly: a ruby node, then a long unbroken Latin run.
+await page.keyboard.insertText('|ルビ(ruby)');
+await page.waitForTimeout(200); // let the ruby structure repair run
+await page.keyboard.insertText('cvxzvczxvz'.repeat(12)); // 120 chars, no spaces
 await page.waitForTimeout(150);
 
-// Force every glyph WIDER than its cell, the way a non-1em CJK font would.
-await page.evaluate(() => {
-  (document.querySelector('[contenteditable]') as HTMLElement).style.letterSpacing = '8px';
-});
-await page.waitForTimeout(150);
-
-for (const label of ['Horizontal', 'Vertical', 'Vertical Columns', 'Vertical Rows'] as const) {
+for (const label of ['Vertical', 'Vertical Columns', 'Vertical Rows'] as const) {
   await page.click(`button[aria-label="${label}"]`);
   await page.waitForTimeout(300);
   const m = await page.evaluate(() => {
-    const r2 = (n: number) => Math.round(n * 10) / 10;
+    const r2 = (n: number) => Math.round(n);
     const content = document.querySelector('[contenteditable]') as HTMLElement;
-    const cs = getComputedStyle(content);
-    const cell = Number.parseFloat(cs.getPropertyValue('--cell-size'));
-    const chars = Number.parseFloat(cs.getPropertyValue('--page-line-chars'));
-    const linePitch = Number.parseFloat(cs.lineHeight);
-    const horizontal = cs.writingMode === 'horizontal-tb';
-    const ps = Array.from(document.querySelectorAll('#editor-content > p'));
-    const long = ps[1].getBoundingClientRect(); // the full-N line
-    const lineLen = horizontal ? long.width : long.height;
-    const editor = (
-      content.closest('[class*="editor"]:not([class*="editorContent"])') as HTMLElement
-    ).getBoundingClientRect();
-    const past = horizontal ? long.right - editor.right : long.bottom - editor.bottom;
+    const ccs = getComputedStyle(content);
+    const cell = Number.parseFloat(ccs.getPropertyValue('--cell-size'));
+    const chars = Number.parseFloat(ccs.getPropertyValue('--page-line-chars'));
+    const p = document.querySelector('#editor-content > p') as HTMLElement;
+    const pcs = getComputedStyle(p);
+    const rect = p.getBoundingClientRect();
     return {
-      cap: r2(chars * cell),
-      lineLen: r2(lineLen),
-      overCap: r2(lineLen - chars * cell), // > 0 ⇒ row longer than N cells
-      pastBorder: r2(past), // > 0 ⇒ row spills past the page border
-      wrapped: (horizontal ? long.height : long.width) > linePitch * 1.5,
+      pageLen: r2(chars * cell), // intended cap (720)
+      paraInlineSize: pcs.inlineSize, // is the cap applied to the paragraph?
+      paraWritingMode: pcs.writingMode,
+      colLength: r2(Math.max(rect.width, rect.height)), // actual length of the column
+      colThick: r2(Math.min(rect.width, rect.height)), // ~pitch if 1 col, more if wrapped
+      contentColumnWidth: ccs.columnWidth,
+      contentHeight: ccs.height,
     };
   });
   console.log(label.padEnd(18), JSON.stringify(m));
 }
 
-await page.click(`button[aria-label="Vertical"]`);
-await page.waitForTimeout(250);
-const url = await app.evaluate(async ({ BrowserWindow }) => {
-  const img = await BrowserWindow.getAllWindows()[0].webContents.capturePage();
-  return img.toDataURL();
-});
-await writeFile(`${root}rowcheck.png`, Buffer.from(url.split(',')[1], 'base64'));
+for (const [label, file] of [
+  ['Vertical Columns', 'cap-columns.png'],
+  ['Vertical Rows', 'cap-rows.png'],
+] as const) {
+  await page.click(`button[aria-label="${label}"]`);
+  await page.waitForTimeout(300);
+  const url = await app.evaluate(async ({ BrowserWindow }) => {
+    const img = await BrowserWindow.getAllWindows()[0].webContents.capturePage();
+    return img.toDataURL();
+  });
+  await writeFile(`${root}${file}`, Buffer.from(url.split(',')[1], 'base64'));
+}
 
 await page.evaluate(() => window.ved.setDirty(false));
 await app.close();

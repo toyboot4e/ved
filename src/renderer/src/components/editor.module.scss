@@ -255,14 +255,18 @@ $col-gap: $pad-y * 2;
       // repeating-linear-gradient: Chromium's compositor drops tiles of
       // attachment-local repeating gradients depending on the scroll
       // position (lines vanish at certain depths).
+      // A band is column-width tall = page-height PLUS the line-number gutter,
+      // so the separator period and gap-line offset must include $line-gutter —
+      // otherwise the band is taller than the separator pitch and each line
+      // overruns the separator by the gutter (see a.png / the Columns repro).
       background-image: linear-gradient(
         to bottom,
-        transparent calc(var(--page-height) + #{$pad-y - 0.5px}),
-        #808080 calc(var(--page-height) + #{$pad-y - 0.5px}),
-        #808080 calc(var(--page-height) + #{$pad-y + 0.5px}),
-        transparent calc(var(--page-height) + #{$pad-y + 0.5px})
+        transparent calc(var(--page-height) + #{$line-gutter} + #{$pad-y - 0.5px}),
+        #808080 calc(var(--page-height) + #{$line-gutter} + #{$pad-y - 0.5px}),
+        #808080 calc(var(--page-height) + #{$line-gutter} + #{$pad-y + 0.5px}),
+        transparent calc(var(--page-height) + #{$line-gutter} + #{$pad-y + 0.5px})
       );
-      background-size: 100% calc(var(--page-height) + #{$col-gap});
+      background-size: 100% calc(var(--page-height) + #{$line-gutter} + #{$col-gap});
       background-repeat: repeat-y;
       background-attachment: local;
       background-position: 0 $pad-y;
@@ -320,7 +324,11 @@ $col-gap: $pad-y * 2;
       height: calc(var(--page-height) + #{$caret-margin} + #{$line-gutter});
       margin: $pad-y $pad-x $footer-height $pad-x;
       padding: $caret-margin 0 0 0;
-      padding-inline-start: calc(#{$caret-margin} + #{$line-gutter}); // line-number gutter (top)
+      // Start padding is EXACTLY the gutter (no extra caret-margin): the line
+      // then starts at the gutter and ends at column-width, so the band height
+      // (column-width) matches the separator pitch and the line never overruns
+      // it. The gutter alone is ample breathing room for the doc-start caret.
+      padding-inline-start: $line-gutter; // line-number gutter (top)
       box-sizing: border-box;
       column-width: calc(var(--page-height) + #{$line-gutter});
       column-gap: $col-gap;
