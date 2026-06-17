@@ -163,9 +163,19 @@ Line movement (`editor.tsx moveCaretByLine`) starts with `Selection.modify
 - modify **crossed paragraphs but landed at the FAR end** of the target
   column. Chromium's `modify('line')` in CSS multi-column vertical-rl doesn't
   preserve the inline-axis coordinate, so the cursor drops at the column end.
-  We re-hit-test with `view.posAtCoords` at the caret's original inline-axis
-  center against the target column's block-axis center — the text position at
-  the matching y in the next column (keeping the column position).
+  We re-hit-test with `view.posAtCoords` at the target column's block-axis
+  center and a **goal column** for the inline axis — the text position at the
+  matching depth in the next column (keeping the column position).
+
+The goal column (`goalInlineRef`) is the caret's **depth into the column** (its
+inline-axis distance from the line's start), held across a run of consecutive
+line moves and reset by any other caret change (a char-axis move, a click, an
+edit). Holding it means stepping through a SHORT line — where the caret lands at
+that line's end — doesn't drag the column up; the next long line restores it.
+It is a *relative* depth, not an absolute screen coordinate, so it stays correct
+across a page-row boundary, where the next column sits at a different origin.
+(Tested in `test/e2e/line-movement.ts`, which runs **visible** — the mover
+defers via RAF, throttled in hidden windows; see the RAF gotcha below.)
 
 ## Caret at ruby boundaries
 

@@ -117,7 +117,12 @@ const closestPara = (root: HTMLElement, n: Node | null): HTMLElement | null => {
  * cross-paragraph move we hit-test the adjacent paragraph's column at the
  * caret's original inline-axis position — keeping the column.
  */
-const moveCaretByLine = (view: EditorView, extend: boolean, reverse: boolean): void => {
+const moveCaretByLine = (
+  view: EditorView,
+  extend: boolean,
+  reverse: boolean,
+  goalRef: React.MutableRefObject<number | null>,
+): void => {
   requestAnimationFrame(() => {
     const sel = window.getSelection();
     if (!sel || sel.rangeCount === 0) return;
@@ -158,7 +163,20 @@ const moveCaretByLine = (view: EditorView, extend: boolean, reverse: boolean): v
     if (!targetP || targetP.tagName !== 'P') return revert(); // document edge: stay put
 
     const tr = targetP.getBoundingClientRect();
-    const inline = isVertical ? beforeRect.top + beforeRect.height / 2 : beforeRect.left + beforeRect.width / 2;
+    // The GOAL column: the caret's DEPTH into the column (its inline-axis
+    // distance from the line's start), held across a run of line moves. Seed it
+    // from the caret on the first move, then reuse it, so stepping through a
+    // SHORT line (caret lands at the line's end) doesn't drag the column. Depth
+    // is RELATIVE to the line start — not an absolute screen coord — so it stays
+    // correct across a page-row boundary, where the next column sits at a
+    // different origin. Reset to null by any non-line-move (handleKeyDown /
+    // mousedown / edit), which starts a fresh run.
+    if (goalRef.current == null && beforeP) {
+      const br = beforeP.getBoundingClientRect();
+      const caret = isVertical ? beforeRect.top + beforeRect.height / 2 : beforeRect.left + beforeRect.width / 2;
+      goalRef.current = caret - (isVertical ? br.top : br.left);
+    }
+    const inline = (isVertical ? tr.top : tr.left) + (goalRef.current ?? 0);
     const block = isVertical ? tr.left + tr.width / 2 : tr.top + tr.height / 2;
     const hit = view.posAtCoords({ left: isVertical ? block : inline, top: isVertical ? inline : block });
     if (hit) commit(hit.pos);
@@ -278,6 +296,10 @@ export const VedEditor = (props: VedEditorProps): React.JSX.Element => {
   const policyClassRef = useRef<Appear>(APPEAR_CLASS[appearPolicy]);
   const lastTextRef = useRef(props.initialText);
   const rebuildingRef = useRef(false);
+  // Goal column for line movement: the inline-axis coordinate held across a run
+  // of ArrowLeft/Right line moves (null = no run in progress; see
+  // moveCaretByLine). Any other caret change resets it.
+  const goalInlineRef = useRef<number | null>(null);
 
   const onScroll = useKeepScrollPosition(scrollerRef, writingMode);
 
@@ -309,6 +331,8 @@ export const VedEditor = (props: VedEditorProps): React.JSX.Element => {
       nodeViews: { ruby: (node) => new RubyView(node) },
       dispatchTransaction(tr) {
         let next = view.state.apply(tr);
+        // An edit repositions the caret along the line — drop the goal column.
+        if (tr.docChanged) goalInlineRef.current = null;
         // Ruby structure repair in the same flush, skipped during IME.
         if (tr.docChanged && !view.composing && !rebuildingRef.current) {
           const fix = repair(next);
@@ -390,9 +414,10 @@ export const VedEditor = (props: VedEditorProps): React.JSX.Element => {
       if (!act) return false;
       event.preventDefault();
       if (act.axis === 'char') {
+        goalInlineRef.current = null; // moving along the line sets a new column
         moveChar(v, policyClassRef.current, act.reverse, event.shiftKey);
       } else {
-        moveCaretByLine(v, event.shiftKey, act.reverse);
+        moveCaretByLine(v, event.shiftKey, act.reverse, goalInlineRef);
       }
       return true;
     };
@@ -410,6 +435,12 @@ export const VedEditor = (props: VedEditorProps): React.JSX.Element => {
     };
     mount.addEventListener('wheel', onWheel, { passive: false });
 
+    // A click places the caret at a new column — end any line-move run.
+    const onPointerDown = (): void => {
+      goalInlineRef.current = null;
+    };
+    mount.addEventListener('mousedown', onPointerDown);
+
     return () => {
       const s = scrollerRef.current;
       live.current.onSnapshot?.({
@@ -418,6 +449,7 @@ export const VedEditor = (props: VedEditorProps): React.JSX.Element => {
         scroll: { top: s?.scrollTop ?? 0, left: s?.scrollLeft ?? 0 },
       });
       mount.removeEventListener('wheel', onWheel);
+      mount.removeEventListener('mousedown', onPointerDown);
       view.destroy();
       viewRef.current = null;
     };
