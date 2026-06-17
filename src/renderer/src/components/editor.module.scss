@@ -9,8 +9,12 @@ $pad-y: 10px;
 $caret-margin: 6px;
 // Gutter reserved at each line's inline-start (left in horizontal, top in
 // vertical-rl) for the line number (pm/ruby.css). Logical, so it's correct in
-// every writing mode.
-$line-gutter: 2.2em;
+// every writing mode. MUST be px, not em: it sizes both the content's
+// column-gap (font-size 18) and the scroller's separator-gradient pitch
+// (font-size 16), and `2.2em` resolves to different pixels on each — which made
+// the VerticalColumns separator drift ~4px PER page. A fixed px is identical
+// on both, so the band period and the separator pitch stay locked together.
+$line-gutter: 2.2 * $font-size;
 $footer-height: $font-size + $pad-y * 2;
 
 .root {

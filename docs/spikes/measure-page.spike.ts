@@ -1,5 +1,5 @@
-// VerticalColumns with several pages: do later page-rows drift so lines cross
-// the page separator? Measure page-row band positions vs the separator pitch.
+// OBSERVE VerticalColumns separators vs lines across MANY pages at once: shrink
+// the page (--page-line-chars) so several page-rows fit one viewport.
 //   node docs/spikes/measure-page.spike.ts
 import { writeFile } from 'node:fs/promises';
 import electronPath from 'electron';
@@ -15,55 +15,48 @@ const page = await app.firstWindow();
 await page.waitForSelector('#editor-content');
 await page.click('#editor-content');
 
-// ~70 full-length lines = 3-4 pages (page-lines = 20).
-const full40 = '一二三四五六七八九十' + '壱弐参四五六七八九拾' + '甲乙丙丁戊己庚辛壬癸' + '子丑寅卯辰巳午未申酉';
-for (let i = 0; i < 70; i++) {
-  await page.keyboard.insertText(full40);
-  if (i < 69) await page.keyboard.press('Enter');
+const line12 = '一二三四五六七八九十壱弐'; // 12 fullwidth chars = one short page line
+const lines = 80; // 4 pages at 20 lines/page
+for (let i = 0; i < lines; i++) {
+  await page.keyboard.insertText(line12);
+  if (i < lines - 1) await page.keyboard.press('Enter');
 }
 await page.waitForTimeout(300);
 await page.click(`button[aria-label="Vertical Columns"]`);
-await page.waitForTimeout(400);
+await page.waitForTimeout(300);
+// Shrink the page so 4 page-rows fit one viewport.
+await page.evaluate(() => {
+  const r = document.querySelector('[class*="root"]') as HTMLElement;
+  r.style.setProperty('--page-line-chars', '12');
+  r.style.setProperty('--page-lines', '20');
+  const sc = Array.from(document.querySelectorAll('div')).find((d) => getComputedStyle(d).overflowY === 'scroll');
+  if (sc) sc.scrollTop = 0;
+});
+await page.waitForTimeout(300);
 
 const m = await page.evaluate(() => {
-  const r2 = (n: number) => Math.round(n);
   const content = document.querySelector('[contenteditable]') as HTMLElement;
-  const ccs = getComputedStyle(content);
-  const num = (s: string) => Number.parseFloat(ccs.getPropertyValue(s));
-  const cell = num('--cell-size');
-  const gutter = Number.parseFloat(ccs.paddingInlineStart); // the line-number gutter
-  const colGap = Number.parseFloat(ccs.columnGap);
-  const pageHeight = num('--page-line-chars') * cell;
-  // Page-row bands: all lines in a band share the same inline-start (top).
+  const top0 = content.getBoundingClientRect().top;
   const ps = Array.from(document.querySelectorAll('#editor-content > p')) as HTMLElement[];
-  const tops = [...new Set(ps.map((p) => r2(p.getBoundingClientRect().top)))].sort((a, b) => a - b);
-  const periods = tops.slice(1).map((t, i) => t - tops[i]);
+  const tops = [...new Set(ps.map((p) => +(p.getBoundingClientRect().top - top0).toFixed(2)))].sort((a, b) => a - b);
+  const periods = tops.slice(1).map((t, i) => +(t - tops[i]).toFixed(2));
+  // The scroller carries the separator background.
+  const sc = Array.from(document.querySelectorAll('div')).find((d) => getComputedStyle(d).overflowY === 'scroll')!;
+  const scs = getComputedStyle(sc);
   return {
-    pageHeight,
-    gutter: r2(gutter),
-    colGap: r2(colGap),
-    separatorPitch: r2(pageHeight + gutter + colGap), // what the gradient uses
+    bgSizeY: scs.backgroundSize,
+    bgPositionY: scs.backgroundPosition,
     bandTops: tops.slice(0, 6),
-    bandPeriods: periods.slice(0, 5), // actual page-row spacing; should == separatorPitch
+    bandPeriods: periods.slice(0, 5),
   };
 });
 console.log(JSON.stringify(m, null, 1));
 
-// Capture the whole stack, then scroll down ~2.5 pages and capture a later page.
-const shoot = async (file: string) => {
-  const url = await app.evaluate(async ({ BrowserWindow }) => {
-    const img = await BrowserWindow.getAllWindows()[0].webContents.capturePage();
-    return img.toDataURL();
-  });
-  await writeFile(`${root}${file}`, Buffer.from(url.split(',')[1], 'base64'));
-};
-await shoot('pages-top.png');
-await page.evaluate(() => {
-  const sc = Array.from(document.querySelectorAll('div')).find((d) => getComputedStyle(d).overflowY === 'scroll');
-  if (sc) sc.scrollTop = sc.scrollHeight; // jump to the last pages
+const url = await app.evaluate(async ({ BrowserWindow }) => {
+  const img = await BrowserWindow.getAllWindows()[0].webContents.capturePage();
+  return img.toDataURL();
 });
-await page.waitForTimeout(300);
-await shoot('pages-bottom.png');
+await writeFile(`${root}pages-top.png`, Buffer.from(url.split(',')[1], 'base64'));
 
 await page.evaluate(() => window.ved.setDirty(false));
 await app.close();
