@@ -32,12 +32,12 @@
 /* ::after (not ::before — the placeholder owns ::before). The number is
  * anchored just before the line's inline-start (its inline-END sits at the
  * line start, with a small gap). The box is stretched across the line's whole
- * BLOCK extent (inset-block-start/end: 0) and the digit centered inside it, so
- * it sits centered against the line's thickness — and self-adjusts when a ruby
- * annotation widens the line (the block extent is unpredictable, but CSS
- * measures it for us). NOT a writing-mode override — that fights the logical
- * insets across modes; instead `text-combine-upright` keeps the digits
- * horizontal inside vertical text. */
+ * BLOCK extent (inset-block-start/end: 0) and the digit aligned to the
+ * block-START edge of it — the RIGHT in vertical-rl (where a line begins), the
+ * top in horizontal — and self-adjusts when a ruby annotation widens the line
+ * (the block extent is unpredictable, but CSS measures it for us). NOT a
+ * writing-mode override — that fights the logical insets across modes; instead
+ * `text-combine-upright` keeps the digits horizontal inside vertical text. */
 .ProseMirror p::after {
   counter-increment: vedline;
   content: counter(vedline);
@@ -46,7 +46,7 @@
   inset-block-start: 0;
   inset-block-end: 0; /* stretch across the line's block extent... */
   display: grid;
-  place-items: center; /* ...and center the digit within it */
+  place-items: start center; /* ...digit at the block-start (right in vertical-rl) */
   margin-inline-end: 0.5em; /* gap between the number and the text */
   text-combine-upright: all; /* digits stay horizontal in vertical-rl */
   font-size: 0.6em;
