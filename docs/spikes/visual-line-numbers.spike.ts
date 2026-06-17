@@ -27,5 +27,8 @@ const url = await app.evaluate(async ({ BrowserWindow }) => {
   const img = await BrowserWindow.getAllWindows()[0].webContents.capturePage();
   return img.toDataURL();
 });
-await writeFile(new URL('./visual-line-numbers.png', import.meta.url).pathname, Buffer.from(url.split(',')[1], 'base64'));
+await writeFile(
+  new URL('./visual-line-numbers.png', import.meta.url).pathname,
+  Buffer.from(url.split(',')[1], 'base64'),
+);
 await app.close();

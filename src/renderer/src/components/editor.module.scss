@@ -255,21 +255,23 @@ $col-gap: $pad-y * 2;
       // repeating-linear-gradient: Chromium's compositor drops tiles of
       // attachment-local repeating gradients depending on the scroll
       // position (lines vanish at certain depths).
-      // A band is column-width tall = page-height PLUS the line-number gutter,
-      // so the separator period and gap-line offset must include $line-gutter —
-      // otherwise the band is taller than the separator pitch and each line
-      // overruns the separator by the gutter (see a.png / the Columns repro).
+      // A band is page-height tall (= column-width) and bands are separated by
+      // $line-gutter (= column-gap, which doubles as the line-number space), so
+      // the band PERIOD is page-height + gutter. Match the separator pitch to
+      // it exactly — any other pitch drifts a fixed amount PER PAGE and lines
+      // overrun the separator by page 3-4. The gap-line sits mid-gutter, and
+      // the phase ($line-gutter) skips the first band's matching start padding.
       background-image: linear-gradient(
         to bottom,
-        transparent calc(var(--page-height) + #{$line-gutter} + #{$pad-y - 0.5px}),
-        #808080 calc(var(--page-height) + #{$line-gutter} + #{$pad-y - 0.5px}),
-        #808080 calc(var(--page-height) + #{$line-gutter} + #{$pad-y + 0.5px}),
-        transparent calc(var(--page-height) + #{$line-gutter} + #{$pad-y + 0.5px})
+        transparent calc(var(--page-height) + #{$line-gutter} / 2 - 0.5px),
+        #808080 calc(var(--page-height) + #{$line-gutter} / 2 - 0.5px),
+        #808080 calc(var(--page-height) + #{$line-gutter} / 2 + 0.5px),
+        transparent calc(var(--page-height) + #{$line-gutter} / 2 + 0.5px)
       );
-      background-size: 100% calc(var(--page-height) + #{$line-gutter} + #{$col-gap});
+      background-size: 100% calc(var(--page-height) + #{$line-gutter});
       background-repeat: repeat-y;
       background-attachment: local;
-      background-position: 0 $pad-y;
+      background-position: 0 #{$line-gutter};
     }
 
     // VerticalRows — the leftward-tiled mirror of multiColMode.
@@ -321,17 +323,23 @@ $col-gap: $pad-y * 2;
     // configured character count.
     &.multiColMode {
       width: var(--page-width);
-      height: calc(var(--page-height) + #{$caret-margin} + #{$line-gutter});
+      // Consistent band geometry so the page-row period is predictable (CSS
+      // multicol applies padding to the FIRST column only, so any per-band
+      // gutter MUST be column-gap, not padding — else later pages drift):
+      //   column-width = page-height (the line), so it equals the content area
+      //     (height - start padding) and is never clamped;
+      //   column-gap   = $line-gutter — the inter-band gap that holds the line
+      //     numbers, uniform across every band;
+      //   start padding = $line-gutter — matches the gap so the FIRST band's
+      //     numbers get the same room (and the separator phase skips it).
+      // Band period = page-height + $line-gutter; the separator pitch matches.
+      height: calc(var(--page-height) + #{$line-gutter});
       margin: $pad-y $pad-x $footer-height $pad-x;
-      padding: $caret-margin 0 0 0;
-      // Start padding is EXACTLY the gutter (no extra caret-margin): the line
-      // then starts at the gutter and ends at column-width, so the band height
-      // (column-width) matches the separator pitch and the line never overruns
-      // it. The gutter alone is ample breathing room for the doc-start caret.
-      padding-inline-start: $line-gutter; // line-number gutter (top)
+      padding: 0;
+      padding-inline-start: $line-gutter;
       box-sizing: border-box;
-      column-width: calc(var(--page-height) + #{$line-gutter});
-      column-gap: $col-gap;
+      column-width: var(--page-height);
+      column-gap: $line-gutter;
     }
 
     // VerticalRows — pages tile leftward, the editor scrolls horizontally.

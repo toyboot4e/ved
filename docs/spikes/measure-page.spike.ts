@@ -1,5 +1,5 @@
-// Reproduce a.png: a long single line in VerticalColumns runs past the page
-// separator. Inspect the paragraph's computed size and actual column length.
+// VerticalColumns with several pages: do later page-rows drift so lines cross
+// the page separator? Measure page-row band positions vs the separator pitch.
 //   node docs/spikes/measure-page.spike.ts
 import { writeFile } from 'node:fs/promises';
 import electronPath from 'electron';
@@ -15,49 +15,55 @@ const page = await app.firstWindow();
 await page.waitForSelector('#editor-content');
 await page.click('#editor-content');
 
-// Reproduce a.png exactly: a ruby node, then a long unbroken Latin run.
-await page.keyboard.insertText('|ルビ(ruby)');
-await page.waitForTimeout(200); // let the ruby structure repair run
-await page.keyboard.insertText('cvxzvczxvz'.repeat(12)); // 120 chars, no spaces
-await page.waitForTimeout(150);
-
-for (const label of ['Vertical', 'Vertical Columns', 'Vertical Rows'] as const) {
-  await page.click(`button[aria-label="${label}"]`);
-  await page.waitForTimeout(300);
-  const m = await page.evaluate(() => {
-    const r2 = (n: number) => Math.round(n);
-    const content = document.querySelector('[contenteditable]') as HTMLElement;
-    const ccs = getComputedStyle(content);
-    const cell = Number.parseFloat(ccs.getPropertyValue('--cell-size'));
-    const chars = Number.parseFloat(ccs.getPropertyValue('--page-line-chars'));
-    const p = document.querySelector('#editor-content > p') as HTMLElement;
-    const pcs = getComputedStyle(p);
-    const rect = p.getBoundingClientRect();
-    return {
-      pageLen: r2(chars * cell), // intended cap (720)
-      paraInlineSize: pcs.inlineSize, // is the cap applied to the paragraph?
-      paraWritingMode: pcs.writingMode,
-      colLength: r2(Math.max(rect.width, rect.height)), // actual length of the column
-      colThick: r2(Math.min(rect.width, rect.height)), // ~pitch if 1 col, more if wrapped
-      contentColumnWidth: ccs.columnWidth,
-      contentHeight: ccs.height,
-    };
-  });
-  console.log(label.padEnd(18), JSON.stringify(m));
+// ~70 full-length lines = 3-4 pages (page-lines = 20).
+const full40 = '一二三四五六七八九十' + '壱弐参四五六七八九拾' + '甲乙丙丁戊己庚辛壬癸' + '子丑寅卯辰巳午未申酉';
+for (let i = 0; i < 70; i++) {
+  await page.keyboard.insertText(full40);
+  if (i < 69) await page.keyboard.press('Enter');
 }
+await page.waitForTimeout(300);
+await page.click(`button[aria-label="Vertical Columns"]`);
+await page.waitForTimeout(400);
 
-for (const [label, file] of [
-  ['Vertical Columns', 'cap-columns.png'],
-  ['Vertical Rows', 'cap-rows.png'],
-] as const) {
-  await page.click(`button[aria-label="${label}"]`);
-  await page.waitForTimeout(300);
+const m = await page.evaluate(() => {
+  const r2 = (n: number) => Math.round(n);
+  const content = document.querySelector('[contenteditable]') as HTMLElement;
+  const ccs = getComputedStyle(content);
+  const num = (s: string) => Number.parseFloat(ccs.getPropertyValue(s));
+  const cell = num('--cell-size');
+  const gutter = Number.parseFloat(ccs.paddingInlineStart); // the line-number gutter
+  const colGap = Number.parseFloat(ccs.columnGap);
+  const pageHeight = num('--page-line-chars') * cell;
+  // Page-row bands: all lines in a band share the same inline-start (top).
+  const ps = Array.from(document.querySelectorAll('#editor-content > p')) as HTMLElement[];
+  const tops = [...new Set(ps.map((p) => r2(p.getBoundingClientRect().top)))].sort((a, b) => a - b);
+  const periods = tops.slice(1).map((t, i) => t - tops[i]);
+  return {
+    pageHeight,
+    gutter: r2(gutter),
+    colGap: r2(colGap),
+    separatorPitch: r2(pageHeight + gutter + colGap), // what the gradient uses
+    bandTops: tops.slice(0, 6),
+    bandPeriods: periods.slice(0, 5), // actual page-row spacing; should == separatorPitch
+  };
+});
+console.log(JSON.stringify(m, null, 1));
+
+// Capture the whole stack, then scroll down ~2.5 pages and capture a later page.
+const shoot = async (file: string) => {
   const url = await app.evaluate(async ({ BrowserWindow }) => {
     const img = await BrowserWindow.getAllWindows()[0].webContents.capturePage();
     return img.toDataURL();
   });
   await writeFile(`${root}${file}`, Buffer.from(url.split(',')[1], 'base64'));
-}
+};
+await shoot('pages-top.png');
+await page.evaluate(() => {
+  const sc = Array.from(document.querySelectorAll('div')).find((d) => getComputedStyle(d).overflowY === 'scroll');
+  if (sc) sc.scrollTop = sc.scrollHeight; // jump to the last pages
+});
+await page.waitForTimeout(300);
+await shoot('pages-bottom.png');
 
 await page.evaluate(() => window.ved.setDirty(false));
 await app.close();

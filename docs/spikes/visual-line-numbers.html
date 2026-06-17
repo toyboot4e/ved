@@ -47,7 +47,7 @@
     <script>
       // For each paragraph, find its visual lines and number each one.
       const numberVisualLines = (box, vertical) => {
-        box.querySelectorAll('.vln').forEach((n) => n.remove());
+        for (const n of box.querySelectorAll('.vln')) n.remove();
         const boxRect = box.getBoundingClientRect();
         const range = document.createRange();
         let n = 0;
