@@ -1,6 +1,7 @@
-// Does the current-line (full-column) highlight extend past the page border,
-// per vertical mode? Measure the highlighted <p> against the bordered editor.
+// Precise check: does a full-N line fit within the page border in vertical
+// modes, or overflow / wrap? Screenshots a single line for visual confirm.
 //   node docs/spikes/measure-page.spike.ts
+import { writeFile } from 'node:fs/promises';
 import electronPath from 'electron';
 import { _electron } from 'playwright';
 
@@ -15,40 +16,46 @@ await page.waitForSelector('#editor-content');
 await page.click('#editor-content');
 
 const full40 = '一二三四五六七八九十' + '壱弐参四五六七八九拾' + '甲乙丙丁戊己庚辛壬癸' + '子丑寅卯辰巳午未申酉';
-for (let i = 0; i < 12; i++) {
-  await page.keyboard.insertText(full40);
-  if (i < 11) await page.keyboard.press('Enter');
-}
-await page.waitForTimeout(200);
+await page.keyboard.insertText('一行目');
+await page.keyboard.press('Enter');
+await page.keyboard.insertText(full40);
+await page.waitForTimeout(150);
 
-for (const label of ['Horizontal', 'Vertical', 'Vertical Columns', 'Vertical Rows'] as const) {
-  await page.click(`button[aria-label="${label}"]`);
-  await page.waitForTimeout(300);
-  const m = await page.evaluate(() => {
-    const r2 = (n: number) => Math.round(n);
-    const ps = Array.from(document.querySelectorAll('#editor-content > p'));
-    const long = ps[0].getBoundingClientRect(); // a full-40 line
-    const horizontal = getComputedStyle(ps[0]).writingMode === 'horizontal-tb';
-    const lineLen = horizontal ? long.width : long.height; // inline axis = length
-    const lineThick = horizontal ? long.height : long.width; // wrap → ~2× pitch
-    const content = document.querySelector('[contenteditable]')!;
-    const cs = getComputedStyle(content);
-    // Resolve --line-length to px by sizing a throwaway element with it.
-    const probe = document.createElement('div');
-    probe.style.cssText = 'position:absolute;visibility:hidden;inline-size:var(--line-length)';
-    content.appendChild(probe);
-    const reserved = probe.getBoundingClientRect().width;
-    probe.remove();
-    return {
-      charSizePx: r2(Number.parseFloat(cs.getPropertyValue('--char-size')) * 100) / 100,
-      reservedTrack: r2(reserved), // chars × char-size
-      actualLineLen: r2(lineLen), // rendered 40 chars
-      trackMinusLine: r2(reserved - lineLen), // ≥0 = fits, <0 = overflow
-      lineThickPx: r2(lineThick), // ~pitch (20) = single line, ~40 = wrapped
-    };
-  });
-  console.log(label.padEnd(18), JSON.stringify(m));
-}
+await page.click(`button[aria-label="Vertical"]`);
+await page.waitForTimeout(300);
+
+const m = await page.evaluate(() => {
+  const r2 = (n: number) => Math.round(n * 10) / 10;
+  const content = document.querySelector('[contenteditable]') as HTMLElement;
+  const cs = getComputedStyle(content);
+  const charSize = Number.parseFloat(cs.getPropertyValue('--char-size'));
+  const chars = Number.parseFloat(cs.getPropertyValue('--page-line-chars'));
+  const linePitch = Number.parseFloat(cs.lineHeight);
+  const ps = Array.from(document.querySelectorAll('#editor-content > p'));
+  const long = ps[1].getBoundingClientRect(); // the full-N line
+  // The bordered page box: the scroller (editor) with the 2px black border.
+  const editor = content.parentElement!.getBoundingClientRect();
+  return {
+    charSize,
+    expectedLen: r2(chars * charSize),
+    lineLen: r2(long.height), // inline (vertical) extent = the row length
+    lineThick: r2(long.width), // block extent; > ~pitch ⇒ wrapped to >1 column
+    linePitch: r2(linePitch),
+    wrapped: long.width > linePitch * 1.5,
+    lineTop: r2(long.top),
+    lineBottom: r2(long.bottom),
+    borderTop: r2(editor.top),
+    borderBottom: r2(editor.bottom),
+    overflowPastBorder: r2(long.bottom - editor.bottom), // > 0 ⇒ past the border
+  };
+});
+console.log(JSON.stringify(m, null, 1));
+
+const url = await app.evaluate(async ({ BrowserWindow }) => {
+  const img = await BrowserWindow.getAllWindows()[0].webContents.capturePage();
+  return img.toDataURL();
+});
+await writeFile(`${root}rowcheck.png`, Buffer.from(url.split(',')[1], 'base64'));
 
 await page.evaluate(() => window.ved.setDirty(false));
 await app.close();
