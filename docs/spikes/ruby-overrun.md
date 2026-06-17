@@ -22,37 +22,49 @@ So 20 rubies fill the column to exactly 720 (the cap = the multicol
 `column-width`), and the **21st starts at exactly 720 and is kept, overhanging
 to 756** — every column, reproducibly. It crosses the page separator.
 
-## Why it's almost certainly a Chromium bug
+## Root cause — the `font-size: 0` leading delimiter (Chromium quirk)
 
-A normal character at the same position **wraps**: a 40-char line breaks before
-the char that would exceed 720 (CJK has a soft-wrap opportunity at every char
-boundary). A `<ruby>` (rendered `display: ruby`) is a whole-cell atom, and at the
-exact cap boundary Chromium does **not** break before it — it places it with
-zero available width and lets it overhang. Atoms are supposed to wrap when they
-don't fit; here they don't. The asymmetry (char wraps, ruby doesn't, same spot)
-points at the ruby line-breaker.
+Isolated in a standalone page (`ruby-overrun-minimal.html`, no ved). A box of
+12 ved-shaped rubies in a 5-ruby-wide `inline-size`, varying the hidden markup:
 
-## Why no CSS cap value fixes it
+| ruby markup | rubies in the first column (5 = correct) |
+|---|---|
+| plain `<ruby>base<rt>…</rt></ruby>` | **5** ✓ |
+| trailing `(reading)` only, `font-size:0` | **5** ✓ |
+| **leading `|` only**, `font-size:0` | **12** (no wrap at all) |
+| both (ved's structure) | **6** (overhang by one) |
 
-The line cap is `inline-size: var(--line-length)`, and it is hard-bounded:
+So it is **not** a generic ruby bug — plain rubies wrap fine. It's the
+**`font-size: 0` leading `|`**: a zero-width box at the ruby's start. At the
+column edge that 0-width box "fits" (0 ≤ remaining), so Chromium places the
+ruby and lets its visible base overhang — where a real character, having width,
+would wrap. A normal char in the same box wraps correctly (the `plain` control).
 
-- It **cannot exceed** the multicol `column-width` (= page-height). `+1px`
-  makes the paragraph wider than its column, so it no longer fits one column.
-- **Reducing** it (`-1px`) wraps the *legitimate* Nth atom too — a 40-char line
-  drops to 39 chars (the 40th now ends past the smaller cap and breaks before).
-- `overflow-wrap: anywhere` and `line-break: anywhere` don't change it — the
-  rubies already wrap *between* columns; it's the boundary atom that's kept.
-- `overflow: clip` would hide the overhang but also clips the line-number
-  `::after`, which sits in the gutter outside the line box.
+`font-size: 0` is **load-bearing**: ved hides the `|`,`(`,`)` markup with it
+(NOT `display: none`) precisely so the caret stays addressable at every
+character (see CLAUDE.md). `display: none` / `position: absolute` would fix the
+wrap but make the caret unaddressable there.
 
-So the only cap that fits the column (720) is the one that overruns; there is no
-value that both holds N real cells and wraps the boundary ruby.
+## Workarounds that DON'T work
+
+Tried in the minimal repro, all still overhang:
+
+- `word-break: break-all` on the line;
+- `line-break: anywhere`;
+- a zero-width space (`U+200B`) before each `|`, and *between* rubies;
+- nudging `inline-size` ±1px (it's hard-bounded: it can't exceed the multicol
+  `column-width`, and reducing it wraps the legitimate Nth char too — a 40-char
+  line drops to 39);
+- `overflow: clip` would hide the overhang but also clips the gutter line-number
+  `::after`.
 
 ## Status / recommendation
 
-Left as a **known limitation** with a comment at the `inline-size` cap
-(`editor.module.scss`). Worth filing upstream (crbug) with the minimal repro:
-a row of `display: ruby` atoms in a fixed `inline-size` whose width is an exact
-multiple of the atom width — the last atom overhangs instead of wrapping, where
-plain text wraps. A future ved-side workaround would need the line numbers off
-the paragraph (the planned visual-line overlay) so the paragraph can `clip`.
+Left as a **known limitation**, commented at the `inline-size` cap
+(`editor.module.scss`). It is a Chromium line-breaking quirk: a `font-size: 0`
+(zero-width, in-flow) box at the start of a `<ruby>` lets the ruby be placed at
+a line boundary with its visible base overhanging. **`ruby-overrun-minimal.html`
+is a self-contained crbug repro** — plain CSS, no ved, no ProseMirror. A future
+ved-side workaround would need the line numbers moved off the paragraph (the
+planned visual-line overlay) so the paragraph could `overflow: clip`, OR a
+zero-width hiding that is still caret-addressable yet has non-zero break weight.
