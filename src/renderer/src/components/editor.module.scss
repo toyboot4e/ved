@@ -197,6 +197,15 @@ $footer-height: $font-size + $pad-y * 2;
     // advance, and without growing the page/separators to chase the text.
     // overflow-wrap lets even an unbreakable run (a long Latin word / URL, where
     // there is no break-all) break at the cap instead of overflowing it.
+    //
+    // Caps the line to N whole cells (= the multicol column-width, so it must
+    // not exceed it). KNOWN LIMITATION: a <ruby> is a whole-cell ATOM, and when
+    // a ruby boundary lands exactly on the cap, Chromium keeps the next ruby
+    // overhanging instead of wrapping it (a char in the same spot wraps) — so a
+    // line of ~20+ consecutive |ルビ(ruby) overruns by one ruby per column in
+    // Rich + VerticalColumns. No CSS cap value fixes it: the cap can't exceed
+    // column-width, and reducing it wraps the legitimate Nth char too. Likely a
+    // Chromium ruby line-break bug. See docs/spikes/ruby-overrun.md.
     inline-size: var(--line-length);
     overflow-wrap: anywhere;
   }
