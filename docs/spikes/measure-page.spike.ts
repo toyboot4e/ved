@@ -21,35 +21,35 @@ await page.keyboard.press('Enter');
 await page.keyboard.insertText(full40);
 await page.waitForTimeout(150);
 
-await page.click(`button[aria-label="Vertical"]`);
-await page.waitForTimeout(300);
-
-const m = await page.evaluate(() => {
-  const r2 = (n: number) => Math.round(n * 10) / 10;
-  const content = document.querySelector('[contenteditable]') as HTMLElement;
-  const cs = getComputedStyle(content);
-  const charSize = Number.parseFloat(cs.getPropertyValue('--char-size'));
-  const chars = Number.parseFloat(cs.getPropertyValue('--page-line-chars'));
-  const linePitch = Number.parseFloat(cs.lineHeight);
-  const ps = Array.from(document.querySelectorAll('#editor-content > p'));
-  const long = ps[1].getBoundingClientRect(); // the full-N line
-  // The bordered page box: the scroller (editor) with the 2px black border.
-  const editor = content.parentElement!.getBoundingClientRect();
-  return {
-    charSize,
-    expectedLen: r2(chars * charSize),
-    lineLen: r2(long.height), // inline (vertical) extent = the row length
-    lineThick: r2(long.width), // block extent; > ~pitch ⇒ wrapped to >1 column
-    linePitch: r2(linePitch),
-    wrapped: long.width > linePitch * 1.5,
-    lineTop: r2(long.top),
-    lineBottom: r2(long.bottom),
-    borderTop: r2(editor.top),
-    borderBottom: r2(editor.bottom),
-    overflowPastBorder: r2(long.bottom - editor.bottom), // > 0 ⇒ past the border
-  };
-});
-console.log(JSON.stringify(m, null, 1));
+for (const label of ['Horizontal', 'Vertical', 'Vertical Columns', 'Vertical Rows'] as const) {
+  await page.click(`button[aria-label="${label}"]`);
+  await page.waitForTimeout(300);
+  const m = await page.evaluate(() => {
+    const r2 = (n: number) => Math.round(n * 10) / 10;
+    const content = document.querySelector('[contenteditable]') as HTMLElement;
+    const cs = getComputedStyle(content);
+    const cell = Number.parseFloat(cs.getPropertyValue('--cell-size'));
+    const chars = Number.parseFloat(cs.getPropertyValue('--page-line-chars'));
+    const linePitch = Number.parseFloat(cs.lineHeight);
+    const horizontal = cs.writingMode === 'horizontal-tb';
+    const ps = Array.from(document.querySelectorAll('#editor-content > p'));
+    const long = ps[1].getBoundingClientRect(); // the full-N line
+    const lineLen = horizontal ? long.width : long.height; // inline (length) axis
+    // The bordered page box (.editor, 2px border) — does the line exceed it?
+    const editor = (
+      content.closest('[class*="editor"]:not([class*="editorContent"])') as HTMLElement
+    ).getBoundingClientRect();
+    const past = horizontal ? long.right - editor.right : long.bottom - editor.bottom;
+    return {
+      cap: r2(chars * cell), // --line-length, the fixed N-cell pixel length
+      lineLen: r2(lineLen),
+      overCap: r2(lineLen - chars * cell), // > 0 ⇒ exceeds the N-cell cap
+      pastBorder: r2(past), // > 0 ⇒ spills past the page border
+      wrapped: (horizontal ? long.height : long.width) > linePitch * 1.5,
+    };
+  });
+  console.log(label.padEnd(18), JSON.stringify(m));
+}
 
 const url = await app.evaluate(async ({ BrowserWindow }) => {
   const img = await BrowserWindow.getAllWindows()[0].webContents.capturePage();
