@@ -256,27 +256,6 @@ const revealCaretInScroller = (scroller: HTMLElement): void => {
   scroller.scrollLeft += revealDelta(rect.left, rect.right, left, left + scroller.clientWidth, cushion);
 };
 
-/** Size the page to N REAL characters. The line length is N × --char-size
- *  (editor.module.scss); publish the running font's fullwidth advance so a line
- *  holds exactly --page-line-chars zenkaku, instead of N × font-size — the
- *  "1 全角 = 1em" guess over/underflows the page border when the font's CJK
- *  advance isn't 1em. Measure in the content's CURRENT writing mode (the inline
- *  advance differs between axes for some fonts), so re-run on a mode change. */
-const publishCharSize = (content: HTMLElement): void => {
-  const probe = document.createElement('span');
-  probe.textContent = '永'.repeat(20);
-  probe.style.cssText = 'position:absolute;visibility:hidden;white-space:nowrap;pointer-events:none';
-  content.appendChild(probe);
-  const rect = probe.getBoundingClientRect();
-  probe.remove();
-  // The probe inherits the content's writing mode; the inline (text-advance)
-  // axis is the column length — vertical in vertical-rl, horizontal otherwise.
-  const vertical = getComputedStyle(content).writingMode.startsWith('vertical');
-  const advance = (vertical ? rect.height : rect.width) / 20;
-  const root = content.closest<HTMLElement>(`.${styles.root}`);
-  if (advance > 0 && root) root.style.setProperty('--char-size', `${advance}px`);
-};
-
 // ---------------------------------------------------------------------------
 // The editor component
 // ---------------------------------------------------------------------------
@@ -371,12 +350,6 @@ export const VedEditor = (props: VedEditorProps): React.JSX.Element => {
     view.dom.id = 'editor-content';
     view.dom.classList.add(...CONTENT_CLASS(vert, multiCol, rows).split(' ').filter(Boolean));
 
-    // Size the page to N real characters now and once webfonts settle (the
-    // writing-mode effect re-measures per mode). CSS holds the font-size
-    // fallback until the first measurement lands.
-    publishCharSize(view.dom);
-    document.fonts?.ready.then(() => publishCharSize(view.dom));
-
     const scroller = scrollerRef.current;
     if (scroller && initialScroll) {
       scroller.scrollTop = initialScroll.top;
@@ -464,9 +437,6 @@ export const VedEditor = (props: VedEditorProps): React.JSX.Element => {
     // the layout/writing-mode classes.
     view.dom.className = '';
     view.dom.classList.add('ProseMirror', ...CONTENT_CLASS(vert, multiCol, rows).split(' ').filter(Boolean));
-    // Re-measure the fullwidth advance in the now-current writing mode (it can
-    // differ between axes), so the line length tracks N real characters here too.
-    publishCharSize(view.dom);
     view.dispatch(view.state.tr.setMeta('redecorate', true));
     // Synchronously (a forced layout), so we don't race the reflow as rAF would.
     if (prevRevealRef.current.policy !== appearPolicy || prevRevealRef.current.mode !== writingMode) {

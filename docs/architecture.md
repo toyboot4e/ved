@@ -229,6 +229,16 @@ The geometry lives in CSS custom properties on the app root
 (`--page-line-chars`, `--page-lines` in `editor.module.scss`); everything else
 derives via `calc()`. A `vertMode` class on the root transposes the page box.
 
+One zenkaku is one **cell** (`--cell-size`, = the body `font-size`/1em), so a
+line is a **fixed `--line-length` = N × cell pixels**. Every line
+(`editorContent > *`) is pinned to that `inline-size`, so it **wraps at exactly
+N cells in every mode** and can never spill past the page border — regardless of
+the font's actual glyph advance (a wide CJK font wraps; it does not overflow).
+The page box is *not* resized to the rendered text, so the border and the
+paged-mode separators stay put. (The line-number gutter is reserved *outside*
+the cell track: on the height in vertical modes, on `--editor-width` in
+horizontal.)
+
 Orthogonal to view modes; pure CSS:
 
 | Mode | CSS | Page | Scroll |

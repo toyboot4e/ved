@@ -22,13 +22,9 @@ $footer-height: $font-size + $pad-y * 2;
   // configuration (editor-ui-plan phase 4) overrides them at runtime.
   --page-line-chars: 40;
   --page-lines: 20;
-  // The line length is N × the REAL fullwidth-character advance, not
-  // N × font-size: "1 全角 = 1em" is only an approximation, and a font whose
-  // CJK advance differs from 1em makes the line over/underflow the page.
-  // editor.tsx measures the running font and sets --char-size (px); the
-  // $font-size fallback holds until that first measurement lands.
-  --char-size: #{$font-size};
-  --line-length: calc(var(--page-line-chars) * var(--char-size));
+  // One zenkaku cell = $font-size (1em); the line is a fixed N cells long.
+  --cell-size: #{$font-size};
+  --line-length: calc(var(--page-line-chars) * var(--cell-size));
   --lines-extent: calc(var(--page-lines) * #{$line-pitch});
 
   // Horizontal writing: lines run horizontally, stacking downwards
@@ -39,9 +35,15 @@ $footer-height: $font-size + $pad-y * 2;
   &.vertMode {
     --page-width: var(--lines-extent);
     --page-height: var(--line-length);
+    // Vertical's line-number gutter sits on the line-length axis (folded into
+    // the content height per mode below), not on this one.
+    --editor-width: calc(var(--page-width) + #{$pad-x * 2});
   }
 
-  --editor-width: calc(var(--page-width) + #{$pad-x * 2});
+  // Horizontal: reserve the line-number gutter BESIDE the text column, so the
+  // text area stays the full --line-length (N cells) and a capped line fits
+  // exactly instead of being squeezed by the gutter padding.
+  --editor-width: calc(var(--page-width) + #{$pad-x * 2} + #{$line-gutter});
 
   width: var(--editor-width);
   height: 100%;
@@ -185,6 +187,11 @@ $footer-height: $font-size + $pad-y * 2;
     padding: 0 $space 0 $space;
     // Containing block for the placeholder (see .placeholder)
     position: relative;
+    // Cap every line to a fixed N-cell length (--line-length px = N × cell).
+    // The line wraps at exactly --page-line-chars cells in every mode, so it
+    // can never spill past the page border — independent of the font's glyph
+    // advance, and without growing the page/separators to chase the text.
+    inline-size: var(--line-length);
   }
 
 }
