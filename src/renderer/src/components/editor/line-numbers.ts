@@ -37,32 +37,40 @@ export const mountLineNumbers = (scroller: HTMLElement, content: HTMLElement): L
       if (!(p instanceof HTMLElement) || p.tagName !== 'P') continue;
       range.selectNodeContents(p);
 
-      // Group the line-box rects into visual lines by the block-axis coordinate,
-      // keeping the inline-START-most rect of each (the line's start corner).
-      const lines = new Map<number, DOMRect>();
+      // Walk the line-box rects in CONTENT order (= reading order: column by
+      // column in vertical-rl, row by row in horizontal). A new visual line
+      // begins only when the block-axis coordinate jumps in the READING
+      // direction — leftward (smaller `left`) in vertical-rl, downward (larger
+      // `top`) in horizontal. A ruby annotation shifts rects the OTHER way, so
+      // it can't false-start a line; `colCoord` tracks the line's representative
+      // coordinate so the annotation's rects don't move it. The first rect of
+      // each line is its start corner (grouping by `round(left)` mis-orders and
+      // miscounts ruby lines, which emit several rects with shifted lefts).
+      const TOL = 3; // px; columns are >=1 line-pitch apart, within-line jitter <1px
+      let colCoord = 0;
+      let started = false;
       for (const r of Array.from(range.getClientRects())) {
-        const key = Math.round(vertical ? r.left : r.top);
-        const cur = lines.get(key);
-        const inlineStart = vertical ? r.top : r.left;
-        if (!cur || inlineStart < (vertical ? cur.top : cur.left)) lines.set(key, r);
-      }
-      // Reading order: RTL columns in vertical-rl (larger x first), TTB rows.
-      const ordered = [...lines.entries()].sort((a, b) => (vertical ? b[0] - a[0] : a[0] - b[0]));
-
-      for (const [, r] of ordered) {
+        if (r.width === 0 && r.height === 0) continue;
+        const block = vertical ? r.left : r.top;
+        const isNew = !started || (vertical ? block < colCoord - TOL : block > colCoord + TOL);
+        if (!isNew) {
+          colCoord = vertical ? Math.min(colCoord, block) : Math.max(colCoord, block);
+          continue;
+        }
+        // New visual line: place a number at this rect's start corner, relative
+        // to the overlay's own (scrolling) box. vertical-rl → above the column,
+        // right edge flush; horizontal → left of the row, top edge flush.
         const el = pool[n] ?? makeNumber(overlay, pool);
-        // The line's start corner relative to the overlay's own (scrolling) box.
         const x = (vertical ? r.right : r.left) - o.left;
         const y = r.top - o.top;
-        // Place the number in the gutter just before that corner:
-        //  vertical-rl → above the column, right edge flush with it;
-        //  horizontal  → left of the row, top edge flush with it.
         el.style.transform = vertical
           ? `translate(${x}px, ${y}px) translate(-100%, -100%)`
           : `translate(${x}px, ${y}px) translate(-100%, 0)`;
         el.textContent = String(n + 1);
         el.style.display = '';
         n += 1;
+        colCoord = block;
+        started = true;
       }
     }
     for (const el of pool.slice(n)) el.style.display = 'none';
