@@ -58,20 +58,26 @@ Tried in the minimal repro, all still overhang:
 - `overflow: clip` would hide the overhang but also clips the gutter line-number
   `::after`.
 
-## Status / recommendation
+## Resolution — make the base an `inline-block`
 
-Left as a **known limitation**, commented at the `inline-size` cap
-(`editor.module.scss`). It is a Chromium line-breaking quirk: a `font-size: 0`
-(zero-width, in-flow) box at the start of a `<ruby>` lets the ruby be placed at
-a line boundary with its visible base overhanging. **`ruby-overrun-minimal.html`
-is a self-contained crbug repro** — plain CSS, no ved, no ProseMirror.
+**FIXED.** `pm/ruby.css`: `ruby.rubyWrap > .rubyBase { display: inline-block }`.
 
-`overflow: clip` was tried (the line-number overlay shipped specifically to free
-the paragraph for it) and **rejected: it only paints-clips the overhang — the
-misplaced ruby is hidden, not relocated to the next column, so it loses
-content** (any wrapped ruby-bearing paragraph can hit it, not just the stress
-case). No CSS value caps the line cleanly either (it can't exceed the multicol
-`column-width`; reducing it wraps the legitimate Nth char; giving the delim a
-hair of width just wastes a ruby per column). So the overrun stands until the
-Chromium bug is fixed or `font-size: 0` is replaced (see docs/adr/0006 — which
-concludes it shouldn't be).
+The root cause is that a `display: ruby` line is broken on its *inline content*,
+so the `font-size: 0` leading `|` (a zero-width box) "fits" at the column edge
+and Chromium keeps the ruby there with its base overhanging. Making the **base**
+an inline-block turns it into an atom measured by its WHOLE width — it can no
+longer half-fit, so the ruby wraps cleanly to the next column. `firstColCount`
+goes 21→**20**, the 20th ruby ends exactly at the cap, the 21st wraps. No
+overhang, no clip/loss, no reserved padding. The base reverts to `inline` when
+the ruby is expanded (`rubyExpanded`) so the shown markup flows as text.
+
+The candidate search is in `ruby-overrun-fix.html` (`inline-block` *wrapper* also
+works but needs a node-view rewrite; `contain` / inline-block-on-the-`<ruby>` do
+not). Verified: `test/e2e/caret-boundary.ts` (overlay caret / IME-rect mapping
+intact), full smoke, Rich + Plain rendering.
+
+`ruby-overrun-minimal.html` stays as the standalone demonstration of the
+underlying Chromium quirk. The dead-end approaches, for the record: `overflow:
+clip` only paints-clips (hides the misplaced ruby — content loss); no cap value
+works (it can't exceed `column-width`, and reducing it wraps the legitimate Nth
+char).

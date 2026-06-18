@@ -58,13 +58,13 @@ anchored at the body edge the same keystroke yields a wrong `X猫` body).
 - Most `font-size: 0` side effects are **bounded guards**, fixed where they
   live: the selection-edge leak → snap range endpoints out of hidden markup (the
   collapsed caret may still visit it).
-- The line **overrun is the exception — it has no clean guard.** Moving line
-  numbers to a measured **overlay** (shipped; it delivers per-visual-line
-  numbering anyway) was meant to free the paragraph to `overflow: clip` the
-  overhang. But `clip` only *paints-clips* it — the misplaced ruby is not
-  relocated to the next column, so clipping **hides content**. So clip is NOT
-  applied; the overrun stays a documented limitation (it's the Chromium bug
-  itself, not something we can mask losslessly). See `docs/spikes/ruby-overrun.md`.
+- The line **overrun is fixed losslessly** by `ruby.rubyWrap > .rubyBase {
+  display: inline-block }`: an inline-block base is measured by its whole width,
+  so the ruby wraps to the next column instead of the zero-width `|` "fitting" at
+  the cap and the base overhanging. No clip (which only paints-clips — it hides
+  the misplaced ruby), no reserved padding. (The line-number **overlay** still
+  shipped — it delivers per-visual-line numbering — but it is no longer needed to
+  enable a clip we don't apply.) See `docs/spikes/ruby-overrun.md`.
 - Copy stays identity-faithful: `textBetween` emits exactly the selection — the
   body alone for a partial select, the full `|猫(…)` for a whole ruby — so it
   round-trips. This is a clipboard-layer concern, independent of how markup is
