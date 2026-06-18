@@ -64,7 +64,14 @@ Left as a **known limitation**, commented at the `inline-size` cap
 (`editor.module.scss`). It is a Chromium line-breaking quirk: a `font-size: 0`
 (zero-width, in-flow) box at the start of a `<ruby>` lets the ruby be placed at
 a line boundary with its visible base overhanging. **`ruby-overrun-minimal.html`
-is a self-contained crbug repro** — plain CSS, no ved, no ProseMirror. A future
-ved-side workaround would need the line numbers moved off the paragraph (the
-planned visual-line overlay) so the paragraph could `overflow: clip`, OR a
-zero-width hiding that is still caret-addressable yet has non-zero break weight.
+is a self-contained crbug repro** — plain CSS, no ved, no ProseMirror.
+
+`overflow: clip` was tried (the line-number overlay shipped specifically to free
+the paragraph for it) and **rejected: it only paints-clips the overhang — the
+misplaced ruby is hidden, not relocated to the next column, so it loses
+content** (any wrapped ruby-bearing paragraph can hit it, not just the stress
+case). No CSS value caps the line cleanly either (it can't exceed the multicol
+`column-width`; reducing it wraps the legitimate Nth char; giving the delim a
+hair of width just wastes a ruby per column). So the overrun stands until the
+Chromium bug is fixed or `font-size: 0` is replaced (see docs/adr/0006 — which
+concludes it shouldn't be).
