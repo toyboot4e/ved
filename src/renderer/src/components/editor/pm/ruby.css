@@ -92,9 +92,22 @@ ruby.rubyWrap > rt.dup {
   -webkit-user-select: none;
 }
 
+/* The base is an inline-block ATOM so the ruby WRAPS by its full width at a line
+ * cap. Otherwise the `font-size: 0` leading `|` (a zero-width box) "fits" at the
+ * column edge, Chromium keeps the ruby there, and its visible base overhangs the
+ * cap — the ruby overrun (docs/spikes/ruby-overrun.md, docs/adr/0006). As an
+ * inline-block the base is measured by its whole width, so it can't half-fit. */
+ruby.rubyWrap > .rubyBase {
+  display: inline-block;
+}
+
 /* When the markup is shown (expanded), neutralise the ruby layout and drop the
- * duplicate annotation — the in-flow reading renders instead. */
+ * duplicate annotation — the in-flow reading renders instead. The base goes back
+ * to inline so the now-visible markup wraps as normal text. */
 ruby.rubyExpanded {
+  display: inline;
+}
+ruby.rubyExpanded > .rubyBase {
   display: inline;
 }
 ruby.rubyExpanded > rt.dup {
