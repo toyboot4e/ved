@@ -7,6 +7,7 @@ import { EditorView } from 'prosemirror-view';
 import type React from 'react';
 import { useCallback, useEffect, useLayoutEffect, useRef } from 'react';
 import type { PlainTextHistory } from './editor/history';
+import { type LineNumbers, mountLineNumbers } from './editor/line-numbers';
 import { nextCaretOffset } from './editor/pm/caret-model';
 import { type CursorState, cursorToOffset, offsetToCursor } from './editor/pm/cursor';
 import { buildDecorations } from './editor/pm/decorations';
@@ -300,6 +301,7 @@ export const VedEditor = (props: VedEditorProps): React.JSX.Element => {
   // of ArrowLeft/Right line moves (null = no run in progress; see
   // moveCaretByLine). Any other caret change resets it.
   const goalInlineRef = useRef<number | null>(null);
+  const lineNumbersRef = useRef<LineNumbers | null>(null);
 
   const onScroll = useKeepScrollPosition(scrollerRef, writingMode);
 
@@ -339,6 +341,7 @@ export const VedEditor = (props: VedEditorProps): React.JSX.Element => {
           if (fix) next = next.apply(fix);
         }
         view.updateState(next);
+        if (tr.docChanged) lineNumbersRef.current?.schedule(); // re-measure visual lines
         // Keep the caret in view after edits — PM's scrollIntoView doesn't
         // survive the post-commit repair, nor handle vertical-rl multicol.
         if (tr.docChanged && !view.composing) {
@@ -373,6 +376,16 @@ export const VedEditor = (props: VedEditorProps): React.JSX.Element => {
     viewRef.current = view;
     view.dom.id = 'editor-content';
     view.dom.classList.add(...CONTENT_CLASS(vert, multiCol, rows).split(' ').filter(Boolean));
+
+    // Per-visual-line number overlay (replaces the CSS counter). Re-measure on
+    // mount, once webfonts settle, and whenever the scroller resizes (wrapping
+    // changes); doc/mode/policy changes schedule it from their own handlers.
+    const lineNumbers = mountLineNumbers(mount, view.dom);
+    lineNumbersRef.current = lineNumbers;
+    lineNumbers.schedule();
+    document.fonts?.ready.then(() => lineNumbers.schedule());
+    const resizeObserver = new ResizeObserver(() => lineNumbers.schedule());
+    resizeObserver.observe(mount);
 
     const scroller = scrollerRef.current;
     if (scroller && initialScroll) {
@@ -450,6 +463,9 @@ export const VedEditor = (props: VedEditorProps): React.JSX.Element => {
       });
       mount.removeEventListener('wheel', onWheel);
       mount.removeEventListener('mousedown', onPointerDown);
+      resizeObserver.disconnect();
+      lineNumbers.destroy();
+      lineNumbersRef.current = null;
       view.destroy();
       viewRef.current = null;
     };
@@ -470,6 +486,7 @@ export const VedEditor = (props: VedEditorProps): React.JSX.Element => {
     view.dom.className = '';
     view.dom.classList.add('ProseMirror', ...CONTENT_CLASS(vert, multiCol, rows).split(' ').filter(Boolean));
     view.dispatch(view.state.tr.setMeta('redecorate', true));
+    lineNumbersRef.current?.schedule(); // wrapping changed → re-measure line numbers
     // Synchronously (a forced layout), so we don't race the reflow as rAF would.
     if (prevRevealRef.current.policy !== appearPolicy || prevRevealRef.current.mode !== writingMode) {
       prevRevealRef.current = { policy: appearPolicy, mode: writingMode };
