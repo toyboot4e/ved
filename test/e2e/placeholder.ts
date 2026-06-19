@@ -56,6 +56,26 @@ try {
   await page.waitForTimeout(80);
   assert.ok((await placeholder()).includes('本文'), 'placeholder returns after composition');
   step('placeholder hides on IME compositionstart and returns on compositionend');
+
+  // The placeholder must take NO flow space: an in-flow hint pushes the empty
+  // line (and its caret/highlight) down by its own body, overflowing the page
+  // in multicol (VerticalColumns). The empty line's content must sit at the
+  // paragraph's start, not below the placeholder.
+  await clickWritingMode(page, 'Vertical Columns');
+  await page.waitForTimeout(150);
+  const push = await page.evaluate(() => {
+    const p = document.querySelector('#editor-content > p') as HTMLElement;
+    const range = document.createRange();
+    range.selectNodeContents(p);
+    const first = [...range.getClientRects()].find((r) => r.width || r.height);
+    return { paraTop: Math.round(p.getBoundingClientRect().top), lineTop: first ? Math.round(first.top) : null };
+  });
+  assert.ok(push.lineTop !== null, 'empty line has a measurable content rect');
+  assert.ok(
+    Math.abs(push.lineTop! - push.paraTop) < 6, // scroll-invariant: both shift together
+    `placeholder takes no flow space: empty line top ${push.lineTop} should equal paragraph top ${push.paraTop}`,
+  );
+  step('placeholder does not push the empty line down');
 } catch (e) {
   fail(e instanceof Error ? e.message : String(e));
 } finally {

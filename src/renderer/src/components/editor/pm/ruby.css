@@ -54,15 +54,23 @@
   background-color: rgba(120, 170, 255, 0.12);
 }
 
-/* Placeholder: an empty document is a single <p> holding only a <br>. Render
- * the hint in normal flow inside it so it sits exactly where the first
- * character will, in every writing mode (an absolutely-positioned placeholder
- * lands a page away under vertical-rl). Hidden while an IME composition is
- * active (`.composing`, set in editor.tsx): on Linux mozc the pre-edit stays in
- * the IME window and the <p><br></p> persists, so the hint would otherwise show
- * behind the composing text. */
+/* Placeholder: an empty document is a single <p> holding only a <br>. Position
+ * the hint ABSOLUTELY at the paragraph's start corner (the <p> is the containing
+ * block) so it takes NO flow space — an in-flow hint pushes the empty line (and
+ * its caret/highlight) down by its own body, overflowing the page in multicol;
+ * a bare `position: absolute` without the relative <p> lands a page away under
+ * vertical-rl. Logical insets put it at the start corner in every writing mode.
+ * Hidden while an IME composition is active (`.composing`, set in editor.tsx):
+ * on Linux mozc the pre-edit stays in the IME window and the <p><br></p>
+ * persists, so the hint would otherwise show behind the composing text. */
+#editor-content:not(.composing) > p:only-child:has(> br:only-child) {
+  position: relative;
+}
 #editor-content:not(.composing) > p:only-child:has(> br:only-child)::before {
   content: "本文";
+  position: absolute;
+  inset-block-start: 0;
+  inset-inline-start: 0;
   color: #555;
   pointer-events: none;
 }
