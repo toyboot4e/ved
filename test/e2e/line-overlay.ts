@@ -127,6 +127,24 @@ try {
     `the move is ONE column, not several: Δleft=${Math.round(before.highlight!.left - after.highlight!.left)}`,
   );
   step('highlight follows the caret one visual line per move');
+
+  // No PHANTOM line numbers for RUBY content across page boundaries: Chromium
+  // emits a stray zero-height rect on the previous page for a paragraph whose
+  // column is the first on the next page; if the grouping keeps it, it numbers
+  // a phantom extra line near each page boundary (mis-positioned number).
+  await setText(Array.from({ length: 44 }, () => '|ルビ(ruby)').join('\n'));
+  await page.waitForTimeout(400);
+  const counts = await page.evaluate(() => ({
+    numbers: [...document.querySelectorAll('.vedLineNumber')].filter((n) => (n as HTMLElement).style.display !== 'none')
+      .length,
+    paragraphs: document.querySelectorAll('#editor-content p').length,
+  }));
+  assert.equal(
+    counts.numbers,
+    counts.paragraphs,
+    `one line number per ruby line — no phantom across page boundaries (got ${counts.numbers} for ${counts.paragraphs} paragraphs)`,
+  );
+  step('line numbers: one per ruby line, no phantoms across page boundaries');
 } catch (e) {
   fail(e instanceof Error ? e.message : String(e));
 } finally {

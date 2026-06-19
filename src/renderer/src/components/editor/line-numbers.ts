@@ -207,7 +207,12 @@ const linesOfParagraph = (
   let cur: VisualLine | null = null;
   let colCoord = 0;
   for (const r of Array.from(range.getClientRects())) {
-    if (r.width === 0 && r.height === 0) continue;
+    // Skip DEGENERATE rects (zero width OR height) — not just 0×0. Chromium
+    // emits a stray zero-HEIGHT rect on the previous page for a paragraph whose
+    // column is the first on the next page; with the old `&&` it survived and
+    // its leftward block coord grouped as a phantom extra visual line (a
+    // mis-numbered line near the page boundary).
+    if (r.width === 0 || r.height === 0) continue;
     const left = r.left - o.left;
     const top = r.top - o.top;
     const right = r.right - o.left;

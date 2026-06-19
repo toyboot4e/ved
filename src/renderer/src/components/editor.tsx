@@ -128,7 +128,7 @@ const paragraphCols = (p: HTMLElement, vertical: boolean): VisualCol[] => {
   let cur: VisualCol | null = null;
   let coord = 0;
   for (const r of Array.from(range.getClientRects())) {
-    if (r.width === 0 && r.height === 0) continue;
+    if (r.width === 0 || r.height === 0) continue; // skip degenerate rects (see line-numbers.ts)
     const block = vertical ? r.left : r.top;
     const blockEnd = vertical ? r.right : r.bottom;
     const iStart = vertical ? r.top : r.left;
