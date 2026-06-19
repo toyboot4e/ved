@@ -208,7 +208,7 @@ $footer-height: $font-size + $pad-y * 2;
     // line of ~20+ consecutive |ルビ(ruby) overruns by one ruby per column in
     // Rich + VerticalColumns. No CSS cap value fixes it: the cap can't exceed
     // column-width, and reducing it wraps the legitimate Nth char too. Likely a
-    // Chromium ruby line-break bug. See docs/spikes/ruby-overrun.md.
+    // Chromium ruby line-break bug. See docs/adr/0006.
     inline-size: var(--line-length);
     overflow-wrap: anywhere;
   }
@@ -285,7 +285,7 @@ $col-gap: $pad-y * 2;
     // VerticalRows — the leftward-tiled mirror of multiColMode.
     // Pages tile horizontally (leftward in vertical-rl); the user scrolls
     // along the horizontal axis to read further. Separator gradient runs
-    // along the horizontal axis between pages. See ADR 0004 + the spike.
+    // along the horizontal axis between pages. See ADR 0004.
     &.rowsMode {
       flex: 1 1 auto;
       overflow-x: scroll;

@@ -1,7 +1,7 @@
 # Plan: migrate the editor core from Slate to Lexical
 
-Status: **complete** (2026-06-15). Greenlit after the feasibility spike
-([spikes/lexical-ruby.md](spikes/lexical-ruby.md)) retired the ADR-0002 risks;
+Status: **complete** (2026-06-15). Greenlit after a feasibility prototype
+retired the ADR-0002 risks;
 the app now runs on Lexical and Slate is removed. All steps below are done;
 the editor-lexical/ module was folded into editor/. The one execution caveat:
 collapsed-ruby markup is hidden with `font-size: 0`, not `display: none`, so
@@ -25,7 +25,7 @@ Levers that make this tractable (all from the identity model):
   confined to `components/editor*`.
 - **`parse.ts` is backend-agnostic.** The Lexical core reuses it verbatim;
   only tree construction differs.
-- **The spike proved the hard parts** (identity round-trip, ruby DOM +
+- **The prototype proved the hard parts** (identity round-trip, ruby DOM +
   reconciliation, selection round-trip under vertical-rl).
 
 ## Steps
@@ -47,9 +47,8 @@ Each step ends with `just test-all` green and **stop for review**.
     (`registerAppearance`: selection → `.activePara` / `.rubyActive`). The
     policy is a class on the wrapper; CSS expands the right rubies — no tree
     mutation, so IME/structure-repair safe. Added an `onReady(editor)` seam.
-  - Throwaway harness + driver (`docs/spikes/lexical-render.*`): asserts ruby
-    geometry and all four policies (`rich/showall/paragraph/char`). Findings
-    in [spikes/lexical-render.md](spikes/lexical-render.md).
+  - A throwaway harness + driver asserted ruby geometry and all four policies
+    (`rich/showall/paragraph/char`).
   - App untouched (no Lexical in the app bundle); 81 unit + full e2e green.
 
 - [x] **Step 3 — caret movement.** *(done 2026-06-15)*
@@ -84,9 +83,8 @@ Each step ends with `just test-all` green and **stop for review**.
     `createDOM` emits raw class names).
   - `PlainTextHistory` extracted to `editor/history.ts` (backend-neutral;
     re-exported from `editor-core` so Slate imports are unchanged).
-  - Harness + driver (`docs/spikes/lexical-editor.*`): typing creates a ruby,
-    Ctrl+1/4 switch modes, Ctrl+Z undoes — 3/3 runs. Findings in
-    [spikes/lexical-editor.md](spikes/lexical-editor.md).
+  - A harness + driver verified typing creates a ruby, Ctrl+1/4 switch modes,
+    Ctrl+Z undoes — 3/3 runs.
   - **Owed:** real mozc typing (automation garbles Japanese; ASCII used).
 
 - [x] **Step 5b + 6 — full parity, flip, delete Slate.** *(done 2026-06-15)*
@@ -99,7 +97,7 @@ Each step ends with `just test-all` green and **stop for review**.
     (deterministic caret capture/restore), not a node transform.
   - `editor-lexical/` folded into `editor/`; `PlainTextHistory` lives in
     `editor/history.ts`. Deleted the Slate core + stepping-stone components +
-    spike harnesses; removed `slate`/`slate-react`.
+    prototype harnesses; removed `slate`/`slate-react`.
   - Caret fix: delimiters use `font-size: 0`, not `display: none`.
   - The full e2e suite (smoke, placeholder, ruby-reveal, tabs, tab-keys,
     tab-close-cancel) + 60 unit tests pass. Docs/CLAUDE.md/CONTEXT.md/ADR
@@ -108,7 +106,7 @@ Each step ends with `just test-all` green and **stop for review**.
 
 ## Risks / watch list
 
-- **IME (step 4).** Unproven by the spike; the first thing to validate by hand.
+- **IME (step 4).** Unproven by the prototype; the first thing to validate by hand.
   Lexical's composition handling is strong, but ruby structure repair must not
   fire mid-composition (the `isComposing` guard, ported).
 - **Selection across structure repair (step 4).** Lexical replaces children by

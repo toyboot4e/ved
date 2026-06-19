@@ -7,9 +7,8 @@ moves the editor to ProseMirror for the rich-syntax roadmap.
 ---
 
 > **Update (2026-06-15).** The migration is **complete**: the app runs on
-> Lexical and Slate is removed. The feasibility spike
-> ([../spikes/lexical-ruby.md](../spikes/lexical-ruby.md)) and the slice plan
-> ([../lexical-migration-plan.md](../lexical-migration-plan.md)) record how.
+> Lexical and Slate is removed. The slice plan
+> ([../lexical-migration-plan.md](../lexical-migration-plan.md)) records how.
 > The analysis below — why Lexical over TipTap/ProseMirror/CodeMirror, and why
 > vertical-rl is not a differentiator — is the rationale for the move. One
 > caveat surfaced in execution: collapsed-ruby markup must be hidden with
@@ -59,9 +58,8 @@ provides. So Slate, Lexical, and TipTap are equal on verticality.
   through Lexical's DOM-selection reconciliation is the main risk to retire.
   **Run 2026-06-14 — all three risks (identity round-trip, ruby DOM +
   reconciliation survival, selection round-trip) retired green; IME and the
-  typing pipeline remain unproven. See
-  [../spikes/lexical-ruby.md](../spikes/lexical-ruby.md).** This validates
-  Lexical as the target; it does not trigger a migration — Slate stays.
+  typing pipeline remain unproven.** This validates Lexical as the target; it
+  does not trigger a migration — Slate stays.
 - **Revisit (tripwire) when:** Slate is archived or hits an unpatched CVE; ved
   needs a feature Slate cannot do (realistically collaborative editing, where
   Yjs binds to ProseMirror/CodeMirror, not Slate); or editor-core work keeps

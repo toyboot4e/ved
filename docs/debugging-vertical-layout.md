@@ -41,22 +41,16 @@ What finally fixed it in one pass: **a single screenshot of the actual failure**
 
 ## The capture harness
 
-`docs/spikes/measure-page.spike.ts` and `capture-modes.spike.ts` launch the
-built app in a **visible** window (Playwright's `page.screenshot` stalls on the
-hidden smoke window; `webContents.capturePage().toDataURL()` does not), type a
-scenario, switch modes, and write PNGs. To read a tall capture inline, shrink it
-first: `magick cap-columns.png -resize 900x cap-columns-small.png`.
+Write a throwaway driver that launches the built app in a **visible** window
+(Playwright's `page.screenshot` stalls on the hidden smoke window;
+`webContents.capturePage().toDataURL()` does not), types a scenario, switches
+modes, and writes PNGs. To read a tall capture inline, shrink it first:
+`magick cap-columns.png -resize 900x cap-columns-small.png`.
 
-Pattern:
-
-```
-node docs/spikes/measure-page.spike.ts     # types a repro, writes cap-*.png
-magick cap-columns.png -resize 900x small.png
-```
-
-Edit the typed content to match the report (e.g. a ruby followed by a long
-unbroken Latin run is what reproduced the separator overrun), and capture the
-exact mode named in the bug.
+Match the typed content to the report (e.g. a ruby followed by a long unbroken
+Latin run is what reproduced the separator overrun), and capture the exact mode
+named in the bug. Keep the driver as a temp file — the durable artifact is an
+e2e regression test in `test/e2e/`, not the throwaway driver.
 
 ## The class of bug: gutter vs separator
 

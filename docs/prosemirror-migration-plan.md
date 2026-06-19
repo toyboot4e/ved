@@ -31,21 +31,21 @@ carries structure-repair.
 ## Done — built and verified
 
 - [x] **Decision + comparison** — ADR-0005 (ProseMirror vs Slate, why not
-  TipTap / stay on Lexical), spikes `pm-ruby.md` / `pm-syntax.md`.
+  TipTap / stay on Lexical).
 - [x] **Identity model core** (`pm/model.ts`, unit-tested):
   - `schema` (doc/paragraph/text + the `ruby` inline node).
   - `docFromText` / `serialize` — round-trips every case incl. adjacent rubies.
   - `offsetToPos` / `posToOffset` — plain-offset ↔ PM-position, across ruby
     node boundaries (round-trips every offset).
-- [x] **Backend-neutral movement core** carried over from the earlier spike
-  work and re-homed under `pm/`: `pm/leaves.ts`, `pm/caret-model.ts`,
+- [x] **Backend-neutral movement core** carried over from the earlier
+  prototype work and re-homed under `pm/`: `pm/leaves.ts`, `pm/caret-model.ts`,
   `pm/cursor.ts` (+ tests). These are pure plain-offset logic.
 - [x] **Rendering** (`pm/ruby-view.ts`, `pm/decorations.ts`):
   - `RubyView` node view — `<ruby>` with the editable base + a read-only `<rt>`
     annotation INSIDE it (the nesting PM decorations can't do).
   - `buildDecorations` — hides ruby markup (from the shared leaf model) and
     renders bold/italic/縦中横; one `RULES` entry per format.
-- [x] **End-to-end spike** (`pm-editor.*`): ruby + `*bold*` + `/italic/` + 縦中横
+- [x] **End-to-end prototype**: ruby + `*bold*` + `/italic/` + 縦中横
   in one vertical-rl document, via the production modules. Identity round-trips,
   the annotation nests in `<ruby>`, typing preserves identity. (`pm-editor.png`.)
 - [x] **Pagination gate** — PM renders the whole doc (500/2000 paragraphs), so

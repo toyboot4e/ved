@@ -25,8 +25,7 @@ and asked whether the two could be generalized into a single 2D grid mode
 - **Two separate 1D modes (chosen).** `VerticalColumns` keeps its name and
   semantics (1 page per row, vertical scroll); `VerticalRows` is added
   alongside (1 page per column, horizontal scroll). Both fall out of CSS
-  multi-column on the existing single `<ContentEditable>` — see
-  [spikes/vertical-2d-pagination.md](../spikes/vertical-2d-pagination.md).
+  multi-column on the existing single `<ContentEditable>`.
   Identity text model intact; scroll-keep extends in a mechanical way.
 - **One unified 2D mode (rejected for now).** A single mode with
   `pagesPerRow: number | 'auto'` and `pagesPerColumn: number | 'auto'`.
@@ -52,11 +51,9 @@ and asked whether the two could be generalized into a single 2D grid mode
   `VerticalRows` maps `scrollLeft ↔ first-visible-line`. Cross-mode
   switches preserve the line being read.
 - **2D is not gone, only deferred.** If the user later needs multiple
-  pages per row OR per column, the spike already names the path (JS
-  pagination over one editor) and the cost. The 1D modes remain valid as
-  the N=M=1 case of any future 2D mode, so the rename/move impact is
-  bounded.
+  pages per row OR per column, the path is JS pagination over one editor.
+  The 1D modes remain valid as the N=M=1 case of any future 2D mode, so
+  the rename/move impact is bounded.
 - **A future agent considering 2D should reopen this ADR**, not just
   amend `architecture.md` — the choice has cross-cutting consequences
-  (model, scroll, mode switching, persistence) that the spike doesn't
-  fully cover.
+  (model, scroll, mode switching, persistence) to work through.

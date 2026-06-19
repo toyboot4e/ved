@@ -111,7 +111,7 @@ ruby.rubyWrap > rt.dup {
 /* The base is an inline-block ATOM so the ruby WRAPS by its full width at a line
  * cap. Otherwise the `font-size: 0` leading `|` (a zero-width box) "fits" at the
  * column edge, Chromium keeps the ruby there, and its visible base overhangs the
- * cap — the ruby overrun (docs/spikes/ruby-overrun.md, docs/adr/0006). As an
+ * cap — the ruby overrun (docs/adr/0006). As an
  * inline-block the base is measured by its whole width, so it can't half-fit. */
 ruby.rubyWrap > .rubyBase {
   display: inline-block;

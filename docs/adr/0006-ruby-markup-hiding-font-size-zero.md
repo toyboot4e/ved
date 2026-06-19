@@ -25,9 +25,9 @@ This is load-bearing for two things the browser owns, not us:
 
 The cost: an invisible-but-real char that the browser lays out and selects in
 ways we don't fully control — it overhangs the line-wrap boundary (a `<ruby>`
-at the exact column cap is kept, overrunning by one ruby — see
-`docs/spikes/ruby-overrun.md`), and a selection *edge* can silently land inside
-it, leaking a stray `|` into a copy. The tempting "cleaner" alternative is to
+at the exact column cap is kept, overrunning by one ruby), and a selection
+*edge* can silently land inside it, leaking a stray `|` into a copy. The
+tempting "cleaner" alternative is to
 hide the markup with `display: none` and track **which side of the ruby the
 caret is on** as explicit app state (a "border position value").
 
@@ -65,7 +65,9 @@ anchored at the body edge the same keystroke yields a wrong `X猫` body).
   the misplaced ruby), no reserved padding. (The measured **overlay**
   (`editor/line-numbers.ts`) still shipped — it carries per-visual-line numbers
   and the current-line highlight — but it is no longer needed to enable a clip
-  we don't apply.) See `docs/spikes/ruby-overrun.md`.
+  we don't apply.) The root cause is the `font-size: 0` leading `|`: a
+  zero-width box "fits" at the column edge, so Chromium keeps the ruby there and
+  lets its base overhang; plain rubies wrap fine.
 - Copy stays identity-faithful: `textBetween` emits exactly the selection — the
   body alone for a partial select, the full `|猫(…)` for a whole ruby — so it
   round-trips. This is a clipboard-layer concern, independent of how markup is

@@ -24,13 +24,12 @@ PM doc      paragraph[ text "字は", ruby("|漢(かん)"), text "字" ]
 plaintext   "字は|漢(かん)字"        (identical, by construction)
 ```
 
-The editor went Slate → Lexical → **ProseMirror** (ADR-0005 + the spikes
-`docs/spikes/pm-*.md`). The driver was the rich-syntax roadmap: ProseMirror has
-view-only decorations, so a new inline format is a parse rule + a CSS class
-with no per-format structure repair (Lexical, being node-only, paid that cost
-per format); and ProseMirror renders the whole document to the DOM, so the
-CSS-multicol page layouts (ADR-0004) keep working (CodeMirror's virtualization
-could not — see `docs/spikes/cm-multicol.md`).
+The editor went Slate → Lexical → **ProseMirror** (ADR-0005). The driver was
+the rich-syntax roadmap: ProseMirror has view-only decorations, so a new inline
+format is a parse rule + a CSS class with no per-format structure repair
+(Lexical, being node-only, paid that cost per format); and ProseMirror renders
+the whole document to the DOM, so the CSS-multicol page layouts (ADR-0004) keep
+working (CodeMirror's virtualization could not).
 
 ## The ProseMirror core (`editor/pm/`)
 
@@ -68,11 +67,9 @@ The ruby **node view** (`pm/ruby-view.ts`) renders `<ruby class="rubyWrap">`
 with the editable base content in a `<span class="rubyBase">` and a read-only
 `<rt class="dup">` annotation (the reading, parsed from the node's content).
 The wrapper is required: a lone `display: ruby-text` span doesn't annotate its
-siblings (Chromium gives it an anonymous container) — see
-[spikes/identity-text-model.md](spikes/identity-text-model.md). PM decorations
-can't nest an `<rt>` inside a `<ruby>` (widgets render as siblings), which is
-exactly why ruby is a node with this view; see
-[spikes/pm-ruby.md](spikes/pm-ruby.md).
+siblings (Chromium gives it an anonymous container). PM decorations can't nest
+an `<rt>` inside a `<ruby>` (widgets render as siblings), which is exactly why
+ruby is a node with this view.
 
 ## Rendering: view modes (`AppearPolicy`)
 
@@ -284,9 +281,7 @@ Orthogonal to view modes; pure CSS:
 Both paged modes (`VerticalColumns`, `VerticalRows`) are 1D arrangements
 — there is no CSS primitive that wraps multi-column into a 2D grid over
 one contenteditable. The 2D generalization (N pages per row OR per
-column) is deferred to a future spike; see [ADR
-0004](adr/0004-vertical-page-layouts.md) and
-[spikes/vertical-2d-pagination.md](spikes/vertical-2d-pagination.md).
+column) is deferred; see [ADR 0004](adr/0004-vertical-page-layouts.md).
 
 Notes that took debugging to learn:
 
@@ -350,7 +345,6 @@ src/renderer/src/
 test/e2e/                  Playwright tests against the built app, hidden windows
 docs/editor-ui-plan.md     editor UI shell plan + phase checklist
 docs/lexical-migration-plan.md   the Slate → Lexical migration
-docs/spikes/               spike findings
 ```
 
 NixOS specifics live in `flake.nix`: Electron's runtime libraries via

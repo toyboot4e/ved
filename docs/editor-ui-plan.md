@@ -273,10 +273,9 @@ explicitly out of scope until the schema stops churning.
 
 Add the leftward-tiled "book-style" page layout as a sibling of today's
 downward-tiled `VerticalColumns`, exposed in the toolbar with a four-mode
-SVG icon row. Design recorded in [ADR 0004](adr/0004-vertical-page-layouts.md)
-and the supporting [spike](spikes/vertical-2d-pagination.md); this phase
-is the implementation. The 2D generalization (N pages per row / M rows
-per column) is **not** part of this phase — it stays in the spike.
+SVG icon row. Design recorded in [ADR 0004](adr/0004-vertical-page-layouts.md);
+this phase is the implementation. The 2D generalization (N pages per row / M
+rows per column) is **not** part of this phase — it stays deferred (ADR 0004).
 
 Each step lands an independently-shippable change with `just test-all`
 green.
@@ -304,9 +303,9 @@ green.
   fourth row, and the `CONTEXT.md` entry for the new mode gets
   cross-referenced.
 
-The spike-deferred 2D case is referenced in `editor.tsx` next to the new
-CSS, so a future contributor who wants N≥2 pages per row finds the
-spike rather than re-deriving the constraint.
+The deferred 2D case is noted in `editor.tsx` next to the new CSS, so a future
+contributor who wants N≥2 pages per row finds ADR 0004 rather than re-deriving
+the constraint.
 
 ### Phase 5 — polish (each independent, grab as needed)
 

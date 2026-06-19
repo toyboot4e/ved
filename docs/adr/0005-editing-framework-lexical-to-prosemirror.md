@@ -24,9 +24,8 @@ Two rendering philosophies answer that very differently:
   structure, no repair. Cost is **flat** as formats are added.
 
 Lexical has no view-only decoration system — everything is a node — so the
-node-per-format tax grows exactly as the roadmap does. Spikes
-([../spikes/pm-syntax.md](../spikes/pm-syntax.md),
-[../spikes/pm-ruby.md](../spikes/pm-ruby.md)) confirmed that on **ProseMirror**,
+node-per-format tax grows exactly as the roadmap does. A feasibility prototype
+confirmed that on **ProseMirror**,
 bold/italic/縦中横 render correctly under vertical-rl as plain inline
 decorations, the plaintext identity model round-trips, and — critically — PM
 renders the **whole document to the DOM** (500/2000 paragraphs, no
