@@ -536,6 +536,16 @@ export const VedEditor = (props: VedEditorProps): React.JSX.Element => {
     };
     mount.addEventListener('mousedown', onPointerDown);
 
+    // Hide the empty-document placeholder while an IME composition is active.
+    // On Linux mozc (over-the-spot) the pre-edit stays in the IME window and the
+    // contenteditable keeps its empty <p><br></p>, so the placeholder would
+    // otherwise show behind the composing text. A class beats the `:has(br)`
+    // selector regardless of whether the pre-edit reached the DOM.
+    const onCompositionStart = (): void => view.dom.classList.add('composing');
+    const onCompositionEnd = (): void => view.dom.classList.remove('composing');
+    view.dom.addEventListener('compositionstart', onCompositionStart);
+    view.dom.addEventListener('compositionend', onCompositionEnd);
+
     return () => {
       const s = scrollerRef.current;
       live.current.onSnapshot?.({
@@ -545,6 +555,8 @@ export const VedEditor = (props: VedEditorProps): React.JSX.Element => {
       });
       mount.removeEventListener('wheel', onWheel);
       mount.removeEventListener('mousedown', onPointerDown);
+      view.dom.removeEventListener('compositionstart', onCompositionStart);
+      view.dom.removeEventListener('compositionend', onCompositionEnd);
       resizeObserver.disconnect();
       lineNumbers.destroy();
       lineNumbersRef.current = null;

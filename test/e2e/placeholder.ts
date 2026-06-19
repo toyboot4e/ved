@@ -36,6 +36,26 @@ try {
   await page.waitForTimeout(150);
   assert.ok((await placeholder()).includes('本文'), 'placeholder returns when emptied');
   step('placeholder hides on input and returns when emptied');
+
+  // An IME composition must also hide the placeholder, even while the document
+  // stays empty — on Linux mozc the pre-edit is in the IME window and the
+  // <p><br></p> persists, so the hint would otherwise show behind it. The editor
+  // hides it on `compositionstart` (a class), independent of the DOM state.
+  await page.click('#editor-content');
+  assert.ok((await placeholder()).includes('本文'), 'placeholder shown before composing');
+  await page.evaluate(() =>
+    document
+      .getElementById('editor-content')!
+      .dispatchEvent(new CompositionEvent('compositionstart', { bubbles: true })),
+  );
+  await page.waitForTimeout(80);
+  assert.equal(await placeholder(), 'none', 'placeholder hidden during composition (empty doc)');
+  await page.evaluate(() =>
+    document.getElementById('editor-content')!.dispatchEvent(new CompositionEvent('compositionend', { bubbles: true })),
+  );
+  await page.waitForTimeout(80);
+  assert.ok((await placeholder()).includes('本文'), 'placeholder returns after composition');
+  step('placeholder hides on IME compositionstart and returns on compositionend');
 } catch (e) {
   fail(e instanceof Error ? e.message : String(e));
 } finally {

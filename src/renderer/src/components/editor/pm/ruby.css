@@ -57,8 +57,11 @@
 /* Placeholder: an empty document is a single <p> holding only a <br>. Render
  * the hint in normal flow inside it so it sits exactly where the first
  * character will, in every writing mode (an absolutely-positioned placeholder
- * lands a page away under vertical-rl). */
-#editor-content > p:only-child:has(> br:only-child)::before {
+ * lands a page away under vertical-rl). Hidden while an IME composition is
+ * active (`.composing`, set in editor.tsx): on Linux mozc the pre-edit stays in
+ * the IME window and the <p><br></p> persists, so the hint would otherwise show
+ * behind the composing text. */
+#editor-content:not(.composing) > p:only-child:has(> br:only-child)::before {
   content: "本文";
   color: #555;
   pointer-events: none;
