@@ -249,6 +249,19 @@ paged-mode separators stay put. (The line-number gutter is reserved *outside*
 the cell track: on the height in vertical modes, on `--editor-width` in
 horizontal.)
 
+`editor/line-numbers.ts` fills that gutter with a **measured overlay**, not a
+decoration: it groups each paragraph's `Range.getClientRects()` into visual
+lines and draws one centered number per **visual** line (a wrapped column/row,
+which a CSS counter on `<p>` cannot address) plus the **current-line
+highlight** — bounded to the caret's visual line (one column/row, on its page in
+the multi-page column layouts), not its whole paragraph. Grouping splits a new
+visual line on a reading-direction block jump *or* a large reverse jump (a
+multicol page wrap, where the next page's first column lands back across the
+page); the band length is the paragraph's computed `inline-size` (one page), not
+its multi-page bounding rect. The overlay is a scroll-invariant child of the
+scroller, re-measured on any doc/selection/mode/policy/resize change (debounced
+to one frame).
+
 Orthogonal to view modes; pure CSS:
 
 | Mode | CSS | Page | Scroll |
@@ -316,6 +329,7 @@ src/renderer/src/
     editor/
       history.ts                     PlainTextHistory (backend-neutral, unit-tested)
       scroll-keep.ts                 scroll offset ↔ line index per mode (unit-tested)
+      line-numbers.ts                per-VISUAL-line overlay: numbers + current-line highlight (measured)
       pm/
         model.ts                     schema (+ ruby node), docFromText, serialize, offset ↔ PM position
         ruby-view.ts                 ruby node view: <ruby> base + read-only <rt> annotation

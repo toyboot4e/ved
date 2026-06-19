@@ -27,7 +27,18 @@ counter. For each paragraph:
 The screenshot confirms `1..6` over the 3 paragraphs (2 + 1 + 3 visual lines).
 The probe also asserts `visualLineNumbers === 6` while `paragraphs === 3`.
 
-## Integration plan (not yet wired into the editor)
+## Shipped as `editor/line-numbers.ts`
+
+This is now wired: `mountLineNumbers(scroller, content, getCaret)` replaces the
+`p::after` CSS counter. Differences from the plan below: numbers are **centered
+on each line's block extent** (over the column width / row height), not dropped
+at the start corner; and the same overlay now also draws the **current-line
+highlight** (previously a `currentLine` node decoration on the whole `<p>`),
+bounded to the caret's visual line via the same grouping pass. Numbering is
+continuous (1,2,3… across all visual lines). The ruby/IME risks below were
+verified by `test/e2e/caret-boundary.ts` + the full smoke suite.
+
+## Integration plan (as designed in the spike)
 
 This replaces the `p::after` CSS counter (`pm/ruby.css`) with a **measured
 overlay** in `editor.tsx`:

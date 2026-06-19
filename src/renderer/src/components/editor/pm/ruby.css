@@ -14,18 +14,12 @@
   padding: 0;
 }
 
-/* Current-line highlight: the cursor's paragraph (a logical line) — a subtle
- * tint of the whole line/column, in every writing mode. */
-.ProseMirror p.currentLine {
-  background-color: rgba(120, 170, 255, 0.12);
-}
-
-/* Line numbers: a measured overlay, one number per VISUAL line (a CSS counter
- * can only number <p>s, not wrapped columns). editor/line-numbers.ts measures
- * each visual line and positions a `.vedLineNumber` inside `.vedLineNumbers`,
- * an absolutely-positioned gutter layer inside the scroller. Decoupled from the
- * paragraphs precisely so each <p> can `overflow: clip` its stray ruby overhang
- * (docs/adr/0006) without clipping the numbers. The numbers sit in the gutter
+/* Per-visual-line overlay: numbers + the current-line highlight, both measured
+ * per VISUAL line (a wrapped column/row) by editor/line-numbers.ts — a CSS
+ * counter can only number <p>s and a node decoration can only tint a whole <p>,
+ * neither of which can address a single wrapped column. `.vedLineNumbers` is an
+ * absolutely-positioned layer inside the scroller; it scrolls with the content,
+ * so the measured offsets are scroll-invariant. The numbers sit in the gutter
  * reserved by editor.module.scss ($line-gutter), so they never shift the text. */
 .vedLineNumbers {
   position: absolute;
@@ -39,6 +33,8 @@
   writing-mode: horizontal-tb; /* digits stay horizontal even in a vertical-rl scroller */
   color: #aaa;
 }
+/* A number, centered on its line's block extent (over the column width in
+ * vertical-rl, over the row height in horizontal) by a translate set inline. */
 .vedLineNumber {
   position: absolute;
   top: 0;
@@ -46,7 +42,16 @@
   font-size: 0.6em;
   line-height: 1;
   white-space: nowrap;
-  transform-origin: top left;
+}
+/* Current-line highlight: a subtle tint over the caret's VISUAL line (one
+ * wrapped column/row), sized and positioned inline. `inline-size`/`block-size`
+ * resolve against the overlay's horizontal-tb writing mode, matching the px
+ * width/height measured from the line's bounding rect. */
+.vedCurrentLine {
+  position: absolute;
+  top: 0;
+  left: 0;
+  background-color: rgba(120, 170, 255, 0.12);
 }
 
 /* Placeholder: an empty document is a single <p> holding only a <br>. Render

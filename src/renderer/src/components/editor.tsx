@@ -7,7 +7,7 @@ import { EditorView } from 'prosemirror-view';
 import type React from 'react';
 import { useCallback, useEffect, useLayoutEffect, useRef } from 'react';
 import type { PlainTextHistory } from './editor/history';
-import { type LineNumbers, mountLineNumbers } from './editor/line-numbers';
+import { type CaretRect, type LineNumbers, mountLineNumbers } from './editor/line-numbers';
 import { nextCaretOffset } from './editor/pm/caret-model';
 import { type CursorState, cursorToOffset, offsetToCursor } from './editor/pm/cursor';
 import { buildDecorations } from './editor/pm/decorations';
@@ -341,7 +341,9 @@ export const VedEditor = (props: VedEditorProps): React.JSX.Element => {
           if (fix) next = next.apply(fix);
         }
         view.updateState(next);
-        if (tr.docChanged) lineNumbersRef.current?.schedule(); // re-measure visual lines
+        // Re-measure on an edit (lines re-wrap) or a caret move (the highlight
+        // follows the caret's visual line).
+        if (tr.docChanged || tr.selectionSet) lineNumbersRef.current?.schedule();
         // Keep the caret in view after edits — PM's scrollIntoView doesn't
         // survive the post-commit repair, nor handle vertical-rl multicol.
         if (tr.docChanged && !view.composing) {
@@ -377,10 +379,20 @@ export const VedEditor = (props: VedEditorProps): React.JSX.Element => {
     view.dom.id = 'editor-content';
     view.dom.classList.add(...CONTENT_CLASS(vert, multiCol, rows).split(' ').filter(Boolean));
 
-    // Per-visual-line number overlay (replaces the CSS counter). Re-measure on
-    // mount, once webfonts settle, and whenever the scroller resizes (wrapping
-    // changes); doc/mode/policy changes schedule it from their own handlers.
-    const lineNumbers = mountLineNumbers(mount, view.dom);
+    // Per-visual-line overlay: numbers + the current-line highlight (replaces
+    // the CSS counter and the paragraph-wide highlight). Re-measure on mount,
+    // once webfonts settle, and whenever the scroller resizes (wrapping
+    // changes); doc/selection/mode/policy changes schedule it from their own
+    // handlers. The highlight follows the caret, so it needs the caret's
+    // viewport rect — coordsAtPos can throw mid-update, hence the guard.
+    const caretRect = (): CaretRect | null => {
+      try {
+        return view.coordsAtPos(view.state.selection.head);
+      } catch {
+        return null;
+      }
+    };
+    const lineNumbers = mountLineNumbers(mount, view.dom, caretRect);
     lineNumbersRef.current = lineNumbers;
     lineNumbers.schedule();
     document.fonts?.ready.then(() => lineNumbers.schedule());

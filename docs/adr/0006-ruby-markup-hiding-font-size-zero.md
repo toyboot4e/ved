@@ -62,9 +62,10 @@ anchored at the body edge the same keystroke yields a wrong `X猫` body).
   display: inline-block }`: an inline-block base is measured by its whole width,
   so the ruby wraps to the next column instead of the zero-width `|` "fitting" at
   the cap and the base overhanging. No clip (which only paints-clips — it hides
-  the misplaced ruby), no reserved padding. (The line-number **overlay** still
-  shipped — it delivers per-visual-line numbering — but it is no longer needed to
-  enable a clip we don't apply.) See `docs/spikes/ruby-overrun.md`.
+  the misplaced ruby), no reserved padding. (The measured **overlay**
+  (`editor/line-numbers.ts`) still shipped — it carries per-visual-line numbers
+  and the current-line highlight — but it is no longer needed to enable a clip
+  we don't apply.) See `docs/spikes/ruby-overrun.md`.
 - Copy stays identity-faithful: `textBetween` emits exactly the selection — the
   body alone for a partial select, the full `|猫(…)` for a whole ruby — so it
   round-trips. This is a clipboard-layer concern, independent of how markup is
