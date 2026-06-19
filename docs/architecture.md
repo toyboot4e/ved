@@ -160,12 +160,15 @@ Line movement (`editor.tsx moveCaretByLine`) starts with `Selection.modify
   single-line paragraph). The cursor would otherwise sit at Chromium's
   end-of-line fallback ("ArrowLeft jumped to end of doc"); with no adjacent
   paragraph we revert.
-- modify **crossed paragraphs but landed at the FAR end** of the target
-  column. Chromium's `modify('line')` in CSS multi-column vertical-rl doesn't
-  preserve the inline-axis coordinate, so the cursor drops at the column end.
-  We re-hit-test with `view.posAtCoords` at the target column's block-axis
-  center and a **goal column** for the inline axis — the text position at the
-  matching depth in the next column (keeping the column position).
+- modify **crossed paragraphs but landed at the FAR end** (or wrong column) of
+  the target. Chromium's `modify('line')` in CSS multi-column vertical-rl
+  doesn't preserve the inline-axis coordinate, and the target paragraph's
+  *bounding-box* centre is a MIDDLE column once that paragraph spans several page
+  rows — so a cross-paragraph move between two multi-row paragraphs jumped
+  several visual lines. Instead we **measure the target paragraph's visual
+  columns in reading order** (`paragraphCols`, the same grouping as the
+  line-number overlay, incl. the multicol page wrap) and hit-test its FIRST
+  (forward) / LAST (backward) column at the **goal column** depth.
 
 The goal column (`goalInlineRef`) is the caret's **depth into the column** (its
 inline-axis distance from the line's start), held across a run of consecutive
@@ -174,8 +177,11 @@ edit). Holding it means stepping through a SHORT line — where the caret lands 
 that line's end — doesn't drag the column up; the next long line restores it.
 It is a *relative* depth, not an absolute screen coordinate, so it stays correct
 across a page-row boundary, where the next column sits at a different origin.
-(Tested in `test/e2e/line-movement.ts`, which runs **visible** — the mover
-defers via RAF, throttled in hidden windows; see the RAF gotcha below.)
+(Tested in `test/e2e/line-movement.ts` — short single-column lines — and
+`test/e2e/line-move-multirow.ts` — two long paragraphs that each span several
+page rows, asserting every step is exactly one visual line across rows and the
+paragraph boundary. Both run **visible**: the mover defers via RAF, throttled in
+hidden windows; see the RAF gotcha below.)
 
 ## Caret at ruby boundaries
 
