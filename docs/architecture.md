@@ -259,8 +259,12 @@ visual line on a reading-direction block jump *or* a large reverse jump (a
 multicol page wrap, where the next page's first column lands back across the
 page); the band length is the paragraph's computed `inline-size` (one page), not
 its multi-page bounding rect. The overlay is a scroll-invariant child of the
-scroller, re-measured on any doc/selection/mode/policy/resize change (debounced
-to one frame).
+scroller. Re-measuring every paragraph is O(document), so it runs only on
+layout changes (edit/mode/policy/resize/font); a **selection-only** change takes
+a cheap *highlight-only* path that reuses the cached line geometry and just
+re-picks the caret's line — otherwise a large doc stalls ~100ms per arrow key
+(the highlight lags and queued keypresses burst, looking like the caret jumping
+several lines). Both are debounced to one frame.
 
 Orthogonal to view modes; pure CSS:
 

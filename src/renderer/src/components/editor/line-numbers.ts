@@ -11,19 +11,30 @@
 // (Chromium emits several around a ruby; we group them). We group by the
 // BLOCK-axis coordinate — a column in vertical-rl, a row in horizontal — number
 // each group in reading order, and highlight the group the caret sits in.
-// Positions are measured relative to the overlay's OWN box, which is an
+// Positions are stored relative to the overlay's OWN box, which is an
 // absolutely-positioned child of the scroller and therefore scrolls WITH the
 // content — so the line-relative offsets are scroll-invariant and we recompute
-// only on layout/selection change, never on scroll.
+// only on layout change, never on scroll.
+//
+// Re-measuring every paragraph (a getClientRects + getComputedStyle each) is
+// O(document) and must NOT run on every caret move, or a large doc stalls for
+// ~100ms per arrow key (the highlight "lags", and queued keypresses then apply
+// in a burst that looks like the caret jumping several lines). So `schedule`
+// has two levels: a FULL measure (rebuild lines + numbers) on layout changes
+// (edit/mode/policy/resize/font), and a cheap HIGHLIGHT-ONLY pass on a
+// selection-only change that reuses the cached line geometry — just re-pick the
+// caret's line and move the highlight, O(lines) of plain math, no layout reads
+// per paragraph.
 
-export type LineNumbers = { schedule: () => void; destroy: () => void };
+export type LineNumbers = { schedule: (full?: boolean) => void; destroy: () => void };
 
 /** Viewport-space rect of a caret, as `view.coordsAtPos` returns it. */
 export type CaretRect = { top: number; bottom: number; left: number; right: number };
 
-// A visual line's geometry. `left/top/right/bottom` bound its CHARACTERS (used
-// to place the number, hit-test the caret, and anchor the highlight at the
-// line's start corner); `bandLen` is the full LINE length along the inline axis
+// A visual line's geometry, in overlay-relative px (scroll-invariant).
+// `left/top/right/bottom` bound its CHARACTERS (used to place the number,
+// hit-test the caret, and anchor the highlight at the line's start corner);
+// `bandLen` is the full LINE length along the inline axis
 // — ONE page's `--line-length` (the paragraph's `inline-size`) — so the
 // highlight fills the line to the page cap, not just to the last glyph. It is
 // the per-page length, NOT the paragraph's bounding extent: a paragraph can
@@ -59,8 +70,11 @@ export const mountLineNumbers = (
   const pool: HTMLElement[] = [];
   const range = document.createRange();
   let raf = 0;
+  let pendingFull = false;
+  let lines: VisualLine[] = []; // cached geometry from the last full measure
 
-  const update = (): void => {
+  // FULL measure: re-collect every visual line and re-place the numbers. O(doc).
+  const measure = (): void => {
     const cs = getComputedStyle(content);
     const vertical = cs.writingMode.startsWith('vertical');
     overlay.style.fontSize = cs.fontSize; // numbers scale with the body
@@ -70,18 +84,20 @@ export const mountLineNumbers = (
     // jumps back across the whole page), not a ruby annotation's small shift.
     // One cell can't hold a jump this large; a page is always ≥ a few cells.
     const colJump = (Number.parseFloat(cs.fontSize) || 18) * 2.5;
+    // The line band length (= `--line-length`) is identical for every paragraph
+    // (`inline-size` is pinned to it), so read it ONCE, not per paragraph.
+    const firstP = content.querySelector('p');
+    const bandLen = firstP ? Number.parseFloat(getComputedStyle(firstP).inlineSize) || 0 : 0;
 
-    // 1) Collect the visual lines (each a bounding rect in viewport coords).
-    const lines = collectVisualLines(content, range, vertical, colJump);
+    lines = collectVisualLines(content, range, vertical, colJump, bandLen, o);
 
-    // 2) Number each line, CENTERED on the line's block extent: above the
-    // column (centered on its width) in vertical-rl, left of the row (centered
-    // on its height) in horizontal. Positions are relative to the overlay's own
-    // (scrolling) box.
+    // Number each line, CENTERED on the line's block extent: above the column
+    // (centered on its width) in vertical-rl, left of the row (centered on its
+    // height) in horizontal. Coords are already overlay-relative.
     lines.forEach((ln, i) => {
       const el = pool[i] ?? makeNumber(overlay, pool);
-      const x = (vertical ? (ln.left + ln.right) / 2 : ln.left) - o.left;
-      const y = (vertical ? ln.top : (ln.top + ln.bottom) / 2) - o.top;
+      const x = vertical ? (ln.left + ln.right) / 2 : ln.left;
+      const y = vertical ? ln.top : (ln.top + ln.bottom) / 2;
       el.style.transform = vertical
         ? `translate(${x}px, ${y}px) translate(-50%, -100%)`
         : `translate(${x}px, ${y}px) translate(-100%, -50%)`;
@@ -90,18 +106,27 @@ export const mountLineNumbers = (
     });
     for (const el of pool.slice(lines.length)) el.style.display = 'none';
 
-    // 3) Highlight the caret's visual line. Match by the caret's block-axis
-    // coordinate (which column/row it sits in), disambiguating across pages —
-    // where columns repeat the same block coord — by nearest inline span.
+    refreshHighlight(vertical, o);
+  };
+
+  // Move the highlight to the caret's visual line, reusing the cached `lines`.
+  const refreshHighlight = (vertical: boolean, o: DOMRect): void => {
     const caret = getCaret();
-    const hit = caret && pickLine(lines, caret, vertical);
+    // Caret rect → overlay-relative, the same space as the cached lines.
+    const rel = caret && {
+      left: caret.left - o.left,
+      top: caret.top - o.top,
+      right: caret.right - o.left,
+      bottom: caret.bottom - o.top,
+    };
+    const hit = rel && pickLine(lines, rel, vertical);
     if (hit) {
       // Anchor at the line's start corner (its top-left character) — for a
       // column that is the page's content top, so the band fills the current
       // page only — and extend the INLINE axis to the full line length
       // (`bandLen`), the block axis to the line's own width.
       highlight.style.display = '';
-      highlight.style.transform = `translate(${hit.left - o.left}px, ${hit.top - o.top}px)`;
+      highlight.style.transform = `translate(${hit.left}px, ${hit.top}px)`;
       highlight.style.inlineSize = `${vertical ? hit.right - hit.left : hit.bandLen}px`;
       highlight.style.blockSize = `${vertical ? hit.bandLen : hit.bottom - hit.top}px`;
     } else {
@@ -109,11 +134,21 @@ export const mountLineNumbers = (
     }
   };
 
-  const schedule = (): void => {
+  // HIGHLIGHT-ONLY: a selection change didn't move any line, so skip the O(doc)
+  // re-measure and just re-pick + reposition the highlight from cached geometry.
+  const highlightOnly = (): void => {
+    refreshHighlight(getComputedStyle(content).writingMode.startsWith('vertical'), overlay.getBoundingClientRect());
+  };
+
+  const schedule = (full = true): void => {
+    if (full) pendingFull = true;
     if (raf) return;
     raf = requestAnimationFrame(() => {
       raf = 0;
-      update();
+      const doFull = pendingFull || lines.length === 0; // first run must measure
+      pendingFull = false;
+      if (doFull) measure();
+      else highlightOnly();
     });
   };
 
@@ -139,39 +174,54 @@ export const mountLineNumbers = (
  *  line's representative coordinate so the annotation's rects don't move it.
  *  (Grouping by `round(left)` mis-orders and miscounts ruby lines, which emit
  *  several rects with shifted lefts.) */
-const collectVisualLines = (content: HTMLElement, range: Range, vertical: boolean, colJump: number): VisualLine[] => {
+const collectVisualLines = (
+  content: HTMLElement,
+  range: Range,
+  vertical: boolean,
+  colJump: number,
+  bandLen: number,
+  o: DOMRect,
+): VisualLine[] => {
   const lines: VisualLine[] = [];
   for (const p of Array.from(content.children)) {
-    if (p instanceof HTMLElement && p.tagName === 'P') lines.push(...linesOfParagraph(p, range, vertical, colJump));
+    if (p instanceof HTMLElement && p.tagName === 'P')
+      lines.push(...linesOfParagraph(p, range, vertical, colJump, bandLen, o));
   }
   return lines;
 };
 
 /** The visual lines of ONE paragraph, grouping its line-box rects per the rules
- *  on `collectVisualLines`. */
-const linesOfParagraph = (p: HTMLElement, range: Range, vertical: boolean, colJump: number): VisualLine[] => {
-  // The line band length: the paragraph's `inline-size`, pinned to
-  // `--line-length` (one page tall in vertical-rl, one page wide in horizontal).
-  // Use the COMPUTED inline-size, not the bounding rect — the rect unions all of
-  // a multi-page paragraph's fragments, which would stretch the highlight across
-  // every page the paragraph touches.
-  const bandLen = Number.parseFloat(getComputedStyle(p).inlineSize) || 0;
+ *  on `collectVisualLines`. Rect coords are made overlay-relative via `o` so the
+ *  cached geometry is scroll-invariant; `bandLen` (the page line length) is the
+ *  same for every paragraph, so it is computed once and passed in. */
+const linesOfParagraph = (
+  p: HTMLElement,
+  range: Range,
+  vertical: boolean,
+  colJump: number,
+  bandLen: number,
+  o: DOMRect,
+): VisualLine[] => {
   range.selectNodeContents(p);
   const lines: VisualLine[] = [];
   let cur: VisualLine | null = null;
   let colCoord = 0;
   for (const r of Array.from(range.getClientRects())) {
     if (r.width === 0 && r.height === 0) continue;
-    const block = vertical ? r.left : r.top;
+    const left = r.left - o.left;
+    const top = r.top - o.top;
+    const right = r.right - o.left;
+    const bottom = r.bottom - o.top;
+    const block = vertical ? left : top;
     if (!cur || startsNewLine(block, colCoord, vertical, colJump)) {
-      cur = { left: r.left, top: r.top, right: r.right, bottom: r.bottom, bandLen };
+      cur = { left, top, right, bottom, bandLen };
       lines.push(cur);
       colCoord = block;
     } else {
-      cur.left = Math.min(cur.left, r.left);
-      cur.top = Math.min(cur.top, r.top);
-      cur.right = Math.max(cur.right, r.right);
-      cur.bottom = Math.max(cur.bottom, r.bottom);
+      cur.left = Math.min(cur.left, left);
+      cur.top = Math.min(cur.top, top);
+      cur.right = Math.max(cur.right, right);
+      cur.bottom = Math.max(cur.bottom, bottom);
       colCoord = vertical ? Math.min(colCoord, block) : Math.max(colCoord, block);
     }
   }

@@ -341,9 +341,11 @@ export const VedEditor = (props: VedEditorProps): React.JSX.Element => {
           if (fix) next = next.apply(fix);
         }
         view.updateState(next);
-        // Re-measure on an edit (lines re-wrap) or a caret move (the highlight
-        // follows the caret's visual line).
-        if (tr.docChanged || tr.selectionSet) lineNumbersRef.current?.schedule();
+        // An edit re-wraps lines → full re-measure. A caret-only move keeps the
+        // geometry → cheap highlight-only pass (no O(doc) re-measure, so large
+        // docs don't stall on every arrow key).
+        if (tr.docChanged) lineNumbersRef.current?.schedule();
+        else if (tr.selectionSet) lineNumbersRef.current?.schedule(false);
         // Keep the caret in view after edits — PM's scrollIntoView doesn't
         // survive the post-commit repair, nor handle vertical-rl multicol.
         if (tr.docChanged && !view.composing) {

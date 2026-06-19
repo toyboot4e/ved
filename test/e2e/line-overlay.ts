@@ -98,6 +98,35 @@ try {
   );
   assert.ok(m2.numbers >= 2, `the wrapped paragraph is numbered per visual line: got ${m2.numbers}`);
   step('highlight is bounded to one wrapped column, not the paragraph');
+
+  // --- Highlight follows the caret via the cheap highlight-only path. --------
+  // A caret move (no edit) reuses the cached line geometry and just repositions
+  // the highlight — it must still land on the new visual line. ArrowLeft moves
+  // one column leftward (vertical-rl), so the highlight's `left` must decrease
+  // by ~one column while it stays one column wide.
+  await setText(Array.from({ length: 8 }, (_, i) => `第${i + 1}行`).join('\n'));
+  await page.waitForTimeout(250);
+  // Click line 1's start, then step left and compare highlight positions.
+  const p1 = await page.evaluate(() => {
+    const r = (document.querySelector('#editor-content p') as HTMLElement).getBoundingClientRect();
+    return { x: r.right - 9, y: r.top + 9 };
+  });
+  await page.mouse.click(p1.x, p1.y);
+  await page.waitForTimeout(200);
+  const before = await measure();
+  await page.keyboard.press('ArrowLeft');
+  await page.waitForTimeout(200);
+  const after = await measure();
+  assert.ok(before.highlight && after.highlight, 'highlight shown before and after the caret move');
+  assert.ok(
+    after.highlight!.left < before.highlight!.left - 5,
+    `highlight follows the caret one column leftward: ${after.highlight!.left} < ${before.highlight!.left}`,
+  );
+  assert.ok(
+    Math.abs(before.highlight!.left - after.highlight!.left) < 40,
+    `the move is ONE column, not several: Δleft=${Math.round(before.highlight!.left - after.highlight!.left)}`,
+  );
+  step('highlight follows the caret one visual line per move');
 } catch (e) {
   fail(e instanceof Error ? e.message : String(e));
 } finally {
