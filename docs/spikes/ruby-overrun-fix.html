@@ -1,0 +1,66 @@
+<!doctype html>
+<!-- Fix attempts for the ruby overrun (docs/spikes/ruby-overrun.md): make the
+     ruby WRAP at the cap instead of letting its font-size:0 leading | "fit" and
+     overhang. Each box holds 12 ved-structured rubies in a 5-ruby-wide box;
+     correct = 5 in the first column, overhang = 6. We also need the <rt>
+     annotation to still render. The driver screenshots + reports counts. -->
+<html lang="ja">
+  <head>
+    <meta charset="utf-8" />
+    <style>
+      body { margin: 16px; font-family: serif; display: flex; gap: 24px; align-items: flex-start; }
+      .box {
+        writing-mode: vertical-rl;
+        font-size: 20px;
+        line-height: 1;
+        inline-size: 200px; /* = 5 rubies of 40px base */
+        border: 1px solid #333;
+        word-break: break-all;
+      }
+      rt { font-size: 0.5em; }
+      .delim { font-size: 0; }
+      .label { writing-mode: horizontal-tb; font: 12px sans-serif; color: #444; }
+
+      /* B: the whole ruby as an atomic inline-block (wraps by full width). */
+      #b ruby { display: inline-block; }
+      /* C: an inline-block WRAPPER, ruby stays display:ruby (annotation intact). */
+      #c .ibwrap { display: inline-block; }
+      /* D: contain on the ruby. */
+      #d ruby { contain: inline-size; }
+      /* E: the BASE as inline-block (decorations stay on the <ruby>). */
+      #e .rubyBase { display: inline-block; }
+    </style>
+  </head>
+  <body>
+    <script>
+      const ruby = () =>
+        `<ruby class="rubyWrap"><span class="rubyBase"><span class="delim">|</span>ルビ` +
+        `<span class="delim">(ruby)</span></span><rt>ruby</rt></ruby>`;
+      const fill = (id, wrap) => {
+        const box = document.getElementById(id);
+        box.innerHTML = Array.from({ length: 12 }, () => (wrap ? `<span class="ibwrap">${ruby()}</span>` : ruby())).join('');
+      };
+      // Three labelled boxes.
+      document.body.innerHTML = ['a', 'b', 'c', 'd', 'e']
+        .map((id) => `<div><div class="label" id="lbl-${id}">${id}</div><div class="box" id="${id}"></div></div>`)
+        .join('');
+      fill('a', false); // baseline display:ruby
+      fill('b', false); // ruby{display:inline-block}
+      fill('c', true);
+      fill('d', false);
+      fill('e', false);
+
+      const firstCol = (id) => {
+        const box = document.getElementById(id);
+        const xs = [...box.querySelectorAll('ruby')].map((k) => Math.round(k.getBoundingClientRect().left));
+        const colX = Math.max(...xs);
+        return xs.filter((x) => x === colX).length;
+      };
+      window.__result = { a: firstCol('a'), b: firstCol('b'), c: firstCol('c'), d: firstCol('d'), e: firstCol('e') };
+      for (const id of ['a', 'b', 'c', 'd', 'e']) {
+        document.getElementById(`lbl-${id}`).textContent = `${id}: firstCol=${window.__result[id]} (5=ok)`;
+      }
+      window.spikeReady = true;
+    </script>
+  </body>
+</html>

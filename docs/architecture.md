@@ -38,7 +38,7 @@ could not — see `docs/spikes/cm-multicol.md`).
 |---|---|
 | `model.ts` | the schema (`doc`/`paragraph`/`text` + the `ruby` inline node), `docFromText` / `serialize` (identity round-trip), and `offsetToPos`/`posToOffset` mapping plain document offsets ↔ PM positions (which count node boundaries) |
 | `ruby-view.ts` | the `ruby` node view: `<ruby>` with the editable base + a read-only `<rt>` annotation parsed from the node's content |
-| `decorations.ts` | view-only decorations: hide ruby markup per the appear policy, render bold/italic/縦中横 (one `RULES` entry per format), and the ruby highlight + boundary overlay-caret classes |
+| `decorations.ts` | view-only decorations: hide ruby markup per the appear policy, render bold/italic/縦中横 (one `RULES` entry per format), and the ruby highlight + boundary overlay-caret classes. Runs on every state change, so the parse and the bulk (caret-independent) decorations are **cached** by `(doc, policy, shown-rubies)` — only the few caret-dependent ruby node classes rebuild per move, or a long ruby doc stalls ~100ms+ per arrow key |
 | `structure.ts` | `repair` — the IME-safe ruby reconcile (the only structure repair left), run from `dispatchTransaction`, skipped while composing |
 | `leaves.ts` / `caret-model.ts` / `cursor.ts` | backend-neutral plain-offset logic: the leaf model, `nextCaretOffset` (model-driven character movement), and the `{para,offset}` cursor map |
 | `ruby.css` | global ruby/syntax styles (decorations emit literal class names a CSS module can't match) |
@@ -160,12 +160,15 @@ Line movement (`editor.tsx moveCaretByLine`) starts with `Selection.modify
   single-line paragraph). The cursor would otherwise sit at Chromium's
   end-of-line fallback ("ArrowLeft jumped to end of doc"); with no adjacent
   paragraph we revert.
-- modify **crossed paragraphs but landed at the FAR end** of the target
-  column. Chromium's `modify('line')` in CSS multi-column vertical-rl doesn't
-  preserve the inline-axis coordinate, so the cursor drops at the column end.
-  We re-hit-test with `view.posAtCoords` at the target column's block-axis
-  center and a **goal column** for the inline axis — the text position at the
-  matching depth in the next column (keeping the column position).
+- modify **crossed paragraphs but landed at the FAR end** (or wrong column) of
+  the target. Chromium's `modify('line')` in CSS multi-column vertical-rl
+  doesn't preserve the inline-axis coordinate, and the target paragraph's
+  *bounding-box* centre is a MIDDLE column once that paragraph spans several page
+  rows — so a cross-paragraph move between two multi-row paragraphs jumped
+  several visual lines. Instead we **measure the target paragraph's visual
+  columns in reading order** (`paragraphCols`, the same grouping as the
+  line-number overlay, incl. the multicol page wrap) and hit-test its FIRST
+  (forward) / LAST (backward) column at the **goal column** depth.
 
 The goal column (`goalInlineRef`) is the caret's **depth into the column** (its
 inline-axis distance from the line's start), held across a run of consecutive
@@ -174,8 +177,11 @@ edit). Holding it means stepping through a SHORT line — where the caret lands 
 that line's end — doesn't drag the column up; the next long line restores it.
 It is a *relative* depth, not an absolute screen coordinate, so it stays correct
 across a page-row boundary, where the next column sits at a different origin.
-(Tested in `test/e2e/line-movement.ts`, which runs **visible** — the mover
-defers via RAF, throttled in hidden windows; see the RAF gotcha below.)
+(Tested in `test/e2e/line-movement.ts` — short single-column lines — and
+`test/e2e/line-move-multirow.ts` — two long paragraphs that each span several
+page rows, asserting every step is exactly one visual line across rows and the
+paragraph boundary. Both run **visible**: the mover defers via RAF, throttled in
+hidden windows; see the RAF gotcha below.)
 
 ## Caret at ruby boundaries
 
@@ -249,6 +255,23 @@ paged-mode separators stay put. (The line-number gutter is reserved *outside*
 the cell track: on the height in vertical modes, on `--editor-width` in
 horizontal.)
 
+`editor/line-numbers.ts` fills that gutter with a **measured overlay**, not a
+decoration: it groups each paragraph's `Range.getClientRects()` into visual
+lines and draws one centered number per **visual** line (a wrapped column/row,
+which a CSS counter on `<p>` cannot address) plus the **current-line
+highlight** — bounded to the caret's visual line (one column/row, on its page in
+the multi-page column layouts), not its whole paragraph. Grouping splits a new
+visual line on a reading-direction block jump *or* a large reverse jump (a
+multicol page wrap, where the next page's first column lands back across the
+page); the band length is the paragraph's computed `inline-size` (one page), not
+its multi-page bounding rect. The overlay is a scroll-invariant child of the
+scroller. Re-measuring every paragraph is O(document), so it runs only on
+layout changes (edit/mode/policy/resize/font); a **selection-only** change takes
+a cheap *highlight-only* path that reuses the cached line geometry and just
+re-picks the caret's line — otherwise a large doc stalls ~100ms per arrow key
+(the highlight lags and queued keypresses burst, looking like the caret jumping
+several lines). Both are debounced to one frame.
+
 Orthogonal to view modes; pure CSS:
 
 | Mode | CSS | Page | Scroll |
@@ -316,6 +339,7 @@ src/renderer/src/
     editor/
       history.ts                     PlainTextHistory (backend-neutral, unit-tested)
       scroll-keep.ts                 scroll offset ↔ line index per mode (unit-tested)
+      line-numbers.ts                per-VISUAL-line overlay: numbers + current-line highlight (measured)
       pm/
         model.ts                     schema (+ ruby node), docFromText, serialize, offset ↔ PM position
         ruby-view.ts                 ruby node view: <ruby> base + read-only <rt> annotation

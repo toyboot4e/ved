@@ -7,6 +7,7 @@ import { EditorView } from 'prosemirror-view';
 import type React from 'react';
 import { useCallback, useEffect, useLayoutEffect, useRef } from 'react';
 import type { PlainTextHistory } from './editor/history';
+import { type CaretRect, type LineNumbers, mountLineNumbers } from './editor/line-numbers';
 import { nextCaretOffset } from './editor/pm/caret-model';
 import { type CursorState, cursorToOffset, offsetToCursor } from './editor/pm/cursor';
 import { buildDecorations } from './editor/pm/decorations';
@@ -109,13 +110,74 @@ const closestPara = (root: HTMLElement, n: Node | null): HTMLElement | null => {
   return p && root.contains(p) ? p : null;
 };
 
+/** One visual line (column/row) of a paragraph: its block-axis center and
+ *  inline-axis span, in viewport px. */
+type VisualCol = { block: number; iStart: number; iEnd: number };
+
+/** A paragraph's visual lines in READING order, grouping `getClientRects` the
+ *  same way the line-number overlay does — including the multicol page wrap (a
+ *  large block jump the OTHER way). So movement follows reading order even
+ *  across page rows, where `Selection.modify('line')` mis-steps and where a
+ *  paragraph's bounding rect alone can't locate a column. */
+const paragraphCols = (p: HTMLElement, vertical: boolean): VisualCol[] => {
+  const range = document.createRange();
+  range.selectNodeContents(p);
+  const colJump = (Number.parseFloat(getComputedStyle(p).fontSize) || 18) * 2.5;
+  const TOL = 3;
+  const cols: VisualCol[] = [];
+  let cur: VisualCol | null = null;
+  let coord = 0;
+  for (const r of Array.from(range.getClientRects())) {
+    if (r.width === 0 && r.height === 0) continue;
+    const block = vertical ? r.left : r.top;
+    const blockEnd = vertical ? r.right : r.bottom;
+    const iStart = vertical ? r.top : r.left;
+    const iEnd = vertical ? r.bottom : r.right;
+    if (
+      !cur ||
+      (vertical ? block < coord - TOL : block > coord + TOL) ||
+      (vertical ? block > coord + colJump : block < coord - colJump)
+    ) {
+      cur = { block: (block + blockEnd) / 2, iStart, iEnd };
+      cols.push(cur);
+      coord = block;
+    } else {
+      cur.iStart = Math.min(cur.iStart, iStart);
+      cur.iEnd = Math.max(cur.iEnd, iEnd);
+      coord = vertical ? Math.min(coord, block) : Math.max(coord, block);
+    }
+  }
+  return cols;
+};
+
+/** Index of the column holding the caret point (block `cb`, inline `ci`): the
+ *  nearest block band, disambiguated by inline span (block coords repeat across
+ *  page rows). */
+const caretColIndex = (cols: VisualCol[], cb: number, ci: number): number => {
+  let best = 0;
+  let bestScore = Number.POSITIVE_INFINITY;
+  cols.forEach((c, i) => {
+    const dInline = ci < c.iStart ? c.iStart - ci : ci > c.iEnd ? ci - c.iEnd : 0;
+    const score = Math.abs(c.block - cb) * 3 + dInline; // block match dominates
+    if (score < bestScore) {
+      bestScore = score;
+      best = i;
+    }
+  });
+  return best;
+};
+
 /**
- * Move the caret by a visual line, crossing paragraphs when
- * `Selection.modify('line')` falls short. In vertical-rl, modify lands at the
- * FAR end of the target column instead of preserving the inline-axis
- * coordinate (the "jumped to end of previous line" bug), so on a
- * cross-paragraph move we hit-test the adjacent paragraph's column at the
- * caret's original inline-axis position — keeping the column.
+ * Move the caret by one VISUAL line. Within a paragraph, `Selection.modify`
+ * line-wraps reliably; the breakage is at a paragraph BOUNDARY when the target
+ * paragraph spans several page rows — `modify` lands on an element edge, and the
+ * old fallback hit-tested the target's bounding-box CENTRE, i.e. some middle
+ * column, not its first/last reading line. So for the cross-paragraph step we
+ * MEASURE the target paragraph's columns and land on its first (forward) / last
+ * (backward) one, at the GOAL depth: the caret's inline-axis distance into its
+ * column, held across a run of moves (so a short line doesn't drag the column)
+ * and relative to the column start so it survives page-row boundaries. Reset to
+ * null by any non-line-move (handleKeyDown / mousedown / edit).
  */
 const moveCaretByLine = (
   view: EditorView,
@@ -138,7 +200,7 @@ const moveCaretByLine = (
       before.endOffset === after.endOffset;
     const landedOnElement = after.startContainer.nodeType === Node.ELEMENT_NODE;
     const content = view.dom as HTMLElement;
-    const isVertical = getComputedStyle(content).writingMode.startsWith('vertical');
+    const vertical = getComputedStyle(content).writingMode.startsWith('vertical');
     const beforeP = closestPara(content, before.startContainer);
     const afterP = closestPara(content, after.startContainer);
 
@@ -146,10 +208,7 @@ const moveCaretByLine = (
       const anchor = extend ? view.state.selection.anchor : pos;
       view.dispatch(view.state.tr.setSelection(TextSelection.create(view.state.doc, anchor, pos)).scrollIntoView());
     };
-    const revert = (): void => {
-      const pos = view.posAtDOM(before.startContainer, before.startOffset);
-      commit(pos);
-    };
+    const revert = (): void => commit(view.posAtDOM(before.startContainer, before.startOffset));
 
     // modify moved reliably within ONE paragraph (line wrap) — accept it.
     if (!same && !landedOnElement && beforeP === afterP) {
@@ -158,27 +217,37 @@ const moveCaretByLine = (
       return;
     }
 
-    // Cross-paragraph (or stuck on an element edge): find the adjacent column.
+    // Cross-paragraph: land on the adjacent paragraph's first/last visual line.
     const targetP = (reverse ? beforeP?.previousElementSibling : beforeP?.nextElementSibling) as HTMLElement | null;
     if (!targetP || targetP.tagName !== 'P') return revert(); // document edge: stay put
 
-    const tr = targetP.getBoundingClientRect();
-    // The GOAL column: the caret's DEPTH into the column (its inline-axis
-    // distance from the line's start), held across a run of line moves. Seed it
-    // from the caret on the first move, then reuse it, so stepping through a
-    // SHORT line (caret lands at the line's end) doesn't drag the column. Depth
-    // is RELATIVE to the line start — not an absolute screen coord — so it stays
-    // correct across a page-row boundary, where the next column sits at a
-    // different origin. Reset to null by any non-line-move (handleKeyDown /
-    // mousedown / edit), which starts a fresh run.
+    // Seed the goal depth from the caret's CURRENT column (not the paragraph's
+    // bounding top — wrong once the paragraph spans rows).
     if (goalRef.current == null && beforeP) {
-      const br = beforeP.getBoundingClientRect();
-      const caret = isVertical ? beforeRect.top + beforeRect.height / 2 : beforeRect.left + beforeRect.width / 2;
-      goalRef.current = caret - (isVertical ? br.top : br.left);
+      const bcols = paragraphCols(beforeP, vertical);
+      const cb = vertical ? (beforeRect.left + beforeRect.right) / 2 : (beforeRect.top + beforeRect.bottom) / 2;
+      const ci = vertical ? beforeRect.top : beforeRect.left;
+      const col = bcols[caretColIndex(bcols, cb, ci)];
+      goalRef.current = col ? ci - col.iStart : 0;
     }
-    const inline = (isVertical ? tr.top : tr.left) + (goalRef.current ?? 0);
-    const block = isVertical ? tr.left + tr.width / 2 : tr.top + tr.height / 2;
-    const hit = view.posAtCoords({ left: isVertical ? block : inline, top: isVertical ? inline : block });
+    const depth = goalRef.current ?? 0;
+
+    const tcols = paragraphCols(targetP, vertical);
+    const target = tcols.length
+      ? reverse
+        ? tcols[tcols.length - 1]
+        : tcols[0]
+      : ((): VisualCol => {
+          const sr = targetP.getBoundingClientRect(); // empty paragraph (blank line)
+          return {
+            block: vertical ? sr.left + sr.width / 2 : sr.top + sr.height / 2,
+            iStart: vertical ? sr.top : sr.left,
+            iEnd: 0,
+          };
+        })();
+    if (!target) return revert();
+    const inline = target.iStart + depth;
+    const hit = view.posAtCoords({ left: vertical ? target.block : inline, top: vertical ? inline : target.block });
     if (hit) commit(hit.pos);
     else revert();
   });
@@ -300,6 +369,7 @@ export const VedEditor = (props: VedEditorProps): React.JSX.Element => {
   // of ArrowLeft/Right line moves (null = no run in progress; see
   // moveCaretByLine). Any other caret change resets it.
   const goalInlineRef = useRef<number | null>(null);
+  const lineNumbersRef = useRef<LineNumbers | null>(null);
 
   const onScroll = useKeepScrollPosition(scrollerRef, writingMode);
 
@@ -339,6 +409,11 @@ export const VedEditor = (props: VedEditorProps): React.JSX.Element => {
           if (fix) next = next.apply(fix);
         }
         view.updateState(next);
+        // An edit re-wraps lines → full re-measure. A caret-only move keeps the
+        // geometry → cheap highlight-only pass (no O(doc) re-measure, so large
+        // docs don't stall on every arrow key).
+        if (tr.docChanged) lineNumbersRef.current?.schedule();
+        else if (tr.selectionSet) lineNumbersRef.current?.schedule(false);
         // Keep the caret in view after edits — PM's scrollIntoView doesn't
         // survive the post-commit repair, nor handle vertical-rl multicol.
         if (tr.docChanged && !view.composing) {
@@ -373,6 +448,26 @@ export const VedEditor = (props: VedEditorProps): React.JSX.Element => {
     viewRef.current = view;
     view.dom.id = 'editor-content';
     view.dom.classList.add(...CONTENT_CLASS(vert, multiCol, rows).split(' ').filter(Boolean));
+
+    // Per-visual-line overlay: numbers + the current-line highlight (replaces
+    // the CSS counter and the paragraph-wide highlight). Re-measure on mount,
+    // once webfonts settle, and whenever the scroller resizes (wrapping
+    // changes); doc/selection/mode/policy changes schedule it from their own
+    // handlers. The highlight follows the caret, so it needs the caret's
+    // viewport rect — coordsAtPos can throw mid-update, hence the guard.
+    const caretRect = (): CaretRect | null => {
+      try {
+        return view.coordsAtPos(view.state.selection.head);
+      } catch {
+        return null;
+      }
+    };
+    const lineNumbers = mountLineNumbers(mount, view.dom, caretRect);
+    lineNumbersRef.current = lineNumbers;
+    lineNumbers.schedule();
+    document.fonts?.ready.then(() => lineNumbers.schedule());
+    const resizeObserver = new ResizeObserver(() => lineNumbers.schedule());
+    resizeObserver.observe(mount);
 
     const scroller = scrollerRef.current;
     if (scroller && initialScroll) {
@@ -450,6 +545,9 @@ export const VedEditor = (props: VedEditorProps): React.JSX.Element => {
       });
       mount.removeEventListener('wheel', onWheel);
       mount.removeEventListener('mousedown', onPointerDown);
+      resizeObserver.disconnect();
+      lineNumbers.destroy();
+      lineNumbersRef.current = null;
       view.destroy();
       viewRef.current = null;
     };
@@ -470,6 +568,7 @@ export const VedEditor = (props: VedEditorProps): React.JSX.Element => {
     view.dom.className = '';
     view.dom.classList.add('ProseMirror', ...CONTENT_CLASS(vert, multiCol, rows).split(' ').filter(Boolean));
     view.dispatch(view.state.tr.setMeta('redecorate', true));
+    lineNumbersRef.current?.schedule(); // wrapping changed → re-measure line numbers
     // Synchronously (a forced layout), so we don't race the reflow as rAF would.
     if (prevRevealRef.current.policy !== appearPolicy || prevRevealRef.current.mode !== writingMode) {
       prevRevealRef.current = { policy: appearPolicy, mode: writingMode };

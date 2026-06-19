@@ -150,6 +150,9 @@ $footer-height: $font-size + $pad-y * 2;
   min-height: 0;
   align-self: center;
   border: solid 2px black;
+  // Containing block for the line-number overlay (editor/line-numbers.ts): an
+  // absolutely-positioned child of the scroller, so it scrolls WITH the content.
+  position: relative;
   // Scroll is managed programmatically across mode switches; Chromium's
   // scroll anchoring fights the restored position during the relayout.
   overflow-anchor: none;
@@ -212,20 +215,6 @@ $footer-height: $font-size + $pad-y * 2;
 
 }
 
-// Placeholder (see renderPlaceholder in editor.tsx). Slate emits it after
-// the empty paragraph's <br> anchor, i.e. one line into the flow — pin it
-// to the paragraph's logical start corner instead; the logical insets
-// follow the writing mode.
-.placeholder {
-  position: absolute;
-  inset-block-start: 0;
-  inset-inline-start: 0;
-  opacity: 0.4;
-  pointer-events: none;
-  user-select: none;
-  -webkit-user-select: none;
-}
-
 .footer {
   height: $footer-height;
   padding: 0;
@@ -261,6 +250,12 @@ $col-gap: $pad-y * 2;
       // Fill the available height (the column rows scroll inside)
       flex: 1 1 auto;
       overflow-y: scroll;
+      // Pages stack DOWNWARD only — there is no horizontal scroll here. The
+      // vertical scrollbar (always shown) eats its own width from the content
+      // box, which would otherwise push the content's right margin past the
+      // viewport and raise a spurious horizontal scrollbar. Clip it: the
+      // overflow is empty margin, never text.
+      overflow-x: hidden;
       // Separator between column rows. Chromium does not paint column-rule
       // between overflow columns, so draw the lines as a background that
       // scrolls with the content (period = column height + gap, phase = the
@@ -375,16 +370,6 @@ $col-gap: $pad-y * 2;
 // Formats
 a.vertMode {
   text-decoration: overline;
-}
-
-.numCombine {
-  -webkit-text-combine: horizontal;
-  -ms-text-combine-horizontal: all;
-  text-combine-upright: digits 2;
-}
-
-.indentView {
-  text-indent: 1em;
 }
 
 // Ruby (identity text model): the markup characters |, (, ) live in the text
