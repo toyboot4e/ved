@@ -69,9 +69,10 @@ smoke: build
 [private]
 alias s := smoke
 
-# runs unit tests (parameter example: 'cursor-map')
+# runs the unit tests; with NO test-name also runs the full E2E suite, so a bare
+# `just test` covers everything (`just test cursor-map` stays a fast unit filter)
 test *args:
-    pnpm run test {{args}}
+    pnpm run test {{args}} {{ if args == "" { "&& just smoke" } else { "" } }}
 
 [private]
 alias t := test

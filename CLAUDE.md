@@ -14,7 +14,8 @@ editor core** (`src/renderer/src/components/editor/`, mainly `editor/pm/`).
 Task runner is `just`:
 
 - `just dev` — electron-vite dev server (HMR)
-- `just test [name]` — vitest unit tests
+- `just test` — vitest unit tests **and** the full e2e smoke suite (everything);
+  `just test <name>` filters to matching unit tests only (fast, no e2e)
 - `just check` — biome check --fix (lint + format)
 - `just typecheck` — tsc over both node and web tsconfigs
 - `just smoke` — builds, then runs the Playwright e2e tests (`test/e2e/`:
