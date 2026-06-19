@@ -38,7 +38,7 @@ could not — see `docs/spikes/cm-multicol.md`).
 |---|---|
 | `model.ts` | the schema (`doc`/`paragraph`/`text` + the `ruby` inline node), `docFromText` / `serialize` (identity round-trip), and `offsetToPos`/`posToOffset` mapping plain document offsets ↔ PM positions (which count node boundaries) |
 | `ruby-view.ts` | the `ruby` node view: `<ruby>` with the editable base + a read-only `<rt>` annotation parsed from the node's content |
-| `decorations.ts` | view-only decorations: hide ruby markup per the appear policy, render bold/italic/縦中横 (one `RULES` entry per format), and the ruby highlight + boundary overlay-caret classes |
+| `decorations.ts` | view-only decorations: hide ruby markup per the appear policy, render bold/italic/縦中横 (one `RULES` entry per format), and the ruby highlight + boundary overlay-caret classes. Runs on every state change, so the parse and the bulk (caret-independent) decorations are **cached** by `(doc, policy, shown-rubies)` — only the few caret-dependent ruby node classes rebuild per move, or a long ruby doc stalls ~100ms+ per arrow key |
 | `structure.ts` | `repair` — the IME-safe ruby reconcile (the only structure repair left), run from `dispatchTransaction`, skipped while composing |
 | `leaves.ts` / `caret-model.ts` / `cursor.ts` | backend-neutral plain-offset logic: the leaf model, `nextCaretOffset` (model-driven character movement), and the `{para,offset}` cursor map |
 | `ruby.css` | global ruby/syntax styles (decorations emit literal class names a CSS module can't match) |
