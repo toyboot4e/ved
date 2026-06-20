@@ -40,20 +40,20 @@
     "prosemirror-view": "^1.41.9"
   },
   "devDependencies": {
-    "@biomejs/biome": "^2.4.16",
+    "@biomejs/biome": "^2.5.0",
     "@electron-toolkit/tsconfig": "^2.0.0",
     "@types/node": "^25.9.3",
     "@types/react": "^19.2.17",
     "@types/react-dom": "^19.2.3",
     "@vitejs/plugin-react": "^6.0.2",
     "electron": "^42.4.0",
-    "electron-builder": "^26.15.2",
+    "electron-builder": "^26.15.3",
     "electron-vite": "6.0.0-beta.1",
     "fast-check": "^4.8.0",
     "playwright": "^1.60.0",
     "react": "^19.2.7",
     "react-dom": "^19.2.7",
-    "sass": "^1.100.0",
+    "sass": "^1.101.0",
     "typescript": "^6.0.3",
     "vite": "^8.0.16",
     "vitest": "^4.1.8"
