@@ -2,6 +2,26 @@
 #+STARTUP: indent
 
 * Task
+** TODO Isolate the real-mozc e2e test on a virtual display (Xvfb)
+The mozc IME e2e harness (=test/e2e/mozc/harness.ts=) drives REAL fcitx5 + mozc
+via =xdotool=, but it must =xdotool windowactivate= the app window, which STEALS
+X focus on the live desktop — so it collides with whatever the user is typing.
+Fix: run the app + fcitx5 + xdotool on an isolated =Xvfb :99= in a private D-Bus
+session so it never touches =:0=.
+(DONE part: the platform mechanics are now behind the =ImePlatform= / =ImeDriver=
+interfaces in =test/e2e/mozc/harness.ts=, so adding a platform = one registry
+entry. A future Xvfb run would be one more =ImePlatform=, or env on the X11 one.)
+- Blocker hit: =dbus-run-session= fails on NixOS ("Failed to open
+  /etc/dbus-1/session.conf"). Use the dbus session.conf from the store, e.g.
+  =dbus-daemon --config-file=/nix/store/...-dbus-1/session.conf --session
+  --print-address= (found via =find /nix/store -name session.conf -path
+  '*dbus*'=), or pass =--config-file= to =dbus-run-session=.
+- Then: =Xvfb :99= → =DISPLAY=:99 fcitx5 -d= (needs its own instance; fcitx5
+  registers one DBus name per session, hence the private bus) → launch ved with
+  =DISPLAY=:99= + IME env → =DISPLAY=:99 xdotool …=.
+- Until then the harness uses the REAL display and STEALS FOCUS; don't type
+  while it runs.
+
 ** DONE Decorate should add parse information
 CLOSED: [2025-04-27 Sun 17:37]
 ** DONE Handle intersection decorations

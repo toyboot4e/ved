@@ -16,10 +16,11 @@ writing (tategaki). Two decisions define the design:
 plaintext   "字は|漢(かん)字"
    │   parse.ts → format spans (per line)
    ▼
-PM doc      paragraph[ text "字は", ruby("|漢(かん)"), text "字" ]
-   │   ruby is ONE inline node whose text content IS the literal markup;
-   │   a node view renders <ruby>漢<rt>かん</rt></ruby>. Everything else
-   │   (bold/italic/縦中横) is a view-only DECORATION, never a node.
+PM doc      paragraph[ text "字は", ruby[ rubyBase "漢", rubyText "かん" ], text "字" ]
+   │   ruby is ONE inline node with two editable children (base + reading);
+   │   the markup |,(,) is NOT DOM text — serialize reconstructs it. Default
+   │   rendering: <ruby><span.rubyBase>漢</span><rt>かん</rt></ruby>. Everything
+   │   else (bold/italic/縦中横) is a view-only DECORATION, never a node.
    ▼
 plaintext   "字は|漢(かん)字"        (identical, by construction)
 ```
@@ -31,13 +32,39 @@ format is a parse rule + a CSS class with no per-format structure repair
 the whole document to the DOM, so the CSS-multicol page layouts (ADR-0004) keep
 working (CodeMirror's virtualization could not).
 
+## What we override in `contenteditable` (and why)
+
+The ideal is "just a `contenteditable`": let the browser lay out vertical text
+and move the caret, and keep the document as the plain string the user typed.
+We get most of that, but a handful of native behaviours fight the **identity
+text model** (hidden markup that must not be editable as text, and a ruby node
+whose boundaries have no usable caret rect) or the **multicol page layout**
+(`Selection.modify` and `scrollIntoView` don't understand pages). Each override
+below exists for one of those two reasons. This table is the full catalogue;
+the linked sections carry the detail and the invariants live in `CLAUDE.md`.
+
+| Override | Native behaviour it replaces | Why | Where |
+|---|---|---|---|
+| **Typed text re-applied from `beforeinput`** | native CE inserts the character into the DOM | native insertion can reorder text via its DOM diff; we insert the literal `data` at the PM model selection and let PM reconcile, keeping identity exact | `editor.tsx` (`beforeinput`) |
+| **Backspace/Delete delete a model offset range (`deleteChar`)** | `baseKeymap` lets a mid-paragraph single-char delete fall to native CE | native CE's single-char delete around a ruby node is unreliable; deleting a model offset range keeps identity and lets structure-repair re-form rubies | `editor.tsx`, `pm/cursor.ts` |
+| **Character arrow movement is model-driven (`nextCaretOffset`)** | native caret steps DOM positions | the cursor steps the base INTERIOR (a collapsed ruby's edges rest on its outer boundary) and skips the hidden markup + reading, landing on model offsets | `pm/caret-model.ts`, `cursor.ts` |
+| **Line arrow movement is taken over (`moveCaretByLine`)** | `Selection.modify('move','line')` | `modify` mis-steps across multicol PAGE rows and at short columns / paragraph edges / the doc end; we measure columns (excluding `<rt>` annotation rects) and step in reading order (RAF-deferred) | `editor.tsx`, `paragraphCols` |
+| **A collapsed ruby is a non-editable ATOM** | native caret enters the ruby's editable base/reading | an IME composes into the DOM at the caret; an editable ruby boundary let it compose INTO the base/reading or sit on the wrong side. `contenteditable=false` on a collapsed ruby + the caret model skipping its interior keep the caret (and IME) outside it. Verified with real mozc (`mozc/ruby-composition`, `ruby-ime-rect`) | `pm/decorations.ts`, `pm/leaves.ts`, `ruby.css` |
+| **Structure repair after each transaction (`repair`)** | none — PM keeps the doc as edited | re-parses typed text into the ruby node (e.g. `X|漢(かん)` → text + ruby); **skipped while composing** | `pm/structure.ts` |
+| **Caret re-revealed after every doc change (`revealCaretInScroller`)** | `EditorView.scrollIntoView` | PM's scroll doesn't survive the post-commit ruby repair (a 2nd transaction) or the vertical-rl multi-page columns | `editor.tsx` |
+| **Line numbers + current-line highlight are a measured overlay** | a CSS counter on `<p>` | a counter can only address the logical `<p>`; a wrapped paragraph needs one number + a highlight per VISUAL line (column/row), which only measurement gives | `editor/line-numbers.ts` |
+| **Custom plain-text history (`PlainTextHistory`)** | `prosemirror-history` | the model is a plain string; tabs snapshot/restore strings, and undo granularity is per plain-text edit | `editor/history.ts` |
+| **IME composition is sacrosanct** | — | never repair structure, steal focus, or remount while `view.composing`/`isComposing` — it cancels composition and drops text | throughout (`structure.ts`, `editor.tsx`) |
+
+Everything else — bold/italic/縦中横, ruby annotation rendering, the page
+columns — is plain CSS/decoration over the same text and needs no override.
+
 ## The ProseMirror core (`editor/pm/`)
 
 | module | role |
 |---|---|
-| `model.ts` | the schema (`doc`/`paragraph`/`text` + the `ruby` inline node), `docFromText` / `serialize` (identity round-trip), and `offsetToPos`/`posToOffset` mapping plain document offsets ↔ PM positions (which count node boundaries) |
-| `ruby-view.ts` | the `ruby` node view: `<ruby>` with the editable base + a read-only `<rt>` annotation parsed from the node's content |
-| `decorations.ts` | view-only decorations: hide ruby markup per the appear policy, render bold/italic/縦中横 (one `RULES` entry per format), and the ruby highlight + boundary overlay-caret classes. Runs on every state change, so the parse and the bulk (caret-independent) decorations are **cached** by `(doc, policy, shown-rubies)` — only the few caret-dependent ruby node classes rebuild per move, or a long ruby doc stalls ~100ms+ per arrow key |
+| `model.ts` | the schema (`doc`/`paragraph`/`text` + the `ruby` inline node with `rubyBase`/`rubyText` children), `docFromText` / `serialize` (identity round-trip — `serialize` RECONSTRUCTS the markup), and `offsetToPos`/`posToOffset` mapping plain document offsets ↔ PM positions (which count node boundaries) |
+| `decorations.ts` | view-only decorations: per appear policy mark a ruby `rubyExpanded` (delimiters shown as CSS pseudo-elements, reading editable) or leave it a `contenteditable=false` atom, render bold/italic/縦中横 (one `RULES` entry per format), and the `rubyActive` highlight. Runs on every state change, so the bold/italic base set is **cached** by doc identity — only the few caret-dependent ruby node decorations rebuild per move |
 | `structure.ts` | `repair` — the IME-safe ruby reconcile (the only structure repair left), run from `dispatchTransaction`, skipped while composing |
 | `leaves.ts` / `caret-model.ts` / `cursor.ts` | backend-neutral plain-offset logic: the leaf model, `nextCaretOffset` (model-driven character movement), and the `{para,offset}` cursor map |
 | `ruby.css` | global ruby/syntax styles (decorations emit literal class names a CSS module can't match) |
@@ -56,30 +83,26 @@ offsets of each syntactic part. The syntax characters are defined once there
 (`RUBY_DELIM_FRONT` / `RUBY_SEP_MID` / `RUBY_DELIM_END`) and shared by the
 parser, `docFromText`, and the structure-repair reconcile.
 
-A ruby is a single inline **node** (`editor/pm/model.ts schema`) whose text
-content is the literal markup `|漢(かん)`, so the ruby contributes its exact
-source to `textBetween` and `serialize` is identity-exact. `inlineNodesFor(line)`
-builds a line's canonical inline content (plain text-node runs + ruby nodes);
-`docFromText` uses it to build the document and the structure-repair reconcile
-uses it to fix up after edits.
+A ruby is a single inline **node** (`editor/pm/model.ts schema`) whose content is
+two EDITABLE child nodes — `rubyBase` (the base) and `rubyText` (the reading).
+The markup `|`,`(`,`)` is NOT stored as text; `serialize` RECONSTRUCTS
+`|base(reading)` so the plain string is identity-exact (ADR-0008).
+`inlineNodesFor(line)` builds a line's canonical inline content (plain text-node
+runs + ruby nodes); `docFromText` uses it to build the document and the
+structure-repair reconcile uses it to fix up after edits.
 
-The ruby **node view** (`pm/ruby-view.ts`) renders `<ruby class="rubyWrap">`
-with the editable base content in a `<span class="rubyBase">` and a read-only
-`<rt class="dup">` annotation (the reading, parsed from the node's content).
-The wrapper is required: a lone `display: ruby-text` span doesn't annotate its
-siblings (Chromium gives it an anonymous container). PM decorations can't nest
-an `<rt>` inside a `<ruby>` (widgets render as siblings), which is exactly why
-ruby is a node with this view.
+No custom node view: the schema's `toDOM` renders `<ruby class="rubyWrap"><span
+class="rubyBase">漢</span><rt>かん</rt></ruby>`, both children editable PM content.
+In Rich the `<rt>` is the small superscript annotation; in the expanded policies
+a node decoration (`rubyExpanded`) lays the reading inline and shows the markup as
+gray CSS pseudo-elements (`::before`/`::after`).
 
 ## Rendering: view modes (`AppearPolicy`)
 
 The text is identical in all modes; only decorations change. `pm/decorations.ts
-buildDecorations` runs on every doc/selection/policy change and emits, per
-parsed leaf, whether the markup is hidden (`delim`/`syn`, `font-size: 0`) or
-shown (`delimShown`, gray) — decided by `pm/leaves.ts isHidden(leaf, policy,
-activeLine, activeRuby)`. (Unlike Lexical's root-class + descendant-CSS, this is
-per-leaf because PM's flat DOM puts the markup spans as siblings of the
-`<ruby>`, not children.)
+buildDecorations` runs on every doc/selection/policy change and, per ruby, marks
+it `rubyExpanded` (editable, markup shown) or leaves it a `contenteditable=false`
+atom — decided by `pm/leaves.ts isHidden(leaf, policy, activeLine, activeRuby)`.
 
 | Mode | Shortcut | Expanded rubies |
 |---|---|---|
@@ -91,17 +114,17 @@ per-leaf because PM's flat DOM puts the markup spans as siblings of the
 (The mod key is Cmd on macOS. Letter chords are reserved for file shortcuts
 — Ctrl+O/S/Shift+S — handled at the app level; see `app.tsx`.)
 
-Collapsed: the base shows with the read-only `<rt>` annotation; the in-flow
-markup (`|`,`(`, the inline reading, `)`) is hidden with **`font-size: 0`, not
-`display: none`** — `display: none` removes the caret positions, making it
-impossible to place the caret before a ruby or between two adjacent ones;
-`font-size: 0` keeps them caret-addressable while invisible, and arrow movement
-skips them (see Cursor mapping). Expanded: a node decoration adds `rubyExpanded`
-(CSS hides the dup annotation and neutralises the ruby layout) and the markup
-shows gray. The annotation is presentation-only; the node's text is the source
-of truth. Every OTHER inline format (bold/italic/縦中横, planned Hameln syntax)
-is just an inline decoration class — one `RULES` entry in `decorations.ts`, no
-node, no structure repair.
+Collapsed (Rich, or any inactive ruby): the base shows with the read-only `<rt>`
+superscript annotation, the delimiters are not rendered, and the ruby is a
+**non-editable atom** (`contenteditable=false`; the caret model stops only at its
+outer edges). So the native caret + IME stay in the surrounding plain text — see
+"Caret at ruby boundaries". Typed text is still taken over (`beforeinput` applies
+it at the model selection; `deleteChar` for Backspace/Delete). Expanded: a node
+decoration adds `rubyExpanded` — the markup shows as gray pseudo-elements, the
+reading lays out inline, and the base/reading become editable. The annotation is
+presentation-only; the node's children are the source of truth. Every OTHER
+inline format (bold/italic/縦中横, planned Hameln syntax) is just an inline
+decoration class — one `RULES` entry in `decorations.ts`, no node, no repair.
 
 Because rendering is decoration-only, switching modes never touches the
 document: no rebuild, no cursor restore, no IME hazard.
@@ -130,12 +153,14 @@ ruby-only.
 ProseMirror positions count node boundaries, so they are not plain string
 offsets; the editor speaks plain offsets and converts at the edges:
 
-- `posToOffset(doc, pos)` = `doc.textBetween(0, pos, '\n').length`.
-- `offsetToPos(doc, offset)` — the inverse, walking paragraphs and into ruby
-  nodes. **A ruby boundary maps to the text position just INSIDE the node**
-  (the edge `|` / `)` leaf), not the paragraph *element* boundary — see "Caret
-  at ruby boundaries". A boundary with visible text on the outside is resolved
-  by that text node instead (first child to cover the offset wins).
+- `posToOffset(doc, pos)` — walks the doc, spending one offset per reconstructed
+  delimiter (`|`,`(`,`)`) at the node boundary where it belongs.
+- `offsetToPos(doc, offset)` — the inverse (a DFS in `model.ts buildMaps`). A
+  ruby's BOUNDARY offset maps OUTSIDE the node (BEFORE it at the leading edge,
+  AFTER it at the trailing); an interior offset maps to the innermost editable
+  region (`rubyBase`/`rubyText`). In Rich the caret never USES the interior
+  positions — the ruby is an atom — but the map still defines them (for the
+  expanded policies and for decorations).
 - `buildPosMap(doc)` — the O(n) batch form of `offsetToPos` (an `offset → pos`
   array), used by the decoration pass so it isn't O(n²). A unit test pins it to
   `offsetToPos` for every offset.
@@ -144,28 +169,46 @@ offsets; the editor speaks plain offsets and converts at the edges:
 
 Character caret movement (`pm/caret-model.ts nextCaretOffset`, dispatched by
 `editor.tsx moveChar`) is model-driven and pure: over the plain text + parsed
-leaves + appear policy it returns the next stop offset, skipping hidden markup
-but keeping the ruby boundary stops (the hidden delimiter is a real zero-width
-char, so the offsets either side of it are two real stops). In vertical modes
+leaves + appear policy it returns the next stop offset. A COLLAPSED ruby is an
+atom — only its outer edges are stops, so one press steps over the whole ruby;
+in the expanded policies the base/reading are stops (editable). In vertical modes
 the axes rotate (`ArrowUp/Down` → character, `ArrowLeft/Right` → line).
 
 Line movement (`editor.tsx moveCaretByLine`) starts with `Selection.modify
-('line')` over the contenteditable — the browser handles wrap-within-paragraph
-— but post-processes its result for two vertical-rl failure modes:
+('line')` over the contenteditable — the browser handles the common
+wrap-within-paragraph step — but post-processes its result for several
+vertical-rl failure modes. A **fast path** accepts modify when it made a real
+block-axis step within the paragraph (the mid-paragraph common case); otherwise
+modify mis-stepped and we MEASURE columns and step in reading order:
 
 - modify is a **no-op or lands on an element point** (document edge / a
   single-line paragraph). The cursor would otherwise sit at Chromium's
   end-of-line fallback ("ArrowLeft jumped to end of doc"); with no adjacent
   paragraph we revert.
+- modify **slid to the paragraph EDGE** at a first/last visual line (it has no
+  line to step to, so it slides to the line start/end — the same column, against
+  the block direction). Rejected by a block-advance + not-at-paragraph-terminal
+  (`$head.start()/.end()`, model space) check, so the caret STAYS at the
+  first/last column instead of jumping to offset 0 / the paragraph end. (Tested
+  in `test/e2e/line-move-edge.ts`.)
+- modify **mis-stepped within / off a multi-column paragraph** — at a SHORT last
+  column or the doc end it clamps to the wrong line or jumps a whole paragraph.
+  So for EVERY multi-column paragraph (plain or ruby, not just the cross-
+  paragraph case) we **measure the visual columns in reading order**
+  (`paragraphCols`, the same grouping as the line-number overlay, incl. the
+  multicol page wrap) and step to the ADJACENT column at the **goal column**
+  depth — only crossing to the sibling paragraph at the paragraph's first/last
+  column. This is what lets a forward move clamp into a short last column to
+  reach the doc end, and a backward move off the last column land on the
+  previous column rather than the previous paragraph. The caret's column is read
+  from the live DOM caret rect (`beforeRect`), reliable at the doc end where the
+  *model* rect `coordsAtPos(head)` instead reports the empty next column.
+  (Tested in `test/e2e/line-move-doc-end.ts`.)
 - modify **crossed paragraphs but landed at the FAR end** (or wrong column) of
-  the target. Chromium's `modify('line')` in CSS multi-column vertical-rl
-  doesn't preserve the inline-axis coordinate, and the target paragraph's
-  *bounding-box* centre is a MIDDLE column once that paragraph spans several page
-  rows — so a cross-paragraph move between two multi-row paragraphs jumped
-  several visual lines. Instead we **measure the target paragraph's visual
-  columns in reading order** (`paragraphCols`, the same grouping as the
-  line-number overlay, incl. the multicol page wrap) and hit-test its FIRST
-  (forward) / LAST (backward) column at the **goal column** depth.
+  the target — Chromium's `modify('line')` doesn't preserve the inline-axis
+  coordinate, and the target's *bounding-box* centre is a MIDDLE column once it
+  spans several page rows. We hit-test the target paragraph's FIRST (forward) /
+  LAST (backward) column at the goal depth.
 
 The goal column (`goalInlineRef`) is the caret's **depth into the column** (its
 inline-axis distance from the line's start), held across a run of consecutive
@@ -180,39 +223,52 @@ page rows, asserting every step is exactly one visual line across rows and the
 paragraph boundary. Both run **visible**: the mover defers via RAF, throttled in
 hidden windows; see the RAF gotcha below.)
 
-## Caret at ruby boundaries
+## Caret at ruby boundaries (ADR-0008)
 
-At a ruby boundary the caret sits next to a `font-size: 0` delimiter, so the
-NATIVE caret is invisible (the delimiter's tiny metrics) or, worse,
-mis-positioned. Two mechanisms in `pm/model.ts`, `pm/decorations.ts`, and
-`pm/ruby.css`:
+The markup is not DOM text, so the native caret always rests on real, full-size
+glyphs — no overlay caret, no `.delimAnchor`, no zero-sized boxes. **Spec:** with
+the markup collapsed (Rich), a caret at a ruby BOUNDARY writes OUTSIDE the ruby; to
+write at the EDGE of the rubied text, expand the markup. The caret still steps
+through the base INTERIOR (the `rubyActive` highlight, `headOffset > from &&
+headOffset < to`, tracking it) and editing the middle characters lands in the base;
+a single-char base has no interior, so the caret steps over the one glyph. The caret
+steps through EVERY collapsed ruby's base char-by-char this way — leading, adjacent,
+or mid-paragraph. Four mechanisms:
 
-- **The boundary maps to the INSIDE text edge, not the element boundary.** A
-  caret at a ruby's start/end placed at the paragraph element boundary (before
-  `<ruby>` / after it) gets a DEGENERATE rect (0×0 — no adjacent text), so the
-  native caret and the **IME composition box** jump to the viewport's top-left.
-  `offsetToPos` maps the boundary to the `|` / `)` text leaf inside the node,
-  which has a real rect at the column edge; typing/IME there still lands
-  outside the ruby (structure repair re-parses, e.g. `X` at the `|` edge →
-  `X|漢(かん)` → plain `X` + ruby). A boundary preceded/followed by visible
-  text resolves to that text instead, so this only bites the doc/line-edge and
-  adjacent-ruby cases.
-- **An overlay caret where the native one is still invisible.** The decoration
-  pass flags the ruby with `rubyLeadActive` / `rubyTrailActive` at exactly the
-  positions where the native caret has no visible character to its left — just
-  inside after `|`, before the ruby when nothing visible precedes it (doc/line
-  start, adjacent ruby), and after the collapsed `)`. `pm/ruby.css` hides the
-  native caret there (`caret-color: transparent`) and draws an
-  absolutely-positioned 1em `::before` at the column edge (length from
-  `--ved-caret-extent`, the body font size — a raw `1em` would resolve to the
-  delimiter's size). Absolute positioning = zero layout cost; don't fix the
-  size by expanding the delimiter's font, which shifts the body. The
-  `rubyActive` highlight (the caret-is-inside cue) is set strictly inside only,
-  so a caret resting at the outer boundary doesn't highlight the ruby.
+- **The caret model gives a collapsed ruby's base only its INTERIOR stops
+  (`pm/leaves.ts`, `pm/caret-model.ts`).** `isHidden` hides a collapsed ruby's
+  `delim`/`rt` leaves; `caretStops` then contributes only `from+1..to-1` of the
+  `body` (the base START/END edges coincide with the ruby's outer boundary — the
+  hidden zero-width `|`,`(`,`)`). In the EXPANDED policies the whole base and the
+  reading are stops (editable, including the edges).
+- **The reading is `contenteditable=false` when collapsed (`pm/decorations.ts`).**
+  A node decoration on the `rubyText` child keeps an IME from leaking into the
+  reading at the trailing edge.
+- **A keystroke at a collapsed-ruby base edge is redirected OUTSIDE
+  (`editor.tsx beforeinput`, `pm/model.ts rubyEdgeOutsidePos`).** The browser
+  affinity can drop the DOM caret (and PM's synced model) at the base START inside
+  the ruby; the `beforeinput` takeover detects that and inserts before/after the
+  ruby instead (only when collapsed).
+- **An ATOM ruby's base is `contenteditable=false` ONLY while the caret is outside
+  it (`pm/decorations.ts`).** The `beforeinput` redirect handles TYPED text, but an
+  IME composes through PM's native path with no such hook — so a ruby with NO plain
+  text immediately before it (it LEADS its paragraph, or immediately FOLLOWS another
+  ruby — `$pos.parentOffset===0 || $pos.nodeBefore` is a ruby) would have mozc anchor
+  the composition INTO its base at the boundary (nothing editable on the outside).
+  Such a ruby's base is read-only UNTIL the caret is strictly inside it (the same
+  `rubyActive` condition): at the boundary the IME composes OUTSIDE (paragraph start,
+  or BETWEEN two adjacent rubies), but once the caret steps into the interior the base
+  is editable and the IME edits it char-by-char. So navigation granularity and IME
+  safety coexist — the caret still stops at every base char (previous bullet), only
+  the base's editability toggles by caret position.
 
-The boundary classes and overlay extent are tested end-to-end in
-`test/e2e/caret-boundary.ts` (the native caret can't be queried, so the test
-asserts the mechanism — class + `::before` size).
+So an IME (mozc) at a boundary always has an editable plain-text anchor on the
+OUTSIDE side — or, where it would not (doc start, between two adjacent rubies), the
+ruby's base is read-only at that boundary and mozc composes outside it. There is NO
+zero-width-space anchor and NO `compositionend` re-home (both were removed as
+fragile). Verified with the model caret rect (`ruby-ime-rect.ts`), the caret stops
+(`caret-boundary.ts`), and REAL mozc (`mozc/ruby-composition.ts`, including
+`|語(ご)ね|句(く)` typed between two adjacent rubies).
 
 ## Keeping the caret in view (`editor.tsx revealCaretInScroller`)
 
@@ -268,6 +324,16 @@ a cheap *highlight-only* path that reuses the cached line geometry and just
 re-picks the caret's line — otherwise a large doc stalls ~100ms per arrow key
 (the highlight lags and queued keypresses burst, looking like the caret jumping
 several lines). Both are debounced to one frame.
+
+The highlight follows the caret's `coordsAtPos` rect, but at the **end of a
+paragraph whose last visual line is full** that rect (either side) reports the
+*start of the empty next column/page* — the previous reading column from where
+the native caret renders — so the highlight would snap one column back. The
+overlay's caret accessor (`editor.tsx caretRect`) detects the paragraph end
+(`head === $head.end()`, non-empty) and anchors the line-pick to the last
+character (`head - 1`), which is reliably inside the real last column. This is
+the same boundary-affinity family as the line-move clamp; it touches only the
+overlay, not the native-caret/IME rect.
 
 Orthogonal to view modes; pure CSS:
 
@@ -336,12 +402,11 @@ src/renderer/src/
       scroll-keep.ts                 scroll offset ↔ line index per mode (unit-tested)
       line-numbers.ts                per-VISUAL-line overlay: numbers + current-line highlight (measured)
       pm/
-        model.ts                     schema (+ ruby node), docFromText, serialize, offset ↔ PM position
-        ruby-view.ts                 ruby node view: <ruby> base + read-only <rt> annotation
-        decorations.ts               markup hide/show per policy + bold/italic/縦中横 + boundary classes
+        model.ts                     schema (ruby = rubyBase+rubyText), docFromText, serialize, offset ↔ PM position
+        decorations.ts               rubyExpanded vs contenteditable=false atom per policy + bold/italic/縦中横 + rubyActive
         structure.ts                 repair: the IME-safe ruby reconcile (the only structure repair)
-        leaves.ts / caret-model.ts / cursor.ts   plain-offset leaf model, char movement, {para,offset}
-        ruby.css                     global ruby + inline-syntax styles + boundary-caret overlay
+        leaves.ts / caret-model.ts / cursor.ts   plain-offset leaf model, char movement (ruby = atom), {para,offset}
+        ruby.css                     global ruby + inline-syntax styles (rt annotation, expanded pseudo-element delimiters)
 test/e2e/                  Playwright tests against the built app, hidden windows
 docs/editor-ui-plan.md     editor UI shell plan + phase checklist
 docs/lexical-migration-plan.md   the Slate → Lexical migration
@@ -360,10 +425,11 @@ ships its own postinstall, so this project's `postinstall` runs
 
 ## Known papercuts / future work
 
-- **Real mozc IME typing is unverified by automation** (Playwright detaches
-  the IME; synthetic Japanese gets garbled, so the e2e types ASCII ruby
-  syntax). The `isComposing` guard is in place; verify composition around a
-  ruby by hand when touching the editor core.
+- **Real mozc IME composition IS automated** (`test/e2e/mozc/ruby-composition.ts`,
+  `pnpm smoke:mozc`): X11 keys from `xdotool type` are intercepted by fcitx5+mozc
+  where Playwright/CDP keys are not. It STEALS X focus while running (don't type),
+  and is guarded on `mozcAvailable()`. Still owed: isolate it on an Xvfb display
+  so it stops stealing focus (TODO.org; blocked on a NixOS dbus session.conf path).
 - Automated input needs care: synthetic key events are subject to keyboard
   layout and the IME, and sub-60 ms bursts after a programmatic selection
   change can race the DOM→model selection sync. `test/e2e/smoke.ts` inserts

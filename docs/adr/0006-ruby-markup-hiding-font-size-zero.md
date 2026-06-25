@@ -1,8 +1,15 @@
 # Hidden ruby/syntax markup stays in-flow via `font-size: 0`
 
 ---
-status: accepted (2026-06-18)
+status: superseded by 0007 (2026-06-20)
 ---
+
+> **Superseded by [ADR-0007](0007-ruby-markup-hiding-display-none.md).** The
+> `font-size: 0` in-flow box kept generating geometry bugs (overrun, phantom
+> rects, a wrong-column caret rect that broke ruby line movement, a degenerate
+> IME rect). ADR-0007 moves the markup out of flow with `display: none` and
+> recovers editing/caret-rect explicitly (model-driven input + a dynamic
+> anchor). Kept for the history of why the simpler approach didn't hold.
 
 ## Context
 
