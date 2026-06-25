@@ -1,6 +1,6 @@
 /* Global ruby + inline-syntax styles for the ProseMirror editor. These class
  * names are emitted as LITERALS by pm/decorations (Decoration.inline/node) and
- * the pm/ruby-view node view, so they cannot live in a hashed CSS module.
+ * the ruby schema's toDOM, so they cannot live in a hashed CSS module.
  *
  * The page layout (writing modes, multi-column pages) stays in
  * editor.module.scss on the contenteditable; this file is only ruby and the
@@ -73,19 +73,26 @@
   inset-inline-start: 0;
   color: #555;
   pointer-events: none;
+  /* Not selectable: after Ctrl+A then delete the selection is a Range over the
+   * empty <p>, which would paint the selection highlight (a blue "ghost" bar)
+   * over this placeholder. */
+  -webkit-user-select: none;
+  user-select: none;
 }
 
-/* Hidden-but-caret-addressable markup: the |,(,) delimiters, the in-flow ruby
- * reading, and the *,/ syntax markers. font-size:0 (NOT display:none) keeps the
- * caret able to sit at every character. */
-.delim,
+/* Bold/italic syntax markers (`*`, `/`) are hidden. (Ruby's `|`,`(`,`)` are NOT
+ * here — they are not DOM text at all; see the ruby section below.) Unlike ruby,
+ * these markers ARE editable DOM text (bold/italic is a decoration, not a node),
+ * so they keep the old transient IME treatment: while composing, lay them out
+ * in-flow but zero-size, so a `display:none` marker next to the caret can't
+ * scramble the IME (mozc) yet stays invisible. Composition-only, so the steady-
+ * state font-size:0 layout problems don't apply. */
 .syn {
-  font-size: 0;
+  display: none;
 }
-
-/* Shown ruby markup (ShowAll / the expanded paragraph or ruby): gray syntax. */
-.delimShown {
-  color: #808080;
+#editor-content.composing .syn {
+  display: inline;
+  font-size: 0;
 }
 
 /* Inline formats — each is one decoration class. */
@@ -99,77 +106,65 @@
   text-combine-upright: all;
 }
 
-/* Ruby node view: <ruby class="rubyWrap"><span class="rubyBase">|漢(かん)</span>
- * <rt class="dup">かん</rt></ruby>. The base markup is hidden by .delim above;
- * the read-only <rt> renders the annotation. */
-ruby.rubyWrap > rt.dup {
+/* ── Ruby ──────────────────────────────────────────────────────────────────
+ * The schema renders a ruby node as
+ *   <ruby class="rubyWrap"><span class="rubyBase">漢</span><rt>かん</rt></ruby>
+ * Both children are EDITABLE PM content holding ONLY the base / reading text —
+ * the markup `|`,`(`,`)` is never DOM text (it lives only in serialize()). So
+ * the native caret + IME always sit on real, full-size glyphs, even at a ruby
+ * boundary. No overlay caret, no font-size:0, no display:none delimiters — the
+ * machinery that broke the IME (ADR-0007) is gone.
+ *
+ * RICH (default, collapsed): the <rt> is the small annotation above the base. */
+ruby.rubyWrap > rt {
   font-size: 0.5em;
+  /* Read-only in Rich: arrow movement skips the reading (pm/caret-model) and a
+   * pointer can't select it. (Editable in the expanded policies below.) */
   user-select: none;
   -webkit-user-select: none;
 }
 
-/* The base is an inline-block ATOM so the ruby WRAPS by its full width at a line
- * cap. Otherwise the `font-size: 0` leading `|` (a zero-width box) "fits" at the
- * column edge, Chromium keeps the ruby there, and its visible base overhangs the
- * cap — the ruby overrun (docs/adr/0006). As an
- * inline-block the base is measured by its whole width, so it can't half-fit. */
+/* The base stays inline: an inline-block base CLIPS the caret rect at its
+ * content end (coordsAtPos there collapses to 0 height — the native caret +
+ * IME box would vanish at the base-end boundary). The <ruby> element is itself
+ * the layout unit, so the annotation still tracks the base without it. */
 ruby.rubyWrap > .rubyBase {
-  display: inline-block;
+  display: inline;
 }
 
-/* When the markup is shown (expanded), neutralise the ruby layout and drop the
- * duplicate annotation — the in-flow reading renders instead. The base goes back
- * to inline so the now-visible markup wraps as normal text. */
+/* EXPANDED (ShowAll / the active paragraph or ruby): show the markup as gray
+ * pseudo-elements and lay the reading out inline as ordinary editable text.
+ * `display:inline` on the <ruby>/<rt> drops the native ruby annotation layout so
+ * the parts read as one run: |base(reading). */
 ruby.rubyExpanded {
   display: inline;
 }
 ruby.rubyExpanded > .rubyBase {
   display: inline;
 }
-ruby.rubyExpanded > rt.dup {
-  display: none;
+ruby.rubyExpanded > rt {
+  display: inline;
+  font-size: inherit;
+  vertical-align: baseline;
+  user-select: auto;
+  -webkit-user-select: auto;
+}
+ruby.rubyExpanded > .rubyBase::before {
+  content: "|";
+  color: #808080;
+}
+ruby.rubyExpanded > .rubyBase::after {
+  content: "(";
+  color: #808080;
+}
+/* The closing `)` is a real widget element (pm/decorations.ts), not generated
+ * content — so the caret can sit AFTER it. Styled to match the gray delimiters. */
+.rubyDelimClose {
+  color: #808080;
 }
 
-/* The ruby holding the caret (distinguishes the two boundary positions).
- * Strictly inside only — a caret resting at the outer boundary (outside the
- * ruby) does not highlight it. */
+/* The ruby holding the caret. Strictly inside only — a caret resting at the
+ * outer boundary (logically outside the ruby) does not highlight it. */
 ruby.rubyActive {
   background-color: rgba(255, 200, 50, 0.25);
-}
-
-/* Boundary overlay caret. At the base's start/end the caret sits next to a
- * font-size:0 delimiter, so Chromium draws it with the delimiter's tiny metrics
- * (a few px, effectively invisible). Hide that native caret and draw a 1em
- * overlay pinned to the column edge — the caret length comes from
- * --ved-caret-extent (the body font size, set in editor.module.scss), since a
- * raw 1em here would resolve to the delimiter's size. */
-ruby.rubyLeadActive,
-ruby.rubyTrailActive {
-  position: relative;
-}
-ruby.rubyLeadActive > .rubyBase,
-ruby.rubyTrailActive > .rubyBase {
-  caret-color: transparent;
-}
-ruby.rubyLeadActive::before,
-ruby.rubyTrailActive::before {
-  content: "";
-  position: absolute;
-  inset-block-start: 0;
-  inline-size: 1px;
-  block-size: var(--ved-caret-extent, 1em);
-  background: black;
-  pointer-events: none;
-  animation: caret-blink 1s step-end infinite;
-}
-ruby.rubyLeadActive::before {
-  inset-inline-start: 0;
-}
-ruby.rubyTrailActive::before {
-  inset-inline-end: 0;
-}
-@keyframes caret-blink {
-  50% {
-    opacity: 0;
-  }
 }

@@ -1,5 +1,13 @@
 import { describe, expect, it } from 'vitest';
-import { buildPosMap, docFromText, offsetToPos, posToOffset, serialize } from './model';
+import {
+  buildPosMap,
+  docFromText,
+  offsetToPos,
+  posToOffset,
+  rubyEdgeOutsidePos,
+  serialize,
+  serializeSlice,
+} from './model';
 
 describe('ProseMirror identity model', () => {
   const CASES = [
@@ -8,6 +16,9 @@ describe('ProseMirror identity model', () => {
     'もう|一行(いちぎょう)です\n二行目',
     'プレーンテキスト',
     '|語(ご)|句(く)', // adjacent rubies
+    '|漢()', // empty reading (degenerate ruby)
+    '|(かん)', // empty base (degenerate ruby)
+    'あ|漢(かん)\n|語(ご)い', // ruby spanning a paragraph break boundary
     '',
   ];
 
@@ -15,14 +26,29 @@ describe('ProseMirror identity model', () => {
     for (const t of CASES) expect(serialize(docFromText(t))).toBe(t);
   });
 
-  it('wraps rubies as ruby nodes, plain runs as text', () => {
+  it('wraps rubies as ruby nodes (base + reading children, NOT literal markup)', () => {
     const doc = docFromText('字は|漢(かん)字');
     const para = doc.child(0);
     expect(para.childCount).toBe(3);
     expect(para.child(0).isText).toBe(true);
-    expect(para.child(1).type.name).toBe('ruby');
-    expect(para.child(1).textContent).toBe('|漢(かん)'); // identity-exact markup
+    const ruby = para.child(1);
+    expect(ruby.type.name).toBe('ruby');
+    // The markup `|`,`(`,`)` is NOT editable text — the node holds two children:
+    // rubyBase (the base) and rubyText (the reading). serialize reconstructs it.
+    expect(ruby.child(0).type.name).toBe('rubyBase');
+    expect(ruby.child(0).textContent).toBe('漢');
+    expect(ruby.child(1).type.name).toBe('rubyText');
+    expect(ruby.child(1).textContent).toBe('かん');
     expect(para.child(2).isText).toBe(true);
+  });
+
+  it('builds a leading ruby with NO anchor text before it (markup out of DOM)', () => {
+    const lead = docFromText('|漢(かん)').child(0);
+    expect(lead.childCount).toBe(1); // just the ruby, nothing before
+    expect(lead.child(0).type.name).toBe('ruby');
+    expect(lead.child(0).child(0).textContent).toBe('漢'); // base, no leading ZWSP
+    const adj = docFromText('|語(ご)|句(く)').child(0);
+    expect(adj.childCount).toBe(2); // two adjacent rubies, no filler between
   });
 
   it('round-trips every plain offset through PM positions', () => {
@@ -34,16 +60,27 @@ describe('ProseMirror identity model', () => {
     }
   });
 
-  it('maps a doc-start ruby boundary to the inside edge (a real caret rect, not the degenerate element boundary)', () => {
-    // |漢(かん) is a single ruby node with no text before it. Offset 0 must map
-    // to a TEXT position inside the ruby (the leading `|` leaf), NOT the <p>
-    // element boundary (pos 1) — that boundary has a degenerate caret rect, so
-    // the IME box would jump to the viewport corner. Typing there still lands
-    // before the ruby (structure repair re-parses).
+  it('maps a ruby BOUNDARY (leading + trailing) to OUTSIDE the node (logical position governs insertion)', () => {
+    // |漢(かん) is a single ruby node. A caret at the ruby's boundary is
+    // logically OUTSIDE the node, so it maps to the element edge — BEFORE the
+    // node at offset 0, AFTER it at the trailing offset — NOT inside the markup.
+    // Text typed/composed there lands outside the ruby; crucially an IME composes
+    // into the DOM at the caret, and an inside boundary corrupted the ruby (or,
+    // at the leading edge, mozc could not compose at the hidden-markup spot).
+    // Only an INTERIOR caret (editing the base) maps inside. (The rect at the
+    // boundary is handled separately — see the rubyLeadActive overlay caret.)
     const doc = docFromText('|漢(かん)');
-    const p0 = offsetToPos(doc, 0);
-    expect(doc.resolve(p0).parent.type.name).toBe('ruby'); // inside, on a text leaf
-    expect(doc.resolve(p0).textOffset).toBe(0); // at the start of the `|` leaf
+    const lead = doc.resolve(offsetToPos(doc, 0));
+    expect(lead.parent.type.name).toBe('paragraph'); // before the ruby node
+    expect(lead.nodeAfter?.type.name).toBe('ruby');
+    const trail = doc.resolve(offsetToPos(doc, 6)); // after the closing `)`
+    expect(trail.parent.type.name).toBe('paragraph'); // after the ruby node
+    expect(trail.nodeBefore?.type.name).toBe('ruby');
+    // An interior caret (the base char 漢, offset 1) lands inside the editable
+    // base region (rubyBase), so editing/IME happen in normal text.
+    expect(doc.resolve(offsetToPos(doc, 1)).parent.type.name).toBe('rubyBase');
+    // The reading char (offset 3, か) lands inside the reading region.
+    expect(doc.resolve(offsetToPos(doc, 3)).parent.type.name).toBe('rubyText');
   });
 
   it('buildPosMap equals offsetToPos for every offset (the decoration fast path)', () => {
@@ -52,6 +89,61 @@ describe('ProseMirror identity model', () => {
       const map = buildPosMap(doc);
       for (let o = 0; o <= t.length; o++) expect(map[o]).toBe(offsetToPos(doc, o));
     }
+  });
+
+  it('serializes a COPIED slice with the ruby markup reconstructed', () => {
+    // Copy must put the literal `|`,`(`,`)` on the clipboard even though they are
+    // never DOM text. A slice over plain offsets [a,b) → identity substring.
+    const sliceText = (t: string, a: number, b: number): string => {
+      const doc = docFromText(t);
+      return serializeSlice(doc.slice(offsetToPos(doc, a), offsetToPos(doc, b)));
+    };
+    // 字は|漢(かん)字 — 字0 は1 |2 漢3 (4 か5 ん6 )7 字8
+    expect(sliceText('字は|漢(かん)字', 1, 8)).toBe('は|漢(かん)'); // spans the WHOLE ruby
+    expect(sliceText('字は|漢(かん)字', 2, 8)).toBe('|漢(かん)'); // the ruby alone
+    expect(sliceText('字は|漢(かん)字', 0, 9)).toBe('字は|漢(かん)字'); // the whole line
+    // A selection CUT INTO the base copies just the selected text, NOT half-markup.
+    expect(sliceText('字は|漢(かん)字', 3, 4)).toBe('漢'); // the base char only
+    expect(sliceText('|漢(かん)', 4, 5)).toBe('ん'); // a reading char only (|0 漢1 (2 か3 ん4 )5)
+    // Multi-paragraph: one identity line per paragraph, joined by \n.
+    // もう|一行(いちぎょう) is offsets 0..11 (the \n is 12); 二 is 13.
+    expect(sliceText('もう|一行(いちぎょう)\n二行目', 0, 14)).toBe('もう|一行(いちぎょう)\n二');
+  });
+
+  it('redirects a collapsed ruby base EDGE to OUTSIDE the ruby; interior stays inside', () => {
+    // SPEC: in Rich a ruby boundary writes outside. The browser's affinity drops the
+    // caret at the base START inside the ruby; rubyEdgeOutsidePos sends the insert to
+    // BEFORE the ruby (base start) / AFTER it (base end), and leaves the interior.
+    const rubyOf = (doc: ReturnType<typeof docFromText>) => {
+      let basePos = -1;
+      let baseSize = 0;
+      let rubyPos = -1;
+      let rubyEnd = -1;
+      doc.descendants((node, pos) => {
+        if (node.type.name === 'rubyBase') {
+          basePos = pos;
+          baseSize = node.content.size;
+        }
+        if (node.type.name === 'ruby') {
+          rubyPos = pos;
+          rubyEnd = pos + node.nodeSize;
+        }
+      });
+      return { basePos, baseSize, rubyPos, rubyEnd };
+    };
+    // Single-char base 漢: both edges (offset 0 = end) redirect outside; no interior.
+    const a = docFromText('あ|漢(かん)');
+    const ra = rubyOf(a);
+    expect(rubyEdgeOutsidePos(a.resolve(ra.basePos + 1))).toBe(ra.rubyPos); // start → before
+    expect(rubyEdgeOutsidePos(a.resolve(ra.basePos + 1 + ra.baseSize))).toBe(ra.rubyEnd); // end → after
+    // Multi-char base 漢字: the INTERIOR (between them) writes INSIDE (null = no redirect).
+    const b = docFromText('あ|漢字(かんじ)');
+    const rb = rubyOf(b);
+    expect(rubyEdgeOutsidePos(b.resolve(rb.basePos + 1))).toBe(rb.rubyPos); // start → before
+    expect(rubyEdgeOutsidePos(b.resolve(rb.basePos + 2))).toBe(null); // between 漢字 → inside
+    expect(rubyEdgeOutsidePos(b.resolve(rb.basePos + 1 + rb.baseSize))).toBe(rb.rubyEnd); // end → after
+    // A plain-text caret is never redirected.
+    expect(rubyEdgeOutsidePos(a.resolve(1))).toBe(null);
   });
 
   it('maps offsets across a ruby node boundary', () => {

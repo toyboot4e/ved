@@ -111,6 +111,13 @@ export const mountLineNumbers = (
 
   // Move the highlight to the caret's visual line, reusing the cached `lines`.
   const refreshHighlight = (vertical: boolean, o: DOMRect): void => {
+    // No highlight on an EMPTY document: the band over the blank first line (with
+    // the placeholder showing) reads as a stray "ghost" cursor — most visible
+    // right after Ctrl+A then delete.
+    if (!content.textContent) {
+      highlight.style.display = 'none';
+      return;
+    }
     const caret = getCaret();
     // Caret rect → overlay-relative, the same space as the cached lines.
     const rel = caret && {
@@ -228,6 +235,21 @@ const linesOfParagraph = (
       cur.right = Math.max(cur.right, right);
       cur.bottom = Math.max(cur.bottom, bottom);
       colCoord = vertical ? Math.min(colCoord, block) : Math.max(colCoord, block);
+    }
+  }
+  // An EMPTY paragraph (just a <br>) yields no text rects — its only client rects
+  // are degenerate and skipped above — so it would get no visual line, hence no
+  // line number. Use the paragraph's own box as its single visual line.
+  if (!lines.length) {
+    const b = p.getBoundingClientRect();
+    if (b.width > 0 && b.height > 0) {
+      lines.push({
+        left: b.left - o.left,
+        top: b.top - o.top,
+        right: b.right - o.left,
+        bottom: b.bottom - o.top,
+        bandLen,
+      });
     }
   }
   return lines;
