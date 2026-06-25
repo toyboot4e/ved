@@ -77,6 +77,29 @@ test *args:
 [private]
 alias t := test
 
+# starts the vitest UI dashboard server (unit tests): filterable describe/it tree,
+# per-test pass/fail + duration, re-runs on save. Open http://localhost:51204/ in a
+# browser (or use `test-ui-open`). `just test-ui cursor-map` filters by test name.
+test-ui *args:
+    pnpm exec vitest --project unit --ui {{args}}
+
+[private]
+alias tu := test-ui
+
+# FIXME: xdg-open does not work as expected due to the polluted LD_LIBRARY_PATH.
+# test-ui-open *args:
+#     #!/usr/bin/env bash
+#     url="http://localhost:51204/__vitest__/"
+#     if command -v xdg-open >/dev/null 2>&1; then
+#         xdg-open "$url"
+#     elif command -v open >/dev/null 2>&1; then
+#         open "$url"
+#     fi
+#     pnpm exec vitest --project unit --ui {{args}}
+
+# [private]
+# alias tuo := test-ui-open
+
 # runs unit tests, typecheck, lint, build, and the smoke test
 test-all:
     pnpm run test && pnpm run check && just smoke
