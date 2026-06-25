@@ -23,25 +23,15 @@ await writeFile(openPath, '|空(そら)は青い', 'utf-8');
 const snap = () =>
   page.evaluate(() => {
     const root = document.getElementById('editor-content');
-    const clone = root.cloneNode(true) as HTMLElement;
-    // Drop the read-only duplicated annotations — they are presentation,
-    // not model text
-    for (const rt of clone.querySelectorAll('rt[contenteditable=false]')) rt.remove();
-    // The model class names are CSS-module-scoped (ruby.module.scss), so the
-    // actual class is `_rubyWrap_<hash>`/`_delim_<hash>` — use a substring match.
-    const rubies = [...root.querySelectorAll('[class*=rubyWrap]')];
-    // Expansion is CSS-driven (the appear-policy class on the root); a collapsed
-    // ruby hides delims with the small markup font-size, an expanded one shows
-    // them at the inherited 1em (= the editor's font-size, 18px).
-    const collapsed = rubies.filter((r) => {
-      const d = r.querySelector('[class*=delim]');
-      return !d || Number.parseFloat(getComputedStyle(d).fontSize) < 12;
-    }).length;
-    return {
-      text: (clone.textContent ?? '').replaceAll('﻿', ''),
-      rubies: rubies.length,
-      collapsed,
-    };
+    // Text comes from the MODEL (serialize), never the DOM: the markup `|`,`(`,`)`
+    // is not DOM text in the new model — it lives only in serialize(). __vedText
+    // is the identity plain-text seam (editor.tsx).
+    const text = (window as unknown as { __vedText?: () => string }).__vedText?.() ?? '';
+    const rubies = [...root.querySelectorAll('ruby.rubyWrap')];
+    // A ruby is collapsed (Rich) unless decorations marked it `rubyExpanded`
+    // (ShowAll / the active paragraph or ruby), where the delimiters show.
+    const collapsed = rubies.filter((r) => !r.classList.contains('rubyExpanded')).length;
+    return { text, rubies: rubies.length, collapsed };
   });
 
 try {
@@ -81,33 +71,20 @@ try {
   assert.equal(s.collapsed, 2);
   step('Rich collapses again');
 
-  // Vertical arrow navigation (default mode is vertical columns):
-  // ArrowDown moves the caret forward by one character
-  const sel = () =>
-    page.evaluate(() => {
-      const s = getSelection();
-      return { text: s.anchorNode?.textContent ?? null, offset: s.anchorOffset };
-    });
-  await caretToStart(page);
-  const before = await sel();
+  // Vertical arrow navigation (default mode is vertical columns). Assert on the
+  // model caret seam, not the DOM selection — the caret is model-driven, and at a
+  // ruby boundary the DOM anchor sits at the paragraph level (not a per-glyph
+  // text node). The doc here is `|試(し)あ|ルビ(ruby)` (offsets |0 試1 (2 し3 )4 あ5
+  // …): `|試(し)` has a SINGLE-char base 試 (no interior between chars), so one
+  // ArrowDown steps from offset 0 (before the ruby) past the one glyph to offset 5,
+  // the あ just after it. (A multi-char base would stop between its chars first.)
+  const caret = () => page.evaluate(() => (window as unknown as { __vedCaret(): number }).__vedCaret());
+  await caretToStart(page); // offset 0, before the leading ruby
+  assert.equal(await caret(), 0);
   await page.keyboard.press('ArrowDown');
   await page.waitForTimeout(100);
-  const after = await sel();
-  assert.notDeepEqual(after, before);
-  step('vertical arrow navigation moves the caret');
-
-  // One press = one visible character: from the start, a single ArrowDown
-  // must step past the first visible glyph, not park inside a zero-width
-  // span (slate-react's empty-leaf anchors)
-  const leaf = await page.evaluate(() => {
-    const sel = getSelection();
-    return {
-      leafText: sel.focusNode?.parentElement?.closest('[data-slate-leaf]')?.textContent ?? null,
-      zeroWidth: !!sel.focusNode?.parentElement?.closest('[data-slate-zero-width]'),
-    };
-  });
-  assert.equal(leaf.zeroWidth, false);
-  step('caret never parks in a zero-width span');
+  assert.equal(await caret(), 5);
+  step('vertical arrow navigation steps past a single-char ruby base to the text after it');
 
   // Undo restores the initial document
   await pressMod(page, 'z');
@@ -143,6 +120,10 @@ try {
 
   // Edit, then save back to the same path
   await page.click('#editor-content');
+  // Let the click's selection settle BEFORE placing the caret — its
+  // selectionchange lands a tick later and would otherwise override the
+  // programmatic caret (the model-driven seam in caretToStart).
+  await page.waitForTimeout(60);
   await caretToStart(page);
   await page.waitForTimeout(150);
   await page.keyboard.insertText('あ');

@@ -126,11 +126,18 @@ export const pressCtrlTab = async (page: Page, { shift = false } = {}): Promise<
  * see docs/architecture.md).
  */
 export const caretToStart = async (page: Page): Promise<void> => {
-  await page.evaluate(() => {
-    const el = document.getElementById('editor-content');
-    const first = document.createTreeWalker(el, NodeFilter.SHOW_TEXT).nextNode();
-    getSelection().collapse(first, 0);
-  });
+  // Document start = model offset 0. Use the model seam, not a DOM TreeWalker:
+  // when the first paragraph begins with a ruby, the first TEXT node is the
+  // rubyBase content (offset 1, INSIDE the base), so a text-node collapse lands
+  // the caret inside the ruby rather than before it.
+  //
+  // First let any PENDING selectionchange settle: a click right before this lands
+  // its DOM selection a tick LATER, which would otherwise override the model caret
+  // we set here (the click → caret-at-the-click-point race). Setting the model
+  // selection also writes the DOM selection, so after this both agree on offset 0.
+  await page.waitForTimeout(60);
+  await page.evaluate(() => (window as unknown as { __vedSetCaret: (o: number) => void }).__vedSetCaret(0));
+  await page.waitForTimeout(20);
 };
 
 /** Empties the document (select all + delete) so the placeholder shows. */
