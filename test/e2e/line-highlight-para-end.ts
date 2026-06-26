@@ -85,6 +85,29 @@ try {
   const mid = await bandAt(100);
   expectCaretInBand(100, mid);
   step('highlight covers the caret column mid last column');
+
+  // A paragraph that ENDS WITH A RUBY: the caret at the end must highlight the
+  // ruby's column, not one column before. `head - 1` would land inside the ruby's
+  // reading (<rt>), whose rect is the superscript — the wrong column; the overlay
+  // anchors into the trailing ruby's BASE instead. あ×80 fills col0+col1, then
+  // |漢(かん) puts 漢 alone in col2; offsets: あ…79, |80 漢81 (82 か83 ん84 )85, end=86.
+  await page.evaluate(() => getSelection()!.selectAllChildren(document.getElementById('editor-content')!));
+  await page.keyboard.press('Backspace');
+  await page.waitForTimeout(60);
+  await page.keyboard.insertText(`${'あ'.repeat(80)}|漢(かん)`);
+  await page.waitForTimeout(300);
+  // The native DOM caret rect is degenerate at the ruby-end boundary (the very
+  // reason the overlay uses coordsAtPos), so compare COLUMNS: the end highlight must
+  // be a LATER column (smaller left, vertical-rl) than a caret clearly in col1. The
+  // bug put it ON col1 ("one before" col2).
+  const rbCol1 = await bandAt(70); // clearly col1
+  const rbEnd = await bandAt(86); // paragraph end, AFTER the trailing ruby — must be col2
+  assert.ok(rbCol1 && rbEnd, 'bands present for the ruby-ending paragraph');
+  assert.ok(
+    rbEnd.left < rbCol1.left - 3,
+    `paragraph-ending-in-a-ruby highlight must be col2 (the ruby's column), not col1 one before it (col1.left=${rbCol1?.left}, end.left=${rbEnd?.left})`,
+  );
+  step('highlight covers the ruby column when the paragraph ends with a ruby');
 } catch (e) {
   fail(e instanceof Error ? e.message : String(e));
 } finally {

@@ -750,7 +750,15 @@ export const VedEditor = (props: VedEditorProps): React.JSX.Element => {
         // (same line as `head`). Only the overlay uses this; the native-caret
         // seam (`__vedCaretRect`) is unaffected.
         const atParaEnd = sel.empty && head === sel.$head.end() && head > sel.$head.start();
-        return view.coordsAtPos(atParaEnd ? head - 1 : head);
+        // EXCEPT when the paragraph ends with a ruby: `head - 1` lands inside the
+        // ruby's content (the reading `<rt>` end), whose rect is the superscript —
+        // a different column — so the highlight slips one column back. Anchor into
+        // the trailing ruby's BASE instead (`rubyStart + 2` = its content start),
+        // which renders in the ruby's real column.
+        const before = atParaEnd ? sel.$head.nodeBefore : null;
+        const anchor =
+          before?.type.name === 'ruby' ? head - before.nodeSize + 2 : atParaEnd ? head - 1 : head;
+        return view.coordsAtPos(anchor);
       } catch {
         return null;
       }
