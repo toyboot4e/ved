@@ -233,7 +233,7 @@ through the base INTERIOR (the `rubyActive` highlight, `headOffset > from &&
 headOffset < to`, tracking it) and editing the middle characters lands in the base;
 a single-char base has no interior, so the caret steps over the one glyph. The caret
 steps through EVERY collapsed ruby's base char-by-char this way — leading, adjacent,
-or mid-paragraph. Four mechanisms:
+or mid-paragraph. Five mechanisms:
 
 - **The caret model gives a collapsed ruby's base only its INTERIOR stops
   (`pm/leaves.ts`, `pm/caret-model.ts`).** `isHidden` hides a collapsed ruby's
@@ -261,6 +261,15 @@ or mid-paragraph. Four mechanisms:
   is editable and the IME edits it char-by-char. So navigation granularity and IME
   safety coexist — the caret still stops at every base char (previous bullet), only
   the base's editability toggles by caret position.
+- **A CLICK that resolves INSIDE a collapsed ruby is snapped OUTSIDE
+  (`editor.tsx createSelectionBetween`, `pm/model.ts rubyClickOutsidePos`).** Clicking
+  the empty space past a paragraph that ends in a ruby hit-tests to the ruby, so the
+  model head lands in the ruby span — `rubyActive` lights with no visible caret. The
+  redirect keeps the editable base INTERIOR (a real caret spot), but snaps a base
+  EDGE / the READING / the RUBY NODE level out to before/after the ruby. The
+  ruby-node case matters for a LEADING or adjacent ATOM ruby: its base is
+  `contenteditable=false`, so the click resolves to `parent==='ruby'` (not
+  `rubyBase`), which the base-edge-only `rubyEdgeOutsidePos` missed (`click-end-ruby`).
 
 So an IME (mozc) at a boundary always has an editable plain-text anchor on the
 OUTSIDE side — or, where it would not (doc start, between two adjacent rubies), the
@@ -331,9 +340,13 @@ paragraph whose last visual line is full** that rect (either side) reports the
 the native caret renders — so the highlight would snap one column back. The
 overlay's caret accessor (`editor.tsx caretRect`) detects the paragraph end
 (`head === $head.end()`, non-empty) and anchors the line-pick to the last
-character (`head - 1`), which is reliably inside the real last column. This is
-the same boundary-affinity family as the line-move clamp; it touches only the
-overlay, not the native-caret/IME rect.
+character (`head - 1`), which is reliably inside the real last column. EXCEPT when
+the paragraph ENDS IN A RUBY: `head - 1` is inside the ruby's content — the reading
+`<rt>` end, a superscript in a *different* column — so it anchors into the trailing
+ruby's BASE instead (`head - before.nodeSize + 2`, the base content start), which
+renders in the ruby's real column (`line-highlight-para-end`). This is the same
+boundary-affinity family as the line-move clamp; it touches only the overlay, not
+the native-caret/IME rect.
 
 Orthogonal to view modes; pure CSS:
 

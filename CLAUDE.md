@@ -66,7 +66,15 @@ Task runner is `just`:
   affinity can still drop the DOM caret (and PM's synced model) at the base START
   INSIDE the ruby, so `editor.tsx`'s `beforeinput` redirects a keystroke at a
   collapsed-ruby base edge to OUTSIDE the ruby (`pm/model.ts rubyEdgeOutsidePos`;
-  only when collapsed — in expanded policies the edges are editable). IME at a
+  only when collapsed — in expanded policies the edges are editable). A CLICK that
+  resolves INSIDE a collapsed ruby (clicking the empty space past a ruby-ending
+  paragraph) is likewise snapped OUTSIDE by `editor.tsx createSelectionBetween`
+  (`pm/model.ts rubyClickOutsidePos` — the editable base INTERIOR stays; a base edge,
+  the reading, or the RUBY NODE level for an atom ruby whose base is read-only go
+  before/after). And the current-line highlight at a paragraph ENDING in a ruby
+  anchors into the trailing ruby's BASE, not `head-1` (which is the reading — a
+  different column, so the highlight slipped one column back); see `editor.tsx
+  caretRect`. IME at a
   boundary works because the OUTSIDE side always has an editable plain-text anchor,
   OR — when it would not (doc start, between two adjacent rubies) — the ruby is an
   ATOM with a read-only base, so mozc can't compose into it and lands outside. All
