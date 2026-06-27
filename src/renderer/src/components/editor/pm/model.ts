@@ -104,7 +104,9 @@ export const paragraphText = (para: PMNode): string => {
 /** The plain document string. Identity-exact: paragraphs join with `\n`. */
 export const serialize = (doc: PMNode): string => {
   const lines: string[] = [];
-  doc.forEach((para) => lines.push(paragraphText(para)));
+  doc.forEach((para) => {
+    lines.push(paragraphText(para));
+  });
   return lines.join('\n');
 };
 
@@ -119,7 +121,9 @@ export const serializeSlice = (slice: Slice): string => {
   // Block-level (multi-paragraph) selection: one identity line per paragraph.
   if (frag.childCount > 0 && frag.firstChild?.type.name === 'paragraph') {
     const lines: string[] = [];
-    frag.forEach((para) => lines.push(paragraphText(para)));
+    frag.forEach((para) => {
+      lines.push(paragraphText(para));
+    });
     return lines.join('\n');
   }
   // Inline (within one paragraph): a ruby is "whole" only when the slice did not
