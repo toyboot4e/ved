@@ -15,3 +15,7 @@ docs/spikes/*.bundle.css
 *storybook.log
 /.storybook
 storybook-static
+
+# nix build output symlink
+/result
+/result-*
