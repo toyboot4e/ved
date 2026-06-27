@@ -145,6 +145,23 @@ try {
     `one line number per ruby line — no phantom across page boundaries (got ${counts.numbers} for ${counts.paragraphs} paragraphs)`,
   );
   step('line numbers: one per ruby line, no phantoms across page boundaries');
+
+  // EMPTY paragraphs (blank lines) get a visual line number too. A blank line
+  // yields only degenerate rects, so the overlay must fall back to the paragraph
+  // box — otherwise blank lines are skipped and every line below is mis-numbered.
+  await setText('あいうえお\n\nかきくけこ\n\n\nさしすせそ');
+  await page.waitForTimeout(400);
+  const blanks = await page.evaluate(() => ({
+    numbers: [...document.querySelectorAll('.vedLineNumber')].filter((n) => (n as HTMLElement).style.display !== 'none')
+      .length,
+    paragraphs: document.querySelectorAll('#editor-content p').length,
+  }));
+  assert.equal(
+    blanks.numbers,
+    blanks.paragraphs,
+    `every paragraph incl. blank lines is numbered (got ${blanks.numbers} for ${blanks.paragraphs} paragraphs)`,
+  );
+  step('empty lines get a visual line number');
 } catch (e) {
   fail(e instanceof Error ? e.message : String(e));
 } finally {

@@ -8,7 +8,7 @@
 // cancel the IME session), mirroring the Lexical core's `isComposing` guard.
 import { Fragment } from 'prosemirror-model';
 import { type EditorState, TextSelection, type Transaction } from 'prosemirror-state';
-import { inlineNodesFor, offsetToPos, posToOffset } from './model';
+import { inlineNodesFor, offsetToPos, paragraphText, posToOffset } from './model';
 
 /** A transaction that makes ruby nodes match `parse()` for every changed
  *  paragraph, or null if the document is already canonical. */
@@ -21,7 +21,9 @@ export const repair = (state: EditorState): Transaction | null => {
   // positions stay valid as content lengths change.
   const paras: { pos: number; size: number; line: string; content: Fragment }[] = [];
   state.doc.forEach((para, offset) => {
-    paras.push({ pos: offset, size: para.nodeSize, line: para.textContent, content: para.content });
+    // `paragraphText` reconstructs the markup (`|base(reading)`); a ruby's raw
+    // `textContent` is now `base+reading`, which would mis-reparse.
+    paras.push({ pos: offset, size: para.nodeSize, line: paragraphText(para), content: para.content });
   });
 
   for (let i = paras.length - 1; i >= 0; i--) {

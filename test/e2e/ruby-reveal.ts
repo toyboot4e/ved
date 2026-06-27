@@ -8,21 +8,23 @@ import { caretToStart, fail, finish, launchVed, pressMod, step } from './harness
 const ved = await launchVed();
 const { page } = ved;
 
-/** The caret's visibility within the scroller viewport. */
+/** The caret's visibility within the scroller viewport. Prefers the DOM range
+ *  rect (what the user's native caret follows), but a collapsed range at a node
+ *  boundary (e.g. offset 0 before a leading ruby) yields a degenerate {0,0,0,0}
+ *  rect — there, fall back to the MODEL rect (coordsAtPos via __vedCaretRect),
+ *  which is reliable at boundaries (the old element fallback grabbed the whole
+ *  huge paragraph and read as out-of-view). */
 const caretInView = () =>
   page.evaluate(() => {
     const sel = getSelection();
     if (!sel || sel.rangeCount === 0) return null;
     const range = sel.getRangeAt(0);
-    let rect = range.getClientRects()[0] ?? range.getBoundingClientRect();
+    let rect: { top: number; bottom: number; left: number; right: number } | null =
+      range.getClientRects()[0] ?? range.getBoundingClientRect();
     if (rect.top === 0 && rect.bottom === 0 && rect.left === 0 && rect.right === 0) {
-      // Collapsed ranges at element boundaries can yield an empty rect —
-      // fall back to the focus node's leaf element
-      const node = sel.focusNode;
-      const el = node && node.nodeType === Node.TEXT_NODE ? node.parentElement : node;
-      if (!el) return null;
-      rect = el.getBoundingClientRect();
+      rect = (window as unknown as { __vedCaretRect(): DOMRect | null }).__vedCaretRect();
     }
+    if (!rect) return null;
     const scroller = document.getElementById('editor-content').parentElement;
     const view = scroller.getBoundingClientRect();
     return {

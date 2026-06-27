@@ -99,10 +99,15 @@ export const activeRuby = (leaves: Leaf[], offset: number): number => {
   return found;
 };
 
-/** Is this leaf rendered hidden (and therefore skipped by arrow movement)
- *  under the policy, given the active paragraph/ruby? Mirrors the SCSS:
- *  ShowAll shows all; Rich hides all markup; ByParagraph shows the caret
- *  paragraph's; ByCharacter shows the caret ruby's. */
+/** Is this leaf hidden (skipped by arrow movement) under the policy? When a ruby
+ *  is collapsed its markup (`delim`) and reading (`rt`) are hidden. The caret then
+ *  steps through the base's INTERIOR (the `rubyActive` highlight lights up there,
+ *  and an IME composes into the base), but the base's START/END edges coincide
+ *  with the ruby's outer boundary and are NOT stops — typing/IME at a ruby boundary
+ *  lands OUTSIDE (caret-model.ts handles the interior-only rule). The READING is
+ *  kept read-only so the IME can't leak into it. ShowAll expands all; Rich
+ *  collapses all; ByParagraph expands the caret paragraph's; ByCharacter expands
+ *  the caret ruby's. (Plain text is never hidden; the base is handled separately.) */
 export const isHidden = (leaf: Leaf, policy: Appear, activeLine: number, active: number): boolean => {
   if (leaf.kind !== 'delim' && leaf.kind !== 'rt') return false;
   switch (policy) {

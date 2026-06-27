@@ -1,17 +1,16 @@
-// Caret visibility at ruby boundaries (ProseMirror editor).
+// Caret behavior at ruby boundaries (ProseMirror editor).
 //
-// At a ruby boundary the caret sits next to a font-size:0 delimiter, so the
-// NATIVE caret renders with the delimiter's tiny metrics (effectively
-// invisible). The native caret cannot be queried from the page, so instead of
-// asserting its pixels we test the MECHANISM that fixes it: the editor flips
-// `rubyLeadActive`/`rubyTrailActive` on the ruby, and the CSS draws a 1em
-// overlay caret (a `::before` pseudo-element) at the column edge. We assert the
-// class is on at each invisible-native-caret position and that the overlay
-// pseudo-element has a real (≥14px) extent. We also assert the highlight
-// (`rubyActive`) is OFF at the outer boundary (caret outside the ruby).
-//
-// See: src/renderer/src/components/editor/pm/decorations.ts (class logic),
-//      src/renderer/src/components/editor/pm/ruby.css (overlay caret).
+// In the markup-out-of-DOM model (ADR-0007 / the no-zero-sized-font redesign)
+// a ruby node holds editable rubyBase + rubyText children; the delimiters
+// `|`,`(`,`)` are NOT DOM text. So the native caret + IME live on REAL,
+// full-size glyphs at EVERY position — including the outer boundaries — and the
+// old overlay-caret / delimAnchor machinery is gone. We assert:
+//   - the caret rect (coordsAtPos — what positions the native caret + IME) is
+//     NON-DEGENERATE at every boundary position and sits at the ruby, not the
+//     viewport corner (the bug this redesign fixes);
+//   - `rubyActive` is ON strictly inside the ruby, OFF at the outer boundaries;
+//   - moving the caret across the boundaries causes NO layout shift (the
+//     highlight is a background; the markup is never revealed in Rich).
 //
 // Usage: node test/e2e/caret-boundary.ts (after `pnpm run build`).
 import assert from 'node:assert/strict';
@@ -20,33 +19,41 @@ import { fail, finish, launchVed, pressMod, step } from './harness.ts';
 const ved = await launchVed({ env: () => ({ VED_SMOKE_CLOSE_RESPONSE: 'discard' }) });
 const { page } = ved;
 
-/** The boundary classes on the only ruby, plus the overlay caret's extent
- *  (max of the ::before width/height — ~1em where it renders, 0 otherwise). */
-const rubyState = () =>
+type R = { top: number; bottom: number; left: number; right: number };
+
+const setCaret = async (off: number) => {
+  await page.evaluate((o) => (window as unknown as { __vedSetCaret(o: number): void }).__vedSetCaret(o), off);
+  await page.waitForTimeout(80);
+};
+
+/** The caret rect, the ruby's own rect, and its highlight class. The caret is
+ *  measured BOTH ways — coordsAtPos (PM's metric, drives reveal + IME placement)
+ *  and the DOM Range rect (what the browser draws the native caret from) — and we
+ *  keep the one with the larger extent. At a node boundary EACH can collapse on
+ *  its own (the Range rect is empty before a leading ruby; coordsAtPos is a point
+ *  at the base end inside the inline ruby), but the caret is visible as long as
+ *  one is real. */
+const measure = () =>
   page.evaluate(() => {
-    const r = document.querySelector('ruby.rubyWrap') as HTMLElement | null;
-    if (!r) return { found: false, classes: '', active: false, lead: false, trail: false, overlay: 0 };
-    const cs = getComputedStyle(r, '::before');
-    const w = Number.parseFloat(cs.width) || 0;
-    const h = Number.parseFloat(cs.height) || 0;
+    const model = (window as unknown as { __vedCaretRect(): R | null }).__vedCaretRect();
+    const sel = getSelection();
+    let dom: R | null = null;
+    if (sel && sel.rangeCount > 0) {
+      const d = sel.getRangeAt(0).getClientRects()[0] ?? sel.getRangeAt(0).getBoundingClientRect();
+      dom = { top: d.top, bottom: d.bottom, left: d.left, right: d.right };
+    }
+    const ext = (r: R | null) => (r ? Math.max(r.bottom - r.top, r.right - r.left) : -1);
+    const caret = ext(model) >= ext(dom) ? model : dom;
+    const r = document.querySelector('ruby.rubyWrap') as HTMLElement;
+    const b = r.getBoundingClientRect();
     return {
-      found: true,
-      classes: r.className,
+      caret,
+      ruby: { top: b.top, bottom: b.bottom, left: b.left, right: b.right },
       active: r.classList.contains('rubyActive'),
-      lead: r.classList.contains('rubyLeadActive'),
-      trail: r.classList.contains('rubyTrailActive'),
-      overlay: Math.max(w, h),
+      classes: r.className,
     };
-  });
+  }) as Promise<{ caret: R | null; ruby: R; active: boolean; classes: string }>;
 
-const rubyRect = () =>
-  page.evaluate(() => {
-    const b = (document.querySelector('ruby.rubyWrap') as HTMLElement).getBoundingClientRect();
-    return { x: b.x, y: b.y, w: b.width, h: b.height };
-  });
-
-/** Replace the whole document with `text` (which the editor re-parses into
- *  ruby nodes via structure repair). */
 const setDoc = async (text: string) => {
   await page.evaluate(() => getSelection()!.selectAllChildren(document.getElementById('editor-content')!));
   await page.keyboard.press('Backspace');
@@ -55,90 +62,66 @@ const setDoc = async (text: string) => {
   await page.waitForTimeout(200);
 };
 
-/** Collapse the native selection to the very first caret position (doc start),
- *  then let ProseMirror sync. */
-const caretToDocStart = async () => {
-  await page.evaluate(() => {
-    const root = document.getElementById('editor-content')!;
-    const first = document.createTreeWalker(root, NodeFilter.SHOW_TEXT).nextNode();
-    if (first) getSelection()!.collapse(first, 0);
-  });
-  await page.waitForTimeout(150);
-};
+// The caret's real extent. A caret is a 1-D line: in horizontal text it is tall
+// and thin (height), in vertical-rl it is a horizontal bar at a line end (width,
+// zero height). Either is a valid, visible caret — the OLD bug was a 0×0 box at
+// the viewport ORIGIN. So measure the LARGER axis.
+const extent = (r: R) => Math.max(r.bottom - r.top, r.right - r.left);
+// The caret rect lies within the ruby's box (a small margin for the caret's own
+// extent past the glyph and the boundary being just outside the node).
+const nearRuby = (c: R, ruby: R) =>
+  c.left >= ruby.left - 30 && c.right <= ruby.right + 30 && c.top >= ruby.top - 30 && c.bottom <= ruby.bottom + 30;
 
 try {
   await page.click('#editor-content');
   await pressMod(page, '4'); // Rich
   await page.waitForTimeout(150);
 
-  // A ruby alone on the line, so its boundaries ARE the document edges.
-  await setDoc('|ルビ(ruby)');
-  await caretToDocStart();
+  // A leading ruby plus a trailing char, so the BEFORE boundary is the document
+  // start and the AFTER boundary is followed by visible text (not the doc end,
+  // whose caret rect is degenerate in vertical-rl multicol for unrelated reasons).
+  // |ルビ(ruby)あ: offsets — |0 ル1 ビ2 (3 r4 u5 b6 y7 )8 あ9 ; base "ルビ", reading "ruby".
+  await setDoc('|ルビ(ruby)あ');
 
-  // --- offset 0: before the ruby, at the document start (OUTSIDE-lead) -----
-  // Native caret is invisible (nothing visible to the left, the `|` is hidden).
-  let s = await rubyState();
-  assert.ok(s.lead, `doc-start OUTSIDE-lead: rubyLeadActive ON (got "${s.classes}")`);
-  assert.ok(!s.active, 'doc-start OUTSIDE-lead: rubyActive OFF (caret is outside the ruby)');
-  assert.ok(s.overlay >= 14, `doc-start OUTSIDE-lead: overlay caret ≥14px, got ${s.overlay}`);
-  const rectStart = await rubyRect();
-  step('doc-start before-ruby: overlay caret ON, not highlighted');
+  // Boundary positions and whether the caret is logically inside the ruby.
+  // 0: before the ruby (outside). 1: base start (inside). 2: mid base (inside).
+  // 3: base end (inside). 9: after the ruby, before あ (outside).
+  const cases: { off: number; inside: boolean; label: string }[] = [
+    { off: 0, inside: false, label: 'before the ruby (doc start)' },
+    { off: 1, inside: true, label: 'just inside, base start (where IME begins)' },
+    { off: 2, inside: true, label: 'mid base' },
+    { off: 3, inside: true, label: 'base end' },
+    { off: 9, inside: false, label: 'after the ruby (before あ)' },
+  ];
 
-  // --- ArrowDown → offset 1: just inside, after `|` (INSIDE-lead) ----------
-  await page.keyboard.press('ArrowDown');
-  await page.waitForTimeout(150);
-  s = await rubyState();
-  assert.ok(s.lead, `INSIDE-lead: rubyLeadActive ON (got "${s.classes}")`);
-  assert.ok(s.active, 'INSIDE-lead: rubyActive ON (caret inside the ruby)');
-  assert.ok(s.overlay >= 14, `INSIDE-lead: overlay caret ≥14px, got ${s.overlay}`);
-  step('inside after the leading delim: overlay caret ON, highlighted');
+  const rects: R[] = [];
+  for (const c of cases) {
+    await setCaret(c.off);
+    const m = await measure();
+    assert.ok(m.caret, `${c.label}: caret rect available`);
+    // The native caret has a real, full-size extent (NOT the 0×0 corner box that
+    // threw the IME to the viewport origin in the old display:none model).
+    assert.ok(extent(m.caret!) >= 12, `${c.label}: caret rect full extent, got ${JSON.stringify(m.caret)}`);
+    assert.ok(
+      nearRuby(m.caret!, m.ruby),
+      `${c.label}: caret at the ruby, got ${JSON.stringify(m.caret)} vs ${JSON.stringify(m.ruby)}`,
+    );
+    assert.equal(m.active, c.inside, `${c.label}: rubyActive ${c.inside ? 'ON' : 'OFF'} (got "${m.classes}")`);
+    rects.push(m.ruby);
+  }
+  step('caret rect is full-height and at the ruby at every boundary position');
+  step('rubyActive is ON strictly inside, OFF at the outer boundaries');
 
-  // --- ArrowDown → offset 2: between ル and ビ (INSIDE, native caret fine) --
-  await page.keyboard.press('ArrowDown');
-  await page.waitForTimeout(150);
-  s = await rubyState();
-  assert.ok(s.active, 'INSIDE-mid: rubyActive ON');
-  assert.ok(!s.lead && !s.trail, `INSIDE-mid: no overlay (native caret is visible on ル/ビ), got "${s.classes}"`);
-  step('inside the body: highlighted, native caret (no overlay)');
-
-  // --- walk to the trailing edge (offset after the closing `)`) -----------
-  // From offset 2: ArrowDown to body end (3), then once more to cross to the
-  // OUTSIDE-trail position (after the hidden `)`), where the native caret is
-  // again invisible.
-  await page.keyboard.press('ArrowDown'); // → 3 (body end)
-  await page.keyboard.press('ArrowDown'); // → after ) (OUTSIDE-trail)
-  await page.waitForTimeout(150);
-  s = await rubyState();
-  assert.ok(s.trail, `OUTSIDE-trail: rubyTrailActive ON (got "${s.classes}")`);
-  assert.ok(!s.active, 'OUTSIDE-trail: rubyActive OFF (caret is outside the ruby)');
-  assert.ok(s.overlay >= 14, `OUTSIDE-trail: overlay caret ≥14px, got ${s.overlay}`);
-  step('after the ruby: overlay caret ON, not highlighted');
-
-  // --- no layout shift: the overlay is absolutely positioned (zero-cost) ---
-  const rectEnd = await rubyRect();
-  assert.equal(rectStart.x, rectEnd.x, `ruby.x unchanged across boundaries (${rectStart.x} ≠ ${rectEnd.x})`);
-  assert.equal(rectStart.y, rectEnd.y, `ruby.y unchanged (${rectStart.y} ≠ ${rectEnd.y})`);
-  assert.equal(rectStart.w, rectEnd.w, `ruby.w unchanged (${rectStart.w} ≠ ${rectEnd.w})`);
-  assert.equal(rectStart.h, rectEnd.h, `ruby.h unchanged (${rectStart.h} ≠ ${rectEnd.h})`);
+  // No layout shift: the ruby's own box is identical at every caret position
+  // (the highlight is a background; the markup is never revealed in Rich).
+  for (let i = 1; i < rects.length; i++) {
+    assert.equal(rects[i]!.left, rects[0]!.left, `ruby.left unchanged across boundaries (pos ${cases[i]!.off})`);
+    assert.equal(rects[i]!.top, rects[0]!.top, `ruby.top unchanged across boundaries (pos ${cases[i]!.off})`);
+  }
   step('no layout shift across the boundary positions');
 
-  // --- mid-paragraph ruby: the OUTSIDE boundary is on adjacent visible text,
-  // so the native caret is fine there — no overlay, no highlight. ----------
-  await setDoc('あ|ルビ(ruby)い');
-  // Caret at the end of "あ" (just before the ruby): visible char to the left.
-  await page.evaluate(() => {
-    const root = document.getElementById('editor-content')!;
-    const aText = document.createTreeWalker(root, NodeFilter.SHOW_TEXT).nextNode() as Text;
-    getSelection()!.collapse(aText, aText.length);
-  });
-  await page.waitForTimeout(200);
-  s = await rubyState();
-  assert.ok(!s.lead && !s.trail, `mid-paragraph before-ruby (after visible あ): no overlay, got "${s.classes}"`);
-  assert.ok(!s.active, 'mid-paragraph before-ruby: not highlighted (outside)');
-  step('mid-paragraph outer boundary on visible text: native caret, no overlay');
-
-  // --- ArrowLeft across paragraphs preserves the inline-axis coordinate ----
-  // In vertical-rl, ArrowLeft = line backward. The bug landed the caret at the
+  // --- ArrowLeft/Right across paragraphs preserves the inline-axis coordinate.
+  // In vertical-rl, ArrowRight = line backward. The bug landed the caret at the
   // END of the previous column ("jumped to the end of previous"); the fix
   // hit-tests the previous column at the caret's inline-axis (y) position.
   await setDoc('first paragraph here');

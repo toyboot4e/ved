@@ -54,11 +54,25 @@ try {
     return before + Math.floor(s.off / CAP);
   };
 
+  // moveCaretByLine commits asynchronously (a RAF, to let the keydown settle),
+  // and the visible window's RAF still lags under load — a fixed wait reads a
+  // stale line, so the move appears to "stick then jump". Press, then POLL the
+  // editor's own caret offset until THIS move registers (or a generous cap), so
+  // each sample reflects exactly one settled move.
+  const caretOffset = () => page.evaluate(() => (window as unknown as { __vedCaret(): number }).__vedCaret());
+  const pressLine = async () => {
+    const before = await caretOffset();
+    await page.keyboard.press('ArrowLeft');
+    for (let k = 0; k < 200; k++) {
+      await page.waitForTimeout(16);
+      if ((await caretOffset()) !== before) return;
+    }
+  };
+
   const samples = [await probe()];
   // 1000 + 1 + 1000 chars ≈ 50 columns; press enough to cross both paragraphs.
   for (let i = 0; i < 52; i++) {
-    await page.keyboard.press('ArrowLeft');
-    await page.waitForTimeout(120);
+    await pressLine();
     const s = await probe();
     samples.push(s);
     if (s.para === 1 && s.off >= 960) break; // reached the last column of para 2

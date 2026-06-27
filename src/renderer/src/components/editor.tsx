@@ -2,7 +2,7 @@ import { clsx } from 'clsx';
 import { baseKeymap } from 'prosemirror-commands';
 import { keymap } from 'prosemirror-keymap';
 import { Fragment, Slice } from 'prosemirror-model';
-import { EditorState, Plugin, TextSelection } from 'prosemirror-state';
+import { type Command, EditorState, Plugin, TextSelection } from 'prosemirror-state';
 import { EditorView } from 'prosemirror-view';
 import type React from 'react';
 import { useCallback, useEffect, useLayoutEffect, useRef } from 'react';
@@ -12,7 +12,16 @@ import { nextCaretOffset } from './editor/pm/caret-model';
 import { type CursorState, cursorToOffset, offsetToCursor } from './editor/pm/cursor';
 import { buildDecorations } from './editor/pm/decorations';
 import type { Appear } from './editor/pm/leaves';
-import { docFromText, offsetToPos, posToOffset, schema, serialize } from './editor/pm/model';
+import { docLeaves } from './editor/pm/leaves';
+import {
+  docFromText,
+  offsetToPos,
+  posToOffset,
+  rubyEdgeOutsidePos,
+  schema,
+  serialize,
+  serializeSlice,
+} from './editor/pm/model';
 import { RubyView } from './editor/pm/ruby-view';
 import { repair } from './editor/pm/structure';
 import { lineToScroll, type ScrollGeom, type ScrollMode, scrollToLine } from './editor/scroll-keep';
@@ -103,6 +112,84 @@ const moveChar = (view: EditorView, policy: Appear, reverse: boolean, extend: bo
   view.dispatch(view.state.tr.setSelection(sel).scrollIntoView());
 };
 
+/** Delete one MODEL character at the caret (Backspace = the char before, Delete
+ *  = the char after), or the whole selection. Taken over because PM's baseKeymap
+ *  leaves a mid-paragraph single-char delete to NATIVE contenteditable, which —
+ *  with hidden markup at display:none — deletes the out-of-layout delimiters/
+ *  syntax markers along with the visible char (so e.g. Backspace next to a
+ *  bold `*` ate the `*` too). Deleting a plain offset range keeps identity exact
+ *  and lets structure-repair re-form rubies. */
+const deleteChar = (view: EditorView, forward: boolean): void => {
+  const { doc, selection } = view.state;
+  // Honor a non-empty DOM selection that may LEAD PM's model (a programmatic
+  // select-all isn't synced until the next selectionchange flush) — otherwise a
+  // "select all + Backspace" would delete a single char instead of clearing.
+  const ds = view.dom.ownerDocument.getSelection();
+  if (ds && !ds.isCollapsed && ds.anchorNode && ds.focusNode && view.dom.contains(ds.anchorNode)) {
+    try {
+      const a = view.posAtDOM(ds.anchorNode, ds.anchorOffset);
+      const f = view.posAtDOM(ds.focusNode, ds.focusOffset);
+      if (a !== f) {
+        const lo = Math.min(a, f);
+        const tr = view.state.tr.delete(lo, Math.max(a, f));
+        // COLLAPSE to a caret: deleting a Ctrl+A AllSelection otherwise leaves an
+        // AllSelection over the now-empty paragraph, which paints a blue
+        // selection "ghost" bar over the blank line. `near` snaps to a valid TEXT
+        // position INSIDE a paragraph — a raw `create(doc, 0)` lands on the doc
+        // boundary (no textblock), and the next insert then splits a paragraph
+        // (a stray trailing newline on the first insert).
+        tr.setSelection(TextSelection.near(tr.doc.resolve(Math.min(lo, tr.doc.content.size))));
+        view.dispatch(tr.scrollIntoView());
+        return;
+      }
+    } catch {
+      // fall through to the model-selection path
+    }
+  }
+  if (!selection.empty) {
+    view.dispatch(view.state.tr.deleteSelection().scrollIntoView());
+    return;
+  }
+  const head = posToOffset(doc, selection.head);
+  const len = serialize(doc).length;
+  const target = forward ? head + 1 : head - 1;
+  if (target < 0 || target > len) return; // document edge — nothing to delete
+  const from = offsetToPos(doc, Math.min(head, target));
+  const to = offsetToPos(doc, Math.max(head, target));
+  if (from < to) view.dispatch(view.state.tr.delete(from, to).scrollIntoView());
+};
+
+/** Enter must REPLACE a non-empty selection with a paragraph split. PM's
+ *  baseKeymap `splitBlock` only deletes a TextSelection first, so Enter was a
+ *  NO-OP on the Ctrl+A `AllSelection` (and on a programmatic select-all whose DOM
+ *  selection leads the model). Delete the range (DOM selection first, like
+ *  `deleteChar`, else the model selection), then split at the caret. A collapsed
+ *  caret returns false → baseKeymap splits normally. */
+const enterReplacingSelection: Command = (state, dispatch, view) => {
+  let range: [number, number] | null = null;
+  const ds = view?.dom.ownerDocument.getSelection();
+  if (view && ds && !ds.isCollapsed && ds.anchorNode && ds.focusNode && view.dom.contains(ds.anchorNode)) {
+    try {
+      const a = view.posAtDOM(ds.anchorNode, ds.anchorOffset);
+      const f = view.posAtDOM(ds.focusNode, ds.focusOffset);
+      if (a !== f) range = [Math.min(a, f), Math.max(a, f)];
+    } catch {
+      // fall through to the model selection
+    }
+  }
+  if (!range && !state.selection.empty) range = [state.selection.from, state.selection.to];
+  if (!range) return false; // collapsed → baseKeymap handles the split
+  if (dispatch) {
+    const tr = state.tr.delete(range[0], range[1]);
+    // After clearing the whole doc the caret lands at the doc boundary, where
+    // split() is invalid — clamp it INSIDE the (now empty) paragraph.
+    const pos = Math.min(Math.max(tr.selection.from, 1), Math.max(1, tr.doc.content.size - 1));
+    tr.split(pos);
+    dispatch(tr.scrollIntoView());
+  }
+  return true;
+};
+
 const closestPara = (root: HTMLElement, n: Node | null): HTMLElement | null => {
   if (!n) return null;
   const el = n.nodeType === Node.TEXT_NODE ? n.parentElement : (n as Element);
@@ -114,20 +201,37 @@ const closestPara = (root: HTMLElement, n: Node | null): HTMLElement | null => {
  *  inline-axis span, in viewport px. */
 type VisualCol = { block: number; iStart: number; iEnd: number };
 
+/** The client rects of a paragraph's READING FLOW, in document order, EXCLUDING
+ *  ruby `<rt>` annotations. A ruby reading is a real superscript node now (NOT a
+ *  hidden zero-size dup), so its rects sit in their own block band BETWEEN the
+ *  reading columns — `range.selectNodeContents(p)` would include them and the
+ *  column grouping would read each annotation as a phantom column, desyncing
+ *  line movement. We walk the text nodes and skip any inside an `<rt>`. */
+const readingFlowRects = (p: HTMLElement): DOMRect[] => {
+  const walker = document.createTreeWalker(p, NodeFilter.SHOW_TEXT, {
+    acceptNode: (n) => (n.parentElement?.closest('rt') ? NodeFilter.FILTER_REJECT : NodeFilter.FILTER_ACCEPT),
+  });
+  const rects: DOMRect[] = [];
+  for (let n = walker.nextNode(); n; n = walker.nextNode()) {
+    const r = document.createRange();
+    r.selectNodeContents(n);
+    rects.push(...Array.from(r.getClientRects()));
+  }
+  return rects;
+};
+
 /** A paragraph's visual lines in READING order, grouping `getClientRects` the
  *  same way the line-number overlay does — including the multicol page wrap (a
  *  large block jump the OTHER way). So movement follows reading order even
  *  across page rows, where `Selection.modify('line')` mis-steps and where a
  *  paragraph's bounding rect alone can't locate a column. */
 const paragraphCols = (p: HTMLElement, vertical: boolean): VisualCol[] => {
-  const range = document.createRange();
-  range.selectNodeContents(p);
   const colJump = (Number.parseFloat(getComputedStyle(p).fontSize) || 18) * 2.5;
   const TOL = 3;
   const cols: VisualCol[] = [];
   let cur: VisualCol | null = null;
   let coord = 0;
-  for (const r of Array.from(range.getClientRects())) {
+  for (const r of readingFlowRects(p)) {
     if (r.width === 0 || r.height === 0) continue; // skip degenerate rects (see line-numbers.ts)
     const block = vertical ? r.left : r.top;
     const blockEnd = vertical ? r.right : r.bottom;
@@ -204,51 +308,135 @@ const moveCaretByLine = (
     const beforeP = closestPara(content, before.startContainer);
     const afterP = closestPara(content, after.startContainer);
 
+    // Offset the caret head sits at BEFORE this move (model space).
+    const beforeOffset = posToOffset(view.state.doc, view.state.selection.head);
+    // Stay put: undo modify's DOM-selection move first, so re-committing the
+    // model pos PM already has isn't a no-op that reads modify's stray selection
+    // back (which would strand the caret at, e.g., the paragraph start / end).
+    const revert = (): void => {
+      sel.removeAllRanges();
+      sel.addRange(before);
+      const p = view.posAtDOM(before.startContainer, before.startOffset);
+      view.dispatch(
+        view.state.tr
+          .setSelection(TextSelection.create(view.state.doc, view.state.selection.anchor, p))
+          .scrollIntoView(),
+      );
+    };
     const commit = (pos: number): void => {
+      // A line move must PROGRESS in its direction: backward decreases the model
+      // offset, forward increases it. A wrong-direction result is a `modify`
+      // mis-step at a document edge (e.g. ArrowRight in the first line jumping to
+      // the paragraph start, or worse to the doc end) — stay put instead. (No
+      // reliable column measurement here: paragraphCols mis-groups some columns.)
+      if (
+        !extend &&
+        (reverse ? posToOffset(view.state.doc, pos) > beforeOffset : posToOffset(view.state.doc, pos) < beforeOffset)
+      ) {
+        revert();
+        return;
+      }
       const anchor = extend ? view.state.selection.anchor : pos;
       view.dispatch(view.state.tr.setSelection(TextSelection.create(view.state.doc, anchor, pos)).scrollIntoView());
     };
-    const revert = (): void => commit(view.posAtDOM(before.startContainer, before.startOffset));
 
-    // modify moved reliably within ONE paragraph (line wrap) — accept it.
+    // modify moved within ONE paragraph. Accept it ONLY if it actually advanced
+    // the BLOCK axis (the reading column / wrapped row) in the move's direction.
+    // At a paragraph's first/last visual line there is no line to step to, so
+    // `modify('line')` instead SLIDES to the line start/end — the SAME column,
+    // at the paragraph edge (offset 0 / paragraph end). The direction-only clamp
+    // in `commit` misses that: a slide to offset 0 is "backward", a slide to the
+    // end is "forward" — the right sign, just an over-jump to the boundary. A
+    // real step shifts the block coord by ~one column pitch; the stray slide
+    // leaves it in the same column (or, at the doc end, lands in the wrong one).
+    // Reject the slide (fall through to column-step / sibling-cross / revert,
+    // which correctly STAYS at the first/last column).
     if (!same && !landedOnElement && beforeP === afterP) {
       const r = sel.getRangeAt(0);
-      commit(view.posAtDOM(r.endContainer, r.endOffset));
-      return;
+      const afterPos = view.posAtDOM(r.endContainer, r.endOffset);
+      // Is this a REAL line step, or a stray slide to the paragraph edge? At a
+      // paragraph's first/last visual line `modify('line')` has no line to step
+      // to, so it slides to the line start/end — landing EXACTLY at the
+      // paragraph's terminal offset, in the SAME column, against the block-axis
+      // direction (a backward slide grows x in vertical-rl; a forward slide is
+      // the wrong way). A real step changes the block coord in the move's
+      // direction; the one exception is a PAGE-ROW WRAP (last column of a row →
+      // first of the next), which jumps the block axis the "wrong" way but does
+      // NOT land at the paragraph terminal. So accept iff the block coord moved
+      // AND (it advanced in-direction OR the landing isn't the paragraph edge).
+      // The terminal test is in MODEL space ($head.start/end) — robust where the
+      // doc-end caret's rect is degenerate.
+      let accept = false;
+      try {
+        const bc = view.coordsAtPos(view.state.selection.head);
+        const ac = view.coordsAtPos(afterPos);
+        const blockBefore = vertical ? (bc.left + bc.right) / 2 : (bc.top + bc.bottom) / 2;
+        const blockAfter = vertical ? (ac.left + ac.right) / 2 : (ac.top + ac.bottom) / 2;
+        // forward advances the reading column: vertical-rl steps left (block-x
+        // decreases), horizontal steps down (block-y increases); reverse flips it.
+        const sign = vertical ? (reverse ? 1 : -1) : reverse ? -1 : 1;
+        const moved = Math.abs(blockAfter - blockBefore) > 2;
+        const dirOk = (blockAfter - blockBefore) * sign > 2;
+        const $h = view.state.selection.$head;
+        const atTerminal = afterPos === (reverse ? $h.start() : $h.end());
+        accept = moved && (dirOk || !atTerminal);
+      } catch {
+        accept = false;
+      }
+      if (accept) {
+        commit(afterPos);
+        return;
+      }
     }
+    // `modify` mis-stepped (landed on a ruby element, or jumped paragraphs while
+    // inner columns remain). MEASURE the caret's column and step to the adjacent
+    // one (revert undoes modify's stray DOM move if it can't).
+    if (!beforeP) return revert();
 
-    // Cross-paragraph: land on the adjacent paragraph's first/last visual line.
-    const targetP = (reverse ? beforeP?.previousElementSibling : beforeP?.nextElementSibling) as HTMLElement | null;
-    if (!targetP || targetP.tagName !== 'P') return revert(); // document edge: stay put
-
-    // Seed the goal depth from the caret's CURRENT column (not the paragraph's
-    // bounding top — wrong once the paragraph spans rows).
-    if (goalRef.current == null && beforeP) {
-      const bcols = paragraphCols(beforeP, vertical);
-      const cb = vertical ? (beforeRect.left + beforeRect.right) / 2 : (beforeRect.top + beforeRect.bottom) / 2;
-      const ci = vertical ? beforeRect.top : beforeRect.left;
-      const col = bcols[caretColIndex(bcols, cb, ci)];
-      goalRef.current = col ? ci - col.iStart : 0;
-    }
+    // We reach here only when `modify('line')` MIS-STEPPED: it landed on a ruby
+    // element, jumped paragraphs while inner columns remain, or — at a SHORT
+    // last column / the doc end — clamped to the wrong line or stranded the
+    // caret. So MEASURE this paragraph's columns and step to the adjacent one;
+    // this covers plain multi-column paragraphs too (a forward step into a short
+    // last column, a backward step off the last column to the previous one),
+    // which `modify` gets wrong at the doc end. The first-branch fast-path means
+    // we don't measure on the common mid-paragraph move, only at these edges.
+    // `beforeRect` (the live DOM caret rect, captured before `modify` ran) gives
+    // the caret's column reliably — including at the doc end, where the *model*
+    // rect `coordsAtPos(head)` instead reports the empty next column.
+    const cb = vertical ? (beforeRect.left + beforeRect.right) / 2 : (beforeRect.top + beforeRect.bottom) / 2;
+    const ci = vertical ? beforeRect.top : beforeRect.left;
+    const bcols = paragraphCols(beforeP, vertical);
+    const idx = bcols.length ? caretColIndex(bcols, cb, ci) : 0;
+    if (goalRef.current == null) goalRef.current = bcols.length ? ci - (bcols[idx]?.iStart ?? ci) : 0;
     const depth = goalRef.current ?? 0;
 
-    const tcols = paragraphCols(targetP, vertical);
-    const target = tcols.length
-      ? reverse
-        ? tcols[tcols.length - 1]
-        : tcols[0]
-      : ((): VisualCol => {
-          const sr = targetP.getBoundingClientRect(); // empty paragraph (blank line)
-          return {
-            block: vertical ? sr.left + sr.width / 2 : sr.top + sr.height / 2,
-            iStart: vertical ? sr.top : sr.left,
-            iEnd: 0,
-          };
-        })();
+    // Adjacent column within THIS paragraph; else cross to the sibling's first
+    // (forward) / last (backward) column.
+    let target: VisualCol | undefined = bcols.length ? (reverse ? bcols[idx - 1] : bcols[idx + 1]) : undefined;
+    if (!target) {
+      const targetP = (reverse ? beforeP.previousElementSibling : beforeP.nextElementSibling) as HTMLElement | null;
+      if (!targetP || targetP.tagName !== 'P') return revert(); // document edge: stay put
+      const tcols = paragraphCols(targetP, vertical);
+      if (tcols.length) target = reverse ? tcols[tcols.length - 1] : tcols[0];
+      else {
+        const sr = targetP.getBoundingClientRect(); // empty paragraph (blank line)
+        target = {
+          block: vertical ? sr.left + sr.width / 2 : sr.top + sr.height / 2,
+          iStart: vertical ? sr.top : sr.left,
+          iEnd: 0,
+        };
+      }
+    }
     if (!target) return revert();
     const inline = target.iStart + depth;
     const hit = view.posAtCoords({ left: vertical ? target.block : inline, top: vertical ? inline : target.block });
     if (hit) commit(hit.pos);
+    // Hit-test of an OFF-SCREEN target (the sibling paragraph below the fold)
+    // returns null. When `modify` itself crossed to the adjacent paragraph (plain
+    // text — it only mis-steps within a wrapping ruby paragraph), its landing is
+    // a fine fallback; reverting would strand the caret at the paragraph edge.
+    else if (beforeP !== afterP && !landedOnElement) commit(view.posAtDOM(after.startContainer, after.startOffset));
     else revert();
   });
 };
@@ -324,20 +512,27 @@ const revealDelta = (lo: number, hi: number, viewLo: number, viewHi: number, cus
  *  visible. Used after edits and on a policy-change reflow — PM's own
  *  scrollIntoView doesn't survive the post-commit ruby repair, and doesn't
  *  reliably handle the vertical-rl multi-column page layouts. */
-const revealCaretInScroller = (scroller: HTMLElement): void => {
+const revealCaretInScroller = (scroller: HTMLElement, view: EditorView): void => {
   const sel = window.getSelection();
   if (!sel || sel.rangeCount === 0) return;
   const range = sel.getRangeAt(0);
-  let rect = range.getClientRects()[0] ?? range.getBoundingClientRect();
+  let rect: { top: number; bottom: number; left: number; right: number } | null =
+    range.getClientRects()[0] ?? range.getBoundingClientRect();
   if (!rect || (rect.top === 0 && rect.bottom === 0 && rect.left === 0 && rect.right === 0)) {
-    const node = sel.focusNode;
-    const el = node && node.nodeType === Node.TEXT_NODE ? node.parentElement : (node as Element | null);
-    if (!el) return;
-    rect = el.getBoundingClientRect();
+    // A collapsed DOM range at a node boundary (offset 0 before a leading ruby,
+    // a ruby edge) yields a degenerate {0,0,0,0} rect. Use the MODEL caret rect
+    // (coordsAtPos) — the same metric that positions the native caret — NOT the
+    // focus node's element rect, which at a boundary is the whole (huge)
+    // paragraph and makes the reveal over-scroll the caret off-screen.
+    try {
+      rect = view.coordsAtPos(view.state.selection.head);
+    } catch {
+      return;
+    }
   }
-  const view = scroller.getBoundingClientRect();
-  const top = view.top + scroller.clientTop;
-  const left = view.left + scroller.clientLeft;
+  const viewBox = scroller.getBoundingClientRect();
+  const top = viewBox.top + scroller.clientTop;
+  const left = viewBox.left + scroller.clientLeft;
   const cushion = 8;
   scroller.scrollTop += revealDelta(rect.top, rect.bottom, top, top + scroller.clientHeight, cushion);
   scroller.scrollLeft += revealDelta(rect.left, rect.right, left, left + scroller.clientWidth, cushion);
@@ -370,7 +565,6 @@ export const VedEditor = (props: VedEditorProps): React.JSX.Element => {
   // moveCaretByLine). Any other caret change resets it.
   const goalInlineRef = useRef<number | null>(null);
   const lineNumbersRef = useRef<LineNumbers | null>(null);
-
   const onScroll = useKeepScrollPosition(scrollerRef, writingMode);
 
   // Mount the ProseMirror view once.
@@ -390,14 +584,27 @@ export const VedEditor = (props: VedEditorProps): React.JSX.Element => {
     // baseKeymap supplies Enter (split paragraph), Backspace/Delete (join,
     // delete), etc. Arrow keys and Ctrl chords are handled by handleKeyDown
     // below (which runs first); baseKeymap doesn't bind arrows, so no conflict.
-    let state = EditorState.create({ doc: docFromText(initialText), plugins: [keymap(baseKeymap), decoPlugin] });
-    if (initialCursor) {
-      const pos = offsetToPos(state.doc, cursorToOffset(initialText, initialCursor));
-      state = state.apply(state.tr.setSelection(TextSelection.create(state.doc, pos)));
+    let state = EditorState.create({
+      doc: docFromText(initialText),
+      plugins: [keymap({ Enter: enterReplacingSelection }), keymap(baseKeymap), decoPlugin],
+    });
+    // Always set the caret EXPLICITLY (via offsetToPos, our boundary-aware map).
+    // PM's default selection lands on the first text leaf, which for a document
+    // that STARTS with a ruby is INSIDE the rubyBase content (offset 1), not the
+    // logical start. Offset 0 maps to BEFORE the ruby node, the true document
+    // start, where the native caret has a real rect (markup is out of the DOM).
+    {
+      const off = initialCursor ? cursorToOffset(initialText, initialCursor) : 0;
+      state = state.apply(state.tr.setSelection(TextSelection.create(state.doc, offsetToPos(state.doc, off))));
     }
 
     const view = new EditorView(mount, {
       state,
+      // The ruby renders via the schema's toDOM (markup shown as pseudo-elements
+      // by decorations); RubyView exists only to re-home the native caret INTO the
+      // base at the base-start, so an IME composes inside the ruby when the caret
+      // is logically inside it (PM's default selection side lands it on the
+      // preceding text — see pm/ruby-view.ts).
       nodeViews: { ruby: (node) => new RubyView(node) },
       dispatchTransaction(tr) {
         let next = view.state.apply(tr);
@@ -419,7 +626,7 @@ export const VedEditor = (props: VedEditorProps): React.JSX.Element => {
         if (tr.docChanged && !view.composing) {
           requestAnimationFrame(() => {
             const s = scrollerRef.current;
-            if (s) revealCaretInScroller(s);
+            if (s) revealCaretInScroller(s, view);
           });
         }
         if (tr.docChanged && !view.composing && !rebuildingRef.current) {
@@ -433,6 +640,45 @@ export const VedEditor = (props: VedEditorProps): React.JSX.Element => {
         }
       },
       handleKeyDown: (v, event) => handleKeyDown(v, event),
+      handleDOMEvents: {
+        // Take over plain text insertion at the beforeinput level. With hidden
+        // markup at display:none, PM's own text-input reconciliation derives the
+        // inserted string from a DOM diff that the browser can REORDER next to a
+        // display:none delimiter (e.g. "*1ん" → "1ん*"). Use the beforeinput
+        // event's literal `data` instead and apply it at PM's MODEL selection,
+        // which we track exactly. (Backspace/Delete → handleKeyDown; IME → PM's
+        // composition path; paste → handlePaste.)
+        beforeinput: (v, event) => {
+          const ie = event as InputEvent;
+          if (v.composing || ie.inputType !== 'insertText' || ie.data == null) return false;
+          ie.preventDefault();
+          if (ie.data.includes('\n')) {
+            // Multi-line insertText (some IMEs, programmatic input): split into
+            // paragraphs, like a paste — `tr.insertText` would inline the \n.
+            const paras = ie.data
+              .split('\n')
+              .map((line) => schema.node('paragraph', null, line ? [schema.text(line)] : []));
+            v.dispatch(v.state.tr.replaceSelection(new Slice(Fragment.fromArray(paras), 1, 1)).scrollIntoView());
+          } else {
+            // New spec: in Rich a ruby's base EDGE writes OUTSIDE the ruby. The
+            // caret rests at the boundary, but the browser's affinity can drop the
+            // DOM caret (and thus PM's synced model selection) at the base START
+            // inside the ruby — so redirect the insert to before/after the ruby.
+            // (Only when collapsed: in expanded policies the edges are editable.)
+            const sel = v.state.selection;
+            const outside = sel.empty && policyClassRef.current === 'rich' ? rubyEdgeOutsidePos(sel.$head) : null;
+            const tr =
+              outside != null ? v.state.tr.insertText(ie.data, outside, outside) : v.state.tr.insertText(ie.data);
+            v.dispatch(tr.scrollIntoView());
+          }
+          return true;
+        },
+      },
+      // Copy as IDENTITY TEXT: reconstruct the ruby markup `|base(reading)` for
+      // the selection. The delimiters are not DOM text (they're pseudo-elements /
+      // a widget), so PM's default copy drops them — this puts them on the
+      // clipboard, and a paste back round-trips through structure repair.
+      clipboardTextSerializer: (slice) => serializeSlice(slice),
       // Paste as PLAIN TEXT (the identity model): split on newlines into
       // paragraphs of text, never the copied ruby NODES — pasting a ruby node
       // into another ruby's content violates the schema and PM drops the caret
@@ -446,6 +692,41 @@ export const VedEditor = (props: VedEditorProps): React.JSX.Element => {
       },
     });
     viewRef.current = view;
+
+    // Test seams (read-only, harmless in production):
+    //  - __vedCaret: a reliable GLOBAL caret offset (a DOM Range metric is
+    //    unreliable across hidden markup); maps the live PM head to a plain
+    //    offset.
+    //  - __vedCaretRect: the caret's coordsAtPos rect — what drives the native
+    //    caret + IME composition box; a degenerate (0-height) or corner rect is
+    //    the ruby-boundary IME bug.
+    const w = window as unknown as {
+      __vedCaret?: () => number;
+      __vedCaretRect?: () => { top: number; bottom: number; left: number; right: number } | null;
+      __vedText?: () => string;
+      __vedSetCaret?: (off: number) => void;
+    };
+    w.__vedCaret = () => posToOffset(view.state.doc, view.state.selection.head);
+    w.__vedCaretRect = () => {
+      try {
+        return view.coordsAtPos(view.state.selection.head);
+      } catch {
+        return null;
+      }
+    };
+    //  - __vedText: the identity plain text (serialize). The PBT oracle.
+    //  - __vedSetCaret: set the caret by plain offset (positions edits in PBT).
+    w.__vedText = () => serialize(view.state.doc);
+    w.__vedSetCaret = (off: number) => {
+      const clamped = Math.max(0, Math.min(off, serialize(view.state.doc).length));
+      // Placing the caret ends any line-move run, exactly as a click or a
+      // char-axis move does — otherwise a stale goal-inline depth would steer
+      // the next line move (a test-only artifact of the programmatic seam).
+      goalInlineRef.current = null;
+      view.dispatch(
+        view.state.tr.setSelection(TextSelection.create(view.state.doc, offsetToPos(view.state.doc, clamped))),
+      );
+    };
     view.dom.id = 'editor-content';
     view.dom.classList.add(...CONTENT_CLASS(vert, multiCol, rows).split(' ').filter(Boolean));
 
@@ -457,7 +738,27 @@ export const VedEditor = (props: VedEditorProps): React.JSX.Element => {
     // viewport rect — coordsAtPos can throw mid-update, hence the guard.
     const caretRect = (): CaretRect | null => {
       try {
-        return view.coordsAtPos(view.state.selection.head);
+        const sel = view.state.selection;
+        const head = sel.head;
+        // At the END of a non-empty paragraph whose last visual line is FULL,
+        // `coordsAtPos(head)` (both sides) returns the START of the empty next
+        // column/page — the PREVIOUS reading column from where the native caret
+        // actually renders (the end of the last line). The line-numbers
+        // highlight would then land one column back ("previous line"). Anchor
+        // the line-pick to the last character (`head - 1`), which is reliably
+        // inside the real last column. Harmless when the last line isn't full
+        // (same line as `head`). Only the overlay uses this; the native-caret
+        // seam (`__vedCaretRect`) is unaffected.
+        const atParaEnd = sel.empty && head === sel.$head.end() && head > sel.$head.start();
+        // EXCEPT when the paragraph ends with a ruby: `head - 1` lands inside the
+        // ruby's content (the reading `<rt>` end), whose rect is the superscript —
+        // a different column — so the highlight slips one column back. Anchor into
+        // the trailing ruby's BASE instead (`rubyStart + 2` = its content start),
+        // which renders in the ruby's real column.
+        const before = atParaEnd ? sel.$head.nodeBefore : null;
+        const anchor =
+          before?.type.name === 'ruby' ? head - before.nodeSize + 2 : atParaEnd ? head - 1 : head;
+        return view.coordsAtPos(anchor);
       } catch {
         return null;
       }
@@ -503,6 +804,49 @@ export const VedEditor = (props: VedEditorProps): React.JSX.Element => {
         live.current.setAppearPolicy(mode);
         return true;
       }
+      // Take over plain Backspace/Delete (see deleteChar). Word-delete chords and
+      // IME composition keep the default path.
+      if (!mod && !event.altKey && !v.composing && (event.key === 'Backspace' || event.key === 'Delete')) {
+        event.preventDefault();
+        deleteChar(v, event.key === 'Delete');
+        return true;
+      }
+      // Home/End → the visual-line edge. Native CE does this, but at a line that
+      // STARTS with a ruby it lands the caret on the base-START (the before-ruby
+      // position and the base-start coincide in the DOM), so "Home" reads as INSIDE
+      // the ruby. Take it over: do the native line-boundary move, then SNAP Home
+      // back to BEFORE a leading ruby so an IME there composes outside it.
+      if (!mod && !event.altKey && !v.composing && (event.key === 'Home' || event.key === 'End')) {
+        event.preventDefault();
+        const ds = v.dom.ownerDocument.getSelection();
+        if (ds?.focusNode) {
+          try {
+            ds.modify(
+              event.shiftKey ? 'extend' : 'move',
+              event.key === 'Home' ? 'backward' : 'forward',
+              'lineboundary',
+            );
+            let off = posToOffset(v.state.doc, v.posAtDOM(ds.focusNode, ds.focusOffset, event.key === 'Home' ? -1 : 1));
+            if (event.key === 'Home') {
+              // A `body` leaf's `from` IS the base-start; the offset just before it
+              // is the lead `|` = the "before the ruby" stop.
+              for (const l of docLeaves(serialize(v.state.doc))) {
+                if (l.kind === 'body' && l.from === off) {
+                  off -= 1;
+                  break;
+                }
+              }
+            }
+            goalInlineRef.current = null;
+            const pos = offsetToPos(v.state.doc, off);
+            const anchor = event.shiftKey ? v.state.selection.anchor : pos;
+            v.dispatch(v.state.tr.setSelection(TextSelection.create(v.state.doc, anchor, pos)).scrollIntoView());
+          } catch {
+            /* leave the native move in place */
+          }
+        }
+        return true;
+      }
       const isVert = live.current.writingMode !== WritingMode.Horizontal;
       if (!isVert && (mod || event.altKey)) return false;
       const act = (isVert ? VERT_ARROWS : HORIZ_ARROWS)[event.key];
@@ -541,8 +885,12 @@ export const VedEditor = (props: VedEditorProps): React.JSX.Element => {
     // contenteditable keeps its empty <p><br></p>, so the placeholder would
     // otherwise show behind the composing text. A class beats the `:has(br)`
     // selector regardless of whether the pre-edit reached the DOM.
-    const onCompositionStart = (): void => view.dom.classList.add('composing');
-    const onCompositionEnd = (): void => view.dom.classList.remove('composing');
+    const onCompositionStart = (): void => {
+      view.dom.classList.add('composing');
+    };
+    const onCompositionEnd = (): void => {
+      view.dom.classList.remove('composing');
+    };
     view.dom.addEventListener('compositionstart', onCompositionStart);
     view.dom.addEventListener('compositionend', onCompositionEnd);
 
@@ -585,7 +933,7 @@ export const VedEditor = (props: VedEditorProps): React.JSX.Element => {
     if (prevRevealRef.current.policy !== appearPolicy || prevRevealRef.current.mode !== writingMode) {
       prevRevealRef.current = { policy: appearPolicy, mode: writingMode };
       const s = scrollerRef.current;
-      if (s) revealCaretInScroller(s);
+      if (s) revealCaretInScroller(s, view);
     }
   }, [appearPolicy, vert, multiCol, rows, writingMode]);
 

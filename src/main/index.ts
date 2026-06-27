@@ -36,6 +36,12 @@ const createWindow = () => {
     webPreferences: {
       preload: join(__dirname, '../preload/index.js'),
       sandbox: false,
+      // In e2e the window is hidden or unfocused, so Chromium backgrounds it and
+      // throttles requestAnimationFrame to ~seconds — moveCaretByLine and the
+      // perf probe defer via RAF, so throttling makes caret moves stall and
+      // tests flake. Keep RAF running in smoke runs (the harness always sets
+      // VED_SMOKE_HIDDEN). Production keeps the default (throttle when hidden).
+      backgroundThrottling: !('VED_SMOKE_HIDDEN' in process.env),
     },
   });
 

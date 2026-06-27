@@ -25,46 +25,88 @@ Task runner is `just`:
 
 ## Invariants
 
-- **Identity text model.** The document is plaintext: ruby is the one inline
-  NODE, and its text content holds the literal markup (`|漢(かん)`), so
-  `serialize` (`doc.textBetween(…, '\n')`) is identity-exact, character for
-  character. Every other inline format (bold/italic/縦中横, …) is a view-only
-  **decoration**, not a node — adding one is a parse rule + a CSS class, no
-  structure repair. Never add state where displayed text and model text can
-  diverge. Outside the editor core, a document is always a plain string.
-  Collapsed markup is hidden with `font-size: 0` (NOT `display: none`) so the
-  caret stays addressable; arrow movement skips it via `nextCaretOffset`.
-- **Ruby boundaries map to the INSIDE text edge (for a real caret/IME rect).**
-  `pm/model.ts offsetToPos` maps a caret at a ruby's start/end to the text
-  position just *inside* the node (the edge `|` / `)` leaf), NOT the paragraph
-  *element* boundary before/after it. The element boundary has a DEGENERATE
-  caret rect (0×0, no adjacent text), so the native caret — and the IME
-  composition box — would jump to the viewport's top-left. The inside edge has a
-  real rect; typing/IME there still lands *outside* the ruby because the
-  structure repair re-parses (e.g. `X` typed at the `|` edge → `X|漢(かん)`,
-  re-parsed to plain `X` + ruby). `pm/decorations.ts` uses `buildPosMap` (the
-  O(n) batch form of `offsetToPos`, pinned to it by a unit test) so the
-  decoration pass isn't O(n²).
+- **Identity text model.** The document is plaintext. A ruby is the one inline
+  NODE; its content is two EDITABLE child nodes — `rubyBase` + `rubyText` — and
+  `serialize` RECONSTRUCTS the literal markup `|base(reading)` (custom, not
+  `textBetween`), so the plain string is identity-exact, character for character.
+  The markup `|`,`(`,`)` is NEVER DOM text — it lives only in `serialize`, and in
+  the expanded appear policies it is DISPLAYED as CSS pseudo-elements (ADR-0008
+  supersedes the `display:none` of 0007 and `font-size:0` of 0006). Every other
+  inline format (bold/italic/縦中横, …) is a view-only **decoration**, not a node —
+  a parse rule + a CSS class, no structure repair. Never add state where
+  displayed text and model text can diverge. Outside the editor core a document
+  is always a plain string. Typed text is still taken over: `editor.tsx` applies
+  the `beforeinput` event's literal `data` at the PM model selection (PM's DOM-diff
+  reconciliation can reorder characters), and Backspace/Delete delete a model
+  offset range (`deleteChar`). IME goes through PM's native composition path into
+  editable plain text. Verified by PBT (`test/e2e/pbt-edit.ts`).
+- **In Rich, a ruby BOUNDARY writes OUTSIDE; the base INTERIOR is editable. NO
+  zero-width-space anchor.** Spec: with the markup collapsed (Rich, or a non-active
+  paragraph/ruby under ByParagraph/ByCharacter), a caret at a ruby's boundary
+  writes OUTSIDE the ruby. To write at the EDGE of the rubied text (prepend/append
+  to the base), EXPAND the markup. The caret STILL steps through the base INTERIOR
+  — the `rubyActive` highlight is on there (`headOffset > from && headOffset < to`,
+  the markup span, `pm/decorations.ts`) and editing the middle characters lands in
+  the base — but a single-char base has NO interior, so the caret steps from before
+  it to after it (over the one glyph). The caret steps through EVERY collapsed ruby's
+  base char-by-char this way — leading, adjacent, or mid-paragraph. `pm/caret-model.ts`
+  makes a collapsed ruby's base contribute only its INTERIOR offsets
+  (`from+1..to-1`) as caret stops; the START/END edges
+  coincide with the ruby's outer boundary (the hidden zero-width `|`,`(`,`)`).
+  An ATOM ruby (one with NO plain text immediately before it for an IME to anchor to:
+  it LEADS its paragraph, OR immediately FOLLOWS another ruby — `pm/decorations.ts`
+  `$pos.parentOffset===0 || $pos.nodeBefore` is a ruby) keeps its base read-only
+  ONLY WHILE the caret is OUTSIDE it (not strictly inside the markup span). So at the
+  boundary an IME composes OUTSIDE (paragraph start / BETWEEN the rubies) instead of
+  into the base, but once the caret steps INTO the interior the base is editable and
+  the IME edits it char-by-char — the read-only toggle is keyed to the SAME
+  `rubyActive` strictly-inside condition as the highlight, so they can't drift.
+  `pm/leaves.ts isHidden` hides `delim`/`rt`; the READING (`rubyText`) is also
+  `contenteditable=false` on a collapsed ruby so an IME can't leak in. The browser
+  affinity can still drop the DOM caret (and PM's synced model) at the base START
+  INSIDE the ruby, so `editor.tsx`'s `beforeinput` redirects a keystroke at a
+  collapsed-ruby base edge to OUTSIDE the ruby (`pm/model.ts rubyEdgeOutsidePos`;
+  only when collapsed — in expanded policies the edges are editable). IME at a
+  boundary works because the OUTSIDE side always has an editable plain-text anchor,
+  OR — when it would not (doc start, between two adjacent rubies) — the ruby is an
+  ATOM with a read-only base, so mozc can't compose into it and lands outside. All
+  boundary cases are verified with real mozc (`mozc/ruby-composition`), including
+  `|語(ご)ね|句(く)` between two adjacent rubies. (History: the ZWSP IME anchor and
+  the `compositionend` re-home are both GONE — they were a hack; the markup is
+  still out of the DOM per ADR-0008.)
 - **Keep the caret in view after edits.** PM's `scrollIntoView` doesn't survive
   the post-commit ruby repair (a second transaction) or the vertical-rl
   multi-column page layouts, so `editor.tsx revealCaretInScroller` scrolls the
   caret back into view after every doc change and — synchronously, after the
-  re-decoration reflow — on an appear-policy change. It is a no-op when the
-  caret is already visible.
-- **Caret at ruby boundaries renders via an overlay, not delim font.** At a
-  boundary the native caret takes the font-size:0 delimiter's tiny metrics.
-  `pm/decorations.ts` flips `rubyActive` (highlight, strictly inside only) and
-  `rubyLeadActive`/`rubyTrailActive` (the positions where the native caret is
-  invisible — just inside after `|`, before the ruby when nothing visible
-  precedes it, and after the collapsed `)`); `pm/ruby.css` hides the native
-  caret and draws an absolutely-positioned 1em `::before`. Don't fix caret
-  size by expanding the delim's font — it shifts the body. See
-  `docs/architecture.md` § "Caret at ruby boundaries".
+  re-decoration reflow — on an appear-policy change. It is a no-op when the caret
+  is already visible. When the DOM range rect is degenerate (a collapsed range at
+  a node boundary), it falls back to `coordsAtPos` — NOT the focus node's element
+  rect, which at a boundary is the whole (huge) paragraph and over-scrolls.
 - **IME safety.** Never repair structure, steal focus, or remount the editor
   during an IME composition (`view.composing`, `event.isComposing`). Ruby
   structure repair (`pm/structure.ts repair`, run from `dispatchTransaction`)
-  is skipped while composing. (Real mozc typing is not covered by automation —
-  verify by hand when touching this.)
+  is skipped while composing.
+- **Never fix IME by revealing the ruby's markup in Rich.** The markup stays
+  hidden in Rich (only the base + read-only reading show); editing the reading, and
+  prepending/appending at the base EDGES, with the markup VISIBLE is the EXPANDED
+  policies' job. Do not "fix" an IME issue by expanding the ruby in Rich or by
+  making the READING editable there. (Historical:
+  the old `display:none` markup scrambled mozc and was patched with in-flow
+  `font-size:0`; ADR-0008 removes that whole class by taking the markup out of the
+  DOM.) Verified with real mozc (`mozc/ruby-composition`), the ONLY faithful check.
+- **Test IME composition with REAL mozc — DON'T assume it's un-automatable.**
+  When touching anything IME-related, FIRST reproduce with real mozc; don't reach
+  for CDP `Input.imeSetComposition` (it does NOT faithfully model mozc — it
+  scrambles differently, giving false greens/reds). The recipe is codified in
+  `test/e2e/mozc/harness.ts`: CDP/Playwright keys bypass the system IME, but X11
+  keys from `xdotool type` are intercepted by fcitx5 + mozc. So launch with the
+  IME ATTACHED + visible (the harness normally detaches it via `GTK_IM_MODULE=''`
+  for determinism), `xdotool windowactivate` the window (this STEALS X focus —
+  warn before running on a live desktop), `fcitx5-remote -o`, `xdotool key
+  Henkan_Mode` (→ hiragana), then `xdotool type aiueo` → 「あいうえお」, commit with
+  `Return`. Guard on `mozcAvailable()`; ALWAYS `fcitx5-remote -c` to restore.
+  (Verified: composing inside a ruby base scrambles — `|ルビ(ruby)` + `aiueo` →
+  `|あルいうえおビ(ruby)` — exactly the in-app bug, which CDP could not reproduce.)
 - **Process boundaries.** All fs and dialog access lives in the main process
   behind the typed IPC contract in `src/shared/ipc.ts` (exposed to the
   renderer as `window.ved` by the preload). The renderer never touches Node.
