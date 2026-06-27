@@ -827,15 +827,24 @@ export const VedEditor = (props: VedEditorProps): React.JSX.Element => {
               'lineboundary',
             );
             let off = posToOffset(v.state.doc, v.posAtDOM(ds.focusNode, ds.focusOffset, event.key === 'Home' ? -1 : 1));
+            const leaves = docLeaves(serialize(v.state.doc));
             if (event.key === 'Home') {
               // A `body` leaf's `from` IS the base-start; the offset just before it
               // is the lead `|` = the "before the ruby" stop.
-              for (const l of docLeaves(serialize(v.state.doc))) {
+              for (const l of leaves) {
                 if (l.kind === 'body' && l.from === off) {
                   off -= 1;
                   break;
                 }
               }
+            } else {
+              // End at a line ENDING with a ruby lands on the base-END (a `body`
+              // leaf's `to`) — a position INSIDE the ruby span, which lights the
+              // rubyActive highlight with no visible caret. Snap FORWARD to AFTER
+              // the ruby (its `trail` delimiter's `to`), mirroring the Home snap.
+              const body = leaves.find((l) => l.kind === 'body' && l.to === off);
+              const trail = body && leaves.find((l) => l.ruby === body.ruby && l.edge === 'trail');
+              if (trail) off = trail.to;
             }
             goalInlineRef.current = null;
             const pos = offsetToPos(v.state.doc, off);
