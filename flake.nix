@@ -218,18 +218,24 @@
 
           buildPhase = ''
             runHook preBuild
-            pnpm exec electron-vite build
+            pnpm -C desktop exec electron-vite build
             runHook postBuild
           '';
 
-          # electron-vite externalizes package.json `dependencies` in the
-          # main/preload bundles, so they need a node_modules at runtime —
-          # reshape it to production-only before shipping it.
+          # @ved/desktop's node_modules is a pnpm symlink farm into the root
+          # store, so it can't be copied directly. `pnpm deploy` materializes a
+          # self-contained, symlink-free prod tree (with the built out/) under
+          # $out/share/ved. electron-vite externalizes the main/preload
+          # `dependencies` (@electron-toolkit/*, electron-updater), which the
+          # deployed node_modules provides; the renderer bundle is self-contained.
+          # CI=true: deploy re-lays node_modules and pnpm won't purge without a
+          # TTY confirmation inside the build sandbox.
           installPhase = ''
             runHook preInstall
-            pnpm install --offline --prod --frozen-lockfile --ignore-scripts
-            mkdir -p $out/share/ved $out/bin
-            cp -r out node_modules package.json $out/share/ved/
+            mkdir -p $out/share $out/bin
+            CI=true pnpm --filter=@ved/desktop --prod --ignore-scripts \
+              --config.inject-workspace-packages=true \
+              deploy $out/share/ved
             runHook postInstall
           '';
 

@@ -7,6 +7,27 @@ settings:
 importers:
 
   .:
+    devDependencies:
+      '@biomejs/biome':
+        specifier: ^2.4.16
+        version: 2.4.16
+      '@types/node':
+        specifier: ^25.9.3
+        version: 25.9.3
+      '@vitest/ui':
+        specifier: ^4.1.9
+        version: 4.1.9(vitest@4.1.8)
+      fast-check:
+        specifier: ^4.8.0
+        version: 4.8.0
+      typescript:
+        specifier: ^6.0.3
+        version: 6.0.3
+      vitest:
+        specifier: ^4.1.8
+        version: 4.1.8(@types/node@25.9.3)(@vitest/coverage-v8@4.1.8)(@vitest/ui@4.1.9)(vite@8.0.16(@types/node@25.9.3)(esbuild@0.27.2)(jiti@2.6.1)(sass@1.100.0))
+
+  desktop:
     dependencies:
       '@electron-toolkit/preload':
         specifier: ^3.0.2
@@ -14,12 +35,55 @@ importers:
       '@electron-toolkit/utils':
         specifier: ^4.0.0
         version: 4.0.0(electron@42.4.0)
+      '@ved/editor':
+        specifier: workspace:*
+        version: link:../editor
       clsx:
         specifier: ^2.1.1
         version: 2.1.1
       electron-updater:
         specifier: ^6.8.9
         version: 6.8.9
+    devDependencies:
+      '@electron-toolkit/tsconfig':
+        specifier: ^2.0.0
+        version: 2.0.0(@types/node@25.9.3)
+      '@types/react':
+        specifier: ^19.2.17
+        version: 19.2.17
+      '@types/react-dom':
+        specifier: ^19.2.3
+        version: 19.2.3(@types/react@19.2.17)
+      '@vitejs/plugin-react':
+        specifier: ^6.0.2
+        version: 6.0.2(vite@8.0.16(@types/node@25.9.3)(esbuild@0.27.2)(jiti@2.6.1)(sass@1.100.0))
+      electron:
+        specifier: ^42.4.0
+        version: 42.4.0
+      electron-builder:
+        specifier: ^26.15.2
+        version: 26.15.2(electron-builder-squirrel-windows@26.15.2)
+      electron-vite:
+        specifier: 6.0.0-beta.1
+        version: 6.0.0-beta.1(vite@8.0.16(@types/node@25.9.3)(esbuild@0.27.2)(jiti@2.6.1)(sass@1.100.0))
+      playwright:
+        specifier: ^1.60.0
+        version: 1.60.0
+      react:
+        specifier: ^19.2.7
+        version: 19.2.7
+      react-dom:
+        specifier: ^19.2.7
+        version: 19.2.7(react@19.2.7)
+      sass:
+        specifier: ^1.100.0
+        version: 1.100.0
+
+  editor:
+    dependencies:
+      clsx:
+        specifier: ^2.1.1
+        version: 2.1.1
       prosemirror-commands:
         specifier: ^1.7.1
         version: 1.7.1
@@ -38,16 +102,38 @@ importers:
       prosemirror-view:
         specifier: ^1.41.9
         version: 1.41.9
+      react-dom:
+        specifier: ^19.2.7
+        version: 19.2.7(react@19.2.7)
     devDependencies:
-      '@biomejs/biome':
-        specifier: ^2.4.16
-        version: 2.4.16
       '@electron-toolkit/tsconfig':
         specifier: ^2.0.0
         version: 2.0.0(@types/node@25.9.3)
-      '@types/node':
-        specifier: ^25.9.3
-        version: 25.9.3
+      '@types/react':
+        specifier: ^19.2.17
+        version: 19.2.17
+      react:
+        specifier: ^19.2.7
+        version: 19.2.7
+
+  web:
+    dependencies:
+      '@ved/editor':
+        specifier: workspace:*
+        version: link:../editor
+      clsx:
+        specifier: ^2.1.1
+        version: 2.1.1
+      react:
+        specifier: ^19.2.7
+        version: 19.2.7
+      react-dom:
+        specifier: ^19.2.7
+        version: 19.2.7(react@19.2.7)
+    devDependencies:
+      '@electron-toolkit/tsconfig':
+        specifier: ^2.0.0
+        version: 2.0.0(@types/node@25.9.3)
       '@types/react':
         specifier: ^19.2.17
         version: 19.2.17
@@ -57,42 +143,12 @@ importers:
       '@vitejs/plugin-react':
         specifier: ^6.0.2
         version: 6.0.2(vite@8.0.16(@types/node@25.9.3)(esbuild@0.27.2)(jiti@2.6.1)(sass@1.100.0))
-      '@vitest/ui':
-        specifier: ^4.1.9
-        version: 4.1.9(vitest@4.1.8)
-      electron:
-        specifier: ^42.4.0
-        version: 42.4.0
-      electron-builder:
-        specifier: ^26.15.2
-        version: 26.15.2(electron-builder-squirrel-windows@26.15.2)
-      electron-vite:
-        specifier: 6.0.0-beta.1
-        version: 6.0.0-beta.1(vite@8.0.16(@types/node@25.9.3)(esbuild@0.27.2)(jiti@2.6.1)(sass@1.100.0))
-      fast-check:
-        specifier: ^4.8.0
-        version: 4.8.0
-      playwright:
-        specifier: ^1.60.0
-        version: 1.60.0
-      react:
-        specifier: ^19.2.7
-        version: 19.2.7
-      react-dom:
-        specifier: ^19.2.7
-        version: 19.2.7(react@19.2.7)
       sass:
         specifier: ^1.100.0
         version: 1.100.0
-      typescript:
-        specifier: ^6.0.3
-        version: 6.0.3
       vite:
         specifier: ^8.0.16
         version: 8.0.16(@types/node@25.9.3)(esbuild@0.27.2)(jiti@2.6.1)(sass@1.100.0)
-      vitest:
-        specifier: ^4.1.8
-        version: 4.1.8(@types/node@25.9.3)(@vitest/coverage-v8@4.1.8)(@vitest/ui@4.1.9)(vite@8.0.16(@types/node@25.9.3)(esbuild@0.27.2)(jiti@2.6.1)(sass@1.100.0))
 
 packages:
 
@@ -2908,7 +2964,7 @@ snapshots:
       detect-libc: 2.1.2
       is-glob: 4.0.3
       node-addon-api: 7.1.1
-      picomatch: 4.0.3
+      picomatch: 4.0.4
     optionalDependencies:
       '@parcel/watcher-android-arm64': 2.5.6
       '@parcel/watcher-darwin-arm64': 2.5.6
@@ -3017,7 +3073,7 @@ snapshots:
     dependencies:
       '@types/http-cache-semantics': 4.2.0
       '@types/keyv': 3.1.4
-      '@types/node': 24.10.9
+      '@types/node': 25.9.3
       '@types/responselike': 1.0.3
 
   '@types/chai@5.2.3':
@@ -3035,13 +3091,13 @@ snapshots:
 
   '@types/fs-extra@9.0.13':
     dependencies:
-      '@types/node': 24.10.9
+      '@types/node': 25.9.3
 
   '@types/http-cache-semantics@4.2.0': {}
 
   '@types/keyv@3.1.4':
     dependencies:
-      '@types/node': 24.10.9
+      '@types/node': 25.9.3
 
   '@types/ms@2.1.0': {}
 
@@ -3063,7 +3119,7 @@ snapshots:
 
   '@types/responselike@1.0.3':
     dependencies:
-      '@types/node': 24.10.9
+      '@types/node': 25.9.3
 
   '@vitejs/plugin-react@6.0.2(vite@8.0.16(@types/node@25.9.3)(esbuild@0.27.2)(jiti@2.6.1)(sass@1.100.0))':
     dependencies:
@@ -4099,7 +4155,7 @@ snapshots:
       proc-log: 6.1.0
       semver: 7.8.4
       tar: 7.5.16
-      tinyglobby: 0.2.15
+      tinyglobby: 0.2.17
       undici: 6.26.0
       which: 6.0.1
 

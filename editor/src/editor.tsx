@@ -6,13 +6,14 @@ import { type Command, EditorState, Plugin, TextSelection } from 'prosemirror-st
 import { EditorView } from 'prosemirror-view';
 import type React from 'react';
 import { useCallback, useEffect, useLayoutEffect, useRef } from 'react';
-import type { PlainTextHistory } from './editor/history';
-import { type CaretRect, type LineNumbers, mountLineNumbers } from './editor/line-numbers';
-import { nextCaretOffset } from './editor/pm/caret-model';
-import { type CursorState, cursorToOffset, offsetToCursor } from './editor/pm/cursor';
-import { buildDecorations } from './editor/pm/decorations';
-import type { Appear } from './editor/pm/leaves';
-import { docLeaves } from './editor/pm/leaves';
+import styles from './editor.module.scss';
+import type { PlainTextHistory } from './history';
+import { type CaretRect, type LineNumbers, mountLineNumbers } from './line-numbers';
+import { nextCaretOffset } from './pm/caret-model';
+import { type CursorState, cursorToOffset, offsetToCursor } from './pm/cursor';
+import { buildDecorations } from './pm/decorations';
+import type { Appear } from './pm/leaves';
+import { docLeaves } from './pm/leaves';
 import {
   docFromText,
   offsetToPos,
@@ -22,15 +23,19 @@ import {
   schema,
   serialize,
   serializeSlice,
-} from './editor/pm/model';
-import { RubyView } from './editor/pm/ruby-view';
-import { repair } from './editor/pm/structure';
-import { lineToScroll, type ScrollGeom, type ScrollMode, scrollToLine } from './editor/scroll-keep';
-import styles from './editor.module.scss';
+} from './pm/model';
+import { RubyView } from './pm/ruby-view';
+import { repair } from './pm/structure';
+import { lineToScroll, type ScrollGeom, type ScrollMode, scrollToLine } from './scroll-keep';
 // ProseMirror's required base styles, then ved's GLOBAL ruby/syntax styles
 // (decorations + the node view emit literal class names a CSS module can't match).
 import 'prosemirror-view/style/prosemirror.css';
-import './editor/pm/ruby.css';
+import './pm/ruby.css';
+
+// macOS uses Cmd as the editing modifier; everywhere else Ctrl. Detected from
+// the browser so it works in both Electron and the web preview — the editor
+// core must not reach for Electron globals (e.g. `window.electron`).
+const IS_MAC = typeof navigator !== 'undefined' && /mac/i.test(navigator.platform || navigator.userAgent);
 
 export enum WritingMode {
   Horizontal,
@@ -804,7 +809,7 @@ export const VedEditor = (props: VedEditorProps): React.JSX.Element => {
     };
 
     const handleKeyDown = (v: EditorView, event: KeyboardEvent): boolean => {
-      const mod = window.electron?.process.platform === 'darwin' ? event.metaKey : event.ctrlKey;
+      const mod = IS_MAC ? event.metaKey : event.ctrlKey;
       if (mod && event.key === 'z') {
         event.preventDefault();
         restore(event.shiftKey ? live.current.history.redo() : live.current.history.undo());

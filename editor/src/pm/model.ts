@@ -10,7 +10,7 @@
 // Rich mode renders just the base + a read-only <rt>; the caret and IME live in
 // normal full-size text.
 import { type Node as PMNode, type ResolvedPos, Schema, type Slice } from 'prosemirror-model';
-import { parse, RUBY_DELIM_END, RUBY_DELIM_FRONT, RUBY_SEP_MID } from '../../../parse';
+import { parse, RUBY_DELIM_END, RUBY_DELIM_FRONT, RUBY_SEP_MID } from '../parse';
 
 export const schema = new Schema({
   nodes: {

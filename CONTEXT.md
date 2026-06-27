@@ -85,6 +85,17 @@ A ruby currently rendered as visible syntax (its **delim**/**rt** leaves
 shown) rather than as an annotation, per the **appear policy** and cursor.
 _Avoid_: open, revealed.
 
+### Project structure
+
+**Package**:
+A workspace unit of the ved monorepo (a `package.json` under the pnpm
+workspace) with its own dependencies and boundary. The canonical unit of
+the split; "ved" (the **project**) is the whole monorepo, never one package.
+The three packages are `@ved/editor` (the **editor core** — the sole
+prosemirror consumer), `@ved/desktop` (the Electron product shell), and
+`@ved/web` (the preview-site shell). Named by role/platform, never by tech.
+_Avoid_: project (means the whole), module (means a single file), subproject.
+
 ## Flagged ambiguities
 
 - **"Mode"** is overloaded: always qualify as **writing mode** (layout) or

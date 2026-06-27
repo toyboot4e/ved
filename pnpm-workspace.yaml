@@ -1,3 +1,16 @@
+packages:
+  - editor
+  - desktop
+  - web
+
+# electron-vite resolves `electron/package.json` from its own location in the
+# shared pnpm store, so `electron` must be visible at the workspace root even
+# though it's declared only by @ved/desktop. Hoist ONLY electron — NOT a blanket
+# node-linker=hoisted, which would flatten everything and let desktop/web resolve
+# prosemirror, defeating the scope boundary (ADR-0009).
+publicHoistPattern:
+  - electron
+
 # Dependency build scripts are blocked unless acknowledged here.
 # electron@42 no longer ships a postinstall at all — its binary download
 # runs from this project's own postinstall instead. The others work without

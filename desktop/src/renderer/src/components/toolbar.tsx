@@ -1,6 +1,5 @@
+import { AppearPolicy, editorStyles as styles, WritingMode } from '@ved/editor';
 import type React from 'react';
-import { AppearPolicy, WritingMode } from './editor';
-import styles from './editor.module.scss';
 import { HorizontalIcon, VerticalColumnsIcon, VerticalIcon, VerticalRowsIcon } from './icons/WritingModeIcons';
 
 /** Properties of {@link Toolbar}. */

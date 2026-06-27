@@ -2,7 +2,16 @@
 
 Electron + React + ProseMirror editor for Japanese vertical writing (tategaki)
 with ruby annotations. **Read `docs/architecture.md` before touching the
-editor core** (`src/renderer/src/components/editor/`, mainly `editor/pm/`).
+editor core** (`editor/src/`, mainly `editor/src/pm/`).
+
+**Monorepo (pnpm workspace, ADR-0009).** Three packages, flat at the root:
+`@ved/editor` (`editor/` — the editor core, the ONLY prosemirror consumer),
+`@ved/desktop` (`desktop/` — the Electron product: main/preload/shared/renderer,
+tabs, files, the e2e + mozc suites), and `@ved/web` (`web/` — a throwaway Vite
+preview site). prosemirror is declared only in `@ved/editor`; pnpm's isolation
+makes a PM import from desktop/web fail to resolve (a Biome rule flags it too).
+Consumed as SOURCE via the `@ved/editor` exports entry — never deep-import its
+internals. Paths below are relative to these package roots.
 
 - `CONTEXT.md` — project glossary (the words to use, and the ones to avoid).
 - `docs/adr/` — architecture decisions and *why* (e.g. browser engine over a
@@ -116,11 +125,13 @@ Task runner is `just`:
   (Verified: composing inside a ruby base scrambles — `|ルビ(ruby)` + `aiueo` →
   `|あルいうえおビ(ruby)` — exactly the in-app bug, which CDP could not reproduce.)
 - **Process boundaries.** All fs and dialog access lives in the main process
-  behind the typed IPC contract in `src/shared/ipc.ts` (exposed to the
+  behind the typed IPC contract in `desktop/src/shared/ipc.ts` (exposed to the
   renderer as `window.ved` by the preload). The renderer never touches Node.
+  The editor core is platform-neutral: it must NOT reach for Electron globals
+  (`window.electron` &c.) — detect platform from the browser (e.g. `navigator`).
 - **Dialog test seams.** Native dialogs cannot be driven by Playwright; main
   accepts stub paths via `VED_SMOKE_*` env vars (see
-  `src/main/file-service.ts`). Every new dialog needs such a seam. Ad-hoc
+  `desktop/src/main/file-service.ts`). Every new dialog needs such a seam. Ad-hoc
   probe scripts that type text must launch with
   `VED_SMOKE_CLOSE_RESPONSE=discard`, or the close guard wedges the app.
 - **TypeScript everywhere.** Standalone scripts (e2e drivers) are `.ts` run
