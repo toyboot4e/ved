@@ -8,7 +8,7 @@
 // a hidden delimiter still occupies a real offset: the "boundary pair" the
 // Lexical core synthesised from two same-pixel points is here just two
 // adjacent offsets separated by the (zero-width) delimiter.
-import { parse } from '../../../parse';
+import { parse } from '../parse';
 
 export type Appear = 'rich' | 'showall' | 'paragraph' | 'char';
 

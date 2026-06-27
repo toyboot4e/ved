@@ -1,0 +1,8 @@
+{
+  "extends": ["@electron-toolkit/tsconfig/tsconfig.web.json", "../tsconfig.base.json"],
+  "include": ["src/**/*", "src/**/*.tsx", "src/env.d.ts"],
+  "compilerOptions": {
+    "composite": true,
+    "jsx": "react-jsx"
+  }
+}
