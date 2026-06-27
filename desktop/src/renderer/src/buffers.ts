@@ -2,7 +2,7 @@
 // A pure reducer over plaintext + scalars; the live editor state (Slate tree,
 // hot-path text) stays in the editor. PlainTextHistory is a live instance
 // held here so undo survives tab switches, but it is never serialized.
-import { type CursorState, PlainTextHistory } from './components/editor/history';
+import { type CursorState, PlainTextHistory } from '@ved/editor';
 
 export type { CursorState };
 export type ScrollState = { readonly top: number; readonly left: number };

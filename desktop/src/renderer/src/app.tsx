@@ -1,8 +1,7 @@
+import { AppearPolicy, type EditorSnapshot, editorStyles as styles, VedEditor, WritingMode } from '@ved/editor';
 import { clsx } from 'clsx';
 import { useCallback, useEffect, useReducer, useRef, useState } from 'react';
 import { activeBuffer, type BufferId, buffersReducer, initBuffers, isDirty, someInactiveDirty } from './buffers';
-import { AppearPolicy, type EditorSnapshot, VedEditor, WritingMode } from './components/editor';
-import styles from './components/editor.module.scss';
 import { TabBar } from './components/tab-bar';
 import { Toolbar } from './components/toolbar';
 import {

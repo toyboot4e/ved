@@ -1,0 +1,42 @@
+{
+  "name": "@ved/desktop",
+  "version": "0.1.0",
+  "private": true,
+  "description": "The ved desktop (Electron) product shell.",
+  "main": "./out/main/index.js",
+  "scripts": {
+    "dev": "electron-vite dev",
+    "start": "electron-vite preview",
+    "build": "pnpm run typecheck && electron-vite build",
+    "build:unpack": "pnpm run build && electron-builder --dir",
+    "build:win": "pnpm run build && electron-builder --win",
+    "build:mac": "electron-vite build && electron-builder --mac",
+    "build:linux": "electron-vite build && electron-builder --linux",
+    "typecheck:node": "tsc --noEmit -p tsconfig.node.json --composite false",
+    "typecheck:web": "tsc --noEmit -p tsconfig.web.json --composite false",
+    "typecheck": "pnpm run typecheck:node && pnpm run typecheck:web",
+    "smoke": "node test/e2e/smoke.ts && node test/e2e/placeholder.ts && node test/e2e/ruby-reveal.ts && node test/e2e/caret-boundary.ts && node test/e2e/caret-end-ruby.ts && node test/e2e/click-end-ruby.ts && node test/e2e/ruby-ime-rect.ts && node test/e2e/edit-markup.ts && node test/e2e/pbt-edit.ts && node test/e2e/pbt-caret.ts && node test/e2e/undo-redo.ts && node test/e2e/select-all-arrow.ts && node test/e2e/line-movement.ts && node test/e2e/line-move-multirow.ts && node test/e2e/ruby-line-move.ts && node test/e2e/line-move-first-para.ts && node test/e2e/line-move-edge.ts && node test/e2e/line-move-doc-end.ts && node test/e2e/line-overlay.ts && node test/e2e/line-highlight-para-end.ts && node test/e2e/line-highlight-empty.ts && node test/e2e/caret-move-perf.ts && node test/e2e/writing-mode-rows.ts && node test/e2e/tabs.ts && node test/e2e/tab-keys.ts && node test/e2e/tab-close-cancel.ts",
+    "smoke:mozc": "node test/e2e/mozc/ruby-composition.ts",
+    "postinstall": "electron-builder install-app-deps && node node_modules/electron/install.js"
+  },
+  "dependencies": {
+    "@electron-toolkit/preload": "^3.0.2",
+    "@electron-toolkit/utils": "^4.0.0",
+    "@ved/editor": "workspace:*",
+    "clsx": "^2.1.1",
+    "electron-updater": "^6.8.9"
+  },
+  "devDependencies": {
+    "@electron-toolkit/tsconfig": "^2.0.0",
+    "@types/react": "^19.2.17",
+    "@types/react-dom": "^19.2.3",
+    "@vitejs/plugin-react": "^6.0.2",
+    "electron": "^42.4.0",
+    "electron-builder": "^26.15.2",
+    "electron-vite": "6.0.0-beta.1",
+    "playwright": "^1.60.0",
+    "react": "^19.2.7",
+    "react-dom": "^19.2.7",
+    "sass": "^1.100.0"
+  }
+}
