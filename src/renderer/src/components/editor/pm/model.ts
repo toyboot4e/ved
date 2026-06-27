@@ -151,6 +151,33 @@ export const rubyEdgeOutsidePos = ($h: ResolvedPos): number | null => {
   return null; // interior — write inside
 };
 
+/** Where a CLICK that resolved INSIDE a collapsed ruby should put the caret. Unlike
+ *  `rubyEdgeOutsidePos` (typed text, base edges only), a click can land deeper:
+ *   - the rubyBase INTERIOR (between chars) is a real, editable caret spot → stay
+ *     (`null`);
+ *   - a rubyBase EDGE → before/after the ruby;
+ *   - the READING (`rubyText`) → after the ruby (it is read-only in Rich);
+ *   - the RUBY NODE level — where a click resolves when the base is read-only (a
+ *     LEADING/adjacent atom ruby), since the DOM caret can't enter the base — →
+ *     before the ruby if the click is at/before the base, else after it.
+ *  Returns `null` when the position is not inside a ruby (or is an editable base
+ *  interior). The caller applies this only when COLLAPSED (Rich). */
+export const rubyClickOutsidePos = ($h: ResolvedPos): number | null => {
+  const d = $h.depth;
+  const name = $h.parent.type.name;
+  if (name === 'rubyBase') {
+    if ($h.parentOffset > 0 && $h.parentOffset < $h.parent.content.size) return null; // editable interior
+    return $h.parentOffset === 0 ? $h.before(d - 1) : $h.after(d - 1);
+  }
+  if (name === 'rubyText') return $h.after(d - 1); // the reading → after the ruby
+  if (name === 'ruby') {
+    // The atom base is read-only, so the click landed at the ruby's content level;
+    // pick the boundary on the side of the base the click fell past.
+    return $h.parentOffset >= $h.parent.child(0).nodeSize ? $h.after(d) : $h.before(d);
+  }
+  return null;
+};
+
 // ---------------------------------------------------------------------------
 // Plain-offset ↔ PM-position mapping.
 //

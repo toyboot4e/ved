@@ -17,6 +17,7 @@ import {
   docFromText,
   offsetToPos,
   posToOffset,
+  rubyClickOutsidePos,
   rubyEdgeOutsidePos,
   schema,
   serialize,
@@ -690,6 +691,18 @@ export const VedEditor = (props: VedEditorProps): React.JSX.Element => {
         v.dispatch(v.state.tr.replaceSelection(new Slice(Fragment.fromArray(paras), 1, 1)).scrollIntoView());
         return true;
       },
+      // A pointer click that lands at a COLLAPSED ruby's base EDGE (start/end) — e.g.
+      // clicking the empty space far past the end of a paragraph that ENDS in a ruby,
+      // where the browser hit-tests to the ruby's base — must put the caret OUTSIDE
+      // the ruby, not inside its base (a position inside the span lights rubyActive
+      // with no visible caret). Snap a COLLAPSED click on a base edge to before/after
+      // the ruby (pm/model.ts rubyEdgeOutsidePos; null for an interior click, which
+      // stays). Rich only — the expanded policies keep the edges editable.
+      createSelectionBetween: (v, $anchor, $head) => {
+        if (policyClassRef.current !== 'rich' || $anchor.pos !== $head.pos) return null;
+        const out = rubyClickOutsidePos($head);
+        return out == null ? null : TextSelection.create(v.state.doc, out);
+      },
     });
     viewRef.current = view;
 
@@ -756,8 +769,7 @@ export const VedEditor = (props: VedEditorProps): React.JSX.Element => {
         // the trailing ruby's BASE instead (`rubyStart + 2` = its content start),
         // which renders in the ruby's real column.
         const before = atParaEnd ? sel.$head.nodeBefore : null;
-        const anchor =
-          before?.type.name === 'ruby' ? head - before.nodeSize + 2 : atParaEnd ? head - 1 : head;
+        const anchor = before?.type.name === 'ruby' ? head - before.nodeSize + 2 : atParaEnd ? head - 1 : head;
         return view.coordsAtPos(anchor);
       } catch {
         return null;
