@@ -1,0 +1,27 @@
+{
+  "name": "@ved/web",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "description": "A throwaway preview site for the ved editor — one buffer, all modes.",
+  "scripts": {
+    "dev": "vite",
+    "build": "vite build",
+    "preview": "vite preview",
+    "typecheck": "tsc --noEmit -p tsconfig.json --composite false"
+  },
+  "dependencies": {
+    "@ved/editor": "workspace:*",
+    "clsx": "^2.1.1",
+    "react": "^19.2.7",
+    "react-dom": "^19.2.7"
+  },
+  "devDependencies": {
+    "@electron-toolkit/tsconfig": "^2.0.0",
+    "@types/react": "^19.2.17",
+    "@types/react-dom": "^19.2.3",
+    "@vitejs/plugin-react": "^6.0.2",
+    "sass": "^1.100.0",
+    "vite": "^8.0.16"
+  }
+}
