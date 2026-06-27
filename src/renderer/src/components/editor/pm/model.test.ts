@@ -4,6 +4,7 @@ import {
   docFromText,
   offsetToPos,
   posToOffset,
+  rubyClickOutsidePos,
   rubyEdgeOutsidePos,
   serialize,
   serializeSlice,
@@ -144,6 +145,43 @@ describe('ProseMirror identity model', () => {
     expect(rubyEdgeOutsidePos(b.resolve(rb.basePos + 1 + rb.baseSize))).toBe(rb.rubyEnd); // end → after
     // A plain-text caret is never redirected.
     expect(rubyEdgeOutsidePos(a.resolve(1))).toBe(null);
+  });
+
+  it('rubyClickOutsidePos: snaps a click inside a COLLAPSED ruby out (base interior stays)', () => {
+    const find = (doc: ReturnType<typeof docFromText>) => {
+      let rubyPos = -1;
+      let rubyEnd = -1;
+      let basePos = -1;
+      let baseSize = 0;
+      let rtPos = -1;
+      doc.descendants((node, pos) => {
+        if (node.type.name === 'ruby') {
+          rubyPos = pos;
+          rubyEnd = pos + node.nodeSize;
+        }
+        if (node.type.name === 'rubyBase') {
+          basePos = pos;
+          baseSize = node.content.size;
+        }
+        if (node.type.name === 'rubyText') rtPos = pos;
+      });
+      return { rubyPos, rubyEnd, basePos, baseSize, rtPos };
+    };
+    // Editable base (non-leading): あ|漢字(かんじ). Base "漢字" content at basePos+1..+3.
+    const b = docFromText('あ|漢字(かんじ)');
+    const rb = find(b);
+    expect(rubyClickOutsidePos(b.resolve(rb.basePos + 2))).toBe(null); // between 漢字 → stay
+    expect(rubyClickOutsidePos(b.resolve(rb.basePos + 1))).toBe(rb.rubyPos); // base start → before
+    expect(rubyClickOutsidePos(b.resolve(rb.basePos + 1 + rb.baseSize))).toBe(rb.rubyEnd); // base end → after
+    expect(rubyClickOutsidePos(b.resolve(rb.rtPos + 1))).toBe(rb.rubyEnd); // reading → after
+    // A plain-text caret is never redirected.
+    expect(rubyClickOutsidePos(b.resolve(1))).toBe(null);
+    // LEADING ruby (read-only atom base): |ルビ(ruby). A click resolves to the RUBY
+    // NODE level — before the base content (offset 0) → before; past it → after.
+    const a = docFromText('|ルビ(ruby)');
+    const ra = find(a);
+    expect(rubyClickOutsidePos(a.resolve(ra.rubyPos + 1))).toBe(ra.rubyPos); // ruby content start → before
+    expect(rubyClickOutsidePos(a.resolve(ra.rtPos))).toBe(ra.rubyEnd); // between base & reading → after
   });
 
   it('maps offsets across a ruby node boundary', () => {

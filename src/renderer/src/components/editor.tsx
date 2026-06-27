@@ -17,6 +17,7 @@ import {
   docFromText,
   offsetToPos,
   posToOffset,
+  rubyClickOutsidePos,
   rubyEdgeOutsidePos,
   schema,
   serialize,
@@ -690,6 +691,18 @@ export const VedEditor = (props: VedEditorProps): React.JSX.Element => {
         v.dispatch(v.state.tr.replaceSelection(new Slice(Fragment.fromArray(paras), 1, 1)).scrollIntoView());
         return true;
       },
+      // A pointer click that lands at a COLLAPSED ruby's base EDGE (start/end) — e.g.
+      // clicking the empty space far past the end of a paragraph that ENDS in a ruby,
+      // where the browser hit-tests to the ruby's base — must put the caret OUTSIDE
+      // the ruby, not inside its base (a position inside the span lights rubyActive
+      // with no visible caret). Snap a COLLAPSED click on a base edge to before/after
+      // the ruby (pm/model.ts rubyEdgeOutsidePos; null for an interior click, which
+      // stays). Rich only — the expanded policies keep the edges editable.
+      createSelectionBetween: (v, $anchor, $head) => {
+        if (policyClassRef.current !== 'rich' || $anchor.pos !== $head.pos) return null;
+        const out = rubyClickOutsidePos($head);
+        return out == null ? null : TextSelection.create(v.state.doc, out);
+      },
     });
     viewRef.current = view;
 
@@ -756,8 +769,7 @@ export const VedEditor = (props: VedEditorProps): React.JSX.Element => {
         // the trailing ruby's BASE instead (`rubyStart + 2` = its content start),
         // which renders in the ruby's real column.
         const before = atParaEnd ? sel.$head.nodeBefore : null;
-        const anchor =
-          before?.type.name === 'ruby' ? head - before.nodeSize + 2 : atParaEnd ? head - 1 : head;
+        const anchor = before?.type.name === 'ruby' ? head - before.nodeSize + 2 : atParaEnd ? head - 1 : head;
         return view.coordsAtPos(anchor);
       } catch {
         return null;
@@ -827,15 +839,24 @@ export const VedEditor = (props: VedEditorProps): React.JSX.Element => {
               'lineboundary',
             );
             let off = posToOffset(v.state.doc, v.posAtDOM(ds.focusNode, ds.focusOffset, event.key === 'Home' ? -1 : 1));
+            const leaves = docLeaves(serialize(v.state.doc));
             if (event.key === 'Home') {
               // A `body` leaf's `from` IS the base-start; the offset just before it
               // is the lead `|` = the "before the ruby" stop.
-              for (const l of docLeaves(serialize(v.state.doc))) {
+              for (const l of leaves) {
                 if (l.kind === 'body' && l.from === off) {
                   off -= 1;
                   break;
                 }
               }
+            } else {
+              // End at a line ENDING with a ruby lands on the base-END (a `body`
+              // leaf's `to`) — a position INSIDE the ruby span, which lights the
+              // rubyActive highlight with no visible caret. Snap FORWARD to AFTER
+              // the ruby (its `trail` delimiter's `to`), mirroring the Home snap.
+              const body = leaves.find((l) => l.kind === 'body' && l.to === off);
+              const trail = body && leaves.find((l) => l.ruby === body.ruby && l.edge === 'trail');
+              if (trail) off = trail.to;
             }
             goalInlineRef.current = null;
             const pos = offsetToPos(v.state.doc, off);
