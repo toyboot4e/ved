@@ -1,3 +1,8 @@
+packages:
+  - editor
+  - desktop
+  - web
+
 # Dependency build scripts are blocked unless acknowledged here.
 # electron@42 no longer ships a postinstall at all — its binary download
 # runs from this project's own postinstall instead. The others work without

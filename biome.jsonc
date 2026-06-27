@@ -58,5 +58,33 @@
   "assist": {
     "enabled": true,
     "actions": { "source": { "organizeImports": "on" } }
-  }
+  },
+  // Scope enforcement (ADR-0009): prosemirror is editor-core only. This is the
+  // legible second signal; the structural guarantee is that prosemirror-* is
+  // declared only in @ved/editor's package.json, so desktop/web can't resolve it
+  // anyway, and @ved/editor's `exports` blocks deep imports of its internals.
+  "overrides": [
+    {
+      "includes": ["desktop/**/*.{ts,tsx}", "web/**/*.{ts,tsx}"],
+      "linter": {
+        "rules": {
+          "style": {
+            "noRestrictedImports": {
+              "level": "error",
+              "options": {
+                "paths": {
+                  "prosemirror-commands": "prosemirror is editor-core only — import from @ved/editor (ADR-0009).",
+                  "prosemirror-keymap": "prosemirror is editor-core only — import from @ved/editor (ADR-0009).",
+                  "prosemirror-model": "prosemirror is editor-core only — import from @ved/editor (ADR-0009).",
+                  "prosemirror-state": "prosemirror is editor-core only — import from @ved/editor (ADR-0009).",
+                  "prosemirror-transform": "prosemirror is editor-core only — import from @ved/editor (ADR-0009).",
+                  "prosemirror-view": "prosemirror is editor-core only — import from @ved/editor (ADR-0009)."
+                }
+              }
+            }
+          }
+        }
+      }
+    }
+  ]
 }
