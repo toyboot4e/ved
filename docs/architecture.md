@@ -49,7 +49,7 @@ the linked sections carry the detail and the invariants live in `CLAUDE.md`.
 | **Backspace/Delete delete a model offset range (`deleteChar`)** | `baseKeymap` lets a mid-paragraph single-char delete fall to native CE | native CE's single-char delete around a ruby node is unreliable; deleting a model offset range keeps identity and lets structure-repair re-form rubies | `editor.tsx`, `pm/cursor.ts` |
 | **Character arrow movement is model-driven (`nextCaretOffset`)** | native caret steps DOM positions | the cursor steps the base INTERIOR (a collapsed ruby's edges rest on its outer boundary) and skips the hidden markup + reading, landing on model offsets | `pm/caret-model.ts`, `cursor.ts` |
 | **Line arrow movement is taken over (`moveCaretByLine`)** | `Selection.modify('move','line')` | `modify` mis-steps across multicol PAGE rows and at short columns / paragraph edges / the doc end; we measure columns (excluding `<rt>` annotation rects) and step in reading order (RAF-deferred) | `editor.tsx`, `paragraphCols` |
-| **A collapsed ruby is a non-editable ATOM** | native caret enters the ruby's editable base/reading | an IME composes into the DOM at the caret; an editable ruby boundary let it compose INTO the base/reading or sit on the wrong side. `contenteditable=false` on a collapsed ruby + the caret model skipping its interior keep the caret (and IME) outside it. Verified with real mozc (`mozc/ruby-composition`, `ruby-ime-rect`) | `pm/decorations.ts`, `pm/leaves.ts`, `ruby.css` |
+| **A collapsed ruby keeps the IME out at the boundary** | native caret enters the ruby's editable base/reading | an IME composes into the DOM at the caret; an editable ruby boundary let it compose INTO the reading or sit on the wrong side. The caret steps the base interior char-by-char, but the READING is `contenteditable=false`, and an ATOM ruby (no plain text before it) keeps its base read-only UNTIL the caret is inside it — so the IME composes outside at the boundary. Verified with real mozc (`mozc/ruby-composition`, `ruby-ime-rect`) | `pm/decorations.ts`, `pm/leaves.ts`, `ruby.css` |
 | **Structure repair after each transaction (`repair`)** | none — PM keeps the doc as edited | re-parses typed text into the ruby node (e.g. `X|漢(かん)` → text + ruby); **skipped while composing** | `pm/structure.ts` |
 | **Caret re-revealed after every doc change (`revealCaretInScroller`)** | `EditorView.scrollIntoView` | PM's scroll doesn't survive the post-commit ruby repair (a 2nd transaction) or the vertical-rl multi-page columns | `editor.tsx` |
 | **Line numbers + current-line highlight are a measured overlay** | a CSS counter on `<p>` | a counter can only address the logical `<p>`; a wrapped paragraph needs one number + a highlight per VISUAL line (column/row), which only measurement gives | `editor/line-numbers.ts` |
@@ -169,10 +169,21 @@ offsets; the editor speaks plain offsets and converts at the edges:
 
 Character caret movement (`pm/caret-model.ts nextCaretOffset`, dispatched by
 `editor.tsx moveChar`) is model-driven and pure: over the plain text + parsed
-leaves + appear policy it returns the next stop offset. A COLLAPSED ruby is an
-atom — only its outer edges are stops, so one press steps over the whole ruby;
-in the expanded policies the base/reading are stops (editable). In vertical modes
-the axes rotate (`ArrowUp/Down` → character, `ArrowLeft/Right` → line).
+leaves + appear policy it returns the next stop offset. A COLLAPSED ruby's base is
+stepped char-by-char (its INTERIOR offsets are stops; the START/END edges rest on
+the ruby's outer boundary, so a single-char base steps over as one glyph); the
+hidden markup + reading are skipped. In the expanded policies the markup/reading
+are stops too. In vertical modes the axes rotate (`ArrowUp/Down` → character,
+`ArrowLeft/Right` → line).
+
+Before either move, a **non-empty selection collapses to its edge** in the move
+direction (`editor.tsx handleKeyDown`): a plain (non-Shift) arrow on a selection —
+notably the `AllSelection` from Ctrl+A — jumps to the document START (backward) or
+END (forward), the standard editor behavior, rather than nudging `selection.head`
+one step. Shift still extends. (This rule lives in the key handler because our
+model-driven `moveChar`/`moveCaretByLine` only move the head — PM's default keymap,
+which we override for the vertical-axis mapping + ruby-aware movement, is what
+normally supplies the collapse.)
 
 Line movement (`editor.tsx moveCaretByLine`) starts with `Selection.modify
 ('line')` over the contenteditable — the browser handles the common

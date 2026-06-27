@@ -873,6 +873,21 @@ export const VedEditor = (props: VedEditorProps): React.JSX.Element => {
       const act = (isVert ? VERT_ARROWS : HORIZ_ARROWS)[event.key];
       if (!act) return false;
       event.preventDefault();
+      // Standard editor behavior: a plain (non-shift) arrow with a NON-EMPTY selection
+      // COLLAPSES the caret to the selection's edge in the move direction — so Ctrl+A
+      // (an AllSelection) then a backward arrow goes to the document START, a forward
+      // arrow to the END — instead of nudging the head one step. Our model-driven
+      // moveChar/moveCaretByLine only move `selection.head`, so without this they'd
+      // step the head (Shift still extends; it falls through to the move below).
+      const sel = v.state.selection;
+      if (!event.shiftKey && !sel.empty) {
+        goalInlineRef.current = null;
+        const off = posToOffset(v.state.doc, act.reverse ? sel.from : sel.to);
+        v.dispatch(
+          v.state.tr.setSelection(TextSelection.create(v.state.doc, offsetToPos(v.state.doc, off))).scrollIntoView(),
+        );
+        return true;
+      }
       if (act.axis === 'char') {
         goalInlineRef.current = null; // moving along the line sets a new column
         moveChar(v, policyClassRef.current, act.reverse, event.shiftKey);
