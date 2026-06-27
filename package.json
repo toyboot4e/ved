@@ -16,6 +16,7 @@
     "test:ui": "vitest --ui",
     "dev": "pnpm -C desktop dev",
     "dev:web": "pnpm -C web dev",
+    "start": "pnpm -C desktop start",
     "build": "pnpm -C desktop build",
     "build:web": "pnpm -C web build",
     "smoke": "pnpm -C desktop smoke",

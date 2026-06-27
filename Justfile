@@ -41,12 +41,19 @@ check-force:
 [private]
 alias cf := check-force
 
-# starts the development server (HMR)
+# starts the desktop development server (HMR)
 dev:
     pnpm run dev
 
 [private]
 alias d := dev
+
+# starts the @ved/web preview site (Vite dev server)
+dev-web:
+    pnpm run dev:web
+
+[private]
+alias dw := dev-web
 
 # installs dependencies (also downloads the Electron binary)
 install:
@@ -81,7 +88,7 @@ alias t := test
 # per-test pass/fail + duration, re-runs on save. Open http://localhost:51204/ in a
 # browser (or use `test-ui-open`). `just test-ui cursor-map` filters by test name.
 test-ui *args:
-    pnpm exec vitest --project unit --ui {{args}}
+    pnpm exec vitest --ui {{args}}
 
 [private]
 alias tu := test-ui

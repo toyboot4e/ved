@@ -79,9 +79,18 @@ packages. Decision and rationale: ADR-0009. Vocabulary: CONTEXT.md ("Package").
 
 ## Status
 
-- [ ] 1. Workspace scaffold
-- [ ] 2. Extract `@ved/editor`
-- [ ] 3. Form `@ved/desktop`
-- [ ] 4. Create `@ved/web`
-- [ ] 5. Enforcement + tooling
-- [ ] 6. Docs sync
+- [x] 1. Workspace scaffold
+- [x] 2. Extract `@ved/editor` (also decoupled a `window.electron` leak in `editor.tsx`)
+- [x] 3. Form `@ved/desktop` (typecheck + 68 unit tests + full smoke green)
+- [x] 4. Create `@ved/web` (`vite build` green)
+- [x] 5. Enforcement + tooling (Biome scope override; Vitest workspace; Justfile
+      `dev`/`dev-web`/`test`/`typecheck`/`smoke`; `electron` hoisted via
+      `publicHoistPattern` so electron-vite resolves it — prosemirror stays
+      isolated, verified by `require.resolve` from desktop/web)
+- [~] 6. Docs sync — CONTEXT.md + this plan + CLAUDE.md done; `flake.nix`
+      pnpm-deps hash still needs regenerating for `nix build` (dev/test via the
+      devShell are unaffected)
+
+Verified post-split: `prosemirror-*` resolves from `editor` but NOT from
+`desktop`/`web`; `@ved/editor` resolves to its single source entry; deep imports
+are blocked by the `exports` map.
