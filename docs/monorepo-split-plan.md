@@ -87,32 +87,26 @@ packages. Decision and rationale: ADR-0009. Vocabulary: CONTEXT.md ("Package").
       `dev`/`dev-web`/`test`/`typecheck`/`smoke`; `electron` hoisted via
       `publicHoistPattern` so electron-vite resolves it — prosemirror stays
       isolated, verified by `require.resolve` from desktop/web)
-- [~] 6. Docs sync — CONTEXT.md + this plan + CLAUDE.md done; `flake.nix`
-      `nix build` packaging still TODO (dev/test/smoke via the devShell are
-      unaffected and fully green)
+- [x] 6. Docs sync — CONTEXT.md + this plan + CLAUDE.md done. `nix flake check`
+      (lint, typecheck, test, build, format, workflow-lint) is green.
 
-### `nix build` packaging — findings (TODO, left for interactive finish)
+### `nix build` packaging — how it was solved
 
-The devShell + `just` workflows are unaffected. The `nix build` (`nix flake
-check`'s `build`) packaging derivation needs work, investigated as far as:
-
-- **pnpm-deps hash is UNCHANGED** (`sha256-omrVnkHKi4080zUgUR1c/8tCPfRhSpuCkl2EMV/astM=`).
-  The dependency *set* (fetched tarballs) is identical post-split — only the
-  lockfile's structure changed. Verified via fake-hash → `got:` == original. No bump.
-- **`nodeCheck` checks (typecheck, test) work** as-is: they run `pnpm run
-  typecheck` / `pnpm run test`, now rewired to `pnpm -r typecheck` / `vitest`.
-- **`ved` package buildPhase:** change `pnpm exec electron-vite build` →
-  `pnpm -C desktop exec electron-vite build` (verified to build `desktop/out` in
-  the sandbox).
-- **installPhase is the open problem.** `cp -r desktop/{out,node_modules,...}`
-  fails `noBrokenSymlinks`: `desktop/node_modules` is a pnpm symlink farm into the
-  root store (`../../node_modules/.pnpm`) and `../../editor`. `pnpm deploy
-  --legacy --offline` fails `ERR_PNPM_NO_OFFLINE_META` (it re-resolves). Likely
-  fixes to try: non-legacy `pnpm deploy` with `inject-workspace-packages=true`,
-  or a pruned store reconstruction. Note the runtime needs ONLY `out/` + the
-  main/preload externalized deps (`@electron-toolkit/*`, `electron-updater`) —
-  the renderer bundle is self-contained, so react/prosemirror/@ved/editor are
-  NOT needed at runtime.
+- **pnpm-deps hash is UNCHANGED** (`sha256-omrVnkHKi4080zUgUR1c/8tCPfRhSpuCkl2EMV/astM=`):
+  the dependency *set* (fetched tarballs) is identical post-split — only the
+  lockfile's structure changed. Verified via fake-hash → `got:` == original.
+- **`nodeCheck` checks (typecheck, test)** work unchanged via the rewired root
+  scripts (`pnpm -r typecheck`, `vitest`).
+- **buildPhase:** `pnpm -C desktop exec electron-vite build` (electron-vite is
+  desktop's, and electron is hoisted so it resolves).
+- **installPhase:** the desktop `node_modules` is a pnpm symlink farm into the
+  root store, so it can't be copied. `pnpm deploy` materializes a self-contained,
+  symlink-free prod tree. The working invocation:
+  `CI=true pnpm --filter=@ved/desktop --prod --ignore-scripts
+  --config.inject-workspace-packages=true deploy $out/share/ved` —
+  non-legacy (copies from the materialized virtual store, no offline
+  re-resolution); `--ignore-scripts` skips desktop's electron-builder postinstall;
+  `inject-workspace-packages` avoids the shared-lockfile legacy-deploy fallback.
 
 Verified post-split: `prosemirror-*` resolves from `editor` but NOT from
 `desktop`/`web`; `@ved/editor` resolves to its single source entry; deep imports
