@@ -8,9 +8,10 @@ writing (tategaki). Two decisions define the design:
    `/italic/`, 縦中横, …).
 2. **Identity text model.** The document is plaintext *character for character*
    — including the markup characters — in every view mode. `serialize`
-   (`doc.textBetween(…, '\n')`) reproduces the source exactly. Everything
-   visual (annotations, hidden syntax, highlighting, bold/italic) is CSS over
-   the same text, driven by decorations.
+   RECONSTRUCTS the source exactly: the markup `|`,`(`,`)` is never DOM text, it
+   is rebuilt at the node boundaries (ADR-0008). Everything visual (annotations,
+   hidden syntax, highlighting, bold/italic) is CSS over the same text, driven by
+   decorations.
 
 ```
 plaintext   "字は|漢(かん)字"
@@ -25,12 +26,12 @@ PM doc      paragraph[ text "字は", ruby[ rubyBase "漢", rubyText "かん" ],
 plaintext   "字は|漢(かん)字"        (identical, by construction)
 ```
 
-The editor went Slate → Lexical → **ProseMirror** (ADR-0005). The driver was
-the rich-syntax roadmap: ProseMirror has view-only decorations, so a new inline
-format is a parse rule + a CSS class with no per-format structure repair
-(Lexical, being node-only, paid that cost per format); and ProseMirror renders
-the whole document to the DOM, so the CSS-multicol page layouts (ADR-0004) keep
-working (CodeMirror's virtualization could not).
+ved is built on **ProseMirror** (ADR-0005 records the framework decision and its
+history). Two of its properties are decisive for the rich-syntax roadmap:
+view-only decorations, so a new inline format is a parse rule + a CSS class with
+no per-format structure repair; and full-document DOM rendering, so the
+CSS-multicol page layouts (ADR-0004) keep working (a virtualized editor could
+not).
 
 ## What we override in `contenteditable` (and why)
 
