@@ -76,6 +76,13 @@ smoke: build
 [private]
 alias s := smoke
 
+# runs the EXPLORATORY caret-navigation fuzz (on-demand; NOT part of `just smoke`).
+# Stops on the first invariant violation, printing a seed to reproduce. Args:
+# `[seed] [iters|duration]` — duration like 5m/30m/90s for a long soak, e.g.
+# `just fuzz`, `just fuzz 7`, `just fuzz '' 30m`.
+fuzz *args: build
+    pnpm -C desktop exec node test/e2e/fuzz-caret.ts {{args}}
+
 # runs the unit tests; with NO test-name also runs the full E2E suite, so a bare
 # `just test` covers everything (`just test cursor-map` stays a fast unit filter)
 test *args:

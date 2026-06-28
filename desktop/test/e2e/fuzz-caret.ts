@@ -63,10 +63,19 @@ const lineKeys = (m: string) => (m === 'Horizontal' ? LINE.Horizontal : { fwd: '
 const charKeys = (m: string) =>
   m === 'Horizontal' ? { fwd: 'ArrowRight', back: 'ArrowLeft' } : { fwd: 'ArrowDown', back: 'ArrowUp' };
 
-const ITER = Number(process.argv[3] ?? 40);
+// argv[3]: a bare iteration count (e.g. `40`) OR a wall-clock budget for a long
+// exploratory run (e.g. `5m`, `30m`, `90s`, `500ms`). Either way it stops early on
+// the first invariant violation. Default: 40 iterations.
+const budget = process.argv[3] ?? '40';
+const dur = /^(\d+)(ms|s|m)$/.exec(budget);
+const UNIT = { ms: 1, s: 1_000, m: 60_000 } as const;
+const deadline = dur ? Date.now() + Number(dur[1]) * UNIT[dur[2] as keyof typeof UNIT] : Number.POSITIVE_INFINITY;
+const MAX_ITER = dur ? Number.POSITIVE_INFINITY : Number(budget);
 const STEPS = 60;
 const LINE_CHARS = 40; // page line cap; a single line move shouldn't leap many of these
-console.log(`fuzz-caret seed=${ORIG_SEED} iters=${ITER} — reproduce with: node test/e2e/fuzz-caret.ts ${ORIG_SEED}`);
+console.log(
+  `fuzz-caret seed=${ORIG_SEED} ${dur ? `budget=${budget}` : `iters=${MAX_ITER}`} — reproduce with: node test/e2e/fuzz-caret.ts ${ORIG_SEED}`,
+);
 
 const press = async (key: string) => {
   await page.keyboard.press(key);
@@ -74,8 +83,11 @@ const press = async (key: string) => {
 };
 
 let firstFail = '';
+let explored = 0;
 try {
-  for (let it = 0; it < ITER && !firstFail; it++) {
+  for (let it = 0; it < MAX_ITER && Date.now() < deadline && !firstFail; it++) {
+    explored = it;
+    if (it > 0 && it % 10 === 0) console.log(`  …${it} docs explored (seed ${ORIG_SEED})`);
     const doc = genDoc();
     const mode = pick(MODES);
     await clickWritingMode(page, mode);
@@ -120,7 +132,7 @@ try {
     }
   }
   if (firstFail) fail(`navigation invariant violated:\n${firstFail}`);
-  else step(`no navigation corruption across ${ITER} random docs (seed ${ORIG_SEED})`);
+  else step(`no navigation corruption across ${explored + 1} random docs (seed ${ORIG_SEED})`);
 } catch (e) {
   fail(e instanceof Error ? e.message : String(e));
 } finally {
