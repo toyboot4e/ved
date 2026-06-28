@@ -1,8 +1,6 @@
 # ved
 
-WIP
-
-Developed with [electron-vite](https://electron-vite.github.io/).
+[WIP] Vertical editor for novel writers backed by plaintext.
 
 ## Quick start
 
@@ -14,10 +12,18 @@ nix run github:toyboot4e/ved
 
 ## Development
 
+If you're using Nix, run `direnv allow`. Other than that, see [./Justfile](./Justfile).
+
 ```sh
-nix develop    # or `direnv allow` — Electron runtime libs, pnpm, biome
 pnpm install   # also downloads the Electron binary (project postinstall)
 pnpm run dev
 ```
 
 See [docs/architecture.md](docs/architecture.md) for the design.
+
+## Thanks
+
+- [electron](https://github.com/electron/electron)
+- [electron-vite](https://electron-vite.github.io/)
+- [ProseMirror](https://code.haverbeke.berlin/prosemirror/prosemirror)
+
