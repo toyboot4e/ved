@@ -37,25 +37,37 @@ not).
 
 The ideal is "just a `contenteditable`": let the browser lay out vertical text
 and move the caret, and keep the document as the plain string the user typed.
-We get most of that, but a handful of native behaviours fight the **identity
-text model** (hidden markup that must not be editable as text, and a ruby node
-whose boundaries have no usable caret rect) or the **multicol page layout**
-(`Selection.modify` and `scrollIntoView` don't understand pages). Each override
-below exists for one of those two reasons. This table is the full catalogue;
-the linked sections carry the detail and the invariants live in `CLAUDE.md`.
+We get most of that; every override below is a consequence of **one of four
+invariants** (the binding statements live in `CLAUDE.md` — this is the summary
+and the catalogue of what each one costs us):
 
-| Override | Native behaviour it replaces | Why | Where |
-|---|---|---|---|
-| **Typed text re-applied from `beforeinput`** | native CE inserts the character into the DOM | native insertion can reorder text via its DOM diff; we insert the literal `data` at the PM model selection and let PM reconcile, keeping identity exact | `editor.tsx` (`beforeinput`) |
-| **Backspace/Delete delete a model offset range (`deleteChar`)** | `baseKeymap` lets a mid-paragraph single-char delete fall to native CE | native CE's single-char delete around a ruby node is unreliable; deleting a model offset range keeps identity and lets structure-repair re-form rubies | `editor.tsx`, `pm/cursor.ts` |
-| **Character arrow movement is model-driven (`nextCaretOffset`)** | native caret steps DOM positions | the cursor steps the base INTERIOR (a collapsed ruby's edges rest on its outer boundary) and skips the hidden markup + reading, landing on model offsets | `pm/caret-model.ts`, `cursor.ts` |
-| **Line arrow movement is taken over (`moveCaretByLine`)** | `Selection.modify('move','line')` | `modify` mis-steps across multicol PAGE rows and at short columns / paragraph edges / the doc end; we measure columns (excluding `<rt>` annotation rects) and step in reading order (RAF-deferred) | `editor.tsx`, `paragraphCols` |
-| **A collapsed ruby keeps the IME out at the boundary** | native caret enters the ruby's editable base/reading | an IME composes into the DOM at the caret; an editable ruby boundary let it compose INTO the reading or sit on the wrong side. The caret steps the base interior char-by-char, but the READING is `contenteditable=false`, and an ATOM ruby (no plain text before it) keeps its base read-only UNTIL the caret is inside it — so the IME composes outside at the boundary. Verified with real mozc (`mozc/ruby-composition`, `ruby-ime-rect`) | `pm/decorations.ts`, `pm/leaves.ts`, `ruby.css` |
-| **Structure repair after each transaction (`repair`)** | none — PM keeps the doc as edited | re-parses typed text into the ruby node (e.g. `X|漢(かん)` → text + ruby); **skipped while composing** | `pm/structure.ts` |
-| **Caret re-revealed after every doc change (`revealCaretInScroller`)** | `EditorView.scrollIntoView` | PM's scroll doesn't survive the post-commit ruby repair (a 2nd transaction) or the vertical-rl multi-page columns | `editor.tsx` |
-| **Line numbers + current-line highlight are a measured overlay** | a CSS counter on `<p>` | a counter can only address the logical `<p>`; a wrapped paragraph needs one number + a highlight per VISUAL line (column/row), which only measurement gives | `editor/line-numbers.ts` |
-| **Custom plain-text history (`PlainTextHistory`)** | `prosemirror-history` | the model is a plain string; tabs snapshot/restore strings, and undo granularity is per plain-text edit | `editor/history.ts` |
-| **IME composition is sacrosanct** | — | never repair structure, steal focus, or remount while `view.composing`/`isComposing` — it cancels composition and drops text | throughout (`structure.ts`, `editor.tsx`) |
+1. **Identity text model** — the plaintext IS the model, character for
+   character; the markup `|`,`(`,`)` is never DOM text. So native editing that
+   reorders text or would edit hidden markup is taken over.
+2. **IME safety** — never repair structure, steal focus, or remount during a
+   composition, and a collapsed ruby must not let an IME compose into it.
+3. **Multicol page layout** — `Selection.modify` and `scrollIntoView` don't
+   understand the CSS-multicol pages, so line movement, caret-reveal, and the
+   line-number/highlight overlay are measured ourselves.
+4. **Backend-neutral string model** — a document is a plain string and a caret
+   is `{para, offset}`, so history and tabs snapshot strings, not PM state.
+
+The table is the full catalogue, indexed by the native behaviour each override
+replaces and tagged with the invariant (1–4) it defends; the linked sections
+carry the detail.
+
+| Inv | Override | Native behaviour it replaces | Why | Where |
+|---|---|---|---|---|
+| 1 | **Typed text re-applied from `beforeinput`** | native CE inserts the character into the DOM | native insertion can reorder text via its DOM diff; we insert the literal `data` at the PM model selection and let PM reconcile, keeping identity exact | `editor.tsx` (`beforeinput`) |
+| 1 | **Backspace/Delete delete a model offset range (`deleteChar`)** | `baseKeymap` lets a mid-paragraph single-char delete fall to native CE | native CE's single-char delete around a ruby node is unreliable; deleting a model offset range keeps identity and lets structure-repair re-form rubies | `editor.tsx`, `pm/cursor.ts` |
+| 1 | **Character arrow movement is model-driven (`nextCaretOffset`)** | native caret steps DOM positions | the cursor steps the base INTERIOR (a collapsed ruby's edges rest on its outer boundary) and skips the hidden markup + reading, landing on model offsets | `pm/caret-model.ts`, `cursor.ts` |
+| 3 | **Line arrow movement is taken over (`moveCaretByLine`)** | `Selection.modify('move','line')` | `modify` mis-steps across multicol PAGE rows and at short columns / paragraph edges / the doc end; we measure columns (excluding `<rt>` annotation rects) and step in reading order (RAF-deferred) | `editor.tsx`, `paragraphCols` |
+| 1,2 | **A collapsed ruby keeps the IME out at the boundary** | native caret enters the ruby's editable base/reading | an IME composes into the DOM at the caret; an editable ruby boundary let it compose INTO the reading or sit on the wrong side. The caret steps the base interior char-by-char, but the READING is `contenteditable=false`, and an ATOM ruby (no plain text before it) keeps its base read-only UNTIL the caret is inside it — so the IME composes outside at the boundary. Verified with real mozc (`mozc/ruby-composition`, `ruby-ime-rect`) | `pm/decorations.ts`, `pm/leaves.ts`, `ruby.css` |
+| 1,2 | **Structure repair after each transaction (`repair`)** | none — PM keeps the doc as edited | re-parses typed text into the ruby node (e.g. `X|漢(かん)` → text + ruby); **skipped while composing** | `pm/structure.ts` |
+| 3 | **Caret re-revealed after every doc change (`revealCaretInScroller`)** | `EditorView.scrollIntoView` | PM's scroll doesn't survive the post-commit ruby repair (a 2nd transaction) or the vertical-rl multi-page columns | `editor.tsx` |
+| 3 | **Line numbers + current-line highlight are a measured overlay** | a CSS counter on `<p>` | a counter can only address the logical `<p>`; a wrapped paragraph needs one number + a highlight per VISUAL line (column/row), which only measurement gives | `editor/line-numbers.ts` |
+| 4 | **Custom plain-text history (`PlainTextHistory`)** | `prosemirror-history` | the model is a plain string; tabs snapshot/restore strings, and undo granularity is per plain-text edit | `editor/history.ts` |
+| 2 | **IME composition is sacrosanct** | — | never repair structure, steal focus, or remount while `view.composing`/`isComposing` — it cancels composition and drops text | throughout (`structure.ts`, `editor.tsx`) |
 
 Everything else — bold/italic/縦中横, ruby annotation rendering, the page
 columns — is plain CSS/decoration over the same text and needs no override.
