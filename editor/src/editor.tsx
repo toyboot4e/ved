@@ -604,6 +604,18 @@ export const VedEditor = (props: VedEditorProps): React.JSX.Element => {
       state = state.apply(state.tr.setSelection(TextSelection.create(state.doc, offsetToPos(state.doc, off))));
     }
 
+    // Record a document change in undo history (and notify the buffer). Shared
+    // by the transaction path and the post-composition path; the lastText guard
+    // makes it idempotent, so committing twice for one change is a no-op.
+    const commitHistory = (committed: EditorState): void => {
+      const text = serialize(committed.doc);
+      if (text === lastTextRef.current) return;
+      lastTextRef.current = text;
+      const cursor = offsetToCursor(text, posToOffset(committed.doc, committed.selection.head));
+      live.current.history.push({ text, cursor });
+      live.current.onTextChange?.(text);
+    };
+
     const view = new EditorView(mount, {
       state,
       // The ruby renders via the schema's toDOM (markup shown as pseudo-elements
@@ -635,14 +647,10 @@ export const VedEditor = (props: VedEditorProps): React.JSX.Element => {
             if (s) revealCaretInScroller(s, view);
           });
         }
+        // History/onTextChange are skipped DURING composition (view.composing);
+        // the committed IME text is recorded by onCompositionEnd instead.
         if (tr.docChanged && !view.composing && !rebuildingRef.current) {
-          const text = serialize(next.doc);
-          if (text !== lastTextRef.current) {
-            lastTextRef.current = text;
-            const cursor = offsetToCursor(text, posToOffset(next.doc, next.selection.head));
-            live.current.history.push({ text, cursor });
-            live.current.onTextChange?.(text);
-          }
+          commitHistory(next);
         }
       },
       handleKeyDown: (v, event) => handleKeyDown(v, event),
@@ -931,6 +939,16 @@ export const VedEditor = (props: VedEditorProps): React.JSX.Element => {
     };
     const onCompositionEnd = (): void => {
       view.dom.classList.remove('composing');
+      // Every transaction during composition is skipped from history by the
+      // !view.composing guard, and PM usually applies the committed text via
+      // those composing transactions WITHOUT firing a fresh docChanged tx after
+      // composition — so the IME word would never enter undo history (undo would
+      // jump past it to the last non-IME entry, discarding it). Commit it here
+      // once PM has settled. Idempotent if PM did fire a post-composition tx.
+      requestAnimationFrame(() => {
+        if (view.composing) return; // a chained composition is still active
+        commitHistory(view.state);
+      });
     };
     view.dom.addEventListener('compositionstart', onCompositionStart);
     view.dom.addEventListener('compositionend', onCompositionEnd);
