@@ -17,14 +17,36 @@
 //
 // There is no full visual-line oracle, so a silent "stuck" (a legitimate no-op at
 // the first/last line vs a real stuck caret) is LOGGED, not failed.
+import type { Page } from 'playwright';
 import { clickWritingMode, fail, finish, launchVed, step } from './harness.ts';
+import { type MozcSession, mozcAvailable, openMozc } from './mozc/harness.ts';
+
+// `FUZZ_MOZC=1` mixes REAL mozc IME compositions into the random command stream
+// (the prime source of ruby bugs). It needs the system IME (skips with a note if
+// absent) and STEALS X FOCUS while running — don't type on this machine.
+const wantMozc = process.env.FUZZ_MOZC === '1';
+const useMozc = wantMozc && mozcAvailable();
+if (wantMozc && !useMozc)
+  console.log('• FUZZ_MOZC=1 but mozc unavailable (need fcitx5 + mozc + xdotool) — running WITHOUT IME');
+if (useMozc) console.log('⚠ mozc mode: STEALS X FOCUS while running — do NOT type on this machine.');
 
 // VISIBLE window: line moves defer via requestAnimationFrame, which hidden
 // Electron windows throttle (the moves would silently no-op). See architecture.md.
-const ved = await launchVed({ env: () => ({ VED_SMOKE_CLOSE_RESPONSE: 'discard', VED_SMOKE_HIDDEN: '' }) });
-const { page } = ved;
+let mozc: MozcSession | null = null;
+let page: Page;
+let closeApp: () => Promise<void>;
+if (useMozc) {
+  mozc = await openMozc(); // launches visible + IME engaged in hiragana
+  page = mozc.page;
+  closeApp = mozc.close;
+} else {
+  const ved = await launchVed({ env: () => ({ VED_SMOKE_CLOSE_RESPONSE: 'discard', VED_SMOKE_HIDDEN: '' }) });
+  page = ved.page;
+  closeApp = ved.close;
+}
 type W = { __vedText(): string; __vedSetCaret(o: number): void; __vedCaret(): number };
 const car = () => page.evaluate(() => (window as unknown as W).__vedCaret());
+const text = () => page.evaluate(() => (window as unknown as W).__vedText());
 const len = () => page.evaluate(() => (window as unknown as W).__vedText().length);
 const setCaret = (o: number) => page.evaluate((off) => (window as unknown as W).__vedSetCaret(off), o);
 const setDoc = async (t: string) => {
@@ -46,6 +68,15 @@ const rng = (): number => {
 const ri = (n: number): number => Math.floor(rng() * n);
 const pick = <T>(a: readonly T[]): T => a[ri(a.length)] as T;
 
+// Romaji whose committed hiragana is predictable (commit = Return, no kanji
+// conversion), so the IME oracle can check the kana lands contiguously.
+const IME = [
+  { romaji: 'aiueo', kana: 'あいうえお' },
+  { romaji: 'ka', kana: 'か' },
+  { romaji: 'ne', kana: 'ね' },
+  { romaji: 'sakura', kana: 'さくら' },
+  { romaji: 'go', kana: 'ご' },
+];
 const RUBY = ['|漢(かん)', '|身体(からだ)', '|語(ご)', '|名(な)'];
 const PLAIN = ['あ', 'いう', 'a', 'んろは', '亜', '1'];
 const genPara = (): string => {
@@ -95,7 +126,7 @@ try {
     await page.keyboard.press('Digit4');
     await page.keyboard.up('Control');
     await setDoc(doc);
-    const L = await len();
+    let L = await len();
     if (L !== doc.length) {
       // setDoc didn't round-trip (insert race) — skip this doc rather than false-fail.
       console.log(`  iter ${it}: skip (len ${L} != ${doc.length})`);
@@ -110,6 +141,51 @@ try {
     await setCaret(0);
     let off = await car();
     for (let s = 0; s < STEPS && !firstFail; s++) {
+      // Occasionally insert REAL IME text at the caret (mozc mode): either plain
+      // kana, or a RUBY built piecewise — type `|`, IME-compose the body, type `(`,
+      // IME-compose the reading, type `)`. Building a ruby is the historical
+      // scramble scenario (the IME composing right next to the markup). Either way
+      // the oracle checks the expected string lands as ONE contiguous block whose
+      // removal yields the pre-insert text — no scramble into the markup, no loss
+      // (the historical `|あルいうえおビ(ruby)` bug).
+      if (useMozc && ri(4) === 0) {
+        const t0 = await text();
+        const compose = async (inp: (typeof IME)[number]) => {
+          await mozc!.escape();
+          await mozc!.type(inp.romaji);
+          await mozc!.commit();
+        };
+        let want: string;
+        let label: string;
+        if (ri(2) === 0) {
+          const inp = pick(IME);
+          await compose(inp);
+          want = inp.kana;
+          label = `ime "${inp.romaji}"→"${inp.kana}"`;
+        } else {
+          // | <body> ( <reading> ) — markup via CDP (bypasses the IME), content via mozc.
+          const b = pick(IME);
+          const r = pick(IME);
+          await page.keyboard.insertText('|');
+          await compose(b);
+          await page.keyboard.insertText('(');
+          await compose(r);
+          await page.keyboard.insertText(')');
+          want = `|${b.kana}(${r.kana})`;
+          label = `ime-ruby "${want}"`;
+        }
+        const t1 = await text();
+        let ok = false;
+        for (let i = t1.indexOf(want); i >= 0 && !ok; i = t1.indexOf(want, i + 1))
+          ok = t1.slice(0, i) + t1.slice(i + want.length) === t0;
+        log.push(`  [${s}] ${label}: len ${t0.length} -> ${t1.length}${ok ? '' : ' ✗SCRAMBLE'}`);
+        if (!ok)
+          firstFail = `IME did not insert ${JSON.stringify(want)} cleanly:\n  before ${JSON.stringify(t0)}\n  after  ${JSON.stringify(t1)}`;
+        L = t1.length;
+        off = await car();
+        if (firstFail) firstFail += `\n--- reproducer (seed ${ORIG_SEED}, FUZZ_MOZC=1) ---\n${log.join('\n')}`;
+        continue;
+      }
       const kind = ri(3) === 0 ? 'char' : 'line'; // bias to line moves (the area under test)
       const dir = ri(2) === 0 ? 'fwd' : 'back';
       const key = kind === 'line' ? lk[dir] : ck[dir];
@@ -136,6 +212,6 @@ try {
 } catch (e) {
   fail(e instanceof Error ? e.message : String(e));
 } finally {
-  await ved.close();
+  await closeApp();
 }
 finish('fuzz-caret (exploratory)');
