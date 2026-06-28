@@ -121,3 +121,15 @@ export const isHidden = (leaf: Leaf, policy: Appear, activeLine: number, active:
       return leaf.ruby !== active;
   }
 };
+
+/** Snap an offset that fell on hidden markup (`delim`) or a collapsed ruby's
+ *  read-only reading (`rt`) — neither hosts a DOM caret, so a selection there
+ *  resyncs to offset 0 — onto the last renderable base GLYPH of the same ruby.
+ *  Plain-text and base offsets pass through unchanged. Used by the line-move
+ *  commit so a geometric hit-test never lands the caret on a non-renderable spot. */
+export const snapToGlyph = (leaves: Leaf[], offset: number): number => {
+  const leaf = leaves.find((l) => offset >= l.from && offset < l.to);
+  if (!leaf || leaf.kind === 'plain' || leaf.kind === 'body' || leaf.ruby < 0) return offset;
+  const body = leaves.find((l) => l.kind === 'body' && l.ruby === leaf.ruby);
+  return body && body.to > body.from ? body.to - 1 : offset;
+};

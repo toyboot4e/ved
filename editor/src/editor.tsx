@@ -13,7 +13,7 @@ import { nextCaretOffset } from './pm/caret-model';
 import { type CursorState, cursorToOffset, offsetToCursor } from './pm/cursor';
 import { buildDecorations } from './pm/decorations';
 import type { Appear } from './pm/leaves';
-import { docLeaves } from './pm/leaves';
+import { docLeaves, snapToGlyph } from './pm/leaves';
 import {
   docFromText,
   offsetToPos,
@@ -320,20 +320,31 @@ const moveCaretByLine = (
 
     // Offset the caret head sits at BEFORE this move (model space).
     const beforeOffset = posToOffset(view.state.doc, view.state.selection.head);
-    // Stay put: undo modify's DOM-selection move first, so re-committing the
-    // model pos PM already has isn't a no-op that reads modify's stray selection
-    // back (which would strand the caret at, e.g., the paragraph start / end).
+    // Stay put: undo modify's DOM-selection move first, then re-commit the model
+    // selection PM already holds (line-move hasn't changed it yet, so it IS the
+    // original caret). Do NOT re-derive the pos from the DOM `before` range — at a
+    // ruby boundary it is anchored on the <p> (no text node), and posAtDOM there
+    // returns offset 0, jumping the caret to the document start (the "left-key
+    // jump"). The model head is always correct.
     const revert = (): void => {
       sel.removeAllRanges();
       sel.addRange(before);
-      const p = view.posAtDOM(before.startContainer, before.startOffset);
       view.dispatch(
         view.state.tr
-          .setSelection(TextSelection.create(view.state.doc, view.state.selection.anchor, p))
+          .setSelection(
+            TextSelection.create(view.state.doc, view.state.selection.anchor, view.state.selection.head),
+          )
           .scrollIntoView(),
       );
     };
-    const commit = (pos: number): void => {
+    const commit = (rawPos: number): void => {
+      // A geometric hit-test can land the caret on hidden markup or a collapsed
+      // ruby's read-only reading — neither hosts a DOM caret, so committing it
+      // resyncs the selection to offset 0 (the "left-key jump"). Snap such a
+      // landing onto the nearest renderable base glyph. Plain text is unaffected.
+      const rawOff = posToOffset(view.state.doc, rawPos);
+      const snapped = snapToGlyph(docLeaves(serialize(view.state.doc)), rawOff);
+      const pos = snapped === rawOff ? rawPos : offsetToPos(view.state.doc, snapped);
       // A line move must PROGRESS in its direction: backward decreases the model
       // offset, forward increases it. A wrong-direction result is a `modify`
       // mis-step at a document edge (e.g. ArrowRight in the first line jumping to
