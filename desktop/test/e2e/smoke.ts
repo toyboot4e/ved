@@ -29,7 +29,7 @@ const snap = () =>
     const text = (window as unknown as { __vedText?: () => string }).__vedText?.() ?? '';
     const rubies = [...root.querySelectorAll('ruby.rubyWrap')];
     // A ruby is collapsed (Rich) unless decorations marked it `rubyExpanded`
-    // (ShowAll / the active paragraph or ruby), where the delimiters show.
+    // (Plain / the active paragraph or ruby), where the delimiters show.
     const collapsed = rubies.filter((r) => !r.classList.contains('rubyExpanded')).length;
     return { text, rubies: rubies.length, collapsed };
   });
@@ -58,12 +58,12 @@ try {
   assert.equal(s.rubies, 2);
   step('typed syntax converts to a ruby element');
 
-  // ShowAll: same text, all rubies expanded
+  // Plain: same text, all rubies expanded
   await pressMod(page, '1');
   s = await snap();
   assert.equal(s.text, '|試(し)あ|ルビ(ruby)');
   assert.equal(s.collapsed, 0);
-  step('ShowAll expands without changing text');
+  step('Plain expands without changing text');
 
   // Rich again: collapsed
   await pressMod(page, '4');

@@ -51,7 +51,7 @@ const rebuildsOverMoves = async (moves: number): Promise<{ delta: number; moved:
 
 try {
   await page.click('#editor-content');
-  await pressMod(page, '1'); // ShowAll: every ruby expanded, so `expanded` is constant across caret moves
+  await pressMod(page, '1'); // Plain: every ruby expanded, so `expanded` is constant across caret moves
   await page.waitForTimeout(120);
 
   await typeDoc(2500);

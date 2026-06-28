@@ -107,7 +107,7 @@ atom — decided by `pm/leaves.ts isHidden(leaf, policy, activeLine, activeRuby)
 
 | Mode | Shortcut | Expanded rubies |
 |---|---|---|
-| `ShowAll` ("Plain") | Ctrl+1 | all |
+| `Plain` | Ctrl+1 | all |
 | `ByParagraph` | Ctrl+2 | those in the cursor's paragraph |
 | `ByCharacter` | Ctrl+3 | the one containing the cursor |
 | `Rich` | Ctrl+4 | none |
@@ -298,7 +298,7 @@ transaction drops the scroll flag) and doesn't handle the vertical-rl
 multi-column page layouts, so the editor scrolls the caret back into view
 itself: minimal adjustment on both axes (`revealDelta`, a no-op when already
 visible), run after every doc change, and — synchronously, after the
-re-decoration reflow (ShowAll can grow the text ~4×) — on an appear-policy
+re-decoration reflow (Plain can grow the text ~4×) — on an appear-policy
 change. The single-burst-insert and reflow cases are covered by
 `test/e2e/ruby-reveal.ts`.
 

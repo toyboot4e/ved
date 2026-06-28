@@ -48,14 +48,14 @@ export enum WritingMode {
 }
 
 export enum AppearPolicy {
-  ShowAll,
+  Plain,
   ByParagraph,
   ByCharacter,
   Rich,
 }
 
 const APPEAR_CLASS: Record<AppearPolicy, Appear> = {
-  [AppearPolicy.ShowAll]: 'showall',
+  [AppearPolicy.Plain]: 'plain',
   [AppearPolicy.ByParagraph]: 'paragraph',
   [AppearPolicy.ByCharacter]: 'char',
   [AppearPolicy.Rich]: 'rich',
@@ -82,7 +82,7 @@ export type VedEditorProps = {
 
 // Digits, not letters: Ctrl+S/O are file shortcuts (handled app-level).
 const MODE_KEYS: Record<string, AppearPolicy> = {
-  '1': AppearPolicy.ShowAll,
+  '1': AppearPolicy.Plain,
   '2': AppearPolicy.ByParagraph,
   '3': AppearPolicy.ByCharacter,
   '4': AppearPolicy.Rich,

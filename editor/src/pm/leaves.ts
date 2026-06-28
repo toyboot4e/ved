@@ -10,7 +10,7 @@
 // adjacent offsets separated by the (zero-width) delimiter.
 import { parse } from '../parse';
 
-export type Appear = 'rich' | 'showall' | 'paragraph' | 'char';
+export type Appear = 'rich' | 'plain' | 'paragraph' | 'char';
 
 export type LeafKind = 'plain' | 'delim' | 'body' | 'rt' | 'nl';
 
@@ -105,13 +105,13 @@ export const activeRuby = (leaves: Leaf[], offset: number): number => {
  *  and an IME composes into the base), but the base's START/END edges coincide
  *  with the ruby's outer boundary and are NOT stops — typing/IME at a ruby boundary
  *  lands OUTSIDE (caret-model.ts handles the interior-only rule). The READING is
- *  kept read-only so the IME can't leak into it. ShowAll expands all; Rich
+ *  kept read-only so the IME can't leak into it. Plain expands all; Rich
  *  collapses all; ByParagraph expands the caret paragraph's; ByCharacter expands
  *  the caret ruby's. (Plain text is never hidden; the base is handled separately.) */
 export const isHidden = (leaf: Leaf, policy: Appear, activeLine: number, active: number): boolean => {
   if (leaf.kind !== 'delim' && leaf.kind !== 'rt') return false;
   switch (policy) {
-    case 'showall':
+    case 'plain':
       return false;
     case 'rich':
       return true;

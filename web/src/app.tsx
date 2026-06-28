@@ -27,7 +27,7 @@ const WRITING_MODES: ReadonlyArray<readonly [WritingMode, string]> = [
 ];
 
 const APPEAR_POLICIES: ReadonlyArray<readonly [AppearPolicy, string]> = [
-  [AppearPolicy.ShowAll, 'ShowAll'],
+  [AppearPolicy.Plain, 'Plain'],
   [AppearPolicy.ByParagraph, 'ByParagraph'],
   [AppearPolicy.ByCharacter, 'ByCharacter'],
   [AppearPolicy.Rich, 'Rich'],

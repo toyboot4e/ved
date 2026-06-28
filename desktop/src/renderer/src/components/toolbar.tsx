@@ -38,7 +38,7 @@ const writingModeItems: {
 ];
 
 const appearPolicyItems: { policy: AppearPolicy; label: string; title: string }[] = [
-  { policy: AppearPolicy.ShowAll, label: 'Plain', title: 'Plain text with ruby syntax (Ctrl+1)' },
+  { policy: AppearPolicy.Plain, label: 'Plain', title: 'Plain text with ruby syntax (Ctrl+1)' },
   {
     policy: AppearPolicy.ByParagraph,
     label: 'Paragraph',

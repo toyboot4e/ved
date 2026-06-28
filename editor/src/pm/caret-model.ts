@@ -19,7 +19,7 @@ import { type Appear, activeRuby, docLeaves, isHidden, type Leaf, lineOf } from 
  *  `isHidden`'s decision for the ruby's delimiters, but answers it for the BASE. */
 const rubyCollapsed = (leaf: Leaf, policy: Appear, activeLine: number, active: number): boolean => {
   switch (policy) {
-    case 'showall':
+    case 'plain':
       return false;
     case 'rich':
       return true;

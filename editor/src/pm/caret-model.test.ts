@@ -41,8 +41,8 @@ describe('nextCaretOffset', () => {
     expect(walk('字は|漢字(かんじ)字', 0, 'rich', false, 8)).toEqual([1, 2, 4, 10, 11]);
   });
 
-  it('ShowAll: every markup char is a stop', () => {
-    expect(walk(DOC, 2, 'showall', false, 12)).toEqual([3, 4, 5, 6, 7, 8, 9]);
+  it('Plain: every markup char is a stop', () => {
+    expect(walk(DOC, 2, 'plain', false, 12)).toEqual([3, 4, 5, 6, 7, 8, 9]);
   });
 
   it('Rich: a LEADING ruby steps through its base INTERIOR char-by-char', () => {

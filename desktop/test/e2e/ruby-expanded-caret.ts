@@ -1,4 +1,4 @@
-// Caret AFTER the closing `)` of an EXPANDED ruby (ShowAll / "Plain").
+// Caret AFTER the closing `)` of an EXPANDED ruby (Plain).
 //
 // Repro for: "In Plain text mode, for |ルビ(ruby), I cannot move the cursor after
 // the )." The expanded delimiters are shown as gray pseudo-elements, but a CSS
@@ -40,7 +40,7 @@ const degenerateAtOrigin = (r: R) => extent(r) < 2 && Math.abs(r.top) < 2 && Mat
 
 try {
   await page.click('#editor-content');
-  await pressMod(page, '1'); // ShowAll ("Plain") — every delimiter visible
+  await pressMod(page, '1'); // Plain — every delimiter visible
   await page.waitForTimeout(150);
 
   // |ルビ(ruby): | 0 ル1 ビ2 (3 r4 u5 b6 y7 )8  — offset 9 is AFTER the `)`.

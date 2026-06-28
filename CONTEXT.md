@@ -76,7 +76,7 @@ _Avoid_: source model, WYSIWYG (it is explicitly not WYSIWYG).
 
 **Appear policy**:
 How much ruby markup renders as visible syntax vs. as an annotation:
-`ShowAll`, `ByParagraph`, `ByCharacter`, `Rich`. Orthogonal to **writing
+`Plain`, `ByParagraph`, `ByCharacter`, `Rich`. Orthogonal to **writing
 mode**; a pure rendering choice over the same model text.
 _Avoid_: view mode, display mode.
 

@@ -49,7 +49,7 @@ const setup = async (base: string, off: number) => {
 // So in RICH the cursor STEPS THROUGH the editable base (highlight on) and an IME
 // there ADDS to the base; at a ruby's outer boundary (before it / after it, with
 // plain text on the outside) the caret is outside and the IME lands in that text.
-// The READING is read-only in Rich, so the IME can never leak into it. (ShowAll
+// The READING is read-only in Rich, so the IME can never leak into it. (Plain
 // also makes the reading editable.)
 //
 // At a ZERO-WIDTH boundary where two editable regions touch with NO plain text
@@ -133,7 +133,7 @@ const cases: Array<{ label: string; mode: string; base: string; off: number; rom
     want: 'あ|漢ね字(かんじ)い',
   },
   // The reading is editable only in an expanded policy.
-  { label: 'ShowAll: into the reading', mode: '1', base: '|漢(かん)', off: 4, romaji: 'ne', want: '|漢(かねん)' },
+  { label: 'Plain: into the reading', mode: '1', base: '|漢(かん)', off: 4, romaji: 'ne', want: '|漢(かねん)' },
   // Bold markers (*…*) are hidden DOM text (a decoration, not a ruby atom), so
   // composing next to a hidden `*` must not scramble: while composing the `.syn`
   // marker is laid out in-flow but zero-size. *X* → *0 X1 *2; compose at off 1.

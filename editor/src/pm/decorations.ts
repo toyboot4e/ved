@@ -95,7 +95,7 @@ const buildBase = (parse: Parse): DecorationSet => {
 /** The caret-/policy-dependent ruby node decorations (rebuilt per caret move):
  *   - `rubyExpanded` shows the markup `|`,`(`,`)` (CSS pseudo-elements) and lays
  *     the reading out inline as editable text — set when the appear policy
- *     reveals this ruby (ShowAll: always; ByParagraph: the caret paragraph;
+ *     reveals this ruby (Plain: always; ByParagraph: the caret paragraph;
  *     ByCharacter: the caret ruby; Rich: never).
  *   - `rubyActive` highlights the ruby when the caret is strictly INSIDE it (the
  *     SHARED "logically in the ruby" condition: the caret steps through the
