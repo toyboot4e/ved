@@ -163,6 +163,18 @@ ruby.rubyExpanded > .rubyBase::after {
   color: #808080;
 }
 
+/* Selection: the shown markup `|`,`(`,`)` is a pseudo-element / widget, neither
+ * of which receives the browser's native text-selection highlight — so when the
+ * whole ruby is selected (Ctrl+A &c., `rubySelected`/`rubyDelimSelected` set in
+ * pm/decorations.ts) we paint them with the OS selection colours to match the
+ * blue over the base/reading glyphs. */
+ruby.rubySelected > .rubyBase::before,
+ruby.rubySelected > .rubyBase::after,
+.rubyDelimClose.rubyDelimSelected {
+  background-color: Highlight;
+  color: HighlightText;
+}
+
 /* The ruby holding the caret. Strictly inside only — a caret resting at the
  * outer boundary (logically outside the ruby) does not highlight it. */
 ruby.rubyActive {

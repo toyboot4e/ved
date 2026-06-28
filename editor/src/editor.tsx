@@ -125,7 +125,7 @@ const moveChar = (view: EditorView, policy: Appear, reverse: boolean, extend: bo
  *  syntax markers along with the visible char (so e.g. Backspace next to a
  *  bold `*` ate the `*` too). Deleting a plain offset range keeps identity exact
  *  and lets structure-repair re-form rubies. */
-const deleteChar = (view: EditorView, forward: boolean): void => {
+const deleteChar = (view: EditorView, forward: boolean, policy: Appear): void => {
   const { doc, selection } = view.state;
   // Honor a non-empty DOM selection that may LEAD PM's model (a programmatic
   // select-all isn't synced until the next selectionchange flush) — otherwise a
@@ -157,9 +157,13 @@ const deleteChar = (view: EditorView, forward: boolean): void => {
     return;
   }
   const head = posToOffset(doc, selection.head);
-  const len = serialize(doc).length;
-  const target = forward ? head + 1 : head - 1;
-  if (target < 0 || target > len) return; // document edge — nothing to delete
+  // Delete one CARET STEP, not one plain offset: in the collapsed policies a step
+  // jumps OVER a whole ruby (its base interior is the only interior stop), so a
+  // single offset at a ruby boundary maps to an empty PM range and nothing
+  // deletes. Stepping by caret stop removes the ruby as a unit. Inside plain text
+  // (and an expanded ruby) the next stop is just head±1, so this is unchanged.
+  const target = nextCaretOffset(serialize(doc), head, policy, !forward);
+  if (target === head) return; // document edge — nothing to delete
   const from = offsetToPos(doc, Math.min(head, target));
   const to = offsetToPos(doc, Math.max(head, target));
   if (from < to) view.dispatch(view.state.tr.delete(from, to).scrollIntoView());
@@ -584,7 +588,16 @@ export const VedEditor = (props: VedEditorProps): React.JSX.Element => {
     const { initialText, initialCursor, initialScroll } = live.current;
 
     const decoPlugin = new Plugin({
-      props: { decorations: (state) => buildDecorations(state.doc, policyClassRef.current, state.selection.head) },
+      props: {
+        decorations: (state) =>
+          buildDecorations(
+            state.doc,
+            policyClassRef.current,
+            state.selection.head,
+            state.selection.from,
+            state.selection.to,
+          ),
+      },
     });
 
     // baseKeymap supplies Enter (split paragraph), Backspace/Delete (join,
@@ -835,7 +848,7 @@ export const VedEditor = (props: VedEditorProps): React.JSX.Element => {
       // IME composition keep the default path.
       if (!mod && !event.altKey && !v.composing && (event.key === 'Backspace' || event.key === 'Delete')) {
         event.preventDefault();
-        deleteChar(v, event.key === 'Delete');
+        deleteChar(v, event.key === 'Delete', policyClassRef.current);
         return true;
       }
       // Home/End → the visual-line edge. Native CE does this, but at a line that

@@ -29,10 +29,12 @@ const RULES: { re: RegExp; cls: string }[] = [
 const TCY = /\d{2,}/g; // 縦中横: runs of 2+ digits
 
 /** The closing `)` of an expanded ruby, as a real (caret-traversable) element —
- *  see the widget in buildRubyNodes for why it can't be `rt::after`. */
-const closeDelim = (): HTMLElement => {
+ *  see the widget in buildRubyNodes for why it can't be `rt::after`. `selected`
+ *  paints it with the selection colours: a widget gets no native selection
+ *  highlight, so when the ruby is fully selected we tint it ourselves to match. */
+const closeDelim = (selected: boolean): HTMLElement => {
   const s = document.createElement('span');
-  s.className = 'rubyDelimClose';
+  s.className = selected ? 'rubyDelimClose rubyDelimSelected' : 'rubyDelimClose';
   s.textContent = ')';
   return s;
 };
@@ -109,7 +111,13 @@ const buildBase = (parse: Parse): DecorationSet => {
  *     it, an IME composed INTO the base at the paragraph start; read-only makes the
  *     IME compose BEFORE the ruby (the caret model treats a leading ruby as an
  *     atom). An expanded ruby is fully editable. */
-const buildRubyNodes = (parse: Parse, headOffset: number, expanded: Set<number>): Decoration[] => {
+const buildRubyNodes = (
+  parse: Parse,
+  headOffset: number,
+  expanded: Set<number>,
+  selFrom: number,
+  selTo: number,
+): Decoration[] => {
   const { doc, span } = parse;
   const decos: Decoration[] = [];
   let rubyIdx = 0;
@@ -117,8 +125,13 @@ const buildRubyNodes = (parse: Parse, headOffset: number, expanded: Set<number>)
     if (node.type.name !== 'ruby') return;
     const cls: string[] = [];
     const isExpanded = expanded.has(rubyIdx);
+    // The whole ruby node lies inside a non-empty selection: its shown delimiters
+    // (pseudo-elements + the close widget) get no native selection highlight, so
+    // we tint them to match (CSS `.rubySelected`). Only matters when expanded.
+    const fullySelected = selFrom < selTo && selFrom <= pos && pos + node.nodeSize <= selTo;
     if (isExpanded) {
       cls.push('rubyExpanded');
+      if (fullySelected) cls.push('rubySelected');
       // The closing `)` is a WIDGET (a real <span>), NOT `rt::after` generated
       // content: generated content has no caret-traversable position after it, so
       // the native caret at the ruby's trailing boundary (offset just after the
@@ -130,7 +143,13 @@ const buildRubyNodes = (parse: Parse, headOffset: number, expanded: Set<number>)
       // reading), so their boundary carets already resolve correctly.
       const closePos = pos + node.nodeSize;
       decos.push(
-        Decoration.widget(closePos, () => closeDelim(), { side: -1, key: `rclose-${rubyIdx}`, ignoreSelection: true }),
+        Decoration.widget(closePos, () => closeDelim(fullySelected), {
+          side: -1,
+          // The selected state is in the key so PM re-renders the widget when the
+          // selection starts/stops covering this ruby (same-key widgets are reused).
+          key: `rclose-${rubyIdx}${fullySelected ? '-sel' : ''}`,
+          ignoreSelection: true,
+        }),
       );
     }
     const sp = span.get(rubyIdx);
@@ -169,8 +188,15 @@ let baseCache: { doc: PMNode; set: DecorationSet } | null = null;
 
 /** Build the decoration set for the document under `policy` and caret `head`
  *  (a ProseMirror position, which fixes the active paragraph/ruby for
- *  ByParagraph / ByCharacter). */
-export const buildDecorations = (doc: PMNode, policy: Appear, head: number): DecorationSet => {
+ *  ByParagraph / ByCharacter). `selFrom`/`selTo` are the selection range (PM
+ *  positions); a ruby fully inside it gets its delimiters tinted as selected. */
+export const buildDecorations = (
+  doc: PMNode,
+  policy: Appear,
+  head: number,
+  selFrom: number = head,
+  selTo: number = head,
+): DecorationSet => {
   if (!parseCache || parseCache.doc !== doc) parseCache = parseDoc(doc);
   const { text, leaves } = parseCache;
 
@@ -201,6 +227,6 @@ export const buildDecorations = (doc: PMNode, policy: Appear, head: number): Dec
   // line (one wrapped column/row), which a node decoration on the <p> can't
   // express. editor/line-numbers.ts measures and draws it in the overlay.
 
-  const nodes = buildRubyNodes(parseCache, headOffset, expanded);
+  const nodes = buildRubyNodes(parseCache, headOffset, expanded, selFrom, selTo);
   return baseCache.set.add(doc, nodes);
 };
