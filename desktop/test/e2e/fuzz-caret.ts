@@ -9,14 +9,17 @@
 //
 //   - the caret offset stays in [0, len];
 //   - a LINE move never REVERSES its direction (forward never decreases the
-//     offset, backward never increases) and never leaps many lines at once — this
-//     catches the "caret resets to 0 / jumps" corruption at a ruby boundary, where
-//     two collapsed rubies meet with no DOM text node and the caret rect is
-//     degenerate (see docs/architecture.md, invariant 1);
+//     offset, backward never increases) — this catches the "caret resets to 0"
+//     teleport at a ruby boundary, where two collapsed rubies meet with no DOM
+//     text node and the caret rect is degenerate (docs/architecture.md, inv. 1);
 //   - a CHAR move changes the offset by only a few characters.
 //
-// There is no full visual-line oracle, so a silent "stuck" (a legitimate no-op at
-// the first/last line vs a real stuck caret) is LOGGED, not failed.
+// We do NOT bound the line-move offset DELTA: one visual line spans an unknown
+// number of offsets (an all-ruby column is ~240), so a threshold can't separate a
+// legit one-line move from an over-jump — that needs a visual-line oracle (TODO;
+// see the known Vertical-Rows cross-paragraph over-jump). Likewise a silent
+// "stuck" (a legitimate no-op at the first/last line vs a real stuck caret) is
+// LOGGED, not failed.
 import type { Page } from 'playwright';
 import { clickWritingMode, fail, finish, launchVed, step } from './harness.ts';
 import { type MozcSession, mozcAvailable, openMozc } from './mozc/harness.ts';
@@ -103,7 +106,6 @@ const UNIT = { ms: 1, s: 1_000, m: 60_000 } as const;
 const deadline = dur ? Date.now() + Number(dur[1]) * UNIT[dur[2] as keyof typeof UNIT] : Number.POSITIVE_INFINITY;
 const MAX_ITER = dur ? Number.POSITIVE_INFINITY : Number(budget);
 const STEPS = 60;
-const LINE_CHARS = 40; // page line cap; a single line move shouldn't leap many of these
 console.log(
   `fuzz-caret seed=${ORIG_SEED} ${dur ? `budget=${budget}` : `iters=${MAX_ITER}`} — reproduce with: node test/e2e/fuzz-caret.ts ${ORIG_SEED}`,
 );
@@ -197,11 +199,18 @@ try {
 
       if (off < 0 || off > L) firstFail = `offset OUT OF RANGE: ${off} (len ${L})`;
       else if (kind === 'line') {
+        // Direction is the reliable, layout-free invariant: forward never goes
+        // back, backward never goes forward — this catches the teleport-to-0 class.
+        // We deliberately do NOT bound the offset DELTA: one visual line spans an
+        // unknown number of offsets (in an all-ruby column it is ~240 offsets — half
+        // a 2-column doc), so an offset threshold can't tell a legit one-line move
+        // from an over-jump. Detecting a forward OVER-JUMP (landing on a non-adjacent
+        // visual line) needs a real visual-line oracle (the line-number overlay) —
+        // see the known Vertical-Rows cross-paragraph over-jump; TODO.
         if (dir === 'fwd' && off < before) firstFail = `LINE forward REVERSED: ${before} -> ${off}`;
         else if (dir === 'back' && off > before) firstFail = `LINE backward REVERSED: ${before} -> ${off}`;
-        else if (Math.abs(off - before) > 6 * LINE_CHARS)
-          firstFail = `LINE move LEAPT ${Math.abs(off - before)} chars: ${before} -> ${off}`;
       } else if (Math.abs(off - before) > 12) {
+        // A char move steps at most one ruby (~6 offsets); a big jump is corruption.
         firstFail = `CHAR move LEAPT ${Math.abs(off - before)} chars: ${before} -> ${off}`;
       }
       if (firstFail) firstFail += `\n--- reproducer (seed ${ORIG_SEED}) ---\n${log.join('\n')}`;
