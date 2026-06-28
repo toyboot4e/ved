@@ -344,13 +344,14 @@ const moveCaretByLine = (
       const snapped = snapToGlyph(docLeaves(serialize(view.state.doc)), rawOff);
       const pos = snapped === rawOff ? rawPos : offsetToPos(view.state.doc, snapped);
       // A line move must PROGRESS in its direction: backward decreases the model
-      // offset, forward increases it. A wrong-direction result is a `modify`
-      // mis-step at a document edge (e.g. ArrowRight in the first line jumping to
-      // the paragraph start, or worse to the doc end) — stay put instead. (No
-      // reliable column measurement here: paragraphCols mis-groups some columns.)
+      // offset, forward increases it; a NO-PROGRESS result (same offset) must also
+      // revert. A wrong-direction or stay-put result is a `modify` mis-step (e.g.
+      // a mis-measured column at a Vertical-Rows page boundary). Critically, revert
+      // RESTORES the DOM to `before`; a no-op commit would instead leave modify's
+      // stray DOM selection, which resyncs the model to it (the over-jump).
       if (
         !extend &&
-        (reverse ? posToOffset(view.state.doc, pos) > beforeOffset : posToOffset(view.state.doc, pos) < beforeOffset)
+        (reverse ? posToOffset(view.state.doc, pos) >= beforeOffset : posToOffset(view.state.doc, pos) <= beforeOffset)
       ) {
         revert();
         return;
@@ -740,14 +741,7 @@ export const VedEditor = (props: VedEditorProps): React.JSX.Element => {
       createSelectionBetween: (v, $anchor, $head) => {
         if (policyClassRef.current !== 'rich' || $anchor.pos !== $head.pos) return null;
         const out = rubyClickOutsidePos($head);
-        // A click can land at a TEXT-LESS boundary — between two adjacent rubies, or
-        // the before/after boundary rubyClickOutsidePos snaps an atom click to — which
-        // hosts no DOM caret (invisible cursor). Snap to the nearest renderable base
-        // glyph. An interior/plain click is unchanged, so it keeps the default.
-        const off = posToOffset(v.state.doc, out ?? $head.pos);
-        const snapped = snapToGlyph(docLeaves(serialize(v.state.doc)), off);
-        if (out == null && snapped === off) return null;
-        return TextSelection.create(v.state.doc, offsetToPos(v.state.doc, snapped));
+        return out == null ? null : TextSelection.create(v.state.doc, out);
       },
     });
     viewRef.current = view;
