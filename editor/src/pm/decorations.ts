@@ -39,6 +39,17 @@ const closeDelim = (selected: boolean): HTMLElement => {
   return s;
 };
 
+/** A rendered caret for a TEXT-LESS seam — between two collapsed rubies (or a
+ *  collapsed ruby against a paragraph edge) the markup is not DOM text, so the
+ *  native caret has nothing to sit on (an invisible cursor). This widget draws the
+ *  caret (CSS, blinks while focused) at the correct seam offset; see ruby.css. */
+const boundaryCaret = (): HTMLElement => {
+  const s = document.createElement('span');
+  s.className = 'vedBoundaryCaret';
+  s.setAttribute('contenteditable', 'false');
+  return s;
+};
+
 type Parse = {
   doc: PMNode;
   text: string;
@@ -228,5 +239,22 @@ export const buildDecorations = (
   // express. editor/line-numbers.ts measures and draws it in the overlay.
 
   const nodes = buildRubyNodes(parseCache, headOffset, expanded, selFrom, selTo);
+
+  // Boundary caret: a COLLAPSED caret BETWEEN two adjacent collapsed rubies sits at
+  // a seam with hidden ruby delimiters on BOTH sides and no DOM text node, so the
+  // native caret is invisible. Render our own caret at the head so the cursor shows
+  // at the correct seam offset (the model offset is unchanged). Plain text or an
+  // expanded ruby on either side is renderable, so no widget then. (A ruby against a
+  // PARAGRAPH edge keeps the native caret, so it is intentionally NOT handled here —
+  // a widget there would double the caret.)
+  if (selFrom === selTo) {
+    const hidden = (l?: Leaf): boolean => !!l && l.kind === 'delim' && isHidden(l, policy, activeLine, active);
+    const lb = leaves.find((l) => l.to === headOffset);
+    const la = leaves.find((l) => l.from === headOffset);
+    if (hidden(lb) && hidden(la) && lb?.ruby !== la?.ruby) {
+      nodes.push(Decoration.widget(head, boundaryCaret, { key: `bcaret-${head}`, side: 0, ignoreSelection: true }));
+    }
+  }
+
   return baseCache.set.add(doc, nodes);
 };

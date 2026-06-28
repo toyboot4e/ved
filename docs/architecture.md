@@ -249,8 +249,13 @@ hidden windows; see the RAF gotcha below.)
 
 ## Caret at ruby boundaries (ADR-0008)
 
-The markup is not DOM text, so the native caret always rests on real, full-size
-glyphs — no overlay caret, no `.delimAnchor`, no zero-sized boxes. **Spec:** with
+The markup is not DOM text, so the native caret rests on real, full-size glyphs —
+no `.delimAnchor`, no zero-sized boxes. The ONE exception is the seam BETWEEN two
+adjacent collapsed rubies: it has no text node either side, so the native caret is
+degenerate (invisible) there. A `pm/decorations.ts` widget renders a `.vedBoundaryCaret`
+at that head (the model offset is unchanged) — a thin CSS line that blinks while
+focused. This is the only rendered caret (the ADR-0008 overlay caret is still gone;
+this is a single targeted widget, not a general overlay). **Spec:** with
 the markup collapsed (Rich), a caret at a ruby BOUNDARY writes OUTSIDE the ruby; to
 write at the EDGE of the rubied text, expand the markup. The caret still steps
 through the base INTERIOR (the `rubyActive` highlight, `headOffset > from &&

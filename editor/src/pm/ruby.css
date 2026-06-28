@@ -180,3 +180,38 @@ ruby.rubySelected > .rubyBase::after,
 ruby.rubyActive {
   background-color: rgba(255, 200, 50, 0.25);
 }
+
+/* Boundary caret (pm/decorations.ts): a rendered caret at a text-less ruby seam,
+ * where the native caret has no DOM text node to sit on. The span takes NO inline
+ * space (so it doesn't shift the text); the ::after draws a 1px line in the inline
+ * axis spanning the line in the block axis — a vertical bar in horizontal text, a
+ * horizontal bar in vertical-rl. Blinks only while the editor is focused. */
+.vedBoundaryCaret {
+  display: inline-block;
+  inline-size: 0;
+  block-size: 1em;
+  position: relative;
+  vertical-align: text-bottom;
+}
+.vedBoundaryCaret::after {
+  content: "";
+  position: absolute;
+  inset-block: 0;
+  inset-inline-start: 0;
+  inline-size: 1px;
+  background: currentColor;
+  opacity: 0; /* hidden unless the editor is focused (below) */
+}
+.ProseMirror-focused .vedBoundaryCaret::after {
+  animation: vedCaretBlink 1.06s step-end infinite;
+}
+@keyframes vedCaretBlink {
+  0%,
+  50% {
+    opacity: 1;
+  }
+  50.01%,
+  100% {
+    opacity: 0;
+  }
+}
