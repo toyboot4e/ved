@@ -1,4 +1,4 @@
-// The multi-buffer model behind the tab bar (Phase 1 — docs/phase-1-plan.md).
+// The multi-buffer model behind the tab bar (editor UI plan, Phase 1).
 // A pure reducer over plaintext + scalars; the live editor state (Slate tree,
 // hot-path text) stays in the editor. PlainTextHistory is a live instance
 // held here so undo survives tab switches, but it is never serialized.

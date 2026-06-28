@@ -200,8 +200,6 @@ one optional prop (step 0.2).
 
 ### Phase 1 — buffers and tab bar
 
-**Detailed step breakdown: [phase-1-plan.md](phase-1-plan.md).**
-
 The `Buffer` store and the `VedEditor` refactor (history lifted out, cursor
 and scroll snapshotted on switch-away). Tab bar: hand-rolled flex row —
 title, dirty dot, close button, middle-click close, `Ctrl+Tab` / `Ctrl+W`,

@@ -16,7 +16,7 @@ internals. Paths below are relative to these package roots.
 - `CONTEXT.md` — project glossary (the words to use, and the ones to avoid).
 - `docs/adr/` — architecture decisions and *why* (e.g. browser engine over a
   custom one; the editor framework — Slate → Lexical → **ProseMirror** for the
-  rich-syntax roadmap, see ADR-0005 + `docs/prosemirror-migration-plan.md`).
+  rich-syntax roadmap, see ADR-0005).
 
 ## Commands
 

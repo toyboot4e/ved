@@ -1,14 +1,12 @@
 # Editing framework: stay on Slate now, Lexical as the migration target
 
 ---
-status: superseded — migrated to Lexical 2026-06-15 (see
-docs/lexical-migration-plan.md); later superseded again by ADR-0005, which
-moves the editor to ProseMirror for the rich-syntax roadmap.
+status: superseded — migrated to Lexical 2026-06-15; later superseded again by
+ADR-0005, which moves the editor to ProseMirror for the rich-syntax roadmap.
 ---
 
 > **Update (2026-06-15).** The migration is **complete**: the app runs on
-> Lexical and Slate is removed. The slice plan
-> ([../lexical-migration-plan.md](../lexical-migration-plan.md)) records how.
+> Lexical and Slate is removed (later moved again to ProseMirror, ADR-0005).
 > The analysis below — why Lexical over TipTap/ProseMirror/CodeMirror, and why
 > vertical-rl is not a differentiator — is the rationale for the move. One
 > caveat surfaced in execution: collapsed-ruby markup must be hidden with

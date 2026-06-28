@@ -1,8 +1,8 @@
 # Editing framework: migrate Lexical → ProseMirror for the rich-syntax roadmap
 
 ---
-status: accepted (2026-06-16) — supersedes ADR-0002. Migration in progress; see
-docs/prosemirror-migration-plan.md.
+status: accepted (2026-06-16) — supersedes ADR-0002. Migration complete; the app
+runs on ProseMirror and Lexical is removed.
 ---
 
 ## Context

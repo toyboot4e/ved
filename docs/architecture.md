@@ -433,7 +433,6 @@ src/renderer/src/
         ruby.css                     global ruby + inline-syntax styles (rt annotation, expanded pseudo-element delimiters)
 test/e2e/                  Playwright tests against the built app, hidden windows
 docs/editor-ui-plan.md     editor UI shell plan + phase checklist
-docs/lexical-migration-plan.md   the Slate → Lexical migration
 ```
 
 NixOS specifics live in `flake.nix`: Electron's runtime libraries via
