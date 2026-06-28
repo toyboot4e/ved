@@ -12,8 +12,9 @@ import { fileURLToPath } from 'node:url';
 
 const dir = dirname(fileURLToPath(import.meta.url));
 const SKIP = new Set(['harness.ts', 'fuzz-caret.ts', 'run-smoke.ts']);
+// Real tests only: skip helpers/fuzz/self and any `*-probe.ts` scratch driver.
 const tests = readdirSync(dir)
-  .filter((f) => f.endsWith('.ts') && !SKIP.has(f))
+  .filter((f) => f.endsWith('.ts') && !f.endsWith('-probe.ts') && !SKIP.has(f))
   .sort();
 
 console.log(`running ${tests.length} e2e drivers`);

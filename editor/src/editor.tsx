@@ -740,7 +740,14 @@ export const VedEditor = (props: VedEditorProps): React.JSX.Element => {
       createSelectionBetween: (v, $anchor, $head) => {
         if (policyClassRef.current !== 'rich' || $anchor.pos !== $head.pos) return null;
         const out = rubyClickOutsidePos($head);
-        return out == null ? null : TextSelection.create(v.state.doc, out);
+        // A click can land at a TEXT-LESS boundary — between two adjacent rubies, or
+        // the before/after boundary rubyClickOutsidePos snaps an atom click to — which
+        // hosts no DOM caret (invisible cursor). Snap to the nearest renderable base
+        // glyph. An interior/plain click is unchanged, so it keeps the default.
+        const off = posToOffset(v.state.doc, out ?? $head.pos);
+        const snapped = snapToGlyph(docLeaves(serialize(v.state.doc)), off);
+        if (out == null && snapped === off) return null;
+        return TextSelection.create(v.state.doc, offsetToPos(v.state.doc, snapped));
       },
     });
     viewRef.current = view;
