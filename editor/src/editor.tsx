@@ -331,9 +331,7 @@ const moveCaretByLine = (
       sel.addRange(before);
       view.dispatch(
         view.state.tr
-          .setSelection(
-            TextSelection.create(view.state.doc, view.state.selection.anchor, view.state.selection.head),
-          )
+          .setSelection(TextSelection.create(view.state.doc, view.state.selection.anchor, view.state.selection.head))
           .scrollIntoView(),
       );
     };
@@ -428,8 +426,7 @@ const moveCaretByLine = (
     // At a ruby BOUNDARY (between two collapsed atom rubies, no text node) the DOM
     // rect is degenerate (0×0); fall back to the model rect there. Elsewhere keep
     // beforeRect — at the doc end coordsAtPos reports the empty next column.
-    const cr =
-      beforeRect.width > 0 || beforeRect.height > 0 ? beforeRect : view.coordsAtPos(view.state.selection.head);
+    const cr = beforeRect.width > 0 || beforeRect.height > 0 ? beforeRect : view.coordsAtPos(view.state.selection.head);
     const cb = vertical ? (cr.left + cr.right) / 2 : (cr.top + cr.bottom) / 2;
     const ci = vertical ? cr.top : cr.left;
     const bcols = paragraphCols(beforeP, vertical);
