@@ -414,8 +414,13 @@ const moveCaretByLine = (
     // `beforeRect` (the live DOM caret rect, captured before `modify` ran) gives
     // the caret's column reliably — including at the doc end, where the *model*
     // rect `coordsAtPos(head)` instead reports the empty next column.
-    const cb = vertical ? (beforeRect.left + beforeRect.right) / 2 : (beforeRect.top + beforeRect.bottom) / 2;
-    const ci = vertical ? beforeRect.top : beforeRect.left;
+    // At a ruby BOUNDARY (between two collapsed atom rubies, no text node) the DOM
+    // rect is degenerate (0×0); fall back to the model rect there. Elsewhere keep
+    // beforeRect — at the doc end coordsAtPos reports the empty next column.
+    const cr =
+      beforeRect.width > 0 || beforeRect.height > 0 ? beforeRect : view.coordsAtPos(view.state.selection.head);
+    const cb = vertical ? (cr.left + cr.right) / 2 : (cr.top + cr.bottom) / 2;
+    const ci = vertical ? cr.top : cr.left;
     const bcols = paragraphCols(beforeP, vertical);
     const idx = bcols.length ? caretColIndex(bcols, cb, ci) : 0;
     if (goalRef.current == null) goalRef.current = bcols.length ? ci - (bcols[idx]?.iStart ?? ci) : 0;
