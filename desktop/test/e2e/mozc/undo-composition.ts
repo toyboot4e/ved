@@ -12,7 +12,7 @@
 // Linux + fcitx5 + mozc + xdotool only; SKIPS elsewhere. STEALS X focus while it
 // runs — don't type. Run: `node test/e2e/mozc/undo-composition.ts`.
 import assert from 'node:assert/strict';
-import { fail, finish, pressMod, step } from '../harness.ts';
+import { fail, finish, step } from '../harness.ts';
 import { mozcAvailable, openMozc } from './harness.ts';
 
 if (!mozcAvailable()) {
@@ -24,18 +24,20 @@ if (!mozcAvailable()) {
 const m = await openMozc();
 const { page } = m;
 const txt = () => page.evaluate(() => (window as unknown as { __vedText(): string }).__vedText());
-// Undo/redo are plain (non-IME) keys; drive them via the app's keydown contract
-// (pressMod forces key:'z'), as the rest of the suite does. NB: a REAL Ctrl+Shift+Z
-// yields event.key==='Z', which the handler's `=== 'z'` rejects — a separate
-// keyboard-redo bug this test does not exercise.
-const undo = async () => {
-  await pressMod(page, 'z');
+// Undo/redo are plain (non-IME) keys, so drive them with REAL key chords. Redo is
+// Shift+Ctrl+Z, whose key is the UPPERCASE 'Z' — the handler must match either
+// case (regression: it once matched only 'z', so real-key redo silently failed).
+const chord = async (...keys: string[]) => {
+  for (const k of keys) await page.keyboard.down(k);
+  for (const k of [...keys].reverse()) await page.keyboard.up(k);
   await page.waitForTimeout(200);
+};
+const undo = async () => {
+  await chord('Control', 'KeyZ');
   return txt();
 };
 const redo = async () => {
-  await pressMod(page, 'z', { shift: true });
-  await page.waitForTimeout(200);
+  await chord('Control', 'Shift', 'KeyZ');
   return txt();
 };
 

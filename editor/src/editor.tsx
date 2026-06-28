@@ -818,7 +818,9 @@ export const VedEditor = (props: VedEditorProps): React.JSX.Element => {
 
     const handleKeyDown = (v: EditorView, event: KeyboardEvent): boolean => {
       const mod = IS_MAC ? event.metaKey : event.ctrlKey;
-      if (mod && event.key === 'z') {
+      // Redo is Shift+Mod+Z, where Shift uppercases the key to 'Z' — match either
+      // case (the old e2e masked this by forcing key:'z').
+      if (mod && event.key.toLowerCase() === 'z') {
         event.preventDefault();
         restore(event.shiftKey ? live.current.history.redo() : live.current.history.undo());
         return true;
