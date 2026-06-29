@@ -169,7 +169,11 @@ const buildRubyNodes = (
     // highlight, the read-only-base toggle, and the insertion mapping share this
     // rule so they can't drift).
     const caretInside = !!sp && headOffset > sp[0] && headOffset < sp[1];
-    if (caretInside) cls.push('rubyActive');
+    // The `rubyActive` tint marks the ruby the EDITING caret sits in. Suppress it
+    // while a non-empty selection is active (`selFrom !== selTo`): there is no
+    // single editing position then, and its (yellow) tint would clash with — and
+    // visually override — the (blue) text-selection highlight on that ruby.
+    if (caretInside && selFrom === selTo) cls.push('rubyActive');
     if (cls.length) decos.push(Decoration.node(pos, pos + node.nodeSize, { class: cls.join(' ') }));
     // Read-only reading on a collapsed ruby: the rubyText child is node.child(1),
     // at pos + 1 (into the ruby) + the rubyBase's size.

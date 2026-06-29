@@ -54,6 +54,28 @@
   background-color: rgba(120, 170, 255, 0.12);
 }
 
+/* Custom text-selection highlight (editor/line-numbers.ts): native `::selection`
+ * fills the whole line box, so over a ruby line it covers the reading (`<rt>`) in
+ * the leading — a thick band that intersects the ruby. We hide the native paint
+ * (below) and draw our own BASE-ONLY rects (one per selected text run, readings
+ * skipped), positioned/sized in px in the overlay's horizontal-tb box. */
+.vedSelectionRect {
+  position: absolute;
+  top: 0;
+  left: 0;
+  background-color: rgba(120, 170, 255, 0.4);
+}
+/* Suppress the native selection paint INSIDE the editor only (the toolbar, tabs,
+ * and any input keep theirs). Keep the text colour so the glyphs stay legible
+ * under our overlay tint. The model selection is unaffected — copy, IME, and
+ * delete-selection all still work; only the paint is ours. */
+#editor-content ::selection {
+  background: transparent;
+}
+#editor-content ::-moz-selection {
+  background: transparent;
+}
+
 /* Placeholder: an empty document is a single <p> holding only a <br>. Position
  * the hint ABSOLUTELY at the paragraph's start corner (the <p> is the containing
  * block) so it takes NO flow space — an in-flow hint pushes the empty line (and

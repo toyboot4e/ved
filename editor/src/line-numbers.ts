@@ -68,6 +68,7 @@ export const mountLineNumbers = (
   scroller.appendChild(overlay);
 
   const pool: HTMLElement[] = [];
+  const selPool: HTMLElement[] = []; // custom text-selection rects (base only)
   const range = document.createRange();
   let raf = 0;
   let pendingFull = false;
@@ -107,6 +108,7 @@ export const mountLineNumbers = (
     for (const el of pool.slice(lines.length)) el.style.display = 'none';
 
     refreshHighlight(vertical, o);
+    refreshSelection(o);
   };
 
   // Move the highlight to the caret's visual line, reusing the cached `lines`.
@@ -141,10 +143,57 @@ export const mountLineNumbers = (
     }
   };
 
+  // Custom TEXT-SELECTION highlight, rendered BASE-ONLY. The native `::selection`
+  // fills the whole line box, which for a ruby line includes the reading (`<rt>`)
+  // sitting in the leading — so a selection over ruby paints a thick band that
+  // intersects the readings. We hide the native selection (ruby.css) and paint our
+  // own rects here, skipping any text inside an `<rt>`, so the highlight hugs the
+  // base text. Rects are overlay-relative (scroll-invariant, like the numbers).
+  const refreshSelection = (o: DOMRect): void => {
+    let n = 0;
+    const sel = content.ownerDocument.getSelection();
+    if (sel && sel.rangeCount > 0 && !sel.isCollapsed) {
+      const selR = sel.getRangeAt(0);
+      if (content.contains(selR.commonAncestorContainer) || selR.commonAncestorContainer === content) {
+        const walker = document.createTreeWalker(content, NodeFilter.SHOW_TEXT, {
+          acceptNode: (t) =>
+            // Skip a COLLAPSED ruby's reading (`.rubyWrap > rt`, the annotation) so
+            // the highlight is base-only; an EXPANDED ruby's reading (`.rubyExpanded`)
+            // is inline editable text, so it selects like normal.
+            t.parentElement?.closest('rt')?.closest('.rubyWrap')
+              ? NodeFilter.FILTER_REJECT
+              : selR.intersectsNode(t)
+                ? NodeFilter.FILTER_ACCEPT
+                : NodeFilter.FILTER_REJECT,
+        });
+        for (let t = walker.nextNode(); t; t = walker.nextNode()) {
+          const sub = content.ownerDocument.createRange();
+          sub.selectNodeContents(t);
+          // Clamp to the selection at the boundary nodes (interior nodes stay full).
+          if (sub.compareBoundaryPoints(Range.START_TO_START, selR) < 0)
+            sub.setStart(selR.startContainer, selR.startOffset);
+          if (sub.compareBoundaryPoints(Range.END_TO_END, selR) > 0) sub.setEnd(selR.endContainer, selR.endOffset);
+          for (const r of sub.getClientRects()) {
+            if (r.width === 0 || r.height === 0) continue;
+            const el = selPool[n] ?? makeSelRect(overlay, selPool);
+            el.style.transform = `translate(${r.left - o.left}px, ${r.top - o.top}px)`;
+            el.style.width = `${r.width}px`;
+            el.style.height = `${r.height}px`;
+            el.style.display = '';
+            n++;
+          }
+        }
+      }
+    }
+    for (const el of selPool.slice(n)) el.style.display = 'none';
+  };
+
   // HIGHLIGHT-ONLY: a selection change didn't move any line, so skip the O(doc)
   // re-measure and just re-pick + reposition the highlight from cached geometry.
   const highlightOnly = (): void => {
-    refreshHighlight(getComputedStyle(content).writingMode.startsWith('vertical'), overlay.getBoundingClientRect());
+    const o = overlay.getBoundingClientRect();
+    refreshHighlight(getComputedStyle(content).writingMode.startsWith('vertical'), o);
+    refreshSelection(o);
   };
 
   const schedule = (full = true): void => {
@@ -297,6 +346,16 @@ const makeNumber = (overlay: HTMLElement, pool: HTMLElement[]): HTMLElement => {
   const el = document.createElement('span');
   el.className = 'vedLineNumber';
   overlay.appendChild(el);
+  pool.push(el);
+  return el;
+};
+
+// A single base-only text-selection rect (overlay-relative, sized in px).
+const makeSelRect = (overlay: HTMLElement, pool: HTMLElement[]): HTMLElement => {
+  const el = document.createElement('div');
+  el.className = 'vedSelectionRect';
+  // Behind the numbers but inside the same scroll-invariant overlay box.
+  overlay.insertBefore(el, overlay.firstChild);
   pool.push(el);
   return el;
 };
