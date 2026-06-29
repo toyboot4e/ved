@@ -427,10 +427,37 @@ const moveCaretByLine = (
     // At a ruby BOUNDARY (between two collapsed atom rubies, no text node) the DOM
     // rect is degenerate (0×0); fall back to the model rect there. Elsewhere keep
     // beforeRect — at the doc end coordsAtPos reports the empty next column.
-    const cr = beforeRect.width > 0 || beforeRect.height > 0 ? beforeRect : view.coordsAtPos(view.state.selection.head);
+    const bcols = paragraphCols(beforeP, vertical);
+    const blockOf = (r: { left: number; right: number; top: number; bottom: number }): number =>
+      vertical ? (r.left + r.right) / 2 : (r.top + r.bottom) / 2;
+    let cr: { left: number; right: number; top: number; bottom: number } =
+      beforeRect.width > 0 || beforeRect.height > 0 ? beforeRect : view.coordsAtPos(view.state.selection.head);
+    // Column-boundary RUBY SEAM affinity. When a forward/backward line move lands
+    // on a column START whose offset is a text-less ruby seam, the DOM caret
+    // renders with END-of-PREVIOUS-column affinity, so `beforeRect` reports that
+    // previous column's BOTTOM (`cb` = prev block, `ci` = its `iEnd`). The caret
+    // then mis-indexes one column back and the next step targets the column it is
+    // already in — the line move STICKS (docs/architecture.md). During a line-move
+    // RUN the caret reached this seam by landing on a column start, so resolve the
+    // ambiguity with the AFTER-side model rect (`coordsAtPos(head, 1)`), which
+    // reports the column whose start is the seam. Apply it ONLY when the two
+    // affinities straddle a column boundary AND the after side lands on a REAL
+    // column — so the doc/paragraph END (where the after side is the empty next
+    // column) keeps `beforeRect` (the true last column) and does not over-step.
+    const afterRect = (() => {
+      try {
+        return view.coordsAtPos(view.state.selection.head, 1);
+      } catch {
+        return null;
+      }
+    })();
+    if (goalRef.current != null && bcols.length && afterRect) {
+      const pitch = Number.parseFloat(getComputedStyle(content).fontSize) || 18;
+      const ab = blockOf(afterRect);
+      if (Math.abs(ab - blockOf(cr)) > pitch && bcols.some((c) => Math.abs(c.block - ab) < pitch)) cr = afterRect;
+    }
     const cb = vertical ? (cr.left + cr.right) / 2 : (cr.top + cr.bottom) / 2;
     const ci = vertical ? cr.top : cr.left;
-    const bcols = paragraphCols(beforeP, vertical);
     const idx = bcols.length ? caretColIndex(bcols, cb, ci) : 0;
     if (goalRef.current == null) goalRef.current = bcols.length ? ci - (bcols[idx]?.iStart ?? ci) : 0;
     const depth = goalRef.current ?? 0;
