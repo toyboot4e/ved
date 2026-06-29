@@ -481,8 +481,47 @@ const moveCaretByLine = (
     }
     if (!target) return revert();
     const inline = target.iStart + depth;
-    const hit = view.posAtCoords({ left: vertical ? target.block : inline, top: vertical ? inline : target.block });
-    if (hit) commit(hit.pos);
+    // Goal depth PAST the target column's content (a short last column): the caret
+    // must clamp to the column's last caret stop. `posAtCoords` for a point past
+    // the content lands INSIDE the trailing ruby, and `commit`'s `snapToGlyph`
+    // then pulls back to its BASE — one short of the column/paragraph end. So when
+    // the goal is past `iEnd`, advance a ruby landing to AFTER the ruby.
+    const pastColEnd = inline > target.iEnd + 2;
+    const clampPastEnd = (p: number): number => {
+      if (!pastColEnd) return p;
+      const off = posToOffset(view.state.doc, p);
+      const lv = docLeaves(serialize(view.state.doc));
+      const leaf = lv.find((l) => off >= l.from && off < l.to);
+      if (!leaf || leaf.ruby < 0) return p;
+      const end = Math.max(...lv.filter((l) => l.ruby === leaf.ruby).map((l) => l.to));
+      return offsetToPos(view.state.doc, end);
+    };
+    let px = vertical ? target.block : inline;
+    let py = vertical ? inline : target.block;
+    // `posAtCoords` only hit-tests VISIBLE content — for a target line scrolled
+    // fully OUT of view it returns null, and the caret would not move AT ALL (the
+    // "moving to a previous line that isn't visible does nothing" bug). Scroll the
+    // target into view FIRST, then hit-test at the scroll-shifted coordinate. A
+    // no-op when the target is already visible (`revealDelta` returns 0). The
+    // partially-visible case already worked, which is why one more step (the next,
+    // fully-off-screen line) was the one that stuck.
+    const scroller = view.dom.parentElement;
+    if (scroller instanceof HTMLElement) {
+      const left0 = scroller.getBoundingClientRect().left + scroller.clientLeft;
+      const top0 = scroller.getBoundingClientRect().top + scroller.clientTop;
+      const dx = revealDelta(px, px, left0, left0 + scroller.clientWidth, 8);
+      const dy = revealDelta(py, py, top0, top0 + scroller.clientHeight, 8);
+      if (dx) {
+        scroller.scrollLeft += dx;
+        px -= dx;
+      }
+      if (dy) {
+        scroller.scrollTop += dy;
+        py -= dy;
+      }
+    }
+    const hit = view.posAtCoords({ left: px, top: py });
+    if (hit) commit(clampPastEnd(hit.pos));
     // Hit-test of an OFF-SCREEN target (the sibling paragraph below the fold)
     // returns null. When `modify` itself crossed to the adjacent paragraph (plain
     // text — it only mis-steps within a wrapping ruby paragraph), its landing is
