@@ -466,6 +466,22 @@ ships its own postinstall, so this project's `postinstall` runs
 
 ## Known papercuts / future work
 
+- **Line move STUCK at a Vertical-Rows column boundary on a ruby seam.** In
+  `VerticalRows`, a forward line move that should cross from one column to the next
+  stays put when the target column STARTS at a ruby boundary (a text-less seam).
+  Diagnosed: after the prior move lands on that column-start offset, the offset has
+  no DOM text node, so its caret rect reports the PREVIOUS column's bottom (`cb` =
+  prev col's block, `ci` = its `iEnd`) instead of the current column's top.
+  `caretColIndex` (`editor.tsx`) then mis-reports the caret as in the previous
+  column, targets the column it is already in → no progress → the no-progress
+  guard in `moveCaretByLine commit` reverts (so it is STUCK, not corrupting — the
+  earlier teleport-to-doc-end is fixed). The hard part: a seam offset's visual
+  column is genuinely ambiguous (prev-col-bottom vs next-col-top are identical in
+  `ci` and in the model offset), so resolving it needs the same boundary-affinity
+  rework as `line-highlight-para-end` / `line-move-doc-end`, not a heuristic.
+  Reproduce: a mixed plain+ruby multi-paragraph doc in Vertical Rows, walk forward
+  by line (the exploratory fuzz `test/e2e/fuzz-caret.ts` finds it; the offset-delta
+  invariant can't flag it, so detection wants a visual-line oracle too).
 - **Real mozc IME composition IS automated** (`test/e2e/mozc/ruby-composition.ts`,
   `pnpm smoke:mozc`): X11 keys from `xdotool type` are intercepted by fcitx5+mozc
   where Playwright/CDP keys are not. It STEALS X focus while running (don't type),
