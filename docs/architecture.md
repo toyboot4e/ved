@@ -487,5 +487,34 @@ ships its own postinstall, so this project's `postinstall` runs
 - `pm/structure.ts repair` compares every paragraph on every change; fine at
   current sizes, trivially limitable to dirty paragraphs if profiling flags it.
   (The decoration pass is already O(n) via `buildPosMap`.)
-- The annotation (`<rt>`) can overflow the fixed `line-height` in vertical
-  mode; needs visual tuning.
+- **Ruby line spacing is `$line-space`-tuned; heavy webfonts may need more.** A
+  collapsed ruby's `<rt>` reading renders OUTSIDE the base's em box (above it in
+  horizontal, beside it in vertical-rl) and the line box is a FIXED pitch (no
+  auto-grow), so too little leading makes ruby-dense rows intersect. Fixed by a
+  tight reading `line-height: 1` (drops the phantom leading the reading otherwise
+  inherits) plus `$line-space` sized so the reading clears the previous row
+  (`editor.module.scss`; the pitch feeds `--lines-extent` → page geometry, kept as
+  one source of truth, measured by scroll-keep + the line-number overlay).
+  Verified in the harness font (`test/e2e/ruby-row-overlap.ts`); the exact value
+  is font-dependent (the reading box scales with the CJK font's metrics), so if a
+  heavier bundled webfont still intersects, raise `$line-space` a few px — it is
+  the single tuning lever.
+- **Text SELECTION over ruby looks thick.** Native `::selection` fills the LINE
+  BOX, and a ruby line's box is tall (it must fit the reading above the base), so
+  selecting ruby-dense text paints a thick band that also covers the readings
+  sitting in the upper leading. There is no CSS to make `::selection` shorter than
+  the line box, and the box can't shrink without the rows intersecting again — so
+  a thin selection that excludes the reading needs a CUSTOM selection overlay
+  (paint our own highlight rects clipped to the base band, and hide the native
+  one). That overlay is feasible (the line-number overlay is the same shape) but
+  is a non-trivial, regression-prone change (IME, focus, multi-range), so it is
+  deferred rather than risk the editing path.
+- **Click on NON-TEXT may not place the caret.** Clicking empty space (the gap
+  between rows, or past a line's text) can land on no text node, leaving the
+  cursor put — easy to mis-click. In the harness the browser already snaps clicks
+  on the contenteditable's own background that fall INSIDE its box (only clicks
+  truly outside the editor no-op, which is correct), so the failing case is
+  scenario-specific and not yet reproduced. When it is: a background-`click`
+  fallback (target is `view.dom`/scroller) that runs `view.posAtCoords` and snaps
+  to the nearest position works and is low-risk (drag/extend untouched) — it was
+  prototyped but reverted for lack of a failing repro to guard it.

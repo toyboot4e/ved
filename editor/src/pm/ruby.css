@@ -118,6 +118,12 @@
  * RICH (default, collapsed): the <rt> is the small annotation above the base. */
 ruby.rubyWrap > rt {
   font-size: 0.5em;
+  /* Tight to the reading's own glyph: the `<rt>` otherwise INHERITS the line's
+   * (tall) line-height, which the native ruby layout reserves as empty space
+   * ABOVE the base — inflating each ruby's line box and forcing extra leading to
+   * keep ruby-dense rows from intersecting. `line-height: 1` lets the reading sit
+   * just above the base, so a smaller `$line-space` already clears the rows. */
+  line-height: 1;
   /* Read-only in Rich: arrow movement skips the reading (pm/caret-model) and a
    * pointer can't select it. (Editable in the expanded policies below.) */
   user-select: none;
