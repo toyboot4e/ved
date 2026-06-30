@@ -49,11 +49,14 @@ dev:
 alias d := dev
 
 # starts the @ved/web preview site (Vite dev server on http://localhost:5173)
-web:
+serve:
     pnpm run dev:web
 
 [private]
-alias w := web
+alias web := serve
+
+[private]
+alias w := serve
 
 # installs dependencies (also downloads the Electron binary)
 install:
