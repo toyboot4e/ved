@@ -189,14 +189,18 @@ hidden markup + reading are skipped. In the expanded policies the markup/reading
 are stops too. In vertical modes the axes rotate (`ArrowUp/Down` → character,
 `ArrowLeft/Right` → line).
 
-Before either move, a **non-empty selection collapses to its edge** in the move
-direction (`editor.tsx handleKeyDown`): a plain (non-Shift) arrow on a selection —
-notably the `AllSelection` from Ctrl+A — jumps to the document START (backward) or
-END (forward), the standard editor behavior, rather than nudging `selection.head`
-one step. Shift still extends. (This rule lives in the key handler because our
-model-driven `moveChar`/`moveCaretByLine` only move the head — PM's default keymap,
-which we override for the vertical-axis mapping + ruby-aware movement, is what
-normally supplies the collapse.)
+Before either move, a **non-empty selection resolves to its directional edge**
+(`editor.tsx handleKeyDown`): a plain (non-Shift) arrow takes the selection's START
+when moving backward and its END when moving forward. A CHAR-axis arrow collapses
+there and stops; a LINE-axis arrow collapses there and then steps ONE line — so the
+caret lands above the selection's start or below its end, never by nudging
+`selection.head`. The `AllSelection` from Ctrl+A is the exception: it jumps to the
+document START (backward) / END (forward), the standard select-all behavior. Shift
+still extends. (This rule lives in the key handler because our model-driven
+`moveChar`/`moveCaretByLine` only move the head — PM's default keymap, which we
+override for the vertical-axis mapping + ruby-aware movement, is what normally
+supplies the collapse. Tested in `test/e2e/selection-collapse-char-edge.ts` and
+`line-move-selection-edge.ts`.)
 
 Line movement (`editor.tsx moveCaretByLine`) starts with `Selection.modify
 ('line')` over the contenteditable — the browser handles the common
@@ -246,6 +250,14 @@ across a page-row boundary, where the next column sits at a different origin.
 page rows, asserting every step is exactly one visual line across rows and the
 paragraph boundary. Both run **visible**: the mover defers via RAF, throttled in
 hidden windows; see the RAF gotcha below.)
+
+**Extend (Shift+line)** runs the SAME measurement, only differing at commit: native
+`modify('extend','line')` slides the focus over a collapsed ruby's read-only base
+all the way to the paragraph END (it can't seat a caret inside the base), so we
+probe with a plain `move` from the head (collapsing the DOM selection to its focus
+first) and re-apply the original anchor. The progress clamp applies too, so at the
+last line the selection stays put instead of swallowing to the end. (Tested in
+`test/e2e/shift-line-move-ruby.ts`.)
 
 ## Caret at ruby boundaries (ADR-0008)
 
@@ -323,10 +335,17 @@ change. The single-burst-insert and reflow cases are covered by
 
 No framework history: operation-level undo is meaningless across structure
 repair, and it is backend-neutral (a document is a string, a caret is
-`{para, offset}`). `{ plaintext, cursor }` snapshots with a 500 ms debounce;
-undo/redo rebuilds the document from text (`docFromText`) and re-resolves the
-caret (`offsetToPos`). A debounced push replaces the newest entry; after an undo
-it truncates the redo tail.
+`{para, offset}`). `{ plaintext, cursor, cursorBefore }` snapshots with a 500 ms
+debounce; undo/redo rebuilds the document from text (`docFromText`) and re-resolves
+the caret (`offsetToPos`). Each entry stores the caret BOTH after its edit (`cursor`,
+where REDO lands) and just before it (`cursorBefore`, in the previous text — where
+UNDO lands); without the latter, undo would restore the caret to wherever the
+*earlier* edit left it (e.g. the end of a paste), not where the user actually was.
+`editor.tsx` feeds `cursorBefore` from a `beforeOffsetRef` that tracks the caret
+across plain moves and freezes during IME composition. A debounced push replaces the
+newest entry (preserving the batch's original `cursorBefore`); after an undo it
+truncates the redo tail. (Unit-tested in `editor/history.test.ts`; end to end in
+`test/e2e/undo-cursor-restore.ts`.)
 
 ## Layout: writing modes (`WritingMode`) and the page
 
@@ -442,8 +461,9 @@ src/renderer/src/
     editor/
       history.ts                     PlainTextHistory (backend-neutral, unit-tested)
       scroll-keep.ts                 scroll offset ↔ line index per mode (unit-tested)
-      line-numbers.ts                per-VISUAL-line overlay: numbers + current-line highlight (measured)
+      line-numbers.ts                per-VISUAL-line overlay: numbers + current-line highlight + base-only selection (measured)
       pm/
+        drag-select.ts               geometric mouse drag-selection across read-only ruby bases (unit-tested)
         model.ts                     schema (ruby = rubyBase+rubyText), docFromText, serialize, offset ↔ PM position
         decorations.ts               rubyExpanded vs contenteditable=false atom per policy + bold/italic/縦中横 + rubyActive
         structure.ts                 repair: the IME-safe ruby reconcile (the only structure repair)
@@ -499,16 +519,20 @@ ships its own postinstall, so this project's `postinstall` runs
   is font-dependent (the reading box scales with the CJK font's metrics), so if a
   heavier bundled webfont still intersects, raise `$line-space` a few px — it is
   the single tuning lever.
-- **Text SELECTION over ruby looks thick.** Native `::selection` fills the LINE
-  BOX, and a ruby line's box is tall (it must fit the reading above the base), so
-  selecting ruby-dense text paints a thick band that also covers the readings
-  sitting in the upper leading. There is no CSS to make `::selection` shorter than
-  the line box, and the box can't shrink without the rows intersecting again — so
-  a thin selection that excludes the reading needs a CUSTOM selection overlay
-  (paint our own highlight rects clipped to the base band, and hide the native
-  one). That overlay is feasible (the line-number overlay is the same shape) but
-  is a non-trivial, regression-prone change (IME, focus, multi-range), so it is
-  deferred rather than risk the editing path.
+- **Text SELECTION over ruby is a custom overlay, not native `::selection`.**
+  Native `::selection` fills the LINE BOX, and a ruby line's box is tall (it must fit
+  the reading above the base), so it paints a thick band that also covers the
+  readings in the upper leading — and there is no CSS to make `::selection` shorter
+  than the line box. So the native highlight is hidden (`pm/ruby.css`) and
+  `line-numbers.ts` paints the selection itself from the MODEL selection: base-only
+  rects clipped to the base band, MERGED per visual line so adjacent rubies show no
+  gap (the same measured overlay as the line numbers / current-line highlight; the
+  `rubyActive` highlight is suppressed while a selection is active so the two don't
+  stack). Because the highlight is model-driven, mouse DRAG-selection can't lean on
+  the native selection either — it can't extend across a collapsed atom ruby's
+  read-only base (`contenteditable=false`) — so `editor.tsx` drives the drag from a
+  GEOMETRIC hit-test over the base glyphs (`pm/drag-select.ts`, unit-tested).
+  (Tested in `test/e2e/ruby-selection-thin.ts`, `drag-select-ruby.ts`.)
 - **Click on NON-TEXT may not place the caret.** Clicking empty space (the gap
   between rows, or past a line's text) can land on no text node, leaving the
   cursor put — easy to mis-click. In the harness the browser already snaps clicks
