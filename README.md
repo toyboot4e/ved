@@ -12,12 +12,18 @@ nix run github:toyboot4e/ved
 
 ## Development
 
-If you're using Nix, run `direnv allow`. Other than that, see [./Justfile](./Justfile).
+If you're using Nix, run `direnv allow`.
+
+`pnpm` is the primary build tool:
 
 ```sh
 pnpm install   # also downloads the Electron binary (project postinstall)
 pnpm run dev
 ```
+
+See [./Justfile](./Justfile) for more commands.
+
+## Documents
 
 See [docs/architecture.md](docs/architecture.md) for the design.
 
