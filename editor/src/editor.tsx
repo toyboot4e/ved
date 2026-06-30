@@ -650,6 +650,10 @@ export const VedEditor = (props: VedEditorProps): React.JSX.Element => {
   live.current = props;
   const policyClassRef = useRef<Appear>(APPEAR_CLASS[appearPolicy]);
   const lastTextRef = useRef(props.initialText);
+  // Caret offset in `lastTextRef`'s text, just before the in-progress edit. Held
+  // across caret-only moves and frozen during IME composition, so when an edit
+  // commits it names where the user WAS — the position undo should return to.
+  const beforeOffsetRef = useRef(0);
   const rebuildingRef = useRef(false);
   // Goal column for line movement: the inline-axis coordinate held across a run
   // of ArrowLeft/Right line moves (null = no run in progress; see
@@ -716,9 +720,11 @@ export const VedEditor = (props: VedEditorProps): React.JSX.Element => {
     const commitHistory = (committed: EditorState): void => {
       const text = serialize(committed.doc);
       if (text === lastTextRef.current) return;
+      // Where the caret was BEFORE this edit, in the OUTGOING text — undo's target.
+      const before = offsetToCursor(lastTextRef.current, beforeOffsetRef.current);
       lastTextRef.current = text;
       const cursor = offsetToCursor(text, posToOffset(committed.doc, committed.selection.head));
-      live.current.history.push({ text, cursor });
+      live.current.history.push({ text, cursor, cursorBefore: before });
       live.current.onTextChange?.(text);
     };
 
@@ -758,6 +764,9 @@ export const VedEditor = (props: VedEditorProps): React.JSX.Element => {
         if (tr.docChanged && !view.composing && !rebuildingRef.current) {
           commitHistory(next);
         }
+        // Track the caret as the pre-edit anchor for the NEXT edit's undo target.
+        // Frozen while composing so the WHOLE IME word's anchor is its start.
+        if (!view.composing) beforeOffsetRef.current = posToOffset(next.doc, next.selection.head);
       },
       handleKeyDown: (v, event) => handleKeyDown(v, event),
       handleDOMEvents: {
@@ -1181,6 +1190,8 @@ export const VedEditor = (props: VedEditorProps): React.JSX.Element => {
       requestAnimationFrame(() => {
         if (view.composing) return; // a chained composition is still active
         commitHistory(view.state);
+        // Re-anchor for the next edit now that the IME word has settled.
+        beforeOffsetRef.current = posToOffset(view.state.doc, view.state.selection.head);
       });
     };
     view.dom.addEventListener('compositionstart', onCompositionStart);
