@@ -42,23 +42,30 @@ try {
   await page.mouse.up();
   await page.waitForTimeout(120);
 
-  const r = await page.evaluate(() => ({
-    head: (window as unknown as { __vedCaret(): number }).__vedCaret(),
-    rects: [...document.querySelectorAll('.vedSelectionRect')].filter(
+  const r = await page.evaluate(() => {
+    const rects = [...document.querySelectorAll('.vedSelectionRect')].filter(
       (e) => (e as HTMLElement).style.display !== 'none',
-    ).length,
-  }));
-  console.log(`drag result: head=${r.head} selectionRects=${r.rects}`);
+    );
+    // The highlight rects are merged per line, so measure the WIDEST one's inline
+    // extent (width, horizontal) — it must span several ruby bases.
+    const widest = Math.max(0, ...rects.map((e) => e.getBoundingClientRect().width));
+    return {
+      head: (window as unknown as { __vedCaret(): number }).__vedCaret(),
+      rects: rects.length,
+      widest: Math.round(widest),
+    };
+  });
+  console.log(`drag result: head=${r.head} rects=${r.rects} widestPx=${r.widest}`);
 
   // The first ruby |身体(からだ) ends at offset 8; a stuck native selection lands at
-  // ~9. Crossing several rubies puts the head well past that, with a highlight rect
-  // per selected base.
+  // ~9. Crossing several rubies puts the head well past that, and the (merged)
+  // highlight spans many glyph-widths (a base is ~18px, several rubies ≫ 50px).
   if (r.head < 13) {
     fail(`drag-select stuck near the first ruby (head ${r.head}) — it did not cross the read-only bases`);
-  } else if (r.rects < 3) {
-    fail(`drag-select highlighted only ${r.rects} glyph(s) — the selection did not span the rubies`);
+  } else if (r.rects < 1 || r.widest < 50) {
+    fail(`drag-select highlight did not span the rubies (${r.rects} rect(s), widest ${r.widest}px)`);
   } else {
-    step(`drag-select crosses rubies (head ${r.head}, ${r.rects} base glyphs highlighted)`);
+    step(`drag-select crosses rubies (head ${r.head}, highlight spans ${r.widest}px)`);
   }
 } catch (e) {
   fail(e instanceof Error ? e.message : String(e));

@@ -1063,15 +1063,37 @@ export const VedEditor = (props: VedEditorProps): React.JSX.Element => {
     };
     // Viewport rects of the base glyphs inside the MODEL selection — the overlay
     // paints the text-selection highlight from these (not the DOM selection, which
-    // PM can't extend across a read-only ruby base). Empty for a caret.
+    // PM can't extend across a read-only ruby base). Consecutive glyphs on the SAME
+    // line (their block-axis coord matches) are MERGED into one span: this both
+    // fills the sub-pixel hairline between adjacent glyphs/rubies and spans the gap
+    // a collapsed ruby's hidden markup/reading leaves between two bases. Empty for
+    // a caret.
     const selectedGlyphRects = (): DOMRect[] => {
       const sel = view.state.selection;
       if (sel.empty) return [];
       const from = posToOffset(view.state.doc, sel.from);
       const to = posToOffset(view.state.doc, sel.to);
-      return walkGlyphs()
-        .filter((g) => g.off >= from && g.off < to)
-        .map((g) => g.rect);
+      const vertical = getComputedStyle(view.dom).writingMode.startsWith('vertical');
+      const out: DOMRect[] = [];
+      let cur: { l: number; t: number; r: number; b: number } | null = null;
+      for (const g of walkGlyphs()) {
+        if (g.off < from || g.off >= to) continue;
+        const r = g.rect;
+        // Same line ⇔ same block-axis position (left in vertical-rl, top in
+        // horizontal), within a sub-cell tolerance.
+        const sameLine = cur != null && Math.abs((vertical ? r.left : r.top) - (vertical ? cur.l : cur.t)) < 6;
+        if (cur && sameLine) {
+          cur.l = Math.min(cur.l, r.left);
+          cur.t = Math.min(cur.t, r.top);
+          cur.r = Math.max(cur.r, r.right);
+          cur.b = Math.max(cur.b, r.bottom);
+        } else {
+          if (cur) out.push(new DOMRect(cur.l, cur.t, cur.r - cur.l, cur.b - cur.t));
+          cur = { l: r.left, t: r.top, r: r.right, b: r.bottom };
+        }
+      }
+      if (cur) out.push(new DOMRect(cur.l, cur.t, cur.r - cur.l, cur.b - cur.t));
+      return out;
     };
     selectedGlyphRectsRef.current = selectedGlyphRects;
 
