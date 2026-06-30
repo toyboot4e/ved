@@ -303,20 +303,28 @@ const moveCaretByLine = (
   requestAnimationFrame(() => {
     const sel = window.getSelection();
     if (!sel || sel.rangeCount === 0) return;
-    const before = sel.getRangeAt(0).cloneRange();
-    const beforeRect = before.getBoundingClientRect();
-    sel.modify(extend ? 'extend' : 'move', reverse ? 'backward' : 'forward', 'line');
+    const before = sel.getRangeAt(0).cloneRange(); // original selection — the revert target
+    // Probe and step from the HEAD, with a plain `move` even when EXTENDING. Native
+    // `modify('extend',…,'line')` slides the focus to the paragraph END over a ruby's
+    // read-only base (it can't seat a caret there) — the whole line is swallowed. So
+    // collapse the live DOM selection to its focus and measure a `move`; `commit`
+    // re-applies the original anchor for extend. Collapsing is a no-op for the
+    // common collapsed caret, and the model selection is untouched until we dispatch.
+    if (extend && sel.focusNode) sel.collapse(sel.focusNode, sel.focusOffset);
+    const head = sel.getRangeAt(0).cloneRange();
+    const beforeRect = head.getBoundingClientRect();
+    sel.modify('move', reverse ? 'backward' : 'forward', 'line');
     const after = sel.getRangeAt(0);
 
     const same =
-      before.startContainer === after.startContainer &&
-      before.startOffset === after.startOffset &&
-      before.endContainer === after.endContainer &&
-      before.endOffset === after.endOffset;
+      head.startContainer === after.startContainer &&
+      head.startOffset === after.startOffset &&
+      head.endContainer === after.endContainer &&
+      head.endOffset === after.endOffset;
     const landedOnElement = after.startContainer.nodeType === Node.ELEMENT_NODE;
     const content = view.dom as HTMLElement;
     const vertical = getComputedStyle(content).writingMode.startsWith('vertical');
-    const beforeP = closestPara(content, before.startContainer);
+    const beforeP = closestPara(content, head.startContainer);
     const afterP = closestPara(content, after.startContainer);
 
     // Offset the caret head sits at BEFORE this move (model space).
@@ -349,10 +357,10 @@ const moveCaretByLine = (
       // revert. A wrong-direction or stay-put result is a `modify` mis-step (e.g.
       // a mis-measured column at a Vertical-Rows page boundary). Critically, revert
       // RESTORES the DOM to `before`; a no-op commit would instead leave modify's
-      // stray DOM selection, which resyncs the model to it (the over-jump).
+      // stray DOM selection, which resyncs the model to it (the over-jump). Applies
+      // to EXTEND too: the head must advance one line or the selection stays put.
       if (
-        !extend &&
-        (reverse ? posToOffset(view.state.doc, pos) >= beforeOffset : posToOffset(view.state.doc, pos) <= beforeOffset)
+        reverse ? posToOffset(view.state.doc, pos) >= beforeOffset : posToOffset(view.state.doc, pos) <= beforeOffset
       ) {
         revert();
         return;
@@ -846,11 +854,13 @@ export const VedEditor = (props: VedEditorProps): React.JSX.Element => {
     //    the ruby-boundary IME bug.
     const w = window as unknown as {
       __vedCaret?: () => number;
+      __vedAnchor?: () => number;
       __vedCaretRect?: () => { top: number; bottom: number; left: number; right: number } | null;
       __vedText?: () => string;
       __vedSetCaret?: (off: number) => void;
     };
     w.__vedCaret = () => posToOffset(view.state.doc, view.state.selection.head);
+    w.__vedAnchor = () => posToOffset(view.state.doc, view.state.selection.anchor);
     w.__vedCaretRect = () => {
       try {
         return view.coordsAtPos(view.state.selection.head);
