@@ -2,7 +2,7 @@ import { clsx } from 'clsx';
 import { baseKeymap } from 'prosemirror-commands';
 import { keymap } from 'prosemirror-keymap';
 import { Fragment, Slice } from 'prosemirror-model';
-import { type Command, EditorState, Plugin, TextSelection } from 'prosemirror-state';
+import { AllSelection, type Command, EditorState, Plugin, TextSelection } from 'prosemirror-state';
 import { EditorView } from 'prosemirror-view';
 import type React from 'react';
 import { useCallback, useEffect, useLayoutEffect, useRef } from 'react';
@@ -12,6 +12,7 @@ import { type CaretRect, type LineNumbers, mountLineNumbers } from './line-numbe
 import { nextCaretOffset } from './pm/caret-model';
 import { type CursorState, cursorToOffset, offsetToCursor } from './pm/cursor';
 import { buildDecorations } from './pm/decorations';
+import { type DragGlyph, glyphOffsets, nearestGlyphOffset } from './pm/drag-select';
 import type { Appear } from './pm/leaves';
 import { docLeaves, snapToGlyph } from './pm/leaves';
 import {
@@ -302,20 +303,28 @@ const moveCaretByLine = (
   requestAnimationFrame(() => {
     const sel = window.getSelection();
     if (!sel || sel.rangeCount === 0) return;
-    const before = sel.getRangeAt(0).cloneRange();
-    const beforeRect = before.getBoundingClientRect();
-    sel.modify(extend ? 'extend' : 'move', reverse ? 'backward' : 'forward', 'line');
+    const before = sel.getRangeAt(0).cloneRange(); // original selection — the revert target
+    // Probe and step from the HEAD, with a plain `move` even when EXTENDING. Native
+    // `modify('extend',…,'line')` slides the focus to the paragraph END over a ruby's
+    // read-only base (it can't seat a caret there) — the whole line is swallowed. So
+    // collapse the live DOM selection to its focus and measure a `move`; `commit`
+    // re-applies the original anchor for extend. Collapsing is a no-op for the
+    // common collapsed caret, and the model selection is untouched until we dispatch.
+    if (extend && sel.focusNode) sel.collapse(sel.focusNode, sel.focusOffset);
+    const head = sel.getRangeAt(0).cloneRange();
+    const beforeRect = head.getBoundingClientRect();
+    sel.modify('move', reverse ? 'backward' : 'forward', 'line');
     const after = sel.getRangeAt(0);
 
     const same =
-      before.startContainer === after.startContainer &&
-      before.startOffset === after.startOffset &&
-      before.endContainer === after.endContainer &&
-      before.endOffset === after.endOffset;
+      head.startContainer === after.startContainer &&
+      head.startOffset === after.startOffset &&
+      head.endContainer === after.endContainer &&
+      head.endOffset === after.endOffset;
     const landedOnElement = after.startContainer.nodeType === Node.ELEMENT_NODE;
     const content = view.dom as HTMLElement;
     const vertical = getComputedStyle(content).writingMode.startsWith('vertical');
-    const beforeP = closestPara(content, before.startContainer);
+    const beforeP = closestPara(content, head.startContainer);
     const afterP = closestPara(content, after.startContainer);
 
     // Offset the caret head sits at BEFORE this move (model space).
@@ -348,10 +357,10 @@ const moveCaretByLine = (
       // revert. A wrong-direction or stay-put result is a `modify` mis-step (e.g.
       // a mis-measured column at a Vertical-Rows page boundary). Critically, revert
       // RESTORES the DOM to `before`; a no-op commit would instead leave modify's
-      // stray DOM selection, which resyncs the model to it (the over-jump).
+      // stray DOM selection, which resyncs the model to it (the over-jump). Applies
+      // to EXTEND too: the head must advance one line or the selection stays put.
       if (
-        !extend &&
-        (reverse ? posToOffset(view.state.doc, pos) >= beforeOffset : posToOffset(view.state.doc, pos) <= beforeOffset)
+        reverse ? posToOffset(view.state.doc, pos) >= beforeOffset : posToOffset(view.state.doc, pos) <= beforeOffset
       ) {
         revert();
         return;
@@ -427,10 +436,37 @@ const moveCaretByLine = (
     // At a ruby BOUNDARY (between two collapsed atom rubies, no text node) the DOM
     // rect is degenerate (0×0); fall back to the model rect there. Elsewhere keep
     // beforeRect — at the doc end coordsAtPos reports the empty next column.
-    const cr = beforeRect.width > 0 || beforeRect.height > 0 ? beforeRect : view.coordsAtPos(view.state.selection.head);
+    const bcols = paragraphCols(beforeP, vertical);
+    const blockOf = (r: { left: number; right: number; top: number; bottom: number }): number =>
+      vertical ? (r.left + r.right) / 2 : (r.top + r.bottom) / 2;
+    let cr: { left: number; right: number; top: number; bottom: number } =
+      beforeRect.width > 0 || beforeRect.height > 0 ? beforeRect : view.coordsAtPos(view.state.selection.head);
+    // Column-boundary RUBY SEAM affinity. When a forward/backward line move lands
+    // on a column START whose offset is a text-less ruby seam, the DOM caret
+    // renders with END-of-PREVIOUS-column affinity, so `beforeRect` reports that
+    // previous column's BOTTOM (`cb` = prev block, `ci` = its `iEnd`). The caret
+    // then mis-indexes one column back and the next step targets the column it is
+    // already in — the line move STICKS (docs/architecture.md). During a line-move
+    // RUN the caret reached this seam by landing on a column start, so resolve the
+    // ambiguity with the AFTER-side model rect (`coordsAtPos(head, 1)`), which
+    // reports the column whose start is the seam. Apply it ONLY when the two
+    // affinities straddle a column boundary AND the after side lands on a REAL
+    // column — so the doc/paragraph END (where the after side is the empty next
+    // column) keeps `beforeRect` (the true last column) and does not over-step.
+    const afterRect = (() => {
+      try {
+        return view.coordsAtPos(view.state.selection.head, 1);
+      } catch {
+        return null;
+      }
+    })();
+    if (goalRef.current != null && bcols.length && afterRect) {
+      const pitch = Number.parseFloat(getComputedStyle(content).fontSize) || 18;
+      const ab = blockOf(afterRect);
+      if (Math.abs(ab - blockOf(cr)) > pitch && bcols.some((c) => Math.abs(c.block - ab) < pitch)) cr = afterRect;
+    }
     const cb = vertical ? (cr.left + cr.right) / 2 : (cr.top + cr.bottom) / 2;
     const ci = vertical ? cr.top : cr.left;
-    const bcols = paragraphCols(beforeP, vertical);
     const idx = bcols.length ? caretColIndex(bcols, cb, ci) : 0;
     if (goalRef.current == null) goalRef.current = bcols.length ? ci - (bcols[idx]?.iStart ?? ci) : 0;
     const depth = goalRef.current ?? 0;
@@ -454,8 +490,47 @@ const moveCaretByLine = (
     }
     if (!target) return revert();
     const inline = target.iStart + depth;
-    const hit = view.posAtCoords({ left: vertical ? target.block : inline, top: vertical ? inline : target.block });
-    if (hit) commit(hit.pos);
+    // Goal depth PAST the target column's content (a short last column): the caret
+    // must clamp to the column's last caret stop. `posAtCoords` for a point past
+    // the content lands INSIDE the trailing ruby, and `commit`'s `snapToGlyph`
+    // then pulls back to its BASE — one short of the column/paragraph end. So when
+    // the goal is past `iEnd`, advance a ruby landing to AFTER the ruby.
+    const pastColEnd = inline > target.iEnd + 2;
+    const clampPastEnd = (p: number): number => {
+      if (!pastColEnd) return p;
+      const off = posToOffset(view.state.doc, p);
+      const lv = docLeaves(serialize(view.state.doc));
+      const leaf = lv.find((l) => off >= l.from && off < l.to);
+      if (!leaf || leaf.ruby < 0) return p;
+      const end = Math.max(...lv.filter((l) => l.ruby === leaf.ruby).map((l) => l.to));
+      return offsetToPos(view.state.doc, end);
+    };
+    let px = vertical ? target.block : inline;
+    let py = vertical ? inline : target.block;
+    // `posAtCoords` only hit-tests VISIBLE content — for a target line scrolled
+    // fully OUT of view it returns null, and the caret would not move AT ALL (the
+    // "moving to a previous line that isn't visible does nothing" bug). Scroll the
+    // target into view FIRST, then hit-test at the scroll-shifted coordinate. A
+    // no-op when the target is already visible (`revealDelta` returns 0). The
+    // partially-visible case already worked, which is why one more step (the next,
+    // fully-off-screen line) was the one that stuck.
+    const scroller = view.dom.parentElement;
+    if (scroller instanceof HTMLElement) {
+      const left0 = scroller.getBoundingClientRect().left + scroller.clientLeft;
+      const top0 = scroller.getBoundingClientRect().top + scroller.clientTop;
+      const dx = revealDelta(px, px, left0, left0 + scroller.clientWidth, 8);
+      const dy = revealDelta(py, py, top0, top0 + scroller.clientHeight, 8);
+      if (dx) {
+        scroller.scrollLeft += dx;
+        px -= dx;
+      }
+      if (dy) {
+        scroller.scrollTop += dy;
+        py -= dy;
+      }
+    }
+    const hit = view.posAtCoords({ left: px, top: py });
+    if (hit) commit(clampPastEnd(hit.pos));
     // Hit-test of an OFF-SCREEN target (the sibling paragraph below the fold)
     // returns null. When `modify` itself crossed to the adjacent paragraph (plain
     // text — it only mis-steps within a wrapping ruby paragraph), its landing is
@@ -583,12 +658,28 @@ export const VedEditor = (props: VedEditorProps): React.JSX.Element => {
   live.current = props;
   const policyClassRef = useRef<Appear>(APPEAR_CLASS[appearPolicy]);
   const lastTextRef = useRef(props.initialText);
+  // Caret offset in `lastTextRef`'s text, just before the in-progress edit. Held
+  // across caret-only moves and frozen during IME composition, so when an edit
+  // commits it names where the user WAS — the position undo should return to.
+  const beforeOffsetRef = useRef(0);
   const rebuildingRef = useRef(false);
   // Goal column for line movement: the inline-axis coordinate held across a run
   // of ArrowLeft/Right line moves (null = no run in progress; see
   // moveCaretByLine). Any other caret change resets it.
   const goalInlineRef = useRef<number | null>(null);
   const lineNumbersRef = useRef<LineNumbers | null>(null);
+  // Mouse drag-selection is DRIVEN BY US (see the pointer handlers): the native
+  // selection can't extend across a collapsed ruby's READ-ONLY base
+  // (`contenteditable=false`, the atom-ruby IME-safety rule), so a native drag
+  // sticks at the first ruby boundary. We hit-test the cursor against the base
+  // glyphs' rects and set the model selection ourselves. `dragAnchorRef` is the
+  // drag's anchor offset; `pointerDraggingRef` is true once a drag is underway.
+  const dragAnchorRef = useRef<number | null>(null);
+  const pointerDraggingRef = useRef(false);
+  // Provided by the mounted view: the viewport rects of the base glyphs inside the
+  // MODEL selection, for the overlay's text-selection highlight (the DOM selection
+  // can't span a read-only ruby base, so the highlight is model-driven).
+  const selectedGlyphRectsRef = useRef<(() => DOMRect[]) | null>(null);
   const onScroll = useKeepScrollPosition(scrollerRef, writingMode);
 
   // Mount the ProseMirror view once.
@@ -637,9 +728,11 @@ export const VedEditor = (props: VedEditorProps): React.JSX.Element => {
     const commitHistory = (committed: EditorState): void => {
       const text = serialize(committed.doc);
       if (text === lastTextRef.current) return;
+      // Where the caret was BEFORE this edit, in the OUTGOING text — undo's target.
+      const before = offsetToCursor(lastTextRef.current, beforeOffsetRef.current);
       lastTextRef.current = text;
       const cursor = offsetToCursor(text, posToOffset(committed.doc, committed.selection.head));
-      live.current.history.push({ text, cursor });
+      live.current.history.push({ text, cursor, cursorBefore: before });
       live.current.onTextChange?.(text);
     };
 
@@ -679,6 +772,9 @@ export const VedEditor = (props: VedEditorProps): React.JSX.Element => {
         if (tr.docChanged && !view.composing && !rebuildingRef.current) {
           commitHistory(next);
         }
+        // Track the caret as the pre-edit anchor for the NEXT edit's undo target.
+        // Frozen while composing so the WHOLE IME word's anchor is its start.
+        if (!view.composing) beforeOffsetRef.current = posToOffset(next.doc, next.selection.head);
       },
       handleKeyDown: (v, event) => handleKeyDown(v, event),
       handleDOMEvents: {
@@ -739,6 +835,9 @@ export const VedEditor = (props: VedEditorProps): React.JSX.Element => {
       // the ruby (pm/model.ts rubyEdgeOutsidePos; null for an interior click, which
       // stays). Rich only — the expanded policies keep the edges editable.
       createSelectionBetween: (v, $anchor, $head) => {
+        // We drive drag-selection ourselves (the pointer handlers); stay out of
+        // the way mid-drag so the ruby click-snap can't collapse it.
+        if (pointerDraggingRef.current) return null;
         if (policyClassRef.current !== 'rich' || $anchor.pos !== $head.pos) return null;
         const out = rubyClickOutsidePos($head);
         return out == null ? null : TextSelection.create(v.state.doc, out);
@@ -755,11 +854,13 @@ export const VedEditor = (props: VedEditorProps): React.JSX.Element => {
     //    the ruby-boundary IME bug.
     const w = window as unknown as {
       __vedCaret?: () => number;
+      __vedAnchor?: () => number;
       __vedCaretRect?: () => { top: number; bottom: number; left: number; right: number } | null;
       __vedText?: () => string;
       __vedSetCaret?: (off: number) => void;
     };
     w.__vedCaret = () => posToOffset(view.state.doc, view.state.selection.head);
+    w.__vedAnchor = () => posToOffset(view.state.doc, view.state.selection.anchor);
     w.__vedCaretRect = () => {
       try {
         return view.coordsAtPos(view.state.selection.head);
@@ -815,7 +916,7 @@ export const VedEditor = (props: VedEditorProps): React.JSX.Element => {
         return null;
       }
     };
-    const lineNumbers = mountLineNumbers(mount, view.dom, caretRect);
+    const lineNumbers = mountLineNumbers(mount, view.dom, caretRect, () => selectedGlyphRectsRef.current?.() ?? []);
     lineNumbersRef.current = lineNumbers;
     lineNumbers.schedule();
     document.fonts?.ready.then(() => lineNumbers.schedule());
@@ -915,20 +1016,31 @@ export const VedEditor = (props: VedEditorProps): React.JSX.Element => {
       const act = (isVert ? VERT_ARROWS : HORIZ_ARROWS)[event.key];
       if (!act) return false;
       event.preventDefault();
-      // Standard editor behavior: a plain (non-shift) arrow with a NON-EMPTY selection
-      // COLLAPSES the caret to the selection's edge in the move direction — so Ctrl+A
-      // (an AllSelection) then a backward arrow goes to the document START, a forward
-      // arrow to the END — instead of nudging the head one step. Our model-driven
-      // moveChar/moveCaretByLine only move `selection.head`, so without this they'd
-      // step the head (Shift still extends; it falls through to the move below).
+      // A plain (non-shift) arrow with a NON-EMPTY selection collapses to the
+      // DIRECTIONAL edge — the selection START going backward, its END going
+      // forward — so the cursor continues from the beginning (previous) or end
+      // (next) of the selection, never "always from the end".
+      //   - CHAR (along the line / between columns): collapse to that edge, no move
+      //     — the edge IS the adjacent character boundary.
+      //   - LINE (between rows / columns): collapse to that edge, then STEP one line
+      //     from it, so the caret lands on the line above the selection's start or
+      //     below its end (the edge itself is on the selection's boundary line).
+      //   - An AllSelection (Ctrl+A) collapses to the document edge (no move).
+      // (moveChar/moveCaretByLine only move `selection.head`, so without this a
+      // plain arrow would step the head; Shift still extends and falls through.)
       const sel = v.state.selection;
       if (!event.shiftKey && !sel.empty) {
         goalInlineRef.current = null;
-        const off = posToOffset(v.state.doc, act.reverse ? sel.from : sel.to);
-        v.dispatch(
-          v.state.tr.setSelection(TextSelection.create(v.state.doc, offsetToPos(v.state.doc, off))).scrollIntoView(),
-        );
-        return true;
+        const edge = posToOffset(v.state.doc, act.reverse ? sel.from : sel.to);
+        if (act.axis === 'char' || sel instanceof AllSelection) {
+          v.dispatch(
+            v.state.tr.setSelection(TextSelection.create(v.state.doc, offsetToPos(v.state.doc, edge))).scrollIntoView(),
+          );
+          return true;
+        }
+        // LINE move: collapse to the directional edge, then fall through to step one
+        // line from it (moveCaretByLine reads the now-collapsed caret).
+        v.dispatch(v.state.tr.setSelection(TextSelection.create(v.state.doc, offsetToPos(v.state.doc, edge))));
       }
       if (act.axis === 'char') {
         goalInlineRef.current = null; // moving along the line sets a new column
@@ -952,9 +1064,120 @@ export const VedEditor = (props: VedEditorProps): React.JSX.Element => {
     };
     mount.addEventListener('wheel', onWheel, { passive: false });
 
-    // A click places the caret at a new column — end any line-move run.
-    const onPointerDown = (): void => {
+    // Walk the editor's VISIBLE glyphs (base + plain text, skipping the reading
+    // `<rt>`) in document order, pairing each with its model offset. The DOM text
+    // (sans `<rt>`) is exactly the `body`/`plain` leaf characters in order, so the
+    // k-th DOM glyph is the k-th `glyphOffsets` entry — this is the only mapping
+    // that survives a collapsed ruby's READ-ONLY base, where the browser's hit-test
+    // and `posAtDOM` clamp to the ruby element.
+    const glyphWalkRange = document.createRange();
+    const walkGlyphs = (): { off: number; rect: DOMRect }[] => {
+      const offs = glyphOffsets(docLeaves(serialize(view.state.doc)));
+      const walker = document.createTreeWalker(view.dom, NodeFilter.SHOW_TEXT, {
+        acceptNode: (n) => (n.parentElement?.closest('rt') ? NodeFilter.FILTER_REJECT : NodeFilter.FILTER_ACCEPT),
+      });
+      const out: { off: number; rect: DOMRect }[] = [];
+      let k = 0;
+      for (let n = walker.nextNode(); n; n = walker.nextNode()) {
+        const len = (n.textContent ?? '').length;
+        for (let i = 0; i < len; i++, k++) {
+          if (k >= offs.length) break;
+          glyphWalkRange.setStart(n, i);
+          glyphWalkRange.setEnd(n, i + 1);
+          const rect = glyphWalkRange.getBoundingClientRect();
+          if (rect.width === 0 && rect.height === 0) continue;
+          out.push({ off: offs[k]!, rect });
+        }
+      }
+      return out;
+    };
+    // Viewport rects of the base glyphs inside the MODEL selection — the overlay
+    // paints the text-selection highlight from these (not the DOM selection, which
+    // PM can't extend across a read-only ruby base). Consecutive glyphs on the SAME
+    // line (their block-axis coord matches) are MERGED into one span: this both
+    // fills the sub-pixel hairline between adjacent glyphs/rubies and spans the gap
+    // a collapsed ruby's hidden markup/reading leaves between two bases. Empty for
+    // a caret.
+    const selectedGlyphRects = (): DOMRect[] => {
+      const sel = view.state.selection;
+      if (sel.empty) return [];
+      const from = posToOffset(view.state.doc, sel.from);
+      const to = posToOffset(view.state.doc, sel.to);
+      const vertical = getComputedStyle(view.dom).writingMode.startsWith('vertical');
+      const out: DOMRect[] = [];
+      let cur: { l: number; t: number; r: number; b: number } | null = null;
+      for (const g of walkGlyphs()) {
+        if (g.off < from || g.off >= to) continue;
+        const r = g.rect;
+        // Same line ⇔ same block-axis position (left in vertical-rl, top in
+        // horizontal), within a sub-cell tolerance.
+        const sameLine = cur != null && Math.abs((vertical ? r.left : r.top) - (vertical ? cur.l : cur.t)) < 6;
+        if (cur && sameLine) {
+          cur.l = Math.min(cur.l, r.left);
+          cur.t = Math.min(cur.t, r.top);
+          cur.r = Math.max(cur.r, r.right);
+          cur.b = Math.max(cur.b, r.bottom);
+        } else {
+          if (cur) out.push(new DOMRect(cur.l, cur.t, cur.r - cur.l, cur.b - cur.t));
+          cur = { l: r.left, t: r.top, r: r.right, b: r.bottom };
+        }
+      }
+      if (cur) out.push(new DOMRect(cur.l, cur.t, cur.r - cur.l, cur.b - cur.t));
+      return out;
+    };
+    selectedGlyphRectsRef.current = selectedGlyphRects;
+
+    // Drag-selection: a CACHE of the glyphs as block/inline bounds, taken at
+    // mousedown (before any selection dispatch re-renders the rubies and shifts the
+    // live rects). `offsetAtPoint` hit-tests against it (see pm/drag-select.ts).
+    let dragCache: { vertical: boolean; glyphs: DragGlyph[] } | null = null;
+    const buildGlyphCache = (): { vertical: boolean; glyphs: DragGlyph[] } => {
+      const vertical = getComputedStyle(view.dom).writingMode.startsWith('vertical');
+      const glyphs = walkGlyphs().map(({ off, rect: r }) => ({
+        off,
+        bLo: vertical ? r.left : r.top,
+        bHi: vertical ? r.right : r.bottom,
+        iLo: vertical ? r.top : r.left,
+        iHi: vertical ? r.bottom : r.right,
+      }));
+      return { vertical, glyphs };
+    };
+    const offsetAtPoint = (px: number, py: number): number | null =>
+      dragCache ? nearestGlyphOffset(dragCache.glyphs, px, py, dragCache.vertical) : null;
+
+    // Drive the model selection from the pointer. We listen on `window` (not the
+    // editor) for the move/up so the drag follows the cursor even past the editor's
+    // edge, and we set the model selection ourselves — the native selection can't
+    // cross a read-only ruby base.
+    const onDragMove = (e: MouseEvent): void => {
+      if (!(e.buttons & 1) || dragAnchorRef.current == null) {
+        endDrag();
+        return;
+      }
+      pointerDraggingRef.current = true;
+      const head = offsetAtPoint(e.clientX, e.clientY);
+      if (head == null) return;
+      const { doc } = view.state;
+      const sel = TextSelection.create(doc, offsetToPos(doc, dragAnchorRef.current), offsetToPos(doc, head));
+      if (!sel.eq(view.state.selection)) view.dispatch(view.state.tr.setSelection(sel));
+    };
+    const endDrag = (): void => {
+      window.removeEventListener('mousemove', onDragMove);
+      window.removeEventListener('mouseup', endDrag);
+      dragAnchorRef.current = null;
+      pointerDraggingRef.current = false;
+      dragCache = null;
+    };
+    // A press ends any line-move run and arms a drag (left button): cache the glyph
+    // geometry, record the anchor, and listen for the move/release.
+    const onPointerDown = (e: MouseEvent): void => {
       goalInlineRef.current = null;
+      endDrag();
+      if (e.button !== 0) return;
+      dragCache = buildGlyphCache();
+      dragAnchorRef.current = offsetAtPoint(e.clientX, e.clientY);
+      window.addEventListener('mousemove', onDragMove);
+      window.addEventListener('mouseup', endDrag);
     };
     mount.addEventListener('mousedown', onPointerDown);
 
@@ -977,6 +1200,8 @@ export const VedEditor = (props: VedEditorProps): React.JSX.Element => {
       requestAnimationFrame(() => {
         if (view.composing) return; // a chained composition is still active
         commitHistory(view.state);
+        // Re-anchor for the next edit now that the IME word has settled.
+        beforeOffsetRef.current = posToOffset(view.state.doc, view.state.selection.head);
       });
     };
     view.dom.addEventListener('compositionstart', onCompositionStart);
@@ -991,6 +1216,7 @@ export const VedEditor = (props: VedEditorProps): React.JSX.Element => {
       });
       mount.removeEventListener('wheel', onWheel);
       mount.removeEventListener('mousedown', onPointerDown);
+      endDrag();
       view.dom.removeEventListener('compositionstart', onCompositionStart);
       view.dom.removeEventListener('compositionend', onCompositionEnd);
       resizeObserver.disconnect();

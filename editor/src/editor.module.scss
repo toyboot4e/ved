@@ -1,5 +1,15 @@
 $font-size: 18px;
-$line-space: 2px;
+// Leading between lines, as a FRACTION OF THE FONT SIZE. It must fit a ruby
+// READING (`<rt>`, 0.5em) in the gap so a ruby-dense paragraph's rows do not
+// INTERSECT — the reading renders outside the base's em box (above it in
+// horizontal, beside it in vertical-rl) and the line box is a fixed pitch (no
+// auto-grow), so too little leading makes each row's reading collide with the
+// neighbouring row. The reading scales with the font, so the leading must too:
+// keep it font-relative, not a fixed px (≈10px at 18px → ~1.55em line-height).
+// This pitch feeds the page geometry (`--lines-extent` → `--page-height`/
+// `--page-width`), measured by scroll-keep and the line-number overlay, so it
+// stays one source of truth.
+$line-space: $font-size * 0.55;
 $line-pitch: $font-size + $line-space;
 $pad-x: 20px;
 $pad-y: 10px;

@@ -57,7 +57,9 @@ const setDoc = async (t: string) => {
   await page.keyboard.press('Backspace');
   await page.waitForTimeout(40);
   if (t) await page.keyboard.insertText(t);
-  await page.waitForTimeout(150);
+  // Long docs (hundreds of ruby tokens) need more time for structure repair +
+  // re-decoration to settle, or the length check below false-skips the doc.
+  await page.waitForTimeout(400);
 };
 
 let SEED = Number(process.argv[2] ?? (Date.now() >>> 0) % 1_000_000_000);
@@ -85,7 +87,13 @@ const PLAIN = ['あ', 'いう', 'a', 'んろは', '亜', '1'];
 const genPara = (): string => {
   const allRuby = ri(3) === 0; // sometimes an ALL-ruby paragraph (the hard case)
   let s = '';
-  const n = 10 + ri(50); // long enough to wrap across several lines
+  // Paragraphs must span MANY columns for line moves to be meaningful — a column
+  // holds 40 cells (`--page-line-chars`), a page row 20 columns (800 cells). A
+  // token is ~1–2 cells, so 120–520 tokens ≈ 5–25 columns: every paragraph wraps
+  // across several columns, and the longer ones cross a page-ROW boundary (the
+  // multicol page wrap, where line movement is hardest). A short single-column
+  // paragraph exercises almost none of the line-move logic under test.
+  const n = 120 + ri(400);
   for (let i = 0; i < n; i++) s += allRuby || ri(2) === 0 ? pick(RUBY) : pick(PLAIN);
   return s;
 };

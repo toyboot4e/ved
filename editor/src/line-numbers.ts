@@ -55,6 +55,7 @@ export const mountLineNumbers = (
   scroller: HTMLElement,
   content: HTMLElement,
   getCaret: () => CaretRect | null,
+  getSelectionRects: () => DOMRect[],
 ): LineNumbers => {
   const overlay = document.createElement('div');
   overlay.className = 'vedLineNumbers';
@@ -68,6 +69,7 @@ export const mountLineNumbers = (
   scroller.appendChild(overlay);
 
   const pool: HTMLElement[] = [];
+  const selPool: HTMLElement[] = []; // custom text-selection rects (base only)
   const range = document.createRange();
   let raf = 0;
   let pendingFull = false;
@@ -107,6 +109,7 @@ export const mountLineNumbers = (
     for (const el of pool.slice(lines.length)) el.style.display = 'none';
 
     refreshHighlight(vertical, o);
+    refreshSelection(o);
   };
 
   // Move the highlight to the caret's visual line, reusing the cached `lines`.
@@ -141,10 +144,32 @@ export const mountLineNumbers = (
     }
   };
 
+  // Custom TEXT-SELECTION highlight, rendered BASE-ONLY from the MODEL selection.
+  // The native `::selection` fills the whole line box (it would cover the ruby
+  // reading in the leading) AND it can't even span a collapsed ruby's read-only
+  // base — so it is hidden (ruby.css) and the editor hands us the viewport rects of
+  // the SELECTED base glyphs (`getSelectionRects`). We just place them, made
+  // overlay-relative (scroll-invariant, like the numbers).
+  const refreshSelection = (o: DOMRect): void => {
+    let n = 0;
+    for (const r of getSelectionRects()) {
+      if (r.width === 0 || r.height === 0) continue;
+      const el = selPool[n] ?? makeSelRect(overlay, selPool);
+      el.style.transform = `translate(${r.left - o.left}px, ${r.top - o.top}px)`;
+      el.style.width = `${r.width}px`;
+      el.style.height = `${r.height}px`;
+      el.style.display = '';
+      n++;
+    }
+    for (const el of selPool.slice(n)) el.style.display = 'none';
+  };
+
   // HIGHLIGHT-ONLY: a selection change didn't move any line, so skip the O(doc)
   // re-measure and just re-pick + reposition the highlight from cached geometry.
   const highlightOnly = (): void => {
-    refreshHighlight(getComputedStyle(content).writingMode.startsWith('vertical'), overlay.getBoundingClientRect());
+    const o = overlay.getBoundingClientRect();
+    refreshHighlight(getComputedStyle(content).writingMode.startsWith('vertical'), o);
+    refreshSelection(o);
   };
 
   const schedule = (full = true): void => {
@@ -297,6 +322,16 @@ const makeNumber = (overlay: HTMLElement, pool: HTMLElement[]): HTMLElement => {
   const el = document.createElement('span');
   el.className = 'vedLineNumber';
   overlay.appendChild(el);
+  pool.push(el);
+  return el;
+};
+
+// A single base-only text-selection rect (overlay-relative, sized in px).
+const makeSelRect = (overlay: HTMLElement, pool: HTMLElement[]): HTMLElement => {
+  const el = document.createElement('div');
+  el.className = 'vedSelectionRect';
+  // Behind the numbers but inside the same scroll-invariant overlay box.
+  overlay.insertBefore(el, overlay.firstChild);
   pool.push(el);
   return el;
 };
