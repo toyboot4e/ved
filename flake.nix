@@ -153,6 +153,7 @@
             packages = with pkgs; [
               biome
               just
+              ni
               nodejs_24
               pnpm
               pinact
