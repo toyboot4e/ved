@@ -12,6 +12,7 @@ import { type CaretRect, type LineNumbers, mountLineNumbers } from './line-numbe
 import { nextCaretOffset } from './pm/caret-model';
 import { type CursorState, cursorToOffset, offsetToCursor } from './pm/cursor';
 import { buildDecorations } from './pm/decorations';
+import { type DragGlyph, glyphOffsets, nearestGlyphOffset } from './pm/drag-select';
 import type { Appear } from './pm/leaves';
 import { docLeaves, snapToGlyph } from './pm/leaves';
 import {
@@ -655,6 +656,18 @@ export const VedEditor = (props: VedEditorProps): React.JSX.Element => {
   // moveCaretByLine). Any other caret change resets it.
   const goalInlineRef = useRef<number | null>(null);
   const lineNumbersRef = useRef<LineNumbers | null>(null);
+  // Mouse drag-selection is DRIVEN BY US (see the pointer handlers): the native
+  // selection can't extend across a collapsed ruby's READ-ONLY base
+  // (`contenteditable=false`, the atom-ruby IME-safety rule), so a native drag
+  // sticks at the first ruby boundary. We hit-test the cursor against the base
+  // glyphs' rects and set the model selection ourselves. `dragAnchorRef` is the
+  // drag's anchor offset; `pointerDraggingRef` is true once a drag is underway.
+  const dragAnchorRef = useRef<number | null>(null);
+  const pointerDraggingRef = useRef(false);
+  // Provided by the mounted view: the viewport rects of the base glyphs inside the
+  // MODEL selection, for the overlay's text-selection highlight (the DOM selection
+  // can't span a read-only ruby base, so the highlight is model-driven).
+  const selectedGlyphRectsRef = useRef<(() => DOMRect[]) | null>(null);
   const onScroll = useKeepScrollPosition(scrollerRef, writingMode);
 
   // Mount the ProseMirror view once.
@@ -805,6 +818,9 @@ export const VedEditor = (props: VedEditorProps): React.JSX.Element => {
       // the ruby (pm/model.ts rubyEdgeOutsidePos; null for an interior click, which
       // stays). Rich only — the expanded policies keep the edges editable.
       createSelectionBetween: (v, $anchor, $head) => {
+        // We drive drag-selection ourselves (the pointer handlers); stay out of
+        // the way mid-drag so the ruby click-snap can't collapse it.
+        if (pointerDraggingRef.current) return null;
         if (policyClassRef.current !== 'rich' || $anchor.pos !== $head.pos) return null;
         const out = rubyClickOutsidePos($head);
         return out == null ? null : TextSelection.create(v.state.doc, out);
@@ -881,7 +897,7 @@ export const VedEditor = (props: VedEditorProps): React.JSX.Element => {
         return null;
       }
     };
-    const lineNumbers = mountLineNumbers(mount, view.dom, caretRect);
+    const lineNumbers = mountLineNumbers(mount, view.dom, caretRect, () => selectedGlyphRectsRef.current?.() ?? []);
     lineNumbersRef.current = lineNumbers;
     lineNumbers.schedule();
     document.fonts?.ready.then(() => lineNumbers.schedule());
@@ -1018,9 +1034,98 @@ export const VedEditor = (props: VedEditorProps): React.JSX.Element => {
     };
     mount.addEventListener('wheel', onWheel, { passive: false });
 
-    // A click places the caret at a new column — end any line-move run.
-    const onPointerDown = (): void => {
+    // Walk the editor's VISIBLE glyphs (base + plain text, skipping the reading
+    // `<rt>`) in document order, pairing each with its model offset. The DOM text
+    // (sans `<rt>`) is exactly the `body`/`plain` leaf characters in order, so the
+    // k-th DOM glyph is the k-th `glyphOffsets` entry — this is the only mapping
+    // that survives a collapsed ruby's READ-ONLY base, where the browser's hit-test
+    // and `posAtDOM` clamp to the ruby element.
+    const glyphWalkRange = document.createRange();
+    const walkGlyphs = (): { off: number; rect: DOMRect }[] => {
+      const offs = glyphOffsets(docLeaves(serialize(view.state.doc)));
+      const walker = document.createTreeWalker(view.dom, NodeFilter.SHOW_TEXT, {
+        acceptNode: (n) => (n.parentElement?.closest('rt') ? NodeFilter.FILTER_REJECT : NodeFilter.FILTER_ACCEPT),
+      });
+      const out: { off: number; rect: DOMRect }[] = [];
+      let k = 0;
+      for (let n = walker.nextNode(); n; n = walker.nextNode()) {
+        const len = (n.textContent ?? '').length;
+        for (let i = 0; i < len; i++, k++) {
+          if (k >= offs.length) break;
+          glyphWalkRange.setStart(n, i);
+          glyphWalkRange.setEnd(n, i + 1);
+          const rect = glyphWalkRange.getBoundingClientRect();
+          if (rect.width === 0 && rect.height === 0) continue;
+          out.push({ off: offs[k]!, rect });
+        }
+      }
+      return out;
+    };
+    // Viewport rects of the base glyphs inside the MODEL selection — the overlay
+    // paints the text-selection highlight from these (not the DOM selection, which
+    // PM can't extend across a read-only ruby base). Empty for a caret.
+    const selectedGlyphRects = (): DOMRect[] => {
+      const sel = view.state.selection;
+      if (sel.empty) return [];
+      const from = posToOffset(view.state.doc, sel.from);
+      const to = posToOffset(view.state.doc, sel.to);
+      return walkGlyphs()
+        .filter((g) => g.off >= from && g.off < to)
+        .map((g) => g.rect);
+    };
+    selectedGlyphRectsRef.current = selectedGlyphRects;
+
+    // Drag-selection: a CACHE of the glyphs as block/inline bounds, taken at
+    // mousedown (before any selection dispatch re-renders the rubies and shifts the
+    // live rects). `offsetAtPoint` hit-tests against it (see pm/drag-select.ts).
+    let dragCache: { vertical: boolean; glyphs: DragGlyph[] } | null = null;
+    const buildGlyphCache = (): { vertical: boolean; glyphs: DragGlyph[] } => {
+      const vertical = getComputedStyle(view.dom).writingMode.startsWith('vertical');
+      const glyphs = walkGlyphs().map(({ off, rect: r }) => ({
+        off,
+        bLo: vertical ? r.left : r.top,
+        bHi: vertical ? r.right : r.bottom,
+        iLo: vertical ? r.top : r.left,
+        iHi: vertical ? r.bottom : r.right,
+      }));
+      return { vertical, glyphs };
+    };
+    const offsetAtPoint = (px: number, py: number): number | null =>
+      dragCache ? nearestGlyphOffset(dragCache.glyphs, px, py, dragCache.vertical) : null;
+
+    // Drive the model selection from the pointer. We listen on `window` (not the
+    // editor) for the move/up so the drag follows the cursor even past the editor's
+    // edge, and we set the model selection ourselves — the native selection can't
+    // cross a read-only ruby base.
+    const onDragMove = (e: MouseEvent): void => {
+      if (!(e.buttons & 1) || dragAnchorRef.current == null) {
+        endDrag();
+        return;
+      }
+      pointerDraggingRef.current = true;
+      const head = offsetAtPoint(e.clientX, e.clientY);
+      if (head == null) return;
+      const { doc } = view.state;
+      const sel = TextSelection.create(doc, offsetToPos(doc, dragAnchorRef.current), offsetToPos(doc, head));
+      if (!sel.eq(view.state.selection)) view.dispatch(view.state.tr.setSelection(sel));
+    };
+    const endDrag = (): void => {
+      window.removeEventListener('mousemove', onDragMove);
+      window.removeEventListener('mouseup', endDrag);
+      dragAnchorRef.current = null;
+      pointerDraggingRef.current = false;
+      dragCache = null;
+    };
+    // A press ends any line-move run and arms a drag (left button): cache the glyph
+    // geometry, record the anchor, and listen for the move/release.
+    const onPointerDown = (e: MouseEvent): void => {
       goalInlineRef.current = null;
+      endDrag();
+      if (e.button !== 0) return;
+      dragCache = buildGlyphCache();
+      dragAnchorRef.current = offsetAtPoint(e.clientX, e.clientY);
+      window.addEventListener('mousemove', onDragMove);
+      window.addEventListener('mouseup', endDrag);
     };
     mount.addEventListener('mousedown', onPointerDown);
 
@@ -1057,6 +1162,7 @@ export const VedEditor = (props: VedEditorProps): React.JSX.Element => {
       });
       mount.removeEventListener('wheel', onWheel);
       mount.removeEventListener('mousedown', onPointerDown);
+      endDrag();
       view.dom.removeEventListener('compositionstart', onCompositionStart);
       view.dom.removeEventListener('compositionend', onCompositionEnd);
       resizeObserver.disconnect();
