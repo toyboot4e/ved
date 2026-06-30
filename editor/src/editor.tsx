@@ -2,7 +2,7 @@ import { clsx } from 'clsx';
 import { baseKeymap } from 'prosemirror-commands';
 import { keymap } from 'prosemirror-keymap';
 import { Fragment, Slice } from 'prosemirror-model';
-import { type Command, EditorState, Plugin, TextSelection } from 'prosemirror-state';
+import { AllSelection, type Command, EditorState, Plugin, TextSelection } from 'prosemirror-state';
 import { EditorView } from 'prosemirror-view';
 import type React from 'react';
 import { useCallback, useEffect, useLayoutEffect, useRef } from 'react';
@@ -997,20 +997,31 @@ export const VedEditor = (props: VedEditorProps): React.JSX.Element => {
       const act = (isVert ? VERT_ARROWS : HORIZ_ARROWS)[event.key];
       if (!act) return false;
       event.preventDefault();
-      // Standard editor behavior: a plain (non-shift) arrow with a NON-EMPTY selection
-      // COLLAPSES the caret to the selection's edge in the move direction — so Ctrl+A
-      // (an AllSelection) then a backward arrow goes to the document START, a forward
-      // arrow to the END — instead of nudging the head one step. Our model-driven
-      // moveChar/moveCaretByLine only move `selection.head`, so without this they'd
-      // step the head (Shift still extends; it falls through to the move below).
+      // A plain (non-shift) arrow with a NON-EMPTY selection collapses to the
+      // DIRECTIONAL edge — the selection START going backward, its END going
+      // forward — so the cursor continues from the beginning (previous) or end
+      // (next) of the selection, never "always from the end".
+      //   - CHAR (along the line / between columns): collapse to that edge, no move
+      //     — the edge IS the adjacent character boundary.
+      //   - LINE (between rows / columns): collapse to that edge, then STEP one line
+      //     from it, so the caret lands on the line above the selection's start or
+      //     below its end (the edge itself is on the selection's boundary line).
+      //   - An AllSelection (Ctrl+A) collapses to the document edge (no move).
+      // (moveChar/moveCaretByLine only move `selection.head`, so without this a
+      // plain arrow would step the head; Shift still extends and falls through.)
       const sel = v.state.selection;
       if (!event.shiftKey && !sel.empty) {
         goalInlineRef.current = null;
-        const off = posToOffset(v.state.doc, act.reverse ? sel.from : sel.to);
-        v.dispatch(
-          v.state.tr.setSelection(TextSelection.create(v.state.doc, offsetToPos(v.state.doc, off))).scrollIntoView(),
-        );
-        return true;
+        const edge = posToOffset(v.state.doc, act.reverse ? sel.from : sel.to);
+        if (act.axis === 'char' || sel instanceof AllSelection) {
+          v.dispatch(
+            v.state.tr.setSelection(TextSelection.create(v.state.doc, offsetToPos(v.state.doc, edge))).scrollIntoView(),
+          );
+          return true;
+        }
+        // LINE move: collapse to the directional edge, then fall through to step one
+        // line from it (moveCaretByLine reads the now-collapsed caret).
+        v.dispatch(v.state.tr.setSelection(TextSelection.create(v.state.doc, offsetToPos(v.state.doc, edge))));
       }
       if (act.axis === 'char') {
         goalInlineRef.current = null; // moving along the line sets a new column
