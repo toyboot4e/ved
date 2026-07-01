@@ -122,6 +122,10 @@ Task runner is `just`:
   warn before running on a live desktop), `fcitx5-remote -o`, `xdotool key
   Henkan_Mode` (→ hiragana), then `xdotool type aiueo` → 「あいうえお」, commit with
   `Return`. Guard on `mozcAvailable()`; ALWAYS `fcitx5-remote -c` to restore.
+  The platform mechanics live behind the harness's `ImePlatform` registry: X11
+  is the VERIFIED entry; Wayland (ydotool/wtype), macOS (osascript + im-select),
+  and Windows (SendInput) are guarded best-effort entries that self-skip where
+  their stack is absent — a new platform is one appended entry, no test changes.
   (Verified: composing inside a ruby base scrambles — `|ルビ(ruby)` + `aiueo` →
   `|あルいうえおビ(ruby)` — exactly the in-app bug, which CDP could not reproduce.)
 - **Process boundaries.** All fs and dialog access lives in the main process
