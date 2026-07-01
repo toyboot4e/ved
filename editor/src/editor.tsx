@@ -1189,6 +1189,34 @@ export const VedEditor = (props: VedEditorProps): React.JSX.Element => {
       if (e.button !== 0) return;
       dragCache = buildGlyphCache();
       dragAnchorRef.current = offsetAtPoint(e.clientX, e.clientY);
+      // A press on the EMPTY scroller area — outside the content element, e.g.
+      // left of the last line in Vertical/VerticalRows, whose content box hugs
+      // its text (Horizontal/VerticalColumns cover their page box, so there the
+      // browser resolves such clicks itself) — never reaches the contenteditable
+      // and moves no caret. Resolve it against the glyph cache (nearest glyph in
+      // reading order: past the document end → the document end) and set the
+      // model selection ourselves, snapping outside a collapsed ruby exactly
+      // like createSelectionBetween does for in-content clicks. Coordinates are
+      // checked against the client area so scrollbar presses stay untouched.
+      const r = mount.getBoundingClientRect();
+      const inClientArea =
+        e.clientX - r.left - mount.clientLeft < mount.clientWidth &&
+        e.clientY - r.top - mount.clientTop < mount.clientHeight;
+      if (
+        !view.composing &&
+        !e.shiftKey &&
+        inClientArea &&
+        e.target instanceof Node &&
+        !view.dom.contains(e.target) &&
+        dragAnchorRef.current != null
+      ) {
+        e.preventDefault(); // the press must not blur the editor
+        const pos = offsetToPos(view.state.doc, dragAnchorRef.current);
+        const snapped =
+          (policyClassRef.current === 'rich' ? rubyClickOutsidePos(view.state.doc.resolve(pos)) : null) ?? pos;
+        view.dispatch(view.state.tr.setSelection(TextSelection.create(view.state.doc, snapped)));
+        view.focus();
+      }
       window.addEventListener('mousemove', onDragMove);
       window.addEventListener('mouseup', endDrag);
     };
