@@ -565,8 +565,16 @@ const measureGeom = (scroller: HTMLElement): ScrollGeom => {
   const contentCs = content ? getComputedStyle(content) : null;
   const fontSize = (contentCs && Number.parseFloat(contentCs.fontSize)) || 18;
   const linePitch = (contentCs && Number.parseFloat(contentCs.lineHeight)) || fontSize + 2;
+  // columns: band period = page height (the line length) + the multicol gap
+  // (the line-number gutter). columnGap is only meaningful under multiCol —
+  // rows has no multicol (ADR 0010), where its pitch is the contiguous one.
   const colGap = (contentCs && Number.parseFloat(contentCs.columnGap)) || 20;
-  return { linePitch, rowPitch: lineChars * fontSize + colGap, linesPerRow };
+  return {
+    linePitch,
+    colsPagePitch: lineChars * fontSize + colGap,
+    rowsPagePitch: linesPerRow * linePitch,
+    linesPerRow,
+  };
 };
 
 const useKeepScrollPosition = (

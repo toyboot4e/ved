@@ -1,8 +1,9 @@
 import { describe, expect, it } from 'vitest';
 import { lineToScroll, revealDelta, type ScrollGeom, scrollToLine } from './scroll-keep';
 
-// 20px lines, 740px page rows (720 + 20 gap), 20 lines per row
-const geom: ScrollGeom = { linePitch: 20, rowPitch: 740, linesPerRow: 20 };
+// 20px lines, 20 lines per page; columns bands pitch 740px (720 + 20 gutter),
+// rows pages pitch 400px (contiguous: 20 lines × 20px, no gap — ADR 0010)
+const geom: ScrollGeom = { linePitch: 20, colsPagePitch: 740, rowsPagePitch: 400, linesPerRow: 20 };
 
 describe('scrollToLine', () => {
   it('reads lines from the flow-axis offset per mode', () => {
@@ -11,15 +12,15 @@ describe('scrollToLine', () => {
     expect(scrollToLine('vertical', geom, 0, -1200)).toBe(60);
     // columns: row 3 starts at line 60
     expect(scrollToLine('columns', geom, 2220, 0)).toBe(60);
-    // rows: page 3 (lines 60..) starts at scrollLeft = -3 × rowPitch
-    expect(scrollToLine('rows', geom, 0, -2220)).toBe(60);
+    // rows: page 3 (lines 60..) starts at scrollLeft = -3 × rowsPagePitch
+    expect(scrollToLine('rows', geom, 0, -1200)).toBe(60);
   });
 
   it('rounds to the nearest line / row', () => {
     expect(scrollToLine('horizontal', geom, 1209, 0)).toBe(60);
     expect(scrollToLine('horizontal', geom, 1211, 0)).toBe(61);
     expect(scrollToLine('columns', geom, 2500, 0)).toBe(60);
-    expect(scrollToLine('rows', geom, 0, -2500)).toBe(60);
+    expect(scrollToLine('rows', geom, 0, -1350)).toBe(60);
   });
 });
 
@@ -28,13 +29,13 @@ describe('lineToScroll', () => {
     expect(lineToScroll('horizontal', geom, 60)).toEqual({ top: 1200, left: 0 });
     expect(lineToScroll('vertical', geom, 60)).toEqual({ top: 0, left: -1200 });
     expect(lineToScroll('columns', geom, 60)).toEqual({ top: 2220, left: 0 });
-    expect(lineToScroll('rows', geom, 60)).toEqual({ top: 0, left: -2220 });
+    expect(lineToScroll('rows', geom, 60)).toEqual({ top: 0, left: -1200 });
   });
 
   it('snaps the paged modes to the containing page', () => {
     // line 70 lives in page 3 (lines 60..79)
     expect(lineToScroll('columns', geom, 70)).toEqual({ top: 2220, left: 0 });
-    expect(lineToScroll('rows', geom, 70)).toEqual({ top: 0, left: -2220 });
+    expect(lineToScroll('rows', geom, 70)).toEqual({ top: 0, left: -1200 });
   });
 
   it('round-trips across mode pairs', () => {

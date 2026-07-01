@@ -403,12 +403,22 @@ Orthogonal to view modes; pure CSS:
 | `Horizontal` | normal flow | line-length wide × lines tall | vertical |
 | `Vertical` | `vertical-rl` | transposed, one fixed page box | both axes |
 | `VerticalColumns` | `vertical-rl` + CSS multi-column (*dankumi*) | pages tile DOWNWARD; one page per row | vertical |
-| `VerticalRows` | `vertical-rl` + CSS multi-column (*dankumi*) | pages tile LEFTWARD; one page per column | horizontal |
+| `VerticalRows` | `vertical-rl`, plain block flow (*dankumi*) | pages tile LEFTWARD; ARITHMETIC pages (every N lines) | horizontal |
 
 Both paged modes (`VerticalColumns`, `VerticalRows`) are 1D arrangements
 — there is no CSS primitive that wraps multi-column into a 2D grid over
 one contenteditable. The 2D generalization (N pages per row OR per
 column) is deferred; see [ADR 0004](adr/0004-vertical-page-layouts.md).
+
+The two paged modes are structurally DIFFERENT, not mirrors: `VerticalColumns`
+has real fragmentation (multicol overflow columns stack along the inline axis
+= downward, with a physical `column-gap` gutter), but multicol can never stack
+columns along the BLOCK axis (= leftward), and Chromium does not fragment an
+orthogonal-flow child either — so `VerticalRows` is one continuous vertical-rl
+block flow where a "page" is arithmetic (every `--page-lines` lines), with NO
+physical inter-page gap possible. The page boundary falls in the inter-line
+leading, and the separator hairline is a right-anchored background lattice with
+period exactly `--page-width`. See [ADR 0010](adr/0010-verticalrows-arithmetic-pages.md).
 
 Notes that took debugging to learn:
 

@@ -10,10 +10,13 @@ export type ScrollMode = 'horizontal' | 'vertical' | 'columns' | 'rows';
 export type ScrollGeom = {
   /** Distance between line starts (font size + line spacing), px. */
   readonly linePitch: number;
-  /** Distance between page-row starts (page height + gap), px. Used by both
-   *  `columns` (pages tile down — pitch is along scrollTop) and `rows`
-   *  (pages tile left — pitch is along scrollLeft, in absolute pixels). */
-  readonly rowPitch: number;
+  /** `columns`: distance between page-row starts along scrollTop —
+   *  page height (the line length) + the gutter gap between bands, px. */
+  readonly colsPagePitch: number;
+  /** `rows`: distance between page starts along scrollLeft (absolute px) —
+   *  the flow is CONTIGUOUS (pages are arithmetic, no physical gap; see
+   *  ADR 0010), so the pitch is exactly lines-per-page × line pitch. */
+  readonly rowsPagePitch: number;
   /** Lines per page in the paged modes. */
   readonly linesPerRow: number;
 };
@@ -29,11 +32,11 @@ export const scrollToLine = (mode: ScrollMode, geom: ScrollGeom, scrollTop: numb
     case 'vertical':
       return Math.round(Math.abs(scrollLeft) / geom.linePitch);
     case 'columns':
-      return Math.round(scrollTop / geom.rowPitch) * geom.linesPerRow;
+      return Math.round(scrollTop / geom.colsPagePitch) * geom.linesPerRow;
     case 'rows':
       // Pages tile leftward (vertical-rl); scrollLeft is negative, so use
       // the absolute distance from the right edge as the "page index".
-      return Math.round(Math.abs(scrollLeft) / geom.rowPitch) * geom.linesPerRow;
+      return Math.round(Math.abs(scrollLeft) / geom.rowsPagePitch) * geom.linesPerRow;
   }
 };
 
@@ -61,9 +64,9 @@ export const lineToScroll = (mode: ScrollMode, geom: ScrollGeom, line: number): 
     case 'vertical':
       return { top: 0, left: -(line * geom.linePitch) };
     case 'columns':
-      return { top: Math.floor(line / geom.linesPerRow) * geom.rowPitch, left: 0 };
+      return { top: Math.floor(line / geom.linesPerRow) * geom.colsPagePitch, left: 0 };
     case 'rows':
       // Pages tile leftward — scrollLeft grows negative as you scroll farther.
-      return { top: 0, left: -(Math.floor(line / geom.linesPerRow) * geom.rowPitch) };
+      return { top: 0, left: -(Math.floor(line / geom.linesPerRow) * geom.rowsPagePitch) };
   }
 };
