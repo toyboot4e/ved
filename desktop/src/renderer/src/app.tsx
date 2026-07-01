@@ -13,12 +13,14 @@ import {
   type TabCommand,
   windowTitle,
 } from './file-commands';
+import { useViewConfigStore, viewConfigToCss } from './view-config';
 
 const INITIAL_TEXT = '|ルビ(ruby)';
 
 export const App = (): React.JSX.Element => {
   const [writingMode, setWritingMode] = useState(WritingMode.VerticalColumns);
   const [appearPolicy, setAppearPolicy] = useState(AppearPolicy.Rich);
+  const viewConfig = useViewConfigStore((s) => s.config);
 
   const [state, dispatch] = useReducer(buffersReducer, INITIAL_TEXT, initBuffers);
   const active = activeBuffer(state);
@@ -146,8 +148,12 @@ export const App = (): React.JSX.Element => {
   }, [runFileCommand, runTabCommand]);
 
   return (
-    // vertMode on the root transposes the page geometry (CSS custom props)
-    <div className={clsx(styles.root, writingMode !== WritingMode.Horizontal && styles.vertMode)}>
+    // vertMode on the root transposes the page geometry (CSS custom props);
+    // the view config overrides the geometry custom props inline (view-config.ts)
+    <div
+      className={clsx(styles.root, writingMode !== WritingMode.Horizontal && styles.vertMode)}
+      style={viewConfigToCss(viewConfig)}
+    >
       {/* Also makes space for traffic lights (macOS only) */}
       <div className={styles.header}>
         <Toolbar

@@ -1,6 +1,7 @@
 import { AppearPolicy, editorStyles as styles, WritingMode } from '@ved/editor';
 import type React from 'react';
 import { HorizontalIcon, VerticalColumnsIcon, VerticalIcon, VerticalRowsIcon } from './icons/WritingModeIcons';
+import { ViewConfigControls } from './view-config-controls';
 
 /** Properties of {@link Toolbar}. */
 export type ToolbarProps = {
@@ -100,6 +101,7 @@ export const Toolbar = ({
           </button>
         ))}
       </fieldset>
+      <ViewConfigControls />
     </div>
   );
 };

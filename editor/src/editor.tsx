@@ -920,6 +920,11 @@ export const VedEditor = (props: VedEditorProps): React.JSX.Element => {
     lineNumbersRef.current = lineNumbers;
     lineNumbers.schedule();
     document.fonts?.ready.then(() => lineNumbers.schedule());
+    // Also fires on a view-config change (font size / line space / page
+    // geometry): the content box resizes, so the line numbers re-measure.
+    // Deliberately NO caret reveal here: an observer-timed scroll races the
+    // line mover's absolute-y hit-testing (and RO is throttled in hidden
+    // windows); the caret re-reveals on the next edit via dispatchTransaction.
     const resizeObserver = new ResizeObserver(() => lineNumbers.schedule());
     resizeObserver.observe(mount);
 

@@ -37,11 +37,23 @@ pages of a Japanese book. One page per column; columns accumulate leftward
 as the document grows.
 _Avoid_: left-dankumi, book-mode.
 
+**Cell**:
+The square of one fullwidth (zenkaku) character; one cell = 1em at the body
+font size. The unit of **page** geometry.
+_Avoid_: grid, square, character (ambiguous — see **page**).
+
 **Page**:
-The text area's character geometry: N fullwidth characters per line × M lines.
-Sizes given in "characters" mean halfwidth (ASCII) columns; N columns = N/2
-fullwidth = N/2 em.
+The text area's geometry: N **cells** per line × M lines, always stated in
+fullwidth cells (40×20, the genkō-yōshi convention). Distinct from sizes
+given in "characters" in prose, which mean halfwidth (ASCII) columns; N
+columns = N/2 cells = N/2 em.
 _Avoid_: viewport, canvas.
+
+**Line space**:
+The leading between adjacent lines, stated as a ratio of the **cell** size
+(line pitch = cell × (1 + line space)). Must clear the ruby reading (0.5em),
+so ratios below 0.5 are out of spec.
+_Avoid_: line-height (the CSS property), leading, gap.
 
 ### Document and annotation
 
@@ -84,6 +96,12 @@ _Avoid_: view mode, display mode.
 A ruby currently rendered as visible syntax (its **delim**/**rt** leaves
 shown) rather than as an annotation, per the **appear policy** and cursor.
 _Avoid_: open, revealed.
+
+**View config**:
+The user-adjustable rendering values: font size (the **cell** size), **line
+space**, **page** geometry, font family. A pure view concern — orthogonal to
+the document string and to **appear policy**.
+_Avoid_: settings (broader — includes keymaps, workspace), theme, preferences.
 
 ### Project structure
 

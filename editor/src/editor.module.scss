@@ -1,16 +1,6 @@
+// Default cell size (body font size); the runtime value is the --cell-size
+// custom property on .root, which the shell may override (view config).
 $font-size: 18px;
-// Leading between lines, as a FRACTION OF THE FONT SIZE. It must fit a ruby
-// READING (`<rt>`, 0.5em) in the gap so a ruby-dense paragraph's rows do not
-// INTERSECT — the reading renders outside the base's em box (above it in
-// horizontal, beside it in vertical-rl) and the line box is a fixed pitch (no
-// auto-grow), so too little leading makes each row's reading collide with the
-// neighbouring row. The reading scales with the font, so the leading must too:
-// keep it font-relative, not a fixed px (≈10px at 18px → ~1.55em line-height).
-// This pitch feeds the page geometry (`--lines-extent` → `--page-height`/
-// `--page-width`), measured by scroll-keep and the line-number overlay, so it
-// stays one source of truth.
-$line-space: $font-size * 0.55;
-$line-pitch: $font-size + $line-space;
 $pad-x: 20px;
 $pad-y: 10px;
 // Breathing room at the line start so the caret at the document start has a
@@ -36,10 +26,24 @@ $footer-height: $font-size + $pad-y * 2;
   // configuration (editor-ui-plan phase 4) overrides them at runtime.
   --page-line-chars: 40;
   --page-lines: 20;
-  // One zenkaku cell = $font-size (1em); the line is a fixed N cells long.
+  // One zenkaku cell = the body font size (1em); the line is a fixed N cells
+  // long. Runtime-overridable like the page geometry above (view config).
   --cell-size: #{$font-size};
+  // Leading between lines, as a FRACTION OF THE CELL SIZE. It must fit a ruby
+  // READING (`<rt>`, 0.5em) in the gap so a ruby-dense paragraph's rows do not
+  // INTERSECT — the reading renders outside the base's em box (above it in
+  // horizontal, beside it in vertical-rl) and the line box is a fixed pitch (no
+  // auto-grow), so too little leading makes each row's reading collide with the
+  // neighbouring row. The reading scales with the font, so the leading must
+  // too: a ratio, not a fixed px (0.55 → ~1.55em line-height). The pitch feeds
+  // the page geometry (`--lines-extent` → `--page-height`/`--page-width`),
+  // measured by scroll-keep and the line-number overlay, so it stays one
+  // source of truth.
+  --line-space-ratio: 0.55;
+  --line-space: calc(var(--cell-size) * var(--line-space-ratio));
+  --line-pitch: calc(var(--cell-size) + var(--line-space));
   --line-length: calc(var(--page-line-chars) * var(--cell-size));
-  --lines-extent: calc(var(--page-lines) * #{$line-pitch});
+  --lines-extent: calc(var(--page-lines) * var(--line-pitch));
 
   // Horizontal writing: lines run horizontally, stacking downwards
   --page-width: var(--line-length);
@@ -126,6 +130,39 @@ $footer-height: $font-size + $pad-y * 2;
   }
 }
 
+// Inline input cells for the view-config group: a tiny label + input pair
+// styled like a toolbarButton slot.
+.toolbarField {
+  display: inline-flex;
+  align-items: center;
+  gap: 3px;
+  font-size: 11px;
+  color: #555;
+  padding: 2px 4px 2px 6px;
+  user-select: none;
+
+  &:not(:last-child) {
+    border-right: 1px solid #808080;
+  }
+}
+
+.toolbarNumberInput,
+.toolbarTextInput {
+  font-size: 12px;
+  padding: 1px 2px;
+  border: 1px solid #c0c0c0;
+  border-radius: 2px;
+  background: #fff;
+}
+
+.toolbarNumberInput {
+  width: 3.6em;
+}
+
+.toolbarTextInput {
+  width: 9em;
+}
+
 // Icon-only variant of toolbarButton, for the writing-mode row. Shares the
 // pressed/border styling; just swaps the padding and cursor target around
 // an SVG glyph. Native `title` attribute carries the hover description.
@@ -184,12 +221,14 @@ $footer-height: $font-size + $pad-y * 2;
   // Used by the leading-delim overlay caret (ruby.module.scss
   // .rubyLeadActive::before): the body font-size, as an absolute pixel
   // value so the overlay's `1em` doesn't shrink to the delim's $markup-size.
-  --ved-caret-extent: #{$font-size};
+  --ved-caret-extent: var(--cell-size);
+  // The document font (view config); empty/unset inherits the shell's stack.
+  font-family: var(--font-family, inherit);
 
   // Horizontal writing: a fixed page box; overflow lines scroll downwards
   &:not(.vertMode) {
-    font-size: $font-size;
-    line-height: $font-size + $line-space;
+    font-size: var(--cell-size);
+    line-height: var(--line-pitch);
     height: calc(var(--page-height) + #{$pad-y * 2});
     box-sizing: border-box;
     padding: $pad-y $pad-x;
@@ -200,8 +239,7 @@ $footer-height: $font-size + $pad-y * 2;
     margin-block-start: 0;
     margin-block-end: 0;
     margin: 0;
-    $space: calc($line-space / 2);
-    padding: 0 $space 0 $space;
+    padding: 0 calc(var(--line-space) / 2);
     // Containing block for the placeholder (see .placeholder)
     position: relative;
     // Cap every line to a fixed N-cell length (--line-length px = N × cell).
@@ -316,8 +354,8 @@ $col-gap: $pad-y * 2;
   }
 
   &.editorContent {
-    font-size: $font-size;
-    line-height: $font-size + $line-space;
+    font-size: var(--cell-size);
+    line-height: var(--line-pitch);
     word-break: break-all;
     word-wrap: break-word;
     writing-mode: vertical-rl;

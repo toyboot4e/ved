@@ -213,6 +213,35 @@ Refinement decided in the detailed plan: Phase 1 uses `useReducer` + a pure
 `buffers.ts`; **Zustand is deferred to Phase 2**, when the sidebar becomes a
 second out-of-tree consumer.
 
+### Interlude — debug view-config controls *(2026-07)*
+
+User-requested, out of phase order: make the view values — font size, line
+space, page geometry, font family — adjustable live, for debugging layout.
+Decisions from the design review (see CONTEXT.md **view config**):
+
+- [x] **Step V.1 — view-config store + toolbar controls.** *(done 2026-07-02)*
+  - `ViewConfig` = `{ fontSize (px), lineSpaceRatio (of the cell), pageLineChars
+    (fullwidth cells), pageLines, fontFamily ('' = inherit) }`, clamped
+    per-field; one pure `viewConfigToCss` produces the custom-property
+    overrides applied inline on the app root. Delivery to the editor is CSS
+    custom properties only — no new `VedEditor` props.
+  - **Zustand pulled forward from Phase 2** for this store: the future config
+    watcher (Phase 4), keymap commands, and e2e assertions all write/read from
+    outside React, and the debug controls are just the first writer. Buffers
+    stay on `useReducer` until Phase 2 as planned.
+  - Editor core: `$font-size`/`$line-space` promoted to `--cell-size` /
+    `--line-space-ratio` custom properties (SCSS defaults, runtime-overridable);
+    derived values (`line-height`, `--lines-extent`, caret extent, paragraph
+    leading pad) follow via `calc()`. `$line-gutter`, paddings, footer stay
+    compile-time. `--font-family` applies to the editor content only.
+  - UI: a third toolbar group (inline, like the writing-mode switcher) —
+    number inputs + a font free-text field + reset. Line-space lower bound is
+    permissive (0.2 < the 0.5 ruby-clearing spec) so ruby collisions can be
+    reproduced deliberately.
+  - No persistence: defaults on launch. Phase 4's `config.json` will hydrate
+    the same store; localStorage is rejected as renderer-owned persistence
+    that Phase 4 would have to migrate away from.
+
 ### Phase 2 — file browser sidebar
 
 A **workspace root** concept ("open folder…", persisted). Hand-rolled lazy
@@ -264,8 +293,10 @@ A single `config.json` in `app.getPath('userData')`, owned by main:
 - keybinding overrides as a `keymap` section once the registry is stable.
 
 `electron-store` is rejected: it's a JSON read/write wrapper around exactly
-what main already does, minus zod validation. A settings GUI panel is
-explicitly out of scope until the schema stops churning.
+what main already does, minus zod validation. The *user-facing* settings GUI
+panel stays out of scope until the schema stops churning; the toolbar debug
+view-config controls (the interlude step above) are the schema-churning
+sandbox, and this phase's `config.json` hydrates the same store they write.
 
 ### Phase 6 — vertical page layouts (`VerticalRows`)
 
