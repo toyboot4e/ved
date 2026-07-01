@@ -15,6 +15,8 @@ export type ViewConfig = {
   readonly pageLineChars: number;
   /** Lines per page (`--page-lines`). */
   readonly pageLines: number;
+  /** Space between VerticalRows pages, in cells (`--page-gap-cells`). */
+  readonly pageGapCells: number;
   /** Editor content font family (`--font-family`); '' inherits the shell's stack. */
   readonly fontFamily: string;
 };
@@ -24,6 +26,7 @@ export const VIEW_CONFIG_DEFAULTS: ViewConfig = {
   lineSpaceRatio: 0.55,
   pageLineChars: 40,
   pageLines: 20,
+  pageGapCells: 1,
   fontFamily: '',
 };
 
@@ -34,6 +37,7 @@ export const VIEW_CONFIG_BOUNDS = {
   lineSpaceRatio: { min: 0.2, max: 2 },
   pageLineChars: { min: 5, max: 100 },
   pageLines: { min: 1, max: 100 },
+  pageGapCells: { min: 0, max: 5 },
 } as const satisfies Partial<Record<keyof ViewConfig, { min: number; max: number }>>;
 
 const clamp = (value: number, { min, max }: { min: number; max: number }, fallback: number): number =>
@@ -45,6 +49,7 @@ export const clampViewConfig = (config: ViewConfig): ViewConfig => ({
   lineSpaceRatio: clamp(config.lineSpaceRatio, VIEW_CONFIG_BOUNDS.lineSpaceRatio, VIEW_CONFIG_DEFAULTS.lineSpaceRatio),
   pageLineChars: clamp(config.pageLineChars, VIEW_CONFIG_BOUNDS.pageLineChars, VIEW_CONFIG_DEFAULTS.pageLineChars),
   pageLines: clamp(config.pageLines, VIEW_CONFIG_BOUNDS.pageLines, VIEW_CONFIG_DEFAULTS.pageLines),
+  pageGapCells: clamp(config.pageGapCells, VIEW_CONFIG_BOUNDS.pageGapCells, VIEW_CONFIG_DEFAULTS.pageGapCells),
   fontFamily: config.fontFamily,
 });
 
@@ -61,6 +66,7 @@ export const viewConfigToCss = (config: ViewConfig): React.CSSProperties => {
     '--line-space-ratio': `${clamped.lineSpaceRatio}`,
     '--page-line-chars': `${clamped.pageLineChars}`,
     '--page-lines': `${clamped.pageLines}`,
+    '--page-gap-cells': `${clamped.pageGapCells}`,
   };
   if (clamped.fontFamily.trim() !== '') style['--font-family'] = clamped.fontFamily;
   return style as React.CSSProperties;

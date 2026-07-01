@@ -415,10 +415,16 @@ has real fragmentation (multicol overflow columns stack along the inline axis
 = downward, with a physical `column-gap` gutter), but multicol can never stack
 columns along the BLOCK axis (= leftward), and Chromium does not fragment an
 orthogonal-flow child either — so `VerticalRows` is one continuous vertical-rl
-block flow where a "page" is arithmetic (every `--page-lines` lines), with NO
-physical inter-page gap possible. The page boundary falls in the inter-line
-leading, and the separator hairline is a right-anchored background lattice with
-period exactly `--page-width`. See [ADR 0010](adr/0010-verticalrows-arithmetic-pages.md).
+block flow where a "page" is arithmetic (every `--page-lines` lines). The
+physical inter-page space is a different primitive: a `.ved-page-gap` widget
+decoration (zero inline size, width = line pitch + `--page-gap`,
+`vertical-align: top`) fattens each page's LAST line one-sidedly, opening a
+real gap before the next page without touching the text model; the editor
+re-measures the widget positions from the glyph rects after layout-affecting
+events (`pm/page-gap.ts`, `measurePageGaps` in editor.tsx). The separator
+hairline is a right-anchored background lattice with period
+`--page-width + --page-gap`, centered in each gap. See
+[ADR 0010](adr/0010-verticalrows-arithmetic-pages.md).
 
 Notes that took debugging to learn:
 

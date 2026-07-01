@@ -243,3 +243,20 @@ ruby.rubyActive {
     opacity: 0;
   }
 }
+
+/* Physical inter-page space in VerticalRows (ADR 0010, solution v2 —
+ * pm/page-gap.ts): a widget decoration in the LAST line of each page. Zero
+ * inline size (height, in vertical-rl) so it can never change the wrapping it
+ * was measured from; its width fattens the line box by --page-gap, and
+ * vertical-align: top pins the line's glyphs to the line-over (right) side so
+ * the whole extra space opens toward the NEXT page. Rows mode is always
+ * vertical-rl, so the physical axes are fixed. */
+.ved-page-gap {
+  display: inline-block;
+  height: 0;
+  width: calc(var(--line-pitch, 27.9px) + var(--page-gap, 0px));
+  vertical-align: top;
+  pointer-events: none;
+  user-select: none;
+  -webkit-user-select: none;
+}

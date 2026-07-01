@@ -1,6 +1,15 @@
 // Default cell size (body font size); the runtime value is the --cell-size
 // custom property on .root, which the shell may override (view config).
 $font-size: 18px;
+
+// Registered so the computed value is an evaluated <length> (an unregistered
+// custom property computes to its raw calc() token stream, which
+// getComputedStyle callers cannot parse). CSS modules keep at-rules global.
+@property --page-gap {
+  syntax: '<length>';
+  inherits: true;
+  initial-value: 0px;
+}
 $pad-x: 20px;
 $pad-y: 10px;
 // Breathing room at the line start so the caret at the document start has a
@@ -44,6 +53,12 @@ $footer-height: $font-size + $pad-y * 2;
   --line-pitch: calc(var(--cell-size) + var(--line-space));
   --line-length: calc(var(--page-line-chars) * var(--cell-size));
   --lines-extent: calc(var(--page-lines) * var(--line-pitch));
+  // Physical space between VerticalRows pages, in cells (ADR 0010 solution v2:
+  // rendered by the .ved-page-gap widgets, pm/page-gap.ts). Registered via
+  // @property below so its computed value is an EVALUATED px length —
+  // measureGeom reads it back for the rows scroll pitch.
+  --page-gap-cells: 1;
+  --page-gap: calc(var(--cell-size) * var(--page-gap-cells));
 
   // Horizontal writing: lines run horizontally, stacking downwards
   --page-width: var(--line-length);
@@ -331,27 +346,34 @@ $footer-height: $font-size + $pad-y * 2;
     // VerticalRows — pages tile leftward; the user scrolls along the
     // horizontal axis to read further. See ADR 0004 and ADR 0010.
     //
-    // Pages here are ARITHMETIC, not physical: the content is one continuous
-    // vertical-rl block flow (no fragmentation — Chromium cannot fragment
-    // along the block axis, see ADR 0010), so every --page-lines lines is "a
-    // page" by arithmetic alone and there is NO physical inter-page gap to
-    // widen. The page boundary falls in the inter-line LEADING (~--line-space
-    // of blank), and the separator hairline is drawn centered on it:
-    //   period = exactly --page-width (= --page-lines × --line-pitch — any
-    //     other period, e.g. the old +col-gap one, drifts per page and lands
-    //     on text);
+    // Pages here are ARITHMETIC, not fragmented: the content is one continuous
+    // vertical-rl block flow (Chromium cannot fragment along the block axis,
+    // see ADR 0010), so every --page-lines lines is "a page". The physical
+    // inter-page space comes from the .ved-page-gap widgets (pm/page-gap.ts)
+    // fattening each page's LAST line by --page-gap, so the page period is
+    // --page-width + --page-gap. The separator hairline is drawn centered in
+    // each gap:
+    //   period = --page-width + --page-gap (any other period drifts per page
+    //     and lands on text — the old +col-gap version did);
     //   anchor = the scroll area's RIGHT edge (the document START in
     //     vertical-rl), inset by the content's start-side margin + padding,
     //     so the lattice stays locked to the first line wherever you scroll
-    //     (attachment: local). The k=0 line of the lattice marks the
-    //     document's start edge itself.
+    //     (attachment: local);
+    //   the hairline sits --page-gap/2 into each tile, i.e. centered in the
+    //     blank the widget opened (gap 0 degrades to the line-box boundary).
     &.rowsMode {
       flex: 1 1 auto;
       overflow-x: scroll;
       writing-mode: vertical-rl;
       -webkit-writing-mode: vertical-rl;
-      background-image: linear-gradient(to right, #808080 0 1px, transparent 1px);
-      background-size: var(--page-width) 100%;
+      background-image: linear-gradient(
+        to right,
+        transparent calc(var(--page-gap) / 2 - 0.5px),
+        #808080 calc(var(--page-gap) / 2 - 0.5px),
+        #808080 calc(var(--page-gap) / 2 + 0.5px),
+        transparent calc(var(--page-gap) / 2 + 0.5px)
+      );
+      background-size: calc(var(--page-width) + var(--page-gap)) 100%;
       background-repeat: repeat-x;
       background-attachment: local;
       background-position:

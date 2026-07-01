@@ -25,6 +25,7 @@ import {
   serialize,
   serializeSlice,
 } from './pm/model';
+import { type LineItem, pageBoundaryEnds, pageGapPlugin, pageGapTr, posAfterEnclosingRuby } from './pm/page-gap';
 import { RubyView } from './pm/ruby-view';
 import { repair } from './pm/structure';
 import { lineToScroll, type ScrollGeom, type ScrollMode, scrollToLine } from './scroll-keep';
@@ -567,12 +568,15 @@ const measureGeom = (scroller: HTMLElement): ScrollGeom => {
   const linePitch = (contentCs && Number.parseFloat(contentCs.lineHeight)) || fontSize + 2;
   // columns: band period = page height (the line length) + the multicol gap
   // (the line-number gutter). columnGap is only meaningful under multiCol —
-  // rows has no multicol (ADR 0010), where its pitch is the contiguous one.
+  // rows has no multicol (ADR 0010): its pitch is the contiguous lines plus
+  // the physical page gap (--page-gap is @property-registered, so the
+  // computed value is an evaluated px length).
   const colGap = (contentCs && Number.parseFloat(contentCs.columnGap)) || 20;
+  const pageGap = Number.parseFloat(cs.getPropertyValue('--page-gap')) || 0;
   return {
     linePitch,
     colsPagePitch: lineChars * fontSize + colGap,
-    rowsPagePitch: linesPerRow * linePitch,
+    rowsPagePitch: linesPerRow * linePitch + pageGap,
     linesPerRow,
   };
 };
@@ -676,6 +680,9 @@ export const VedEditor = (props: VedEditorProps): React.JSX.Element => {
   // moveCaretByLine). Any other caret change resets it.
   const goalInlineRef = useRef<number | null>(null);
   const lineNumbersRef = useRef<LineNumbers | null>(null);
+  // Re-measures the VerticalRows page-gap widget positions (pm/page-gap.ts)
+  // after layout-affecting events; a no-op in the other modes.
+  const pageGapsRef = useRef<{ schedule: () => void } | null>(null);
   // Mouse drag-selection is DRIVEN BY US (see the pointer handlers): the native
   // selection can't extend across a collapsed ruby's READ-ONLY base
   // (`contenteditable=false`, the atom-ruby IME-safety rule), so a native drag
@@ -718,7 +725,7 @@ export const VedEditor = (props: VedEditorProps): React.JSX.Element => {
     // below (which runs first); baseKeymap doesn't bind arrows, so no conflict.
     let state = EditorState.create({
       doc: docFromText(initialText),
-      plugins: [keymap({ Enter: enterReplacingSelection }), keymap(baseKeymap), decoPlugin],
+      plugins: [keymap({ Enter: enterReplacingSelection }), keymap(baseKeymap), decoPlugin, pageGapPlugin()],
     });
     // Always set the caret EXPLICITLY (via offsetToPos, our boundary-aware map).
     // PM's default selection lands on the first text leaf, which for a document
@@ -766,6 +773,7 @@ export const VedEditor = (props: VedEditorProps): React.JSX.Element => {
         // geometry → cheap highlight-only pass (no O(doc) re-measure, so large
         // docs don't stall on every arrow key).
         if (tr.docChanged) lineNumbersRef.current?.schedule();
+        if (tr.docChanged) pageGapsRef.current?.schedule();
         else if (tr.selectionSet) lineNumbersRef.current?.schedule(false);
         // Keep the caret in view after edits — PM's scrollIntoView doesn't
         // survive the post-commit repair, nor handle vertical-rl multicol.
@@ -929,11 +937,15 @@ export const VedEditor = (props: VedEditorProps): React.JSX.Element => {
     lineNumbers.schedule();
     document.fonts?.ready.then(() => lineNumbers.schedule());
     // Also fires on a view-config change (font size / line space / page
-    // geometry): the content box resizes, so the line numbers re-measure.
+    // geometry): the content box resizes, so the line numbers re-measure and
+    // the page-gap widgets re-derive (wraps may have moved).
     // Deliberately NO caret reveal here: an observer-timed scroll races the
     // line mover's absolute-y hit-testing (and RO is throttled in hidden
     // windows); the caret re-reveals on the next edit via dispatchTransaction.
-    const resizeObserver = new ResizeObserver(() => lineNumbers.schedule());
+    const resizeObserver = new ResizeObserver(() => {
+      lineNumbers.schedule();
+      pageGapsRef.current?.schedule();
+    });
     resizeObserver.observe(mount);
 
     const scroller = scrollerRef.current;
@@ -1158,6 +1170,60 @@ export const VedEditor = (props: VedEditorProps): React.JSX.Element => {
     const offsetAtPoint = (px: number, py: number): number | null =>
       dragCache ? nearestGlyphOffset(dragCache.glyphs, px, py, dragCache.vertical) : null;
 
+    // VerticalRows page gaps (pm/page-gap.ts): measure the visual lines from
+    // the glyph rects (wrapping is decided by glyph advances, not arithmetic),
+    // derive the page-boundary positions, and swap the widget set when it
+    // changed. rAF-coalesced; skipped during IME composition (reconciled on
+    // compositionend) and outside rows mode (where the set empties).
+    let pageGapRaf = 0;
+    let lastGapPositions: number[] = [];
+    const measurePageGaps = (): number[] => {
+      const linesPerPage = Number.parseFloat(getComputedStyle(mount).getPropertyValue('--page-lines')) || 20;
+      const pitch = Number.parseFloat(getComputedStyle(view.dom).lineHeight) || 28;
+      const items: LineItem[] = walkGlyphs().map(({ off, rect }) => ({ endOff: off + 1, b: rect.left }));
+      // Empty paragraphs are visual lines with no glyphs — add them by offset.
+      const paras = view.dom.querySelectorAll(':scope > p');
+      let off = 0;
+      serialize(view.state.doc)
+        .split('\n')
+        .forEach((line, i) => {
+          const p = paras[i];
+          if (line.length === 0 && p) items.push({ endOff: off, b: p.getBoundingClientRect().left });
+          off += line.length + 1;
+        });
+      items.sort((a, z) => a.endOff - z.endOff);
+      return pageBoundaryEnds(items, linesPerPage, pitch).map((end) =>
+        posAfterEnclosingRuby(view.state.doc.resolve(offsetToPos(view.state.doc, end))),
+      );
+    };
+    let pageGapTimer: ReturnType<typeof setTimeout> | 0 = 0;
+    const runPageGaps = (): void => {
+      cancelAnimationFrame(pageGapRaf);
+      clearTimeout(pageGapTimer);
+      pageGapRaf = 0;
+      pageGapTimer = 0;
+      if (view.composing) return;
+      const positions = view.dom.classList.contains(styles.rowsMode ?? '') ? measurePageGaps() : [];
+      if (positions.length === lastGapPositions.length && positions.every((p, i) => p === lastGapPositions[i])) return;
+      lastGapPositions = positions;
+      view.dispatch(pageGapTr(view.state, positions));
+      // The widgets shift every following page — re-measure the numbers.
+      lineNumbersRef.current?.schedule();
+    };
+    const pageGaps = {
+      // rAF for frame alignment, with a timeout fallback: rAF does NOT fire in
+      // hidden/throttled windows (the e2e harness runs hidden), where the
+      // widgets must still land. Whichever fires first runs; both are cleared.
+      schedule: (): void => {
+        cancelAnimationFrame(pageGapRaf);
+        clearTimeout(pageGapTimer);
+        pageGapRaf = requestAnimationFrame(runPageGaps);
+        pageGapTimer = setTimeout(runPageGaps, 60);
+      },
+    };
+    pageGapsRef.current = pageGaps;
+    pageGaps.schedule();
+
     // Drive the model selection from the pointer. We listen on `window` (not the
     // editor) for the move/up so the drag follows the cursor even past the editor's
     // edge, and we set the model selection ourselves — the native selection can't
@@ -1243,6 +1309,8 @@ export const VedEditor = (props: VedEditorProps): React.JSX.Element => {
         commitHistory(view.state);
         // Re-anchor for the next edit now that the IME word has settled.
         beforeOffsetRef.current = posToOffset(view.state.doc, view.state.selection.head);
+        // Page-gap re-measures were skipped during the composition — reconcile.
+        pageGapsRef.current?.schedule();
       });
     };
     view.dom.addEventListener('compositionstart', onCompositionStart);
@@ -1263,6 +1331,9 @@ export const VedEditor = (props: VedEditorProps): React.JSX.Element => {
       resizeObserver.disconnect();
       lineNumbers.destroy();
       lineNumbersRef.current = null;
+      cancelAnimationFrame(pageGapRaf);
+      clearTimeout(pageGapTimer);
+      pageGapsRef.current = null;
       view.destroy();
       viewRef.current = null;
     };
@@ -1284,6 +1355,7 @@ export const VedEditor = (props: VedEditorProps): React.JSX.Element => {
     view.dom.classList.add('ProseMirror', ...CONTENT_CLASS(vert, multiCol, rows).split(' ').filter(Boolean));
     view.dispatch(view.state.tr.setMeta('redecorate', true));
     lineNumbersRef.current?.schedule(); // wrapping changed → re-measure line numbers
+    pageGapsRef.current?.schedule(); // rows mode may have toggled → widgets in/out
     // Synchronously (a forced layout), so we don't race the reflow as rAF would.
     if (prevRevealRef.current.policy !== appearPolicy || prevRevealRef.current.mode !== writingMode) {
       prevRevealRef.current = { policy: appearPolicy, mode: writingMode };
