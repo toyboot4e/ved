@@ -131,9 +131,35 @@ typecheck:
 [private]
 alias tc := typecheck
 
+# refreshes flake.nix's pnpmDeps.hash from the current pnpm-lock.yaml. Run
+# after any lockfile change, or `nix flake check` fails with
+# ERR_PNPM_NO_OFFLINE_TARBALL. Builds the deps FOD with a fake hash and writes
+# the `got:` hash back; restores the old hash if the build fails otherwise.
+bump-hash:
+    #!/usr/bin/env bash
+    set -euo pipefail
+    cd {{justfile_directory()}}
+    system=$(nix eval --impure --raw --expr 'builtins.currentSystem')
+    old=$(grep -oP '^\s*hash = "\K[^"]*' flake.nix)
+    sed -i "s|hash = \"$old\";|hash = \"\";|" flake.nix
+    trap 'sed -i "s|hash = \"\";|hash = \"$old\";|" flake.nix' EXIT
+    log=$(nix build --no-link ".#packages.$system.ved.pnpmDeps" 2>&1) || true
+    new=$(grep -oP 'got:\s+\K\S+' <<<"$log" || true)
+    if [ -z "$new" ]; then echo "$log" >&2; exit 1; fi
+    trap - EXIT
+    sed -i "s|hash = \"\";|hash = \"$new\";|" flake.nix
+    if [ "$new" = "$old" ]; then
+        echo "pnpmDeps.hash already up to date: $new"
+    else
+        echo "pnpmDeps.hash: $old -> $new"
+    fi
+
+[private]
+alias bh := bump-hash
+
 # updates dependency versions aggressively. It can fail.
 update:
-    pnpm dlx npm-check-updates -u && pnpm install
+    pnpm dlx npm-check-updates -u && pnpm install && just bump-hash
 
 # creates a new electron-vite project. This is just a note.
 [private]
