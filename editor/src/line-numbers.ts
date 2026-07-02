@@ -190,7 +190,11 @@ export const mountLineNumbers = (
       // borrows the slot boundary from another band (the slice layout
       // repeats). Vertically: in multiCol centered in the strip between the
       // text bottom and the band border; in rows just below the line length.
-      const padRight = Number.parseFloat(cs.paddingRight) || 0;
+      // Rows: the content's caret-margin right padding sits before line 1 —
+      // exclude it from the page edge. multiCol keeps raw box edges: its rt
+      // allowance is symmetric (padding right, natural slack left), so raw
+      // edges center correctly.
+      const padRight = multiCol ? 0 : Number.parseFloat(cs.paddingRight) || 0;
       pages.forEach((pg, p) => {
         const rightEdge = pg.sepX ?? cRight - padRight;
         const bandEnd = Number.isFinite(pagesPerRow) && p % pagesPerRow === pagesPerRow - 1;

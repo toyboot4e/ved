@@ -49,9 +49,17 @@ try {
     return {
       linePitch,
       gap,
+      cell: Number.parseFloat(cs.fontSize),
       contentWidth: content.getBoundingClientRect().width,
       contentLeft: content.getBoundingClientRect().left,
       contentRight: content.getBoundingClientRect().right,
+      // The VISIBLE frame: the scroller client area (what the band borders
+      // span — the always-shown scrollbar eats part of the border box).
+      frameCenter: (() => {
+        const scroller = content.parentElement!;
+        const s = scroller.getBoundingClientRect();
+        return s.left + scroller.clientLeft + scroller.clientWidth / 2;
+      })(),
       widgets: content.querySelectorAll('.ved-page-gap').length,
       seps: [...document.querySelectorAll('.vedPageSeparator')]
         .filter((el) => (el as HTMLElement).style.display !== 'none')
@@ -71,8 +79,16 @@ try {
   });
 
   const P = 5 * m.linePitch;
-  near(m.contentWidth, 2 * P + m.gap, 'band width = 2 pages + 1 gap');
-  step(`band width is a 2-page row (${m.contentWidth}px = 2×${P} + ${m.gap})`);
+  // Band width = the pages + gaps + the rt allowance on each side (half a
+  // cell each, so a band-starting ruby line's reading fits — see the SCSS).
+  near(m.contentWidth, 2 * P + m.gap + m.cell, 'band width = 2 pages + 1 gap + rt allowance');
+  step(`band width is a 2-page row (${m.contentWidth}px = 2×${P} + ${m.gap} + ${m.cell})`);
+
+  // The page block must center in the VISIBLE frame: fixed margins once left
+  // it half a scrollbar off-center on every page (auto margins now split the
+  // scrollbar's bite symmetrically).
+  near((m.contentLeft + m.contentRight) / 2, m.frameCenter, 'page block centered in the visible frame');
+  step('page block (and therefore every folio) centers in the visible frame');
 
   const [p1, p2, p3, p4] = m.pageStarts as [Point, Point, Point, Point];
   // page 2 starts one page + gap LEFT of page 1, same band (same y)

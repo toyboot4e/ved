@@ -34,11 +34,20 @@ try {
     'なにぬねのはひふへほまみ'.repeat(3),
     ...Array.from({ length: 7 }, () => 'いろはにほへとちり'),
   ];
-  for (const [i, p] of paras.entries()) {
-    if (i > 0) await page.keyboard.press('Enter');
-    if (p) await page.keyboard.insertText(p);
-  }
   const modelText = paras.join('\n');
+  // Visible-window typing can drop a keystroke under suite load — verify the
+  // model landed and retype once if not.
+  for (let attempt = 0; attempt < 2; attempt++) {
+    await page.evaluate(() => getSelection()!.selectAllChildren(document.getElementById('editor-content')!));
+    await page.keyboard.press('Backspace');
+    for (const [i, p] of paras.entries()) {
+      if (i > 0) await page.keyboard.press('Enter');
+      if (p) await page.keyboard.insertText(p);
+    }
+    await page.waitForTimeout(150);
+    const typed = await page.evaluate(() => (window as unknown as { __vedText(): string }).__vedText());
+    if (typed === modelText) break;
+  }
   await clickWritingMode(page, 'Vertical Rows');
   await page.waitForTimeout(500); // the widgets + overlay land on a measured pass
 

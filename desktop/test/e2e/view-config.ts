@@ -52,7 +52,8 @@ try {
   await page.waitForTimeout(150);
   s = await contentStyle();
   near(s.lineHeight, 24 * 2, 'line pitch follows the ratio');
-  near(s.width, 20 * 24 * 2, 'page width = lines × pitch (VerticalColumns)');
+  // width = lines × pitch + the rt allowance (one cell across both sides)
+  near(s.width, 20 * 24 * 2 + 24, 'page width = lines × pitch + rt allowance (VerticalColumns)');
   step('line-space ratio input rescales the pitch');
 
   // Page geometry: cells per line and lines per page
@@ -62,7 +63,7 @@ try {
   s = await contentStyle();
   assert.equal(s.pageLineChars, 20, '--page-line-chars follows the input');
   near(s.height, 20 * 24 + GUTTER, 'page height follows cells per line');
-  near(s.width, 10 * 48, 'page width follows lines per page');
+  near(s.width, 10 * 48 + 24, 'page width follows lines per page (plus rt allowance)');
   step('page geometry inputs resize the page box');
 
   // Out-of-range input is clamped at CSS generation (raw value stays typable)

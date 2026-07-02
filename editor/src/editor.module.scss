@@ -76,9 +76,16 @@ $footer-height: $font-size + $pad-y * 2;
     // One page ROW: --pages-per-row pages side by side with a --page-gap
     // between each (= --page-width when --pages-per-row is 1).
     --page-row-width: calc(var(--pages-per-row) * var(--page-width) + (var(--pages-per-row) - 1) * var(--page-gap));
+    // Headroom for a ruby READING's overhang past the FIRST line of a
+    // multicol band (the rt = 0.5em renders on the line-over side; every
+    // other line's rt lands in its neighbor's leading, but line 1 has no
+    // neighbor). Without it the column balancer counts the overhang and
+    // packs N−1 ruby lines into an N-line band. Half a cell covers the
+    // worst case; a plain extra line needs a whole pitch, so N is unchanged.
+    --rt-allowance: calc(var(--cell-size) / 2);
     // Vertical's line-number gutter sits on the line-length axis (folded into
     // the content height per mode below), not on this one.
-    --editor-width: calc(var(--page-row-width) + #{$pad-x * 2});
+    --editor-width: calc(var(--page-row-width) + var(--rt-allowance) * 2 + #{$pad-x * 2});
   }
 
   // Horizontal: reserve the line-number gutter BESIDE the text column, so the
@@ -399,7 +406,6 @@ $footer-height: $font-size + $pad-y * 2;
     // The height is increased by the same amount so the line still fits the
     // configured character count.
     &.multiColMode {
-      width: var(--page-row-width);
       // Intra-band page-boundary separators (--pages-per-row > 1, ADR 0011)
       // are DRAWN BY THE LINE-NUMBER OVERLAY from the measured visual lines
       // (.vedPageSeparator) — a periodic CSS lattice cannot track real
@@ -417,9 +423,21 @@ $footer-height: $font-size + $pad-y * 2;
       //     numbers get the same room (and the separator phase skips it).
       // Band period = page-height + $line-gutter; the separator pitch matches.
       height: calc(var(--page-height) + #{$line-gutter});
-      margin: $pad-y $pad-x $footer-height $pad-x;
+      // Horizontal margins are AUTO, not $pad-x: the scroller's always-shown
+      // vertical scrollbar eats ~15px from the client area, and fixed margins
+      // then leave the whole page block (text, folios, everything) sitting
+      // half a scrollbar right of the visible frame's center — on every page.
+      // Auto margins split whatever the scrollbar leaves symmetrically.
+      margin: $pad-y auto $footer-height auto;
+      // The box carries the rt allowance on BOTH sides: the right one as
+      // padding (the fragmentation area shrinks back to the line slots plus
+      // one allowance, so the first line's reading fits and N lines pack),
+      // the left one as the natural end slack — symmetric, so the text block
+      // stays centered in the band.
+      width: calc(var(--page-row-width) + var(--rt-allowance) * 2);
       padding: 0;
       padding-inline-start: $line-gutter;
+      padding-right: var(--rt-allowance);
       box-sizing: border-box;
       column-width: var(--page-height);
       column-gap: $line-gutter;
