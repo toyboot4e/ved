@@ -120,19 +120,28 @@ export const mountLineNumbers = (
     // non-arithmetic ways (paragraph paddings, empty lines), so a periodic
     // CSS lattice drifts off the gap-widget blanks — measured ~10px at the
     // first boundary of a mixed document. Same measurement, always in sync.
-    const paged =
-      content.classList.contains(styles.multiColMode ?? '') || content.classList.contains(styles.rowsMode ?? '');
+    const multiCol = content.classList.contains(styles.multiColMode ?? '');
+    const paged = multiCol || content.classList.contains(styles.rowsMode ?? '');
     const linesPerPage = paged ? Number.parseFloat(cs.getPropertyValue('--page-lines')) || 20 : 0;
+    // In multiCol the chip must sit ABOVE the band border (the horizontal
+    // separator mid-gutter below the band); the gutter is the column-gap.
+    const bandGutter = multiCol ? Number.parseFloat(cs.columnGap) || 0 : 0;
     let chips = 0;
     let seps = 0;
     if (linesPerPage > 0) {
       for (let page = 0; page * linesPerPage < lines.length; page++) {
         const first = lines[page * linesPerPage];
         if (!first) break;
-        // The chip: a folio at the BOTTOM of the page, centered under the
-        // page's first line's column, just past the full line length.
+        // The chip: a folio at the BOTTOM of the page, centered on the page's
+        // MEASURED span (first line → the page's last line, same band). In
+        // multiCol it bottom-anchors just above the band border; in rows it
+        // hangs just below the line length (no border there).
+        const last = lines[Math.min((page + 1) * linesPerPage, lines.length) - 1] ?? first;
+        const chipX = last.left < first.right ? (first.right + last.left) / 2 : (first.left + first.right) / 2;
         const chip = pagePool[chips] ?? makePageNumber(overlay, pagePool);
-        chip.style.transform = `translate(${(first.left + first.right) / 2}px, ${first.top + first.bandLen}px) translate(-50%, 0) translateY(0.4em)`;
+        chip.style.transform = multiCol
+          ? `translate(${chipX}px, ${first.top + first.bandLen + bandGutter / 2}px) translate(-50%, -100%) translateY(-2px)`
+          : `translate(${chipX}px, ${first.top + first.bandLen}px) translate(-50%, 0) translateY(0.4em)`;
         chip.textContent = `${page + 1}`;
         chip.style.display = '';
         chips++;
