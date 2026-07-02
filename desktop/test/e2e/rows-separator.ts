@@ -136,10 +136,10 @@ try {
     Math.abs(deficitSpace - 4 * m.linePitch) < m.linePitch / 2,
     `partial page reserved as a whole: ${deficitSpace.toFixed(1)}px ≈ 4 × ${m.linePitch}px past the last line`,
   );
-  // The separator sits mid-BLANK, gap/2 right of the page's slot zone.
+  // Folio between the VISIBLE boundaries: the hairline and the reserved end.
   const lastSep = m.seps[1]!.x;
   const chip3 = m.chips[2]!.x;
-  const expect3 = (lastSep - m.gap / 2 + m.contentLeft) / 2;
+  const expect3 = (lastSep + m.contentLeft) / 2;
   assert.ok(
     Math.abs(chip3 - expect3) < 1.5,
     `last folio centers on the WHOLE page: ${chip3.toFixed(1)} ≈ ${expect3.toFixed(1)}`,

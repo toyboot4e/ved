@@ -95,15 +95,14 @@ try {
   // not on the text: page 4 is PARTIAL (one line) and must still center on
   // its slot (band-end → left bound is the band edge).
   assert.equal(m.seps.length, 2, 'one intra-band separator per band');
-  // A separator sits mid-BLANK, gap/2 outside the page's slot zone — slice
-  // edges adjust inward by gap/2 (see line-numbers.ts).
+  // Folios center between the VISIBLE boundaries: the painted hairlines and
+  // the band edges (see line-numbers.ts).
   const [sep1, sep2] = m.seps as [number, number];
-  const g2 = m.gap / 2;
   const expectChip = [
-    (m.contentRight + sep1 + g2) / 2, // page 1: band 1, right slice
-    (sep1 - g2 + m.contentLeft) / 2, // page 2: band 1, left slice (band end)
-    (m.contentRight + sep2 + g2) / 2, // page 3: band 2, right slice
-    (sep2 - g2 + m.contentLeft) / 2, // page 4: PARTIAL, band end → still the slot center
+    (m.contentRight + sep1) / 2, // page 1: band 1, right slice
+    (sep1 + m.contentLeft) / 2, // page 2: band 1, left slice (band end)
+    (m.contentRight + sep2) / 2, // page 3: band 2, right slice
+    (sep2 + m.contentLeft) / 2, // page 4: PARTIAL, band end → still the slot center
   ];
   m.chips.forEach((x, i) => {
     near(x, expectChip[i]!, `folio ${i + 1} centered on its page slot`);
