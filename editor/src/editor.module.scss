@@ -337,7 +337,10 @@ $footer-height: $font-size + $pad-y * 2;
       // the band PERIOD is page-height + gutter. Match the separator pitch to
       // it exactly — any other pitch drifts a fixed amount PER PAGE and lines
       // overrun the separator by page 3-4. The gap-line sits mid-gutter, and
-      // the phase ($line-gutter) skips the first band's matching start padding.
+      // the phase skips the first band's start padding ($line-gutter) AND the
+      // content's top margin ($pad-y — both are inside the scroll area the
+      // local background is positioned against; without the margin the line
+      // painted 10px above mid-gutter, straight through the folio).
       background-image: linear-gradient(
         to bottom,
         transparent calc(var(--page-height) + #{$line-gutter} / 2 - 0.5px),
@@ -348,7 +351,7 @@ $footer-height: $font-size + $pad-y * 2;
       background-size: 100% calc(var(--page-height) + #{$line-gutter});
       background-repeat: repeat-y;
       background-attachment: local;
-      background-position: 0 #{$line-gutter};
+      background-position: 0 #{$line-gutter + $pad-y};
     }
 
     // VerticalRows — pages tile leftward; the user scrolls along the

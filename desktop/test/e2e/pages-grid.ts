@@ -1,11 +1,14 @@
 // VerticalColumns page grid (ADR 0011): --pages-per-row pages side by side in
 // each band (B A / D C …), separated by the physical --page-gap; bands still
-// tile downward via multicol fragmentation. Page numbers chip every page.
-// Usage: node test/e2e/pages-grid.ts  (after a build; window stays hidden)
+// tile downward via multicol fragmentation. Page numbers folio every page.
+//
+// VISIBLE window: the band-border check pixel-scans a screenshot (hidden
+// Electron windows never composite, so page.screenshot hangs there).
+// Usage: node test/e2e/pages-grid.ts  (after a build)
 import assert from 'node:assert/strict';
 import { fail, finish, launchVed, step } from './harness.ts';
 
-const ved = await launchVed({ env: () => ({ VED_SMOKE_CLOSE_RESPONSE: 'discard' }) });
+const ved = await launchVed({ env: () => ({ VED_SMOKE_CLOSE_RESPONSE: 'discard', VED_SMOKE_HIDDEN: '' }) });
 const { page } = ved;
 
 try {
@@ -103,6 +106,68 @@ try {
     near(x, expectChip[i]!, `folio ${i + 1} centered on its page slot`);
   });
   step('folios center on their page slots, including the partial page');
+
+  // The PAINTED band border (pixel-scanned, not computed — the phase once
+  // painted it 10px high, through the folio) sits mid-gutter between the two
+  // bands' texts, and the folio ends clearly BEFORE it.
+  const bounds = await page.evaluate(() => {
+    const content = document.getElementById('editor-content')!;
+    const range = document.createRange();
+    const walker = document.createTreeWalker(content, NodeFilter.SHOW_TEXT);
+    const texts: Text[] = [];
+    for (let n = walker.nextNode(); n; n = walker.nextNode()) texts.push(n as Text);
+    const charRect = (i: number) => {
+      let k = i;
+      for (const t of texts) {
+        if (k < t.length) {
+          range.setStart(t, k);
+          range.setEnd(t, k + 1);
+          return range.getBoundingClientRect();
+        }
+        k -= t.length;
+      }
+      throw new Error(`char ${i} out of range`);
+    };
+    const chip = document.querySelector('.vedPageNumber')!.getBoundingClientRect();
+    const s = content.parentElement!.getBoundingClientRect();
+    // band 1 last char = char 99 (lines 1-10); band 2 first char = char 100
+    return {
+      band1Bottom: charRect(99).bottom,
+      band2Top: charRect(100).top,
+      chipBottom: chip.bottom,
+      scanX: s.left + 8, // inside the pad-x margin: only the border paints there
+    };
+  });
+  const shot = await page.screenshot({ timeout: 60000 });
+  const borderYs = await page.evaluate(
+    async ({ png, x, lo, hi }) => {
+      const img = new Image();
+      img.src = `data:image/png;base64,${png}`;
+      await img.decode();
+      const canvas = document.createElement('canvas');
+      canvas.width = img.width;
+      canvas.height = img.height;
+      const ctx = canvas.getContext('2d')!;
+      ctx.drawImage(img, 0, 0);
+      const dpr = window.devicePixelRatio || 1;
+      const col = ctx.getImageData(Math.round(x * dpr), 0, 1, img.height).data;
+      const ys: number[] = [];
+      for (let y = 0; y < img.height; y++) {
+        const [r, g, b] = [col[y * 4]!, col[y * 4 + 1]!, col[y * 4 + 2]!];
+        if (r < 245 && g < 245 && b < 245 && r > 60 && y / dpr > lo && y / dpr < hi) ys.push(y / dpr);
+      }
+      return ys;
+    },
+    { png: shot.toString('base64'), x: bounds.scanX, lo: bounds.band1Bottom - 2, hi: bounds.band2Top + 2 },
+  );
+  assert.ok(borderYs.length > 0, 'the band border paints between the bands');
+  const borderY = borderYs.reduce((a, z) => a + z, 0) / borderYs.length;
+  near(borderY, (bounds.band1Bottom + bounds.band2Top) / 2, 'painted band border sits mid-gutter');
+  assert.ok(
+    bounds.chipBottom < borderY - 2,
+    `folio ends before the painted border: ${bounds.chipBottom.toFixed(1)} < ${borderY.toFixed(1)} − 2`,
+  );
+  step('painted band border mid-gutter; folio clearly before it');
 } catch (e) {
   fail(e instanceof Error ? e.message : String(e));
 } finally {
