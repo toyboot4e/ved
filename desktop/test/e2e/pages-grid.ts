@@ -47,10 +47,22 @@ try {
       linePitch,
       gap,
       contentWidth: content.getBoundingClientRect().width,
+      contentLeft: content.getBoundingClientRect().left,
+      contentRight: content.getBoundingClientRect().right,
       widgets: content.querySelectorAll('.ved-page-gap').length,
-      chips: [...document.querySelectorAll('.vedPageNumber')].filter(
-        (el) => (el as HTMLElement).style.display !== 'none',
-      ).length,
+      seps: [...document.querySelectorAll('.vedPageSeparator')]
+        .filter((el) => (el as HTMLElement).style.display !== 'none')
+        .map((el) => {
+          const r = el.getBoundingClientRect();
+          return (r.left + r.right) / 2;
+        })
+        .sort((a, z) => z - a),
+      chips: [...document.querySelectorAll('.vedPageNumber')]
+        .filter((el) => (el as HTMLElement).style.display !== 'none')
+        .map((el) => {
+          const r = el.getBoundingClientRect();
+          return (r.left + r.right) / 2;
+        }),
       pageStarts: starts.map((r) => ({ x: Math.round(r.right), y: Math.round(r.top) })),
     };
   });
@@ -75,8 +87,22 @@ try {
   assert.equal(m.widgets, 2, 'widgets at intra-band boundaries only');
   step('gap widgets skip the band break (fragmentation separates it)');
 
-  assert.equal(m.chips, 4, 'one page-number chip per page');
-  step('page numbers chip all four pages');
+  assert.equal(m.chips.length, 4, 'one page-number chip per page');
+  // Folios center on the PAGE AREA (slice bounds = separators / band edges),
+  // not on the text: page 4 is PARTIAL (one line) and must still center on
+  // its slot (band-end → left bound is the band edge).
+  assert.equal(m.seps.length, 2, 'one intra-band separator per band');
+  const [sep1, sep2] = m.seps as [number, number];
+  const expectChip = [
+    (m.contentRight + sep1) / 2, // page 1: band 1, right slice
+    (sep1 + m.contentLeft) / 2, // page 2: band 1, left slice (band end)
+    (m.contentRight + sep2) / 2, // page 3: band 2, right slice
+    (sep2 + m.contentLeft) / 2, // page 4: PARTIAL, band end → still the slot center
+  ];
+  m.chips.forEach((x, i) => {
+    near(x, expectChip[i]!, `folio ${i + 1} centered on its page slot`);
+  });
+  step('folios center on their page slots, including the partial page');
 } catch (e) {
   fail(e instanceof Error ? e.message : String(e));
 } finally {

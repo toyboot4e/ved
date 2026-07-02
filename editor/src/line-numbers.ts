@@ -129,39 +129,71 @@ export const mountLineNumbers = (
     let chips = 0;
     let seps = 0;
     if (linesPerPage > 0) {
+      const pagesPerRow = multiCol
+        ? Number.parseFloat(cs.getPropertyValue('--pages-per-row')) || 1
+        : Number.POSITIVE_INFINITY;
+      const contentRect = content.getBoundingClientRect();
+      const cLeft = contentRect.left - o.left;
+      const cRight = contentRect.right - o.left;
+      // First pass: the pages and their boundary separators. sepX is the
+      // hairline centered in the measured blank BEFORE the page — absent for
+      // page 1 and across a band wrap (the previous line is not to this
+      // line's right in the same band; fragmentation separates those).
+      type PageMark = { first: VisualLine; last: VisualLine; sepX: number | undefined };
+      const pages: PageMark[] = [];
       for (let page = 0; page * linesPerPage < lines.length; page++) {
         const first = lines[page * linesPerPage];
         if (!first) break;
-        // The folio: at the BOTTOM of the page, centered on the page's
-        // MEASURED span (first line → the page's last line, same band). In
-        // multiCol it sits centered in the strip between the text bottom and
-        // the band border (the horizontal separator mid-gutter below), i.e.
-        // clearly BEFORE the border; in rows it hangs just below the line
-        // length (no border there).
         const last = lines[Math.min((page + 1) * linesPerPage, lines.length) - 1] ?? first;
-        const chipX = last.left < first.right ? (first.right + last.left) / 2 : (first.left + first.right) / 2;
+        const prev = page > 0 ? lines[page * linesPerPage - 1] : undefined;
+        const sepX = prev && prev.left > first.right ? (prev.left + first.right) / 2 : undefined;
+        pages.push({ first, last, sepX });
+      }
+      for (const pg of pages) {
+        if (pg.sepX === undefined) continue;
+        const el = sepPool[seps] ?? makePageSeparator(overlay, sepPool);
+        el.style.transform = `translate(${pg.sepX}px, ${pg.first.top}px)`;
+        el.style.height = `${pg.first.bandLen}px`;
+        el.style.display = '';
+        seps++;
+      }
+      // Second pass: the folios — at the BOTTOM of each page, horizontally
+      // centered on the PAGE AREA (bounded by the measured separators / the
+      // band edges), NOT on the text span: a partial page still centers on
+      // its page slot. Only a partial page in a band's non-final slot has no
+      // left bound; it falls back to its text span. Vertically: in multiCol
+      // centered in the strip between the text bottom and the band border;
+      // in rows just below the line length (no border there).
+      pages.forEach((pg, p) => {
+        const rightEdge = pg.sepX ?? cRight;
+        const bandEnd = Number.isFinite(pagesPerRow) && p % pagesPerRow === pagesPerRow - 1;
+        let leftEdge = pages[p + 1]?.sepX ?? (bandEnd ? cLeft : undefined);
+        if (leftEdge === undefined && Number.isFinite(pagesPerRow)) {
+          // A partial page in a non-final slot has no boundary of its own,
+          // but the slice layout repeats across bands — borrow the same slot
+          // boundary from another band so it still centers on its page slot.
+          for (let q = (p % pagesPerRow) + 1; q < pages.length; q += pagesPerRow) {
+            const sx = pages[q]?.sepX;
+            if (sx !== undefined) {
+              leftEdge = sx;
+              break;
+            }
+          }
+        }
+        const chipX =
+          leftEdge !== undefined
+            ? (rightEdge + leftEdge) / 2
+            : pg.last.left < pg.first.right
+              ? (pg.first.right + pg.last.left) / 2
+              : (pg.first.left + pg.first.right) / 2;
         const chip = pagePool[chips] ?? makePageNumber(overlay, pagePool);
         chip.style.transform = multiCol
-          ? `translate(${chipX}px, ${first.top + first.bandLen + bandGutter / 4}px) translate(-50%, -50%)`
-          : `translate(${chipX}px, ${first.top + first.bandLen}px) translate(-50%, 0) translateY(0.4em)`;
-        chip.textContent = `${page + 1}`;
+          ? `translate(${chipX}px, ${pg.first.top + pg.first.bandLen + bandGutter / 4}px) translate(-50%, -50%)`
+          : `translate(${chipX}px, ${pg.first.top + pg.first.bandLen}px) translate(-50%, 0) translateY(0.4em)`;
+        chip.textContent = `${p + 1}`;
         chip.style.display = '';
         chips++;
-        // The separator: a hairline centered in the measured blank between
-        // the previous page's last line and this page's first line. Skipped
-        // across a band wrap (the previous line is not to this line's right
-        // in the same band — fragmentation separates those physically).
-        const prev = page > 0 ? lines[page * linesPerPage - 1] : undefined;
-        if (prev && prev.left > first.right) {
-          const el = sepPool[seps] ?? makePageSeparator(overlay, sepPool);
-          const x = (prev.left + first.right) / 2;
-          const y = Math.min(prev.top, first.top);
-          el.style.transform = `translate(${x}px, ${y}px)`;
-          el.style.height = `${first.bandLen}px`;
-          el.style.display = '';
-          seps++;
-        }
-      }
+      });
     }
     for (const el of pagePool.slice(chips)) el.style.display = 'none';
     for (const el of sepPool.slice(seps)) el.style.display = 'none';
