@@ -397,26 +397,12 @@ $footer-height: $font-size + $pad-y * 2;
     // configured character count.
     &.multiColMode {
       width: var(--page-row-width);
-      // Intra-band page boundaries (--pages-per-row > 1, ADR 0011): a vertical
-      // hairline lattice on the CONTENT. Geometry: a page-boundary blank is
-      // the gap-widget's --page-gap centered between the two pages' glyph
-      // columns (the glyph insets on both sides cancel), so its center sits
-      // k×(page+gap) − gap/2 from the first line's start edge = the content
-      // padding-box right edge here (no horizontal padding). Tile = page+gap,
-      // hairline at gap/2 from the tile's left edge, anchored right 0: lines
-      // land exactly on the centers, and the k=0 line falls gap/2 BEYOND the
-      // right edge — clipped, so no stray frame line before page 1.
-      // Horizontal BAND separators stay on the scroller.
-      background-image: linear-gradient(
-        to right,
-        transparent calc(var(--page-gap) / 2 - 0.5px),
-        #808080 calc(var(--page-gap) / 2 - 0.5px),
-        #808080 calc(var(--page-gap) / 2 + 0.5px),
-        transparent calc(var(--page-gap) / 2 + 0.5px)
-      );
-      background-size: calc(var(--page-width) + var(--page-gap)) 100%;
-      background-repeat: repeat-x;
-      background-position: right 0 top 0;
+      // Intra-band page-boundary separators (--pages-per-row > 1, ADR 0011)
+      // are DRAWN BY THE LINE-NUMBER OVERLAY from the measured visual lines
+      // (.vedPageSeparator) — a periodic CSS lattice cannot track real
+      // documents, whose paragraph paddings and empty lines shift the physical
+      // layout non-arithmetically. Horizontal BAND separators stay on the
+      // scroller (fragmentation makes the band period physically exact).
       // Consistent band geometry so the page-row period is predictable (CSS
       // multicol applies padding to the FIRST column only, so any per-band
       // gutter MUST be column-gap, not padding — else later pages drift):
@@ -444,28 +430,18 @@ $footer-height: $font-size + $pad-y * 2;
     // was INERT — one column spanning the full inline size — and its
     // column-gap never rendered, see ADR 0010.)
     //
-    // The page-boundary separator lattice: same construction as multiColMode's
-    // intra-band lattice above (hairline centered in each gap-widget blank;
-    // the k=0 line clips beyond the box), except this content has a
-    // caret-margin right padding before the first line, so the anchor is
-    // inset by it. Caveat: the k=0 clip needs gap/2 > caret-margin — with a
-    // gap under ~2/3 cell a faint line reappears at the document start.
+    // The page-boundary separators are DRAWN BY THE LINE-NUMBER OVERLAY from
+    // the measured visual lines (.vedPageSeparator, centered in each
+    // gap-widget blank) — a periodic CSS lattice cannot track real documents,
+    // whose paragraph paddings and empty lines shift the physical layout
+    // non-arithmetically (measured ~10px off at the first boundary of a
+    // mixed document).
     &.rowsMode {
       height: calc(var(--page-height) + #{$line-gutter});
       margin: $pad-y $pad-x;
       padding: 0 $caret-margin 0 0;
       padding-inline-start: $line-gutter; // line-number gutter (top)
       box-sizing: border-box;
-      background-image: linear-gradient(
-        to right,
-        transparent calc(var(--page-gap) / 2 - 0.5px),
-        #808080 calc(var(--page-gap) / 2 - 0.5px),
-        #808080 calc(var(--page-gap) / 2 + 0.5px),
-        transparent calc(var(--page-gap) / 2 + 0.5px)
-      );
-      background-size: calc(var(--page-width) + var(--page-gap)) 100%;
-      background-repeat: repeat-x;
-      background-position: right #{$caret-margin} top 0;
     }
   }
 }

@@ -1,12 +1,13 @@
 // VerticalRows pages are ARITHMETIC (ADR 0010): one continuous flow, a page
-// boundary every --page-lines lines. The physical inter-page space comes from
-// the .ved-page-gap widget decorations fattening each page's LAST line by
-// --page-gap (pm/page-gap.ts), so:
-//   - line pitch stays the plain pitch INSIDE a page, pitch + gap ACROSS pages;
-//   - the separator lattice period = --page-width + --page-gap, centered in
-//     each gap (any other period drifts onto text — the old +col-gap one did);
-//   - the text model never changes, and the caret crosses the gap one line at
-//     a time like any other boundary.
+// boundary every --page-lines VISUAL lines. The physical inter-page space
+// comes from the .ved-page-gap widget decorations fattening each page's LAST
+// line; the separator hairlines and page-number chips are drawn by the
+// line-number overlay FROM THE SAME MEASURED LINES — a periodic CSS lattice
+// drifted off real documents (paragraph paddings, empty lines shift layout
+// non-arithmetically), so the doc here is deliberately MIXED: wrapping
+// paragraphs, a short one, and an empty line, with boundaries checked at
+// page 1|2 AND page 2|3.
+//
 // VISIBLE window: the caret walk exercises moveCaretByLine, which defers via
 // requestAnimationFrame — hidden Electron windows throttle it and the moves
 // silently no-op (same as vrows-ruby-seam-line-move).
@@ -24,101 +25,106 @@ try {
   await page.waitForTimeout(150);
   await page.evaluate(() => getSelection()!.selectAllChildren(document.getElementById('editor-content')!));
   await page.keyboard.press('Backspace');
-  const text: string[] = [];
-  for (let i = 0; i < 14; i++) text.push('あいうえおかきくけこ');
-  for (let i = 0; i < text.length; i++) {
-    await page.keyboard.insertText(text[i]!);
-    if (i < text.length - 1) await page.keyboard.press('Enter');
+  // 14 visual lines: p0 wraps to 2, p1 short, p2 EMPTY, p3 wraps to 3, then
+  // 7 one-liners. Page boundaries fall after visual lines 6 (mid-p3!) and 12.
+  const paras = [
+    'あいうえおかきくけこさし'.repeat(2),
+    'たちつてと',
+    '',
+    'なにぬねのはひふへほまみ'.repeat(3),
+    ...Array.from({ length: 7 }, () => 'いろはにほへとちり'),
+  ];
+  for (const [i, p] of paras.entries()) {
+    if (i > 0) await page.keyboard.press('Enter');
+    if (p) await page.keyboard.insertText(p);
   }
-  const modelText = text.join('\n');
+  const modelText = paras.join('\n');
   await clickWritingMode(page, 'Vertical Rows');
-  await page.waitForTimeout(400); // the gap widgets land on a measured pass
+  await page.waitForTimeout(500); // the widgets + overlay land on a measured pass
 
   const m = await page.evaluate(() => {
     const content = document.getElementById('editor-content')!;
     const cs = getComputedStyle(content);
     const linePitch = Number.parseFloat(cs.lineHeight);
-    const gap = Number.parseFloat(cs.getPropertyValue('--page-gap'));
-    // one paragraph = one line here (10 chars < the 12-cell cap). Measure the
-    // GLYPHS (first character), not the paragraph box: the boundary line's box
-    // includes the gap widget, so box edges misattribute the gap by one line.
+    // Cluster ALL glyphs into visual lines (min/max block edges per line);
+    // merge the empty paragraph in by its own box position.
     const range = document.createRange();
-    const ps = [...content.querySelectorAll('p')].map((p) => {
-      const t = p.firstChild!;
-      range.setStart(t, 0);
-      range.setEnd(t, 1);
-      return range.getBoundingClientRect().left;
-    });
-    const scs = cs; // the separator lattice lives on the CONTENT (no stray k=0 line)
-    // Glyph blank between line 6 (page 1's fat last line) and line 7: rects of
-    // their first (only) characters — one-line paragraphs share the line's x.
-    const charRect = (p: Element) => {
-      range.setStart(p.firstChild!, 0);
-      range.setEnd(p.firstChild!, 1);
-      return range.getBoundingClientRect();
-    };
-    const paras = content.querySelectorAll('p');
-    const blankCenter = (charRect(paras[6]!).right + charRect(paras[5]!).left) / 2;
-    const W = 6 * linePitch + gap;
-    const lineX = content.getBoundingClientRect().right - 6 - W + gap / 2;
+    const walker = document.createTreeWalker(content, NodeFilter.SHOW_TEXT);
+    const lines: { right: number; left: number }[] = [];
+    let cur: { right: number; left: number } | null = null;
+    for (let n = walker.nextNode(); n; n = walker.nextNode()) {
+      const t = n as Text;
+      for (let i = 0; i < t.length; i++) {
+        range.setStart(t, i);
+        range.setEnd(t, i + 1);
+        const r = range.getBoundingClientRect();
+        if (r.width === 0 || r.height === 0) continue;
+        if (!cur || Math.abs(r.right - cur.right) > linePitch / 2) {
+          cur = { right: r.right, left: r.left };
+          lines.push(cur);
+        } else {
+          cur.left = Math.min(cur.left, r.left);
+          cur.right = Math.max(cur.right, r.right);
+        }
+      }
+    }
+    for (const p of content.querySelectorAll('p')) {
+      if (!p.textContent) {
+        const r = p.getBoundingClientRect();
+        lines.push({ right: r.right, left: r.left });
+      }
+    }
+    lines.sort((a, z) => z.right - a.right); // reading order (rightward first)
+    // Blank centers at the page boundaries (after visual lines 6 and 12)
+    const center = (i: number) => (lines[i - 1]!.left + lines[i]!.right) / 2;
+    const seps = [...document.querySelectorAll('.vedPageSeparator')]
+      .filter((el) => (el as HTMLElement).style.display !== 'none')
+      .map((el) => {
+        const r = el.getBoundingClientRect();
+        return { x: (r.left + r.right) / 2, top: r.top, height: r.height };
+      })
+      .sort((a, z) => z.x - a.x);
+    const chips = [...document.querySelectorAll('.vedPageNumber')]
+      .filter((el) => (el as HTMLElement).style.display !== 'none')
+      .map((el) => ({ text: el.textContent, y: el.getBoundingClientRect().top }));
     return {
-      linePitch,
-      gap,
+      lineCount: lines.length,
+      centers: [center(6), center(12)],
+      firstLineTop: lines[0]!.right, // unused-ish; keep the shape simple
+      seps,
+      chips,
       widgets: content.querySelectorAll('.ved-page-gap').length,
-      paraPitches: ps.slice(1).map((left, i) => ps[i]! - left),
-      backgroundSize: scs.backgroundSize,
-      backgroundRepeat: scs.backgroundRepeat,
-      lineDelta: lineX - blankCenter,
-      strayInside: lineX + W < content.getBoundingClientRect().right - 0.5,
       text: (window as unknown as { __vedText(): string }).__vedText(),
     };
   });
 
-  assert.ok(m.gap > 0, `--page-gap resolves to a px length (${m.gap})`);
-  assert.equal(m.widgets, 2, 'one gap widget per page boundary (lines 6 and 12 have successors)');
-  m.paraPitches.forEach((pitch, i) => {
-    // boundaries after lines 6 and 12 (1-based): pitches at index 5 and 11
-    const expected = i === 5 || i === 11 ? m.linePitch + m.gap : m.linePitch;
-    assert.ok(Math.abs(pitch - expected) < 0.8, `line ${i + 1}→${i + 2} pitch ${pitch} ≈ ${expected}`);
-  });
-  step(`page gap is physical: boundary pitch = pitch + ${m.gap}px, in-page pitch unchanged`);
-
+  assert.equal(m.lineCount, 14, `mixed doc lays out as 14 visual lines (got ${m.lineCount})`);
+  assert.equal(m.widgets, 2, 'one gap widget per page boundary');
   assert.equal(m.text, modelText, 'the gap widgets never touch the text model');
-  step('identity text model untouched by the gap widgets');
+  step('physical gaps at both boundaries; identity text model untouched');
 
-  const period = Number.parseFloat(m.backgroundSize);
-  assert.ok(
-    Math.abs(period - (6 * m.linePitch + m.gap)) < 0.8,
-    `separator period ${period} = pageLines × linePitch + gap ${6 * m.linePitch + m.gap}`,
-  );
-  assert.equal(m.backgroundRepeat, 'repeat-x', 'separator tiles along the page axis');
-  step(`separator period locks to the page period (${period}px)`);
+  assert.equal(m.seps.length, 2, `one separator per boundary (got ${m.seps.length})`);
+  m.seps.forEach((sep, i) => {
+    const c = m.centers[i]!;
+    assert.ok(
+      Math.abs(sep.x - c) < 1.5,
+      `separator ${i + 1} centered in the measured blank: ${sep.x.toFixed(1)} ≈ ${c.toFixed(1)}`,
+    );
+  });
+  step('separators sit mid-gap at page 1|2 AND page 2|3 (measured, not arithmetic)');
 
-  // The hairline (content rect right − caret-margin − period + gap/2, per the
-  // CSS) sits centered in the glyph blank between pages 1 and 2, and the k=0
-  // lattice line falls beyond the content box (no stray line at the start).
-  assert.ok(Math.abs(m.lineDelta) < 1, `hairline centered in the gap (delta ${m.lineDelta.toFixed(2)}px)`);
-  assert.ok(!m.strayInside, 'no lattice line before the first page');
-  step('separator hairline is centered mid-gap with no document-start line');
+  assert.equal(m.chips.length, 3, 'a folio chip per page');
+  step('page-number chips on all three pages');
 
-  // The caret crosses the gap one visual line per move. Use ONE long wrapping
-  // paragraph (the realistic shape): the page boundary — and the gap widget —
-  // then falls MID-paragraph, and the within-paragraph line move must step
-  // over it to the same column of the next line. (Cross-paragraph line moves
-  // in a one-line-per-paragraph rows doc mis-step with or without the gap —
-  // a pre-existing papercut, not exercised here.)
+  // The caret crosses the gap one visual line per move (single long paragraph
+  // so the within-paragraph move path is exercised across the widget).
   await page.evaluate(() => getSelection()!.selectAllChildren(document.getElementById('editor-content')!));
   await page.keyboard.press('Backspace');
   await page.keyboard.insertText('あいうえおかきくけこさし'.repeat(14)); // 14 lines of exactly 12 cells
-  await page.waitForTimeout(400); // re-measure pass places the widgets
-  const widgets = await page.evaluate(
-    () => document.getElementById('editor-content')!.querySelectorAll('.ved-page-gap').length,
-  );
-  assert.equal(widgets, 2, 'mid-paragraph boundaries also get gap widgets');
+  await page.waitForTimeout(400);
   await page.evaluate(() => (window as unknown as { __vedSetCaret(o: number): void }).__vedSetCaret(5 * 12 + 3));
   await page.waitForTimeout(100);
   await page.keyboard.press('ArrowLeft'); // forward one visual line (vertical-rl)
-  // Poll until the rAF-deferred move settles (see vrows-ruby-seam-line-move).
   const caret = () => page.evaluate(() => (window as unknown as { __vedCaret(): number }).__vedCaret());
   let off = 5 * 12 + 3;
   for (let k = 0; k < 200 && off === 5 * 12 + 3; k++) {

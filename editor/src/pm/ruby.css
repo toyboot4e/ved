@@ -278,3 +278,16 @@ ruby.rubyActive {
   border-radius: 3px;
   padding: 1px 4px;
 }
+
+/* Page-boundary separator (paged modes): a hairline drawn by the line-number
+ * overlay, centered in the MEASURED blank between two pages (the gap-widget
+ * blank in VerticalRows / intra-band in VerticalColumns). Overlay-relative,
+ * scroll-invariant, always in sync with the gap widgets and page chips —
+ * they all derive from the same measured visual lines. */
+.vedPageSeparator {
+  position: absolute;
+  top: 0;
+  left: 0;
+  width: 1px;
+  background: #808080;
+}

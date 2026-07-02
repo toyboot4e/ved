@@ -72,6 +72,7 @@ export const mountLineNumbers = (
 
   const pool: HTMLElement[] = [];
   const pagePool: HTMLElement[] = []; // page-number chips (paged modes)
+  const sepPool: HTMLElement[] = []; // page-boundary separators (paged modes)
   const selPool: HTMLElement[] = []; // custom text-selection rects (base only)
   const range = document.createRange();
   let raf = 0;
@@ -111,27 +112,48 @@ export const mountLineNumbers = (
     });
     for (const el of pool.slice(lines.length)) el.style.display = 'none';
 
-    // Page numbers (paged modes only): a chip at the BOTTOM of each page —
-    // centered under the page's first visual line's column, just past the
-    // line's full length (like a book folio). Pages are arithmetic — every
-    // --page-lines lines — in BOTH paged modes (a VerticalColumns band
-    // fragments there; a VerticalRows boundary is a page-gap widget, ADR 0010).
+    // Page numbers and page separators (paged modes only). Pages are
+    // arithmetic — every --page-lines VISUAL lines — in BOTH paged modes (a
+    // VerticalColumns band fragments there; a VerticalRows boundary is a
+    // page-gap widget, ADR 0010). Both marks derive from the MEASURED lines,
+    // never from pitch arithmetic: real documents shift physical layout in
+    // non-arithmetic ways (paragraph paddings, empty lines), so a periodic
+    // CSS lattice drifts off the gap-widget blanks — measured ~10px at the
+    // first boundary of a mixed document. Same measurement, always in sync.
     const paged =
       content.classList.contains(styles.multiColMode ?? '') || content.classList.contains(styles.rowsMode ?? '');
     const linesPerPage = paged ? Number.parseFloat(cs.getPropertyValue('--page-lines')) || 20 : 0;
     let chips = 0;
+    let seps = 0;
     if (linesPerPage > 0) {
       for (let page = 0; page * linesPerPage < lines.length; page++) {
-        const ln = lines[page * linesPerPage];
-        if (!ln) break;
-        const el = pagePool[chips] ?? makePageNumber(overlay, pagePool);
-        el.style.transform = `translate(${(ln.left + ln.right) / 2}px, ${ln.top + ln.bandLen}px) translate(-50%, 0) translateY(0.4em)`;
-        el.textContent = `${page + 1}`;
-        el.style.display = '';
+        const first = lines[page * linesPerPage];
+        if (!first) break;
+        // The chip: a folio at the BOTTOM of the page, centered under the
+        // page's first line's column, just past the full line length.
+        const chip = pagePool[chips] ?? makePageNumber(overlay, pagePool);
+        chip.style.transform = `translate(${(first.left + first.right) / 2}px, ${first.top + first.bandLen}px) translate(-50%, 0) translateY(0.4em)`;
+        chip.textContent = `${page + 1}`;
+        chip.style.display = '';
         chips++;
+        // The separator: a hairline centered in the measured blank between
+        // the previous page's last line and this page's first line. Skipped
+        // across a band wrap (the previous line is not to this line's right
+        // in the same band — fragmentation separates those physically).
+        const prev = page > 0 ? lines[page * linesPerPage - 1] : undefined;
+        if (prev && prev.left > first.right) {
+          const el = sepPool[seps] ?? makePageSeparator(overlay, sepPool);
+          const x = (prev.left + first.right) / 2;
+          const y = Math.min(prev.top, first.top);
+          el.style.transform = `translate(${x}px, ${y}px)`;
+          el.style.height = `${first.bandLen}px`;
+          el.style.display = '';
+          seps++;
+        }
       }
     }
     for (const el of pagePool.slice(chips)) el.style.display = 'none';
+    for (const el of sepPool.slice(seps)) el.style.display = 'none';
 
     refreshHighlight(vertical, o);
     refreshSelection(o);
@@ -365,6 +387,15 @@ const makePageNumber = (overlay: HTMLElement, pool: HTMLElement[]): HTMLElement 
   const el = document.createElement('span');
   el.className = 'vedPageNumber';
   overlay.appendChild(el);
+  pool.push(el);
+  return el;
+};
+
+const makePageSeparator = (overlay: HTMLElement, pool: HTMLElement[]): HTMLElement => {
+  const el = document.createElement('div');
+  el.className = 'vedPageSeparator';
+  // Behind the numbers/chips but inside the same scroll-invariant overlay box.
+  overlay.insertBefore(el, overlay.firstChild);
   pool.push(el);
   return el;
 };

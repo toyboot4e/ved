@@ -37,10 +37,11 @@ page-gap work (ADR 0010) changed what is reachable:
   line into the next band, oscillating the measurement. `pageBoundaryEnds`
   takes `pagesPerBand` (∞ for rows: every boundary; k for columns: skip every
   k-th).
-- The intra-band vertical separator lattice is painted on the CONTENT
-  (period = page + gap, right-anchored, centered in the gap's visual blank);
-  with one page per row every line falls outside the content box, so the
-  layer self-disables. Band separators stay on the scroller as before.
+- The intra-band vertical separators are drawn by the line-number overlay
+  from the measured visual lines (`.vedPageSeparator`, centered in each
+  gap-widget blank; band-wrap boundaries are skipped — fragmentation
+  separates those physically). A periodic CSS lattice cannot track real
+  documents (see ADR 0010). Band separators stay on the scroller as before.
 - Scroll-keep: a band holds `linesPerRow × pagesPerRow` lines
   (`ScrollGeom.pagesPerRow`).
 - Page numbers (the line-number overlay chips) are arithmetic per

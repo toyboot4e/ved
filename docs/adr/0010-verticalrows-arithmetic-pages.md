@@ -76,14 +76,13 @@ actually is:
   value is an EVALUATED px length that `measureGeom` can read back; the knob
   is `--page-gap-cells` (default 1 cell), exposed in the debug view-config
   toolbar as `gap`.
-- The separator lattice: tile period `--page-width + --page-gap`, painted on
-  the CONTENT box (its right edge is exact and scrolls natively — a
-  scroller-attached `background-attachment: local` version anchored
-  ambiguously against the scroll-area edge), anchored right at the
-  caret-margin inset, hairline at `--page-gap / 2` into the tile — verified
-  centered in the glyph blank to sub-pixel in both paged modes, with the k=0
-  line clipping beyond the box (no line before page 1; a gap under ~2/3 cell
-  cannot clip it past the caret margin).
+- The separator hairlines are DRAWN BY THE LINE-NUMBER OVERLAY from the
+  measured visual lines (`.vedPageSeparator`), centered in each gap-widget
+  blank — the same measurement that places the widgets and the page-number
+  chips, so they cannot desync. Periodic CSS lattices were tried twice and
+  REJECTED: real documents shift physical layout non-arithmetically
+  (paragraph block paddings, empty lines), which drifted the lattice ~10px
+  off the first boundary of a mixed document and worse further in.
 - Verified by `test/e2e/rows-separator.ts` (physical boundary pitch, identity
   text, separator period, caret line-move across the gap) in a VISIBLE window
   (rAF-deferred caret moves no-op in hidden windows) and unit tests
