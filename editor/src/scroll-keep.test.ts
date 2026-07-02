@@ -3,7 +3,9 @@ import { lineToScroll, revealDelta, type ScrollGeom, scrollToLine } from './scro
 
 // 20px lines, 20 lines per page; columns bands pitch 740px (720 + 20 gutter),
 // rows pages pitch 400px (contiguous: 20 lines × 20px, no gap — ADR 0010)
-const geom: ScrollGeom = { linePitch: 20, colsPagePitch: 740, rowsPagePitch: 400, linesPerRow: 20 };
+const geom: ScrollGeom = { linePitch: 20, colsPagePitch: 740, rowsPagePitch: 400, linesPerRow: 20, pagesPerRow: 1 };
+// Columns with 2 pages per band (ADR 0011): a band holds 40 lines.
+const grid2: ScrollGeom = { ...geom, pagesPerRow: 2 };
 
 describe('scrollToLine', () => {
   it('reads lines from the flow-axis offset per mode', () => {
@@ -14,6 +16,8 @@ describe('scrollToLine', () => {
     expect(scrollToLine('columns', geom, 2220, 0)).toBe(60);
     // rows: page 3 (lines 60..) starts at scrollLeft = -3 × rowsPagePitch
     expect(scrollToLine('rows', geom, 0, -1200)).toBe(60);
+    // columns, 2 pages per band: band 3 starts at line 160
+    expect(scrollToLine('columns', grid2, 2960, 0)).toBe(160);
   });
 
   it('rounds to the nearest line / row', () => {
@@ -36,6 +40,10 @@ describe('lineToScroll', () => {
     // line 70 lives in page 3 (lines 60..79)
     expect(lineToScroll('columns', geom, 70)).toEqual({ top: 2220, left: 0 });
     expect(lineToScroll('rows', geom, 70)).toEqual({ top: 0, left: -1200 });
+    // 2 pages per band (40 lines each): line 30 lives in the first band,
+    // line 70 in the second
+    expect(lineToScroll('columns', grid2, 30)).toEqual({ top: 0, left: 0 });
+    expect(lineToScroll('columns', grid2, 70)).toEqual({ top: 740, left: 0 });
   });
 
   it('round-trips across mode pairs', () => {

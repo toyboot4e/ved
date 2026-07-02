@@ -149,10 +149,14 @@ export const App = (): React.JSX.Element => {
 
   return (
     // vertMode on the root transposes the page geometry (CSS custom props);
-    // the view config overrides the geometry custom props inline (view-config.ts)
+    // the view config overrides the geometry custom props inline
+    // (view-config.ts). pagesPerRow only means something in VerticalColumns
+    // (ADR 0011) — pin it to 1 elsewhere so the root/page widths stay one page.
     <div
       className={clsx(styles.root, writingMode !== WritingMode.Horizontal && styles.vertMode)}
-      style={viewConfigToCss(viewConfig)}
+      style={viewConfigToCss(
+        writingMode === WritingMode.VerticalColumns ? viewConfig : { ...viewConfig, pagesPerRow: 1 },
+      )}
     >
       {/* Also makes space for traffic lights (macOS only) */}
       <div className={styles.header}>

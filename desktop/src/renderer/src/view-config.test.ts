@@ -32,6 +32,7 @@ describe('viewConfigToCss', () => {
       pageLineChars: 30,
       pageLines: 15,
       pageGapCells: 2,
+      pagesPerRow: 2,
       fontFamily: 'Noto Serif CJK JP',
     }) as Record<string, string>;
     expect(css['--cell-size']).toBe('24px');
@@ -39,6 +40,7 @@ describe('viewConfigToCss', () => {
     expect(css['--page-line-chars']).toBe('30');
     expect(css['--page-lines']).toBe('15');
     expect(css['--page-gap-cells']).toBe('2');
+    expect(css['--pages-per-row']).toBe('2');
     expect(css['--font-family']).toBe('Noto Serif CJK JP');
   });
 

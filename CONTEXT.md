@@ -55,6 +55,13 @@ The leading between adjacent lines, stated as a ratio of the **cell** size
 so ratios below 0.5 are out of spec.
 _Avoid_: line-height (the CSS property), leading, gap.
 
+**Page row**:
+A row of **pages** laid side by side — the unit that tiles downward in
+VerticalColumns. Holds a configurable number of pages (pages-per-row);
+one page per row is the default. VerticalRows has no counterpart (a column
+of pages cannot exist — see ADR 0011).
+_Avoid_: band (implementation word), grid row.
+
 ### Document and annotation
 
 **Document**:

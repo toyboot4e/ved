@@ -26,6 +26,8 @@
 // caret's line and move the highlight, O(lines) of plain math, no layout reads
 // per paragraph.
 
+import styles from './editor.module.scss';
+
 export type LineNumbers = { schedule: (full?: boolean) => void; destroy: () => void };
 
 /** Viewport-space rect of a caret, as `view.coordsAtPos` returns it. */
@@ -69,6 +71,7 @@ export const mountLineNumbers = (
   scroller.appendChild(overlay);
 
   const pool: HTMLElement[] = [];
+  const pagePool: HTMLElement[] = []; // page-number chips (paged modes)
   const selPool: HTMLElement[] = []; // custom text-selection rects (base only)
   const range = document.createRange();
   let raf = 0;
@@ -107,6 +110,28 @@ export const mountLineNumbers = (
       el.style.display = '';
     });
     for (const el of pool.slice(lines.length)) el.style.display = 'none';
+
+    // Page numbers (paged modes only): a chip above each page's first visual
+    // line's number, in the gutter. Pages are arithmetic — every --page-lines
+    // lines — in BOTH paged modes (a VerticalColumns band fragments there; a
+    // VerticalRows boundary is a page-gap widget, ADR 0010).
+    const paged =
+      content.classList.contains(styles.multiColMode ?? '') || content.classList.contains(styles.rowsMode ?? '');
+    const linesPerPage = paged ? Number.parseFloat(cs.getPropertyValue('--page-lines')) || 20 : 0;
+    let chips = 0;
+    if (linesPerPage > 0) {
+      for (let page = 0; page * linesPerPage < lines.length; page++) {
+        const ln = lines[page * linesPerPage];
+        if (!ln) break;
+        const el = pagePool[chips] ?? makePageNumber(overlay, pagePool);
+        // Same anchor as the line number, one number-height further out.
+        el.style.transform = `translate(${(ln.left + ln.right) / 2}px, ${ln.top}px) translate(-50%, -100%) translateY(-1.4em)`;
+        el.textContent = `${page + 1}`;
+        el.style.display = '';
+        chips++;
+      }
+    }
+    for (const el of pagePool.slice(chips)) el.style.display = 'none';
 
     refreshHighlight(vertical, o);
     refreshSelection(o);
@@ -172,22 +197,32 @@ export const mountLineNumbers = (
     refreshSelection(o);
   };
 
+  // rAF for frame alignment, with a timeout fallback: rAF does NOT fire in
+  // hidden/throttled windows (the e2e harness runs hidden), where the numbers
+  // must still land. Whichever fires first runs; both are cleared.
+  let timer: ReturnType<typeof setTimeout> | 0 = 0;
+  const run = (): void => {
+    cancelAnimationFrame(raf);
+    clearTimeout(timer);
+    raf = 0;
+    timer = 0;
+    const doFull = pendingFull || lines.length === 0; // first run must measure
+    pendingFull = false;
+    if (doFull) measure();
+    else highlightOnly();
+  };
   const schedule = (full = true): void => {
     if (full) pendingFull = true;
     if (raf) return;
-    raf = requestAnimationFrame(() => {
-      raf = 0;
-      const doFull = pendingFull || lines.length === 0; // first run must measure
-      pendingFull = false;
-      if (doFull) measure();
-      else highlightOnly();
-    });
+    raf = requestAnimationFrame(run);
+    timer = setTimeout(run, 60);
   };
 
   return {
     schedule,
     destroy: () => {
       if (raf) cancelAnimationFrame(raf);
+      clearTimeout(timer);
       overlay.remove();
     },
   };
@@ -321,6 +356,14 @@ const bands = (ln: VisualLine, vertical: boolean) =>
 const makeNumber = (overlay: HTMLElement, pool: HTMLElement[]): HTMLElement => {
   const el = document.createElement('span');
   el.className = 'vedLineNumber';
+  overlay.appendChild(el);
+  pool.push(el);
+  return el;
+};
+
+const makePageNumber = (overlay: HTMLElement, pool: HTMLElement[]): HTMLElement => {
+  const el = document.createElement('span');
+  el.className = 'vedPageNumber';
   overlay.appendChild(el);
   pool.push(el);
   return el;

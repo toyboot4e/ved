@@ -59,6 +59,11 @@ $footer-height: $font-size + $pad-y * 2;
   // measureGeom reads it back for the rows scroll pitch.
   --page-gap-cells: 1;
   --page-gap: calc(var(--cell-size) * var(--page-gap-cells));
+  // Pages per page ROW in VerticalColumns (ADR 0011): a multicol band holds
+  // this many pages side by side (arithmetic within the band, separated by
+  // page-gap widgets). Meaningless in the other modes — the shell pins it to
+  // 1 outside VerticalColumns (view-config.ts).
+  --pages-per-row: 1;
 
   // Horizontal writing: lines run horizontally, stacking downwards
   --page-width: var(--line-length);
@@ -68,9 +73,12 @@ $footer-height: $font-size + $pad-y * 2;
   &.vertMode {
     --page-width: var(--lines-extent);
     --page-height: var(--line-length);
+    // One page ROW: --pages-per-row pages side by side with a --page-gap
+    // between each (= --page-width when --pages-per-row is 1).
+    --page-row-width: calc(var(--pages-per-row) * var(--page-width) + (var(--pages-per-row) - 1) * var(--page-gap));
     // Vertical's line-number gutter sits on the line-length axis (folded into
     // the content height per mode below), not on this one.
-    --editor-width: calc(var(--page-width) + #{$pad-x * 2});
+    --editor-width: calc(var(--page-row-width) + #{$pad-x * 2});
   }
 
   // Horizontal: reserve the line-number gutter BESIDE the text column, so the
@@ -359,8 +367,10 @@ $footer-height: $font-size + $pad-y * 2;
     //     vertical-rl), inset by the content's start-side margin + padding,
     //     so the lattice stays locked to the first line wherever you scroll
     //     (attachment: local);
-    //   the hairline sits --page-gap/2 into each tile, i.e. centered in the
-    //     blank the widget opened (gap 0 degrades to the line-box boundary).
+    //   the hairline is phase-shifted a further (gap + leading)/2 so it sits
+    //     centered in the VISUAL blank between the two pages' glyph edges
+    //     (pixel-measured: the fat line's glyphs are pinned flush to the
+    //     line-over edge, so the blank spans the gap PLUS the leading).
     &.rowsMode {
       flex: 1 1 auto;
       overflow-x: scroll;
@@ -377,7 +387,7 @@ $footer-height: $font-size + $pad-y * 2;
       background-repeat: repeat-x;
       background-attachment: local;
       background-position:
-        right #{$pad-x + $caret-margin} top 0;
+        right calc(#{$pad-x + $caret-margin} + (var(--page-gap) + var(--line-space)) / 2) top 0;
     }
   }
 
@@ -406,7 +416,26 @@ $footer-height: $font-size + $pad-y * 2;
     // The height is increased by the same amount so the line still fits the
     // configured character count.
     &.multiColMode {
-      width: var(--page-width);
+      width: var(--page-row-width);
+      // Intra-band page boundaries (--pages-per-row > 1, ADR 0011): a vertical
+      // hairline lattice on the CONTENT — the SAME pixel-verified tile as the
+      // rows separator (hairline at gap/2 into the tile, anchor inset
+      // (gap + leading)/2 — centered in the visual blank the page-gap widget
+      // opened), just anchored at the content's own right edge instead of the
+      // scroll area's. Boundary lines land only INSIDE multi-page bands; with
+      // one page per row the only in-box line is the k=0 frame at the band's
+      // start edge. Horizontal BAND separators stay on the scroller.
+      background-image: linear-gradient(
+        to right,
+        transparent calc(var(--page-gap) / 2 - 0.5px),
+        #808080 calc(var(--page-gap) / 2 - 0.5px),
+        #808080 calc(var(--page-gap) / 2 + 0.5px),
+        transparent calc(var(--page-gap) / 2 + 0.5px)
+      );
+      background-size: calc(var(--page-width) + var(--page-gap)) 100%;
+      background-repeat: repeat-x;
+      background-position:
+        right calc((var(--page-gap) + var(--line-space)) / 2) top 0;
       // Consistent band geometry so the page-row period is predictable (CSS
       // multicol applies padding to the FIRST column only, so any per-band
       // gutter MUST be column-gap, not padding — else later pages drift):

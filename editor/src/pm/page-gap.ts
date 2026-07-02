@@ -65,18 +65,32 @@ export const pageGapPlugin = (): Plugin<DecorationSet> =>
 export type LineItem = { readonly endOff: number; readonly b: number };
 
 /** Text offsets of the page boundaries: the end of every `linesPerPage`-th
- *  visual line that has a following line. Items are in reading order; a new
- *  line starts when the block coordinate moves by more than half a pitch. */
-export const pageBoundaryEnds = (items: readonly LineItem[], linesPerPage: number, linePitch: number): number[] => {
-  if (linesPerPage < 1 || items.length === 0) return [];
+ *  visual line that has a following line — EXCEPT every `pagesPerBand`-th page
+ *  (a VerticalColumns band break separates those physically via multicol
+ *  fragmentation, and a widget there would overflow the band's exact width and
+ *  push a line into the next band — an oscillating re-measure). Rows mode is
+ *  one endless band: leave `pagesPerBand` at Infinity so every boundary gets a
+ *  widget. Items are in reading order; a new line starts when the block
+ *  coordinate moves by more than half a pitch. */
+export const pageBoundaryEnds = (
+  items: readonly LineItem[],
+  linesPerPage: number,
+  linePitch: number,
+  pagesPerBand: number = Number.POSITIVE_INFINITY,
+): number[] => {
+  if (linesPerPage < 1 || pagesPerBand < 1 || items.length === 0) return [];
   const out: number[] = [];
   let line = 0;
   let lineB = items[0]!.b;
   let lastEnd = items[0]!.endOff;
   for (const it of items) {
     if (Math.abs(it.b - lineB) > linePitch / 2) {
-      // A line break BEFORE this item: emit the finished line if it ends a page.
-      if (line % linesPerPage === linesPerPage - 1) out.push(lastEnd);
+      // A line break BEFORE this item: emit the finished line if it ends a
+      // page that is not also a band end.
+      if (line % linesPerPage === linesPerPage - 1) {
+        const page = (line + 1) / linesPerPage; // 1-based finished page
+        if (page % pagesPerBand !== 0) out.push(lastEnd);
+      }
       line++;
       lineB = it.b;
     }

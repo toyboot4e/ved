@@ -260,3 +260,21 @@ ruby.rubyActive {
   user-select: none;
   -webkit-user-select: none;
 }
+
+/* Page-number chip at each page's first visual line (paged modes only —
+ * VerticalColumns / VerticalRows), drawn by the line-number overlay above the
+ * line number, in the gutter. Opaque background so it stays readable over the
+ * separator hairline that runs mid-gutter/mid-gap. */
+.vedPageNumber {
+  position: absolute;
+  top: 0;
+  left: 0;
+  font-size: 0.55em;
+  line-height: 1;
+  white-space: nowrap;
+  color: #777;
+  background: #fff;
+  border: 1px solid #bbb;
+  border-radius: 3px;
+  padding: 1px 4px;
+}

@@ -25,7 +25,8 @@ const numberFields: NumberFieldSpec[] = [
   },
   { field: 'pageLineChars', label: '字', title: 'Fullwidth cells per line', step: 1 },
   { field: 'pageLines', label: '行', title: 'Lines per page', step: 1 },
-  { field: 'pageGapCells', label: 'gap', title: 'Space between VerticalRows pages (cells)', step: 0.5 },
+  { field: 'pageGapCells', label: 'gap', title: 'Space between pages (cells)', step: 0.5 },
+  { field: 'pagesPerRow', label: '頁/段', title: 'Pages side by side per page row (VerticalColumns only)', step: 1 },
 ];
 
 const fieldId = (field: string): string => `view-config-${field}`;

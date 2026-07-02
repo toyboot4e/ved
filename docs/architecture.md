@@ -402,7 +402,7 @@ Orthogonal to view modes; pure CSS:
 |---|---|---|---|
 | `Horizontal` | normal flow | line-length wide × lines tall | vertical |
 | `Vertical` | `vertical-rl` | transposed, one fixed page box | both axes |
-| `VerticalColumns` | `vertical-rl` + CSS multi-column (*dankumi*) | pages tile DOWNWARD; one page per row | vertical |
+| `VerticalColumns` | `vertical-rl` + CSS multi-column (*dankumi*) | page ROWS tile DOWNWARD; `--pages-per-row` pages per row (ADR 0011) | vertical |
 | `VerticalRows` | `vertical-rl`, plain block flow (*dankumi*) | pages tile LEFTWARD; ARITHMETIC pages (every N lines) | horizontal |
 
 Both paged modes (`VerticalColumns`, `VerticalRows`) are 1D arrangements
@@ -425,6 +425,15 @@ events (`pm/page-gap.ts`, `measurePageGaps` in editor.tsx). The separator
 hairline is a right-anchored background lattice with period
 `--page-width + --page-gap`, centered in each gap. See
 [ADR 0010](adr/0010-verticalrows-arithmetic-pages.md).
+
+The same widget trick generalizes VerticalColumns into a page GRID: a band
+holds `--pages-per-row` arithmetic pages side by side (band width =
+`--page-row-width`), gap widgets at intra-band boundaries only (a band break
+fragments physically), and a content-painted vertical lattice marks the
+intra-band boundaries — see [ADR 0011](adr/0011-page-grid-pages-per-row.md).
+The transpose (page COLUMNS in VerticalRows) stays impossible: one
+fragmentation direction exists per flow. Page numbers are chips drawn by the
+line-number overlay at each page's first visual line (every `--page-lines`).
 
 Notes that took debugging to learn:
 

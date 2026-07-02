@@ -573,11 +573,13 @@ const measureGeom = (scroller: HTMLElement): ScrollGeom => {
   // computed value is an evaluated px length).
   const colGap = (contentCs && Number.parseFloat(contentCs.columnGap)) || 20;
   const pageGap = Number.parseFloat(cs.getPropertyValue('--page-gap')) || 0;
+  const pagesPerRow = Number.parseFloat(cs.getPropertyValue('--pages-per-row')) || 1;
   return {
     linePitch,
     colsPagePitch: lineChars * fontSize + colGap,
     rowsPagePitch: linesPerRow * linePitch + pageGap,
     linesPerRow,
+    pagesPerRow,
   };
 };
 
@@ -1170,14 +1172,14 @@ export const VedEditor = (props: VedEditorProps): React.JSX.Element => {
     const offsetAtPoint = (px: number, py: number): number | null =>
       dragCache ? nearestGlyphOffset(dragCache.glyphs, px, py, dragCache.vertical) : null;
 
-    // VerticalRows page gaps (pm/page-gap.ts): measure the visual lines from
-    // the glyph rects (wrapping is decided by glyph advances, not arithmetic),
-    // derive the page-boundary positions, and swap the widget set when it
-    // changed. rAF-coalesced; skipped during IME composition (reconciled on
-    // compositionend) and outside rows mode (where the set empties).
+    // Page gaps (pm/page-gap.ts): measure the visual lines from the glyph
+    // rects (wrapping is decided by glyph advances, not arithmetic), derive
+    // the page-boundary positions, and swap the widget set when it changed.
+    // rAF-coalesced; skipped during IME composition (reconciled on
+    // compositionend) and outside the paged modes (where the set empties).
     let pageGapRaf = 0;
     let lastGapPositions: number[] = [];
-    const measurePageGaps = (): number[] => {
+    const measurePageGaps = (pagesPerBand: number): number[] => {
       const linesPerPage = Number.parseFloat(getComputedStyle(mount).getPropertyValue('--page-lines')) || 20;
       const pitch = Number.parseFloat(getComputedStyle(view.dom).lineHeight) || 28;
       const items: LineItem[] = walkGlyphs().map(({ off, rect }) => ({ endOff: off + 1, b: rect.left }));
@@ -1192,7 +1194,7 @@ export const VedEditor = (props: VedEditorProps): React.JSX.Element => {
           off += line.length + 1;
         });
       items.sort((a, z) => a.endOff - z.endOff);
-      return pageBoundaryEnds(items, linesPerPage, pitch).map((end) =>
+      return pageBoundaryEnds(items, linesPerPage, pitch, pagesPerBand).map((end) =>
         posAfterEnclosingRuby(view.state.doc.resolve(offsetToPos(view.state.doc, end))),
       );
     };
@@ -1203,7 +1205,17 @@ export const VedEditor = (props: VedEditorProps): React.JSX.Element => {
       pageGapRaf = 0;
       pageGapTimer = 0;
       if (view.composing) return;
-      const positions = view.dom.classList.contains(styles.rowsMode ?? '') ? measurePageGaps() : [];
+      // Rows: one endless band — every page boundary gets a widget. Columns
+      // with pages-per-row > 1: widgets at INTRA-band boundaries only (the
+      // band break itself separates pages via fragmentation, ADR 0011).
+      const rowsHere = view.dom.classList.contains(styles.rowsMode ?? '');
+      const multiColHere = view.dom.classList.contains(styles.multiColMode ?? '');
+      const pagesPerRow = Number.parseFloat(getComputedStyle(mount).getPropertyValue('--pages-per-row')) || 1;
+      const positions = rowsHere
+        ? measurePageGaps(Number.POSITIVE_INFINITY)
+        : multiColHere && pagesPerRow > 1
+          ? measurePageGaps(pagesPerRow)
+          : [];
       if (positions.length === lastGapPositions.length && positions.every((p, i) => p === lastGapPositions[i])) return;
       lastGapPositions = positions;
       view.dispatch(pageGapTr(view.state, positions));

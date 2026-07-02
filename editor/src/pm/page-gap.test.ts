@@ -43,6 +43,13 @@ describe('pageBoundaryEnds', () => {
     expect(pageBoundaryEnds(items, 2, 28)).toEqual([3]);
   });
 
+  it('skips every pagesPerBand-th boundary (the multicol band break separates those)', () => {
+    // 5 lines, 1 line per page, 2 pages per band: boundaries after pages 1 and
+    // 3 (intra-band) — pages 2 and 4 end their bands, no widget there.
+    const items = [...line(100, [1]), ...line(72, [2]), ...line(44, [3]), ...line(16, [4]), ...line(-12, [5])];
+    expect(pageBoundaryEnds(items, 1, 28, 2)).toEqual([1, 3]);
+  });
+
   it('is empty for degenerate inputs', () => {
     expect(pageBoundaryEnds([], 6, 28)).toEqual([]);
     expect(pageBoundaryEnds([{ endOff: 1, b: 0 }], 0, 28)).toEqual([]);

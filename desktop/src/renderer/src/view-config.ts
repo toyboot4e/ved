@@ -15,8 +15,11 @@ export type ViewConfig = {
   readonly pageLineChars: number;
   /** Lines per page (`--page-lines`). */
   readonly pageLines: number;
-  /** Space between VerticalRows pages, in cells (`--page-gap-cells`). */
+  /** Space between pages, in cells (`--page-gap-cells`). */
   readonly pageGapCells: number;
+  /** Pages side by side per page row — VerticalColumns only
+   *  (`--pages-per-row`; pinned to 1 in the other modes, ADR 0011). */
+  readonly pagesPerRow: number;
   /** Editor content font family (`--font-family`); '' inherits the shell's stack. */
   readonly fontFamily: string;
 };
@@ -27,6 +30,7 @@ export const VIEW_CONFIG_DEFAULTS: ViewConfig = {
   pageLineChars: 40,
   pageLines: 20,
   pageGapCells: 1,
+  pagesPerRow: 1,
   fontFamily: '',
 };
 
@@ -38,6 +42,7 @@ export const VIEW_CONFIG_BOUNDS = {
   pageLineChars: { min: 5, max: 100 },
   pageLines: { min: 1, max: 100 },
   pageGapCells: { min: 0, max: 5 },
+  pagesPerRow: { min: 1, max: 6 },
 } as const satisfies Partial<Record<keyof ViewConfig, { min: number; max: number }>>;
 
 const clamp = (value: number, { min, max }: { min: number; max: number }, fallback: number): number =>
@@ -50,6 +55,7 @@ export const clampViewConfig = (config: ViewConfig): ViewConfig => ({
   pageLineChars: clamp(config.pageLineChars, VIEW_CONFIG_BOUNDS.pageLineChars, VIEW_CONFIG_DEFAULTS.pageLineChars),
   pageLines: clamp(config.pageLines, VIEW_CONFIG_BOUNDS.pageLines, VIEW_CONFIG_DEFAULTS.pageLines),
   pageGapCells: clamp(config.pageGapCells, VIEW_CONFIG_BOUNDS.pageGapCells, VIEW_CONFIG_DEFAULTS.pageGapCells),
+  pagesPerRow: Math.round(clamp(config.pagesPerRow, VIEW_CONFIG_BOUNDS.pagesPerRow, VIEW_CONFIG_DEFAULTS.pagesPerRow)),
   fontFamily: config.fontFamily,
 });
 
@@ -67,6 +73,7 @@ export const viewConfigToCss = (config: ViewConfig): React.CSSProperties => {
     '--page-line-chars': `${clamped.pageLineChars}`,
     '--page-lines': `${clamped.pageLines}`,
     '--page-gap-cells': `${clamped.pageGapCells}`,
+    '--pages-per-row': `${clamped.pagesPerRow}`,
   };
   if (clamped.fontFamily.trim() !== '') style['--font-family'] = clamped.fontFamily;
   return style as React.CSSProperties;

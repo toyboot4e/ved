@@ -19,6 +19,9 @@ export type ScrollGeom = {
   readonly rowsPagePitch: number;
   /** Lines per page in the paged modes. */
   readonly linesPerRow: number;
+  /** `columns`: pages side by side per band (ADR 0011) — a band holds
+   *  `linesPerRow × pagesPerRow` lines. Always 1 in the other modes. */
+  readonly pagesPerRow: number;
 };
 
 /**
@@ -32,7 +35,7 @@ export const scrollToLine = (mode: ScrollMode, geom: ScrollGeom, scrollTop: numb
     case 'vertical':
       return Math.round(Math.abs(scrollLeft) / geom.linePitch);
     case 'columns':
-      return Math.round(scrollTop / geom.colsPagePitch) * geom.linesPerRow;
+      return Math.round(scrollTop / geom.colsPagePitch) * geom.linesPerRow * geom.pagesPerRow;
     case 'rows':
       // Pages tile leftward (vertical-rl); scrollLeft is negative, so use
       // the absolute distance from the right edge as the "page index".
@@ -64,7 +67,7 @@ export const lineToScroll = (mode: ScrollMode, geom: ScrollGeom, line: number): 
     case 'vertical':
       return { top: 0, left: -(line * geom.linePitch) };
     case 'columns':
-      return { top: Math.floor(line / geom.linesPerRow) * geom.colsPagePitch, left: 0 };
+      return { top: Math.floor(line / (geom.linesPerRow * geom.pagesPerRow)) * geom.colsPagePitch, left: 0 };
     case 'rows':
       // Pages tile leftward — scrollLeft grows negative as you scroll farther.
       return { top: 0, left: -(Math.floor(line / geom.linesPerRow) * geom.rowsPagePitch) };
