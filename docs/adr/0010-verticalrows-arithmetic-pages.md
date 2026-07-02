@@ -76,10 +76,14 @@ actually is:
   value is an EVALUATED px length that `measureGeom` can read back; the knob
   is `--page-gap-cells` (default 1 cell), exposed in the debug view-config
   toolbar as `gap`.
-- The separator lattice: tile period `--page-width + --page-gap`, anchored at
-  the scroll area's right edge (the document start) inset by the content's
-  start margin/padding, hairline at `--page-gap / 2` into the tile — centered
-  in the physical blank; gap 0 degrades to the line-box boundary.
+- The separator lattice: tile period `--page-width + --page-gap`, painted on
+  the CONTENT box (its right edge is exact and scrolls natively — a
+  scroller-attached `background-attachment: local` version anchored
+  ambiguously against the scroll-area edge), anchored right at the
+  caret-margin inset, hairline at `--page-gap / 2` into the tile — verified
+  centered in the glyph blank to sub-pixel in both paged modes, with the k=0
+  line clipping beyond the box (no line before page 1; a gap under ~2/3 cell
+  cannot clip it past the caret margin).
 - Verified by `test/e2e/rows-separator.ts` (physical boundary pitch, identity
   text, separator period, caret line-move across the gap) in a VISIBLE window
   (rAF-deferred caret moves no-op in hidden windows) and unit tests

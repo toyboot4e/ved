@@ -111,10 +111,11 @@ export const mountLineNumbers = (
     });
     for (const el of pool.slice(lines.length)) el.style.display = 'none';
 
-    // Page numbers (paged modes only): a chip above each page's first visual
-    // line's number, in the gutter. Pages are arithmetic — every --page-lines
-    // lines — in BOTH paged modes (a VerticalColumns band fragments there; a
-    // VerticalRows boundary is a page-gap widget, ADR 0010).
+    // Page numbers (paged modes only): a chip at the BOTTOM of each page —
+    // centered under the page's first visual line's column, just past the
+    // line's full length (like a book folio). Pages are arithmetic — every
+    // --page-lines lines — in BOTH paged modes (a VerticalColumns band
+    // fragments there; a VerticalRows boundary is a page-gap widget, ADR 0010).
     const paged =
       content.classList.contains(styles.multiColMode ?? '') || content.classList.contains(styles.rowsMode ?? '');
     const linesPerPage = paged ? Number.parseFloat(cs.getPropertyValue('--page-lines')) || 20 : 0;
@@ -124,8 +125,7 @@ export const mountLineNumbers = (
         const ln = lines[page * linesPerPage];
         if (!ln) break;
         const el = pagePool[chips] ?? makePageNumber(overlay, pagePool);
-        // Same anchor as the line number, one number-height further out.
-        el.style.transform = `translate(${(ln.left + ln.right) / 2}px, ${ln.top}px) translate(-50%, -100%) translateY(-1.4em)`;
+        el.style.transform = `translate(${(ln.left + ln.right) / 2}px, ${ln.top + ln.bandLen}px) translate(-50%, 0) translateY(0.4em)`;
         el.textContent = `${page + 1}`;
         el.style.display = '';
         chips++;

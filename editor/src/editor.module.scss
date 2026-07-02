@@ -357,37 +357,17 @@ $footer-height: $font-size + $pad-y * 2;
     // Pages here are ARITHMETIC, not fragmented: the content is one continuous
     // vertical-rl block flow (Chromium cannot fragment along the block axis,
     // see ADR 0010), so every --page-lines lines is "a page". The physical
-    // inter-page space comes from the .ved-page-gap widgets (pm/page-gap.ts)
-    // fattening each page's LAST line by --page-gap, so the page period is
-    // --page-width + --page-gap. The separator hairline is drawn centered in
-    // each gap:
-    //   period = --page-width + --page-gap (any other period drifts per page
-    //     and lands on text — the old +col-gap version did);
-    //   anchor = the scroll area's RIGHT edge (the document START in
-    //     vertical-rl), inset by the content's start-side margin + padding,
-    //     so the lattice stays locked to the first line wherever you scroll
-    //     (attachment: local);
-    //   the hairline is phase-shifted a further (gap + leading)/2 so it sits
-    //     centered in the VISUAL blank between the two pages' glyph edges
-    //     (pixel-measured: the fat line's glyphs are pinned flush to the
-    //     line-over edge, so the blank spans the gap PLUS the leading).
+    // inter-page space comes from the .ved-page-gap widgets (pm/page-gap.ts).
+    // The separator lattice lives on the CONTENT (see .editorContent.rowsMode
+    // below) — a scroller-attached `background-attachment: local` version
+    // anchored ambiguously against the scroll-area edge and also painted a
+    // stray k=0 line before the first page; the content box's own right edge
+    // is exact, scrolls natively, and clips the k=0 line away.
     &.rowsMode {
       flex: 1 1 auto;
       overflow-x: scroll;
       writing-mode: vertical-rl;
       -webkit-writing-mode: vertical-rl;
-      background-image: linear-gradient(
-        to right,
-        transparent calc(var(--page-gap) / 2 - 0.5px),
-        #808080 calc(var(--page-gap) / 2 - 0.5px),
-        #808080 calc(var(--page-gap) / 2 + 0.5px),
-        transparent calc(var(--page-gap) / 2 + 0.5px)
-      );
-      background-size: calc(var(--page-width) + var(--page-gap)) 100%;
-      background-repeat: repeat-x;
-      background-attachment: local;
-      background-position:
-        right calc(#{$pad-x + $caret-margin} + (var(--page-gap) + var(--line-space)) / 2) top 0;
     }
   }
 
@@ -418,13 +398,15 @@ $footer-height: $font-size + $pad-y * 2;
     &.multiColMode {
       width: var(--page-row-width);
       // Intra-band page boundaries (--pages-per-row > 1, ADR 0011): a vertical
-      // hairline lattice on the CONTENT — the SAME pixel-verified tile as the
-      // rows separator (hairline at gap/2 into the tile, anchor inset
-      // (gap + leading)/2 — centered in the visual blank the page-gap widget
-      // opened), just anchored at the content's own right edge instead of the
-      // scroll area's. Boundary lines land only INSIDE multi-page bands; with
-      // one page per row the only in-box line is the k=0 frame at the band's
-      // start edge. Horizontal BAND separators stay on the scroller.
+      // hairline lattice on the CONTENT. Geometry: a page-boundary blank is
+      // the gap-widget's --page-gap centered between the two pages' glyph
+      // columns (the glyph insets on both sides cancel), so its center sits
+      // k×(page+gap) − gap/2 from the first line's start edge = the content
+      // padding-box right edge here (no horizontal padding). Tile = page+gap,
+      // hairline at gap/2 from the tile's left edge, anchored right 0: lines
+      // land exactly on the centers, and the k=0 line falls gap/2 BEYOND the
+      // right edge — clipped, so no stray frame line before page 1.
+      // Horizontal BAND separators stay on the scroller.
       background-image: linear-gradient(
         to right,
         transparent calc(var(--page-gap) / 2 - 0.5px),
@@ -434,8 +416,7 @@ $footer-height: $font-size + $pad-y * 2;
       );
       background-size: calc(var(--page-width) + var(--page-gap)) 100%;
       background-repeat: repeat-x;
-      background-position:
-        right calc((var(--page-gap) + var(--line-space)) / 2) top 0;
+      background-position: right 0 top 0;
       // Consistent band geometry so the page-row period is predictable (CSS
       // multicol applies padding to the FIRST column only, so any per-band
       // gutter MUST be column-gap, not padding — else later pages drift):
@@ -458,17 +439,33 @@ $footer-height: $font-size + $pad-y * 2;
     // VerticalRows — pages tile leftward, the editor scrolls horizontally.
     // Plain vertical-rl block flow: the fixed height caps every line at one
     // page's line length, and lines then stack leftward without limit. There
-    // is NO fragmentation — pages are arithmetic (every --page-lines lines),
-    // marked by the scroller's separator lattice above. (A previous version
-    // declared column-width/column-gap here; the multicol was INERT — one
-    // column spanning the full inline size — and its column-gap never
-    // rendered, see ADR 0010.)
+    // is NO fragmentation — pages are arithmetic (every --page-lines lines).
+    // (A previous version declared column-width/column-gap here; the multicol
+    // was INERT — one column spanning the full inline size — and its
+    // column-gap never rendered, see ADR 0010.)
+    //
+    // The page-boundary separator lattice: same construction as multiColMode's
+    // intra-band lattice above (hairline centered in each gap-widget blank;
+    // the k=0 line clips beyond the box), except this content has a
+    // caret-margin right padding before the first line, so the anchor is
+    // inset by it. Caveat: the k=0 clip needs gap/2 > caret-margin — with a
+    // gap under ~2/3 cell a faint line reappears at the document start.
     &.rowsMode {
       height: calc(var(--page-height) + #{$line-gutter});
       margin: $pad-y $pad-x;
       padding: 0 $caret-margin 0 0;
       padding-inline-start: $line-gutter; // line-number gutter (top)
       box-sizing: border-box;
+      background-image: linear-gradient(
+        to right,
+        transparent calc(var(--page-gap) / 2 - 0.5px),
+        #808080 calc(var(--page-gap) / 2 - 0.5px),
+        #808080 calc(var(--page-gap) / 2 + 0.5px),
+        transparent calc(var(--page-gap) / 2 + 0.5px)
+      );
+      background-size: calc(var(--page-width) + var(--page-gap)) 100%;
+      background-repeat: repeat-x;
+      background-position: right #{$caret-margin} top 0;
     }
   }
 }

@@ -36,7 +36,6 @@ try {
 
   const m = await page.evaluate(() => {
     const content = document.getElementById('editor-content')!;
-    const scroller = content.parentElement!;
     const cs = getComputedStyle(content);
     const linePitch = Number.parseFloat(cs.lineHeight);
     const gap = Number.parseFloat(cs.getPropertyValue('--page-gap'));
@@ -50,7 +49,18 @@ try {
       range.setEnd(t, 1);
       return range.getBoundingClientRect().left;
     });
-    const scs = getComputedStyle(scroller);
+    const scs = cs; // the separator lattice lives on the CONTENT (no stray k=0 line)
+    // Glyph blank between line 6 (page 1's fat last line) and line 7: rects of
+    // their first (only) characters — one-line paragraphs share the line's x.
+    const charRect = (p: Element) => {
+      range.setStart(p.firstChild!, 0);
+      range.setEnd(p.firstChild!, 1);
+      return range.getBoundingClientRect();
+    };
+    const paras = content.querySelectorAll('p');
+    const blankCenter = (charRect(paras[6]!).right + charRect(paras[5]!).left) / 2;
+    const W = 6 * linePitch + gap;
+    const lineX = content.getBoundingClientRect().right - 6 - W + gap / 2;
     return {
       linePitch,
       gap,
@@ -58,6 +68,8 @@ try {
       paraPitches: ps.slice(1).map((left, i) => ps[i]! - left),
       backgroundSize: scs.backgroundSize,
       backgroundRepeat: scs.backgroundRepeat,
+      lineDelta: lineX - blankCenter,
+      strayInside: lineX + W < content.getBoundingClientRect().right - 0.5,
       text: (window as unknown as { __vedText(): string }).__vedText(),
     };
   });
@@ -81,6 +93,13 @@ try {
   );
   assert.equal(m.backgroundRepeat, 'repeat-x', 'separator tiles along the page axis');
   step(`separator period locks to the page period (${period}px)`);
+
+  // The hairline (content rect right − caret-margin − period + gap/2, per the
+  // CSS) sits centered in the glyph blank between pages 1 and 2, and the k=0
+  // lattice line falls beyond the content box (no stray line at the start).
+  assert.ok(Math.abs(m.lineDelta) < 1, `hairline centered in the gap (delta ${m.lineDelta.toFixed(2)}px)`);
+  assert.ok(!m.strayInside, 'no lattice line before the first page');
+  step('separator hairline is centered mid-gap with no document-start line');
 
   // The caret crosses the gap one visual line per move. Use ONE long wrapping
   // paragraph (the realistic shape): the page boundary — and the gap widget —
