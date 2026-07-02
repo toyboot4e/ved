@@ -75,6 +75,7 @@ try {
           return (r.left + r.right) / 2;
         }),
       pageStarts: starts.map((r) => ({ x: Math.round(r.right), y: Math.round(r.top) })),
+      pageStartCenters: starts.map((r) => (r.left + r.right) / 2),
     };
   });
 
@@ -111,15 +112,17 @@ try {
   // not on the text: page 4 is PARTIAL (one line) and must still center on
   // its slot (band-end → left bound is the band edge).
   assert.equal(m.seps.length, 2, 'one intra-band separator per band');
-  // Folios center between the VISIBLE boundaries: the painted hairlines and
-  // the band edges (see line-numbers.ts).
+  // PERIODIC placement (line-numbers.ts): the folio is the midpoint of the
+  // page's first and last SLOT centers = first-line center − 2 × pitch for a
+  // 5-line page (the slots exist physically whether or not text fills them,
+  // so the PARTIAL page 4 gets the same arithmetic). Separators likewise sit
+  // at slot-blank midpoints.
+  const expectChip = m.pageStartCenters.map((c) => c - 2 * m.linePitch);
   const [sep1, sep2] = m.seps as [number, number];
-  const expectChip = [
-    (m.contentRight + sep1) / 2, // page 1: band 1, right slice
-    (sep1 + m.contentLeft) / 2, // page 2: band 1, left slice (band end)
-    (m.contentRight + sep2) / 2, // page 3: band 2, right slice
-    (sep2 + m.contentLeft) / 2, // page 4: PARTIAL, band end → still the slot center
-  ];
+  // sep p|p+1 = midpoint of page p's LAST slot (start − 4·pitch) and page
+  // p+1's first slot.
+  near(sep1, (m.pageStartCenters[0]! - 4 * m.linePitch + m.pageStartCenters[1]!) / 2, 'separator 1|2 mid-blank');
+  near(sep2, (m.pageStartCenters[2]! - 4 * m.linePitch + m.pageStartCenters[3]!) / 2, 'separator 3|4 mid-blank');
   m.chips.forEach((x, i) => {
     near(x, expectChip[i]!, `folio ${i + 1} centered on its page slot`);
   });
