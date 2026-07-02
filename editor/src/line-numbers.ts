@@ -132,15 +132,17 @@ export const mountLineNumbers = (
       for (let page = 0; page * linesPerPage < lines.length; page++) {
         const first = lines[page * linesPerPage];
         if (!first) break;
-        // The chip: a folio at the BOTTOM of the page, centered on the page's
+        // The folio: at the BOTTOM of the page, centered on the page's
         // MEASURED span (first line → the page's last line, same band). In
-        // multiCol it bottom-anchors just above the band border; in rows it
-        // hangs just below the line length (no border there).
+        // multiCol it sits centered in the strip between the text bottom and
+        // the band border (the horizontal separator mid-gutter below), i.e.
+        // clearly BEFORE the border; in rows it hangs just below the line
+        // length (no border there).
         const last = lines[Math.min((page + 1) * linesPerPage, lines.length) - 1] ?? first;
         const chipX = last.left < first.right ? (first.right + last.left) / 2 : (first.left + first.right) / 2;
         const chip = pagePool[chips] ?? makePageNumber(overlay, pagePool);
         chip.style.transform = multiCol
-          ? `translate(${chipX}px, ${first.top + first.bandLen + bandGutter / 2}px) translate(-50%, -100%) translateY(-2px)`
+          ? `translate(${chipX}px, ${first.top + first.bandLen + bandGutter / 4}px) translate(-50%, -50%)`
           : `translate(${chipX}px, ${first.top + first.bandLen}px) translate(-50%, 0) translateY(0.4em)`;
         chip.textContent = `${page + 1}`;
         chip.style.display = '';

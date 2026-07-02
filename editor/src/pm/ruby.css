@@ -261,22 +261,18 @@ ruby.rubyActive {
   -webkit-user-select: none;
 }
 
-/* Page-number chip at each page's first visual line (paged modes only —
- * VerticalColumns / VerticalRows), drawn by the line-number overlay above the
- * line number, in the gutter. Opaque background so it stays readable over the
- * separator hairline that runs mid-gutter/mid-gap. */
+/* Page-number folio (paged modes only — VerticalColumns / VerticalRows),
+ * drawn by the line-number overlay at the bottom of each page, centered on
+ * the page's measured span; plain text, no box (it sits in clear space —
+ * before the band border in multiCol, below the line length in rows). */
 .vedPageNumber {
   position: absolute;
   top: 0;
   left: 0;
-  font-size: 0.55em;
+  font-size: 0.75em;
   line-height: 1;
   white-space: nowrap;
   color: #777;
-  background: #fff;
-  border: 1px solid #bbb;
-  border-radius: 3px;
-  padding: 1px 4px;
 }
 
 /* Page-boundary separator (paged modes): a hairline drawn by the line-number
