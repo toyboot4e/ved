@@ -1099,6 +1099,12 @@ export const VedEditor = (props: VedEditorProps): React.JSX.Element => {
     // and `posAtDOM` clamp to the ruby element.
     const glyphWalkRange = document.createRange();
     const walkGlyphs = (): { off: number; rect: DOMRect }[] => {
+      // Test seam: count O(document) glyph walks (one layout read PER GLYPH — the
+      // most expensive operation in the editor). A plain in-content click must not
+      // trigger one (click-perf asserts this); only a drag, an empty-area press,
+      // a doc-change page-gap measure, or a non-empty-selection repaint may.
+      const w = globalThis as unknown as { __vedGlyphWalks?: number };
+      w.__vedGlyphWalks = (w.__vedGlyphWalks ?? 0) + 1;
       const offs = glyphOffsets(docLeaves(serialize(view.state.doc)));
       const walker = document.createTreeWalker(view.dom, NodeFilter.SHOW_TEXT, {
         acceptNode: (n) => (n.parentElement?.closest('rt') ? NodeFilter.FILTER_REJECT : NodeFilter.FILTER_ACCEPT),
@@ -1154,10 +1160,16 @@ export const VedEditor = (props: VedEditorProps): React.JSX.Element => {
     };
     selectedGlyphRectsRef.current = selectedGlyphRects;
 
-    // Drag-selection: a CACHE of the glyphs as block/inline bounds, taken at
-    // mousedown (before any selection dispatch re-renders the rubies and shifts the
-    // live rects). `offsetAtPoint` hit-tests against it (see pm/drag-select.ts).
+    // Drag-selection: a CACHE of the glyphs as block/inline bounds, built LAZILY
+    // by the first `offsetAtPoint` hit-test of a gesture (see pm/drag-select.ts)
+    // and dropped when the gesture ends. Building it measures EVERY glyph in the
+    // document — O(document) layout reads, ~1s at 400k chars — so it must never
+    // run on a plain in-content click (which doesn't consume it: the browser/PM
+    // place the caret). Only a real drag move or an empty-area press pays.
     let dragCache: { vertical: boolean; glyphs: DragGlyph[] } | null = null;
+    // Where the current gesture pressed, for resolving the drag ANCHOR lazily on
+    // the first drag move (the press itself must not hit-test).
+    let dragStartPt: { x: number; y: number } | null = null;
     const buildGlyphCache = (): { vertical: boolean; glyphs: DragGlyph[] } => {
       const vertical = getComputedStyle(view.dom).writingMode.startsWith('vertical');
       const glyphs = walkGlyphs().map(({ off, rect: r }) => ({
@@ -1169,8 +1181,10 @@ export const VedEditor = (props: VedEditorProps): React.JSX.Element => {
       }));
       return { vertical, glyphs };
     };
-    const offsetAtPoint = (px: number, py: number): number | null =>
-      dragCache ? nearestGlyphOffset(dragCache.glyphs, px, py, dragCache.vertical) : null;
+    const offsetAtPoint = (px: number, py: number): number | null => {
+      dragCache ??= buildGlyphCache();
+      return nearestGlyphOffset(dragCache.glyphs, px, py, dragCache.vertical);
+    };
 
     // Page gaps (pm/page-gap.ts): measure the visual lines from the glyph
     // rects (wrapping is decided by glyph advances, not arithmetic), derive
@@ -1271,13 +1285,17 @@ export const VedEditor = (props: VedEditorProps): React.JSX.Element => {
     // edge, and we set the model selection ourselves — the native selection can't
     // cross a read-only ruby base.
     const onDragMove = (e: MouseEvent): void => {
-      if (!(e.buttons & 1) || dragAnchorRef.current == null) {
+      if (!(e.buttons & 1) || dragStartPt == null) {
         endDrag();
         return;
       }
       pointerDraggingRef.current = true;
+      // The anchor resolves on the FIRST drag move, from the recorded press point
+      // — this (not the press) is what builds the glyph cache, so a plain click
+      // never pays the O(document) glyph measurement.
+      dragAnchorRef.current ??= offsetAtPoint(dragStartPt.x, dragStartPt.y);
       const head = offsetAtPoint(e.clientX, e.clientY);
-      if (head == null) return;
+      if (dragAnchorRef.current == null || head == null) return;
       const { doc } = view.state;
       const sel = TextSelection.create(doc, offsetToPos(doc, dragAnchorRef.current), offsetToPos(doc, head));
       if (!sel.eq(view.state.selection)) view.dispatch(view.state.tr.setSelection(sel));
@@ -1288,6 +1306,7 @@ export const VedEditor = (props: VedEditorProps): React.JSX.Element => {
       dragAnchorRef.current = null;
       pointerDraggingRef.current = false;
       dragCache = null;
+      dragStartPt = null;
     };
     // A press ends any line-move run and arms a drag (left button): cache the glyph
     // geometry, record the anchor, and listen for the move/release.
@@ -1295,8 +1314,10 @@ export const VedEditor = (props: VedEditorProps): React.JSX.Element => {
       goalInlineRef.current = null;
       endDrag();
       if (e.button !== 0) return;
-      dragCache = buildGlyphCache();
-      dragAnchorRef.current = offsetAtPoint(e.clientX, e.clientY);
+      // NO glyph measurement here: a plain in-content click never consumes the
+      // cache. Record the press point; the anchor (and the cache) resolve on the
+      // first drag move — or right below, for an empty-area press.
+      dragStartPt = { x: e.clientX, y: e.clientY };
       // A press on the EMPTY scroller area — outside the content element, e.g.
       // left of the last line in Vertical/VerticalRows, whose content box hugs
       // its text (Horizontal/VerticalColumns cover their page box, so there the
@@ -1310,20 +1331,18 @@ export const VedEditor = (props: VedEditorProps): React.JSX.Element => {
       const inClientArea =
         e.clientX - r.left - mount.clientLeft < mount.clientWidth &&
         e.clientY - r.top - mount.clientTop < mount.clientHeight;
-      if (
-        !view.composing &&
-        !e.shiftKey &&
-        inClientArea &&
-        e.target instanceof Node &&
-        !view.dom.contains(e.target) &&
-        dragAnchorRef.current != null
-      ) {
-        e.preventDefault(); // the press must not blur the editor
-        const pos = offsetToPos(view.state.doc, dragAnchorRef.current);
-        const snapped =
-          (policyClassRef.current === 'rich' ? rubyClickOutsidePos(view.state.doc.resolve(pos)) : null) ?? pos;
-        view.dispatch(view.state.tr.setSelection(TextSelection.create(view.state.doc, snapped)));
-        view.focus();
+      if (!view.composing && !e.shiftKey && inClientArea && e.target instanceof Node && !view.dom.contains(e.target)) {
+        // Only this EMPTY-AREA path hit-tests at press time (it has no other way
+        // to place the caret), so only it builds the glyph cache on mousedown.
+        dragAnchorRef.current = offsetAtPoint(e.clientX, e.clientY);
+        if (dragAnchorRef.current != null) {
+          e.preventDefault(); // the press must not blur the editor
+          const pos = offsetToPos(view.state.doc, dragAnchorRef.current);
+          const snapped =
+            (policyClassRef.current === 'rich' ? rubyClickOutsidePos(view.state.doc.resolve(pos)) : null) ?? pos;
+          view.dispatch(view.state.tr.setSelection(TextSelection.create(view.state.doc, snapped)));
+          view.focus();
+        }
       }
       window.addEventListener('mousemove', onDragMove);
       window.addEventListener('mouseup', endDrag);
