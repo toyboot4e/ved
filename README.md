@@ -1,6 +1,6 @@
 # ved
 
-[WIP] Vertical editor for novel writers backed by plaintext.
+[WIP] `ved` is a vertical-writing (縦書き) editor for Japanese novel writers. Documents are plain texts.
 
 ## Quick start
 
@@ -17,7 +17,7 @@ If you're using Nix, run `direnv allow`.
 `pnpm` is the primary build tool:
 
 ```sh
-pnpm install   # also downloads the Electron binary (project postinstall)
+pnpm install
 pnpm run dev
 ```
 
