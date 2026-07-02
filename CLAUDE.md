@@ -1,5 +1,9 @@
 # ved — agent context
 
+**Answer in TL;DR style by default**: lead with the conclusion in a few short
+bullets/sentences; expand into detail only when asked. Don't write a "TL;DR"
+heading or label — just be that brief.
+
 Electron + React + ProseMirror editor for Japanese vertical writing (tategaki)
 with ruby annotations. **Read `docs/architecture.md` before touching the
 editor core** (`editor/src/`, mainly `editor/src/pm/`).

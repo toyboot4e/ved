@@ -97,35 +97,62 @@ export const mountLineNumbers = (
 
     lines = collectVisualLines(content, range, vertical, colJump, bandLen, o);
 
-    // Vertical modes: anchor every line number at its BAND's text top — one
-    // consistent line along the top gutter — instead of each line's own rect
-    // top (empty lines report their paragraph-box top and glyphs jitter a few
-    // px, hanging numbers at slightly different heights). A band break is a
-    // top jump larger than half the line length; within a band the anchor is
-    // the minimum top.
-    const anchors: number[] = new Array(lines.length);
-    if (vertical) {
-      let bandTop = Number.POSITIVE_INFINITY;
-      let bandStart = 0;
-      lines.forEach((ln, i) => {
-        const prev = lines[i - 1];
-        if (prev && Math.abs(ln.top - prev.top) > ln.bandLen / 2) {
-          anchors.fill(bandTop, bandStart, i);
-          bandTop = Number.POSITIVE_INFINITY;
-          bandStart = i;
-        }
-        bandTop = Math.min(bandTop, ln.top);
-      });
-      anchors.fill(bandTop, bandStart, lines.length);
+    // THE FIXED GRID. The layout is enforced-periodic — fixed line pitch,
+    // exact page period from the gap widgets (ADR 0010), exact band capacity
+    // from the rt allowance — and the grid itself is PURE ARITHMETIC over the
+    // content box and computed constants: no text measurement anywhere in
+    // mark placement (glyph-derived anchors leaned toward the ruby readings;
+    // per-line rects wobbled on empty paragraphs). Slot k's center:
+    //   x = anchor − (k · pitch + gapsBefore(k))   [within its band]
+    //   band b sits b · bandPeriod below band 0 (multiCol fragmentation).
+    // Measurement's only remaining job here is HOW MANY lines exist (and the
+    // caret highlight, which must follow the real caret).
+    const multiCol = content.classList.contains(styles.multiColMode ?? '');
+    const paged = multiCol || content.classList.contains(styles.rowsMode ?? '');
+    const linesPerPage = paged ? Number.parseFloat(cs.getPropertyValue('--page-lines')) || 20 : 0;
+    const bandGutter = multiCol ? Number.parseFloat(cs.columnGap) || 0 : 0;
+    const pitch = Number.parseFloat(cs.lineHeight) || 28;
+    const pageGap = paged ? Number.parseFloat(cs.getPropertyValue('--page-gap')) || 0 : 0;
+    const pagesPerRow = multiCol ? Number.parseFloat(cs.getPropertyValue('--pages-per-row')) || 1 : 1;
+    const linesPerBand = multiCol && linesPerPage > 0 ? linesPerPage * pagesPerRow : Number.POSITIVE_INFINITY;
+    // Block-axis grid offset of slot k from the anchor (leftward positive).
+    const gridOff = (k: number): number => {
+      const j = Number.isFinite(linesPerBand) ? k % linesPerBand : k;
+      const gaps = linesPerPage > 0 ? Math.floor(j / linesPerPage) * pageGap : 0;
+      return j * pitch + gaps;
+    };
+    // The anchor calibrates the grid to the real layout ONCE: the median of
+    // the first lines' BASE-glyph centers regressed back to slot 0. The line
+    // rects exclude rt (readings), so ruby text cannot lean the anchor; the
+    // median rides over an empty first paragraph's off-grid box. (A pure
+    // content-box-arithmetic anchor was tried and measured ~5px off — the
+    // paragraph inset constants are not what they appear; calibrating on the
+    // base glyphs is exact by construction.) Band tops likewise: fixed
+    // period from band 0's measured text top.
+    const bandPeriod = multiCol
+      ? (Number.parseFloat(cs.columnWidth) || 0) + (Number.parseFloat(cs.columnGap) || 0)
+      : 0;
+    let anchorX = 0;
+    let bandTop0 = 0;
+    if (vertical && lines.length > 0) {
+      const samples = lines
+        .slice(0, 8)
+        .map((ln, k) => (ln.left + ln.right) / 2 + gridOff(k))
+        .sort((a, z) => a - z);
+      anchorX = samples[Math.floor(samples.length / 2)] ?? 0;
+      bandTop0 = Math.min(...lines.slice(0, Math.min(lines.length, 8)).map((ln) => ln.top));
     }
+    const slotX = (k: number): number => anchorX - gridOff(k);
+    const bandTopOf = (k: number): number =>
+      bandTop0 + (Number.isFinite(linesPerBand) ? Math.floor(k / linesPerBand) : 0) * bandPeriod;
 
-    // Number each line, CENTERED on the line's block extent: above the column
-    // (at the band's gutter line) in vertical-rl, left of the row (centered on
-    // its height) in horizontal. Coords are already overlay-relative.
+    // Number each line at its SLOT (grid) position in vertical modes — above
+    // the column, on the band's gutter line — or left of the row (measured)
+    // in horizontal. Coords are already overlay-relative.
     lines.forEach((ln, i) => {
       const el = pool[i] ?? makeNumber(overlay, pool);
-      const x = vertical ? (ln.left + ln.right) / 2 : ln.left;
-      const y = vertical ? (anchors[i] ?? ln.top) : (ln.top + ln.bottom) / 2;
+      const x = vertical ? slotX(i) : ln.left;
+      const y = vertical ? bandTopOf(i) : (ln.top + ln.bottom) / 2;
       el.style.transform = vertical
         ? `translate(${x}px, ${y}px) translate(-50%, -100%)`
         : `translate(${x}px, ${y}px) translate(-100%, -50%)`;
@@ -134,103 +161,36 @@ export const mountLineNumbers = (
     });
     for (const el of pool.slice(lines.length)) el.style.display = 'none';
 
-    // Page numbers and page separators (paged modes only). Pages are
-    // arithmetic — every --page-lines VISUAL lines — in BOTH paged modes (a
-    // VerticalColumns band fragments there; a VerticalRows boundary is a
-    // page-gap widget, ADR 0010). Both marks derive from the MEASURED lines,
-    // never from pitch arithmetic: real documents shift physical layout in
-    // non-arithmetic ways (paragraph paddings, empty lines), so a periodic
-    // CSS lattice drifts off the gap-widget blanks — measured ~10px at the
-    // first boundary of a mixed document. Same measurement, always in sync.
-    const multiCol = content.classList.contains(styles.multiColMode ?? '');
-    const paged = multiCol || content.classList.contains(styles.rowsMode ?? '');
-    const linesPerPage = paged ? Number.parseFloat(cs.getPropertyValue('--page-lines')) || 20 : 0;
-    // In multiCol the chip must sit ABOVE the band border (the horizontal
-    // separator mid-gutter below the band); the gutter is the column-gap.
-    const bandGutter = multiCol ? Number.parseFloat(cs.columnGap) || 0 : 0;
+    // Page separators and folios: pure slot arithmetic. The separator before
+    // page p is the midpoint of the blank between slots pN−1 and pN (skipped
+    // across a multiCol band break — fragmentation separates those). The
+    // folio is the midpoint of the page's FIRST and LAST slot centers — the
+    // middle of the whole page area regardless of how much text exists (the
+    // rows reservation and the band width guarantee the slots physically).
     let chips = 0;
     let seps = 0;
-    if (linesPerPage > 0) {
-      const pagesPerRow = multiCol
-        ? Number.parseFloat(cs.getPropertyValue('--pages-per-row')) || 1
-        : Number.POSITIVE_INFINITY;
-      const contentRect = content.getBoundingClientRect();
-      const cLeft = contentRect.left - o.left;
-      const cRight = contentRect.right - o.left;
-      // First pass: the pages and their boundary separators. sepX is the
-      // hairline centered in the measured blank BEFORE the page — absent for
-      // page 1 and across a band wrap (the previous line is not to this
-      // line's right in the same band; fragmentation separates those).
-      type PageMark = { first: VisualLine; last: VisualLine; sepX: number | undefined; anchor: number };
-      const pages: PageMark[] = [];
-      for (let page = 0; page * linesPerPage < lines.length; page++) {
-        const first = lines[page * linesPerPage];
-        if (!first) break;
-        const last = lines[Math.min((page + 1) * linesPerPage, lines.length) - 1] ?? first;
-        const prev = page > 0 ? lines[page * linesPerPage - 1] : undefined;
-        const sepX = prev && prev.left > first.right ? (prev.left + first.right) / 2 : undefined;
-        pages.push({ first, last, sepX, anchor: anchors[page * linesPerPage] ?? first.top });
-      }
-      for (const pg of pages) {
-        if (pg.sepX === undefined) continue;
-        const el = sepPool[seps] ?? makePageSeparator(overlay, sepPool);
-        el.style.transform = `translate(${pg.sepX}px, ${pg.anchor}px)`;
-        el.style.height = `${pg.first.bandLen}px`;
-        el.style.display = '';
-        seps++;
-      }
-      // Second pass: the folios — at the BOTTOM of each page, horizontally
-      // centered between the page's VISIBLE boundaries: the painted separator
-      // hairlines, the band/content edges, and (rows last page) the reserved
-      // content end. NOT the text span — a partial page still centers on its
-      // whole page area — and NOT a derived "slot zone" either: a reader
-      // centers between the marks they can see, and offsetting from the
-      // hairlines by half a gap reads as off-center (tried and reverted).
-      // Only a partial page in a band's non-final slot has no left bound; it
-      // borrows the slot boundary from another band (the slice layout
-      // repeats). Vertically: in multiCol centered in the strip between the
-      // text bottom and the band border; in rows just below the line length.
-      // Rows: the content's caret-margin right padding sits before line 1 —
-      // exclude it from the page edge. multiCol keeps raw box edges: its rt
-      // allowance is symmetric (padding right, natural slack left), so raw
-      // edges center correctly.
-      const padRight = multiCol ? 0 : Number.parseFloat(cs.paddingRight) || 0;
-      pages.forEach((pg, p) => {
-        const rightEdge = pg.sepX ?? cRight - padRight;
-        const bandEnd = Number.isFinite(pagesPerRow) && p % pagesPerRow === pagesPerRow - 1;
-        let leftEdge = pages[p + 1]?.sepX;
-        if (leftEdge === undefined && Number.isFinite(pagesPerRow) && !bandEnd) {
-          // A partial page in a non-final slot has no boundary of its own,
-          // but the slice layout repeats across bands — borrow the same slot
-          // boundary from another band so it still centers on its page slot.
-          for (let q = (p % pagesPerRow) + 1; q < pages.length; q += pagesPerRow) {
-            const sx = pages[q]?.sepX;
-            if (sx !== undefined) {
-              leftEdge = sx;
-              break;
-            }
-          }
+    if (linesPerPage > 0 && lines.length > 0) {
+      for (let p = 0; p * linesPerPage < lines.length; p++) {
+        const firstSlot = p * linesPerPage;
+        const lastSlot = (p + 1) * linesPerPage - 1;
+        const bandAnchor = bandTopOf(firstSlot);
+        if (p > 0 && firstSlot % linesPerBand !== 0) {
+          const el = sepPool[seps] ?? makePageSeparator(overlay, sepPool);
+          const x = (slotX(firstSlot - 1) + slotX(firstSlot)) / 2;
+          el.style.transform = `translate(${x}px, ${bandAnchor}px)`;
+          el.style.height = `${bandLen}px`;
+          el.style.display = '';
+          seps++;
         }
-        if (leftEdge === undefined && (bandEnd || (!multiCol && p === pages.length - 1))) {
-          // The band's final slot runs to the band edge; a rows last page
-          // runs to the reserved content edge (editor.tsx pads a partial
-          // page whole).
-          leftEdge = cLeft;
-        }
-        const chipX =
-          leftEdge !== undefined
-            ? (rightEdge + leftEdge) / 2
-            : pg.last.left < pg.first.right
-              ? (pg.first.right + pg.last.left) / 2
-              : (pg.first.left + pg.first.right) / 2;
         const chip = pagePool[chips] ?? makePageNumber(overlay, pagePool);
+        const chipX = (slotX(firstSlot) + slotX(lastSlot)) / 2;
         chip.style.transform = multiCol
-          ? `translate(${chipX}px, ${pg.anchor + pg.first.bandLen + bandGutter / 4}px) translate(-50%, -50%)`
-          : `translate(${chipX}px, ${pg.anchor + pg.first.bandLen}px) translate(-50%, 0) translateY(0.4em)`;
+          ? `translate(${chipX}px, ${bandAnchor + bandLen + bandGutter / 4}px) translate(-50%, -50%)`
+          : `translate(${chipX}px, ${bandAnchor + bandLen}px) translate(-50%, 0) translateY(0.4em)`;
         chip.textContent = `${p + 1}`;
         chip.style.display = '';
         chips++;
-      });
+      }
     }
     for (const el of pagePool.slice(chips)) el.style.display = 'none';
     for (const el of sepPool.slice(seps)) el.style.display = 'none';
@@ -371,11 +331,23 @@ const linesOfParagraph = (
   bandLen: number,
   o: DOMRect,
 ): VisualLine[] => {
-  range.selectNodeContents(p);
+  // BASE-only rects: the reading (`rt`) renders BESIDE the base and would
+  // inflate every ruby line's block extent by half a cell on one side — the
+  // grid anchor, line numbers, folios, and the highlight all leaned toward
+  // the reading by ~rt/2 in ruby-dense documents. Walk the paragraph's text
+  // nodes skipping rt subtrees (like the editor's glyph walk).
+  const rects: DOMRect[] = [];
+  const walker = document.createTreeWalker(p, NodeFilter.SHOW_TEXT, {
+    acceptNode: (n) => (n.parentElement?.closest('rt') ? NodeFilter.FILTER_REJECT : NodeFilter.FILTER_ACCEPT),
+  });
+  for (let n = walker.nextNode(); n; n = walker.nextNode()) {
+    range.selectNodeContents(n);
+    rects.push(...range.getClientRects());
+  }
   const lines: VisualLine[] = [];
   let cur: VisualLine | null = null;
   let colCoord = 0;
-  for (const r of Array.from(range.getClientRects())) {
+  for (const r of rects) {
     // Skip DEGENERATE rects (zero width OR height) — not just 0×0. Chromium
     // emits a stray zero-HEIGHT rect on the previous page for a paragraph whose
     // column is the first on the next page; with the old `&&` it survived and

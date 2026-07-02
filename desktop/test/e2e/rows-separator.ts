@@ -106,6 +106,7 @@ try {
     return {
       linePitch,
       gap: Number.parseFloat(cs.getPropertyValue('--page-gap')),
+      line13Center: (lines[12]!.left + lines[12]!.right) / 2, // page 3's first slot
       lineCount: lines.length,
       centers: [center(6), center(12)],
       contentLeft: crect.left,
@@ -145,10 +146,12 @@ try {
     Math.abs(deficitSpace - 4 * m.linePitch) < m.linePitch / 2,
     `partial page reserved as a whole: ${deficitSpace.toFixed(1)}px ≈ 4 × ${m.linePitch}px past the last line`,
   );
-  // Folio between the VISIBLE boundaries: the hairline and the reserved end.
-  const lastSep = m.seps[1]!.x;
+  // PERIODIC placement: the folio is the midpoint of the page's first and
+  // last SLOT centers — slots 12..17 for page 3, so first-slot center −
+  // 2.5 × pitch — whether or not text fills them (the reservation guarantees
+  // the slots physically).
   const chip3 = m.chips[2]!.x;
-  const expect3 = (lastSep + m.contentLeft) / 2;
+  const expect3 = m.line13Center - 2.5 * m.linePitch;
   assert.ok(
     Math.abs(chip3 - expect3) < 1.5,
     `last folio centers on the WHOLE page: ${chip3.toFixed(1)} ≈ ${expect3.toFixed(1)}`,
