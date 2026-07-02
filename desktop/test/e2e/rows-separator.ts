@@ -96,6 +96,7 @@ try {
     const crect = content.getBoundingClientRect();
     return {
       linePitch,
+      gap: Number.parseFloat(cs.getPropertyValue('--page-gap')),
       lineCount: lines.length,
       centers: [center(6), center(12)],
       contentLeft: crect.left,
@@ -135,11 +136,13 @@ try {
     Math.abs(deficitSpace - 4 * m.linePitch) < m.linePitch / 2,
     `partial page reserved as a whole: ${deficitSpace.toFixed(1)}px ≈ 4 × ${m.linePitch}px past the last line`,
   );
+  // The separator sits mid-BLANK, gap/2 right of the page's slot zone.
   const lastSep = m.seps[1]!.x;
   const chip3 = m.chips[2]!.x;
+  const expect3 = (lastSep - m.gap / 2 + m.contentLeft) / 2;
   assert.ok(
-    Math.abs(chip3 - (lastSep + m.contentLeft) / 2) < 1.5,
-    `last folio centers on the WHOLE page: ${chip3.toFixed(1)} ≈ ${((lastSep + m.contentLeft) / 2).toFixed(1)}`,
+    Math.abs(chip3 - expect3) < 1.5,
+    `last folio centers on the WHOLE page: ${chip3.toFixed(1)} ≈ ${expect3.toFixed(1)}`,
   );
   step('partial last page reserved whole; folio at the middle of the entire page');
 

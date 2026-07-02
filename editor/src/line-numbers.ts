@@ -180,34 +180,44 @@ export const mountLineNumbers = (
         seps++;
       }
       // Second pass: the folios — at the BOTTOM of each page, horizontally
-      // centered on the PAGE AREA (bounded by the measured separators / the
-      // band edges), NOT on the text span: a partial page still centers on
-      // its page slot. Only a partial page in a band's non-final slot has no
-      // left bound; it falls back to its text span. Vertically: in multiCol
-      // centered in the strip between the text bottom and the band border;
-      // in rows just below the line length (no border there).
+      // centered on the PAGE AREA (its N line slots), NOT on the text span: a
+      // partial page still centers on its page slot. A separator sits mid-
+      // BLANK, half a --page-gap outside the page's slot zone, so an edge
+      // derived from a separator is adjusted by gap/2 inward (for middle
+      // pages the two adjustments cancel; edge pages need them — a first/last
+      // page centered on raw separator/content edges sat ~gap/4 off). A
+      // content-edge bound subtracts the content's own start padding. Only a
+      // partial page in a band's non-final slot has no left bound; it borrows
+      // the slot boundary from another band (the slice layout repeats).
+      // Vertically: in multiCol centered in the strip between the text bottom
+      // and the band border; in rows just below the line length (no border).
+      const pageGap = Number.parseFloat(cs.getPropertyValue('--page-gap')) || 0;
+      const padRight = Number.parseFloat(cs.paddingRight) || 0;
       pages.forEach((pg, p) => {
-        const rightEdge = pg.sepX ?? cRight;
+        const rightEdge = pg.sepX !== undefined ? pg.sepX - pageGap / 2 : cRight - padRight;
         const bandEnd = Number.isFinite(pagesPerRow) && p % pagesPerRow === pagesPerRow - 1;
-        let leftEdge = pages[p + 1]?.sepX ?? (bandEnd ? cLeft : undefined);
-        if (leftEdge === undefined && !multiCol && p === pages.length - 1) {
-          // Rows: the editor RESERVES the remainder of a partial last page
-          // (editor.tsx pads the content's block end), so the page area runs
-          // to the content edge and the folio centers on the WHOLE page.
-          leftEdge = cLeft;
-        }
-        if (leftEdge === undefined && Number.isFinite(pagesPerRow)) {
+        let leftSep = pages[p + 1]?.sepX;
+        if (leftSep === undefined && Number.isFinite(pagesPerRow) && !bandEnd) {
           // A partial page in a non-final slot has no boundary of its own,
           // but the slice layout repeats across bands — borrow the same slot
           // boundary from another band so it still centers on its page slot.
           for (let q = (p % pagesPerRow) + 1; q < pages.length; q += pagesPerRow) {
             const sx = pages[q]?.sepX;
             if (sx !== undefined) {
-              leftEdge = sx;
+              leftSep = sx;
               break;
             }
           }
         }
+        const leftEdge =
+          leftSep !== undefined
+            ? leftSep + pageGap / 2
+            : bandEnd || (!multiCol && p === pages.length - 1)
+              ? // The band's final slot runs to the band edge; a rows last
+                // page runs to the reserved content edge (editor.tsx pads a
+                // partial page whole).
+                cLeft
+              : undefined;
         const chipX =
           leftEdge !== undefined
             ? (rightEdge + leftEdge) / 2
