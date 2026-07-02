@@ -86,13 +86,24 @@ try {
       .sort((a, z) => z.x - a.x);
     const chips = [...document.querySelectorAll('.vedPageNumber')]
       .filter((el) => (el as HTMLElement).style.display !== 'none')
-      .map((el) => ({ text: el.textContent, y: el.getBoundingClientRect().top }));
+      .map((el) => {
+        const cr = el.getBoundingClientRect();
+        return { text: el.textContent, y: cr.top, x: (cr.left + cr.right) / 2 };
+      });
+    const numberTops = [...document.querySelectorAll('.vedLineNumber')]
+      .filter((el) => (el as HTMLElement).style.display !== 'none')
+      .map((el) => el.getBoundingClientRect().top);
+    const crect = content.getBoundingClientRect();
     return {
+      linePitch,
       lineCount: lines.length,
       centers: [center(6), center(12)],
-      firstLineTop: lines[0]!.right, // unused-ish; keep the shape simple
+      contentLeft: crect.left,
+      contentRight: crect.right,
+      lastLineLeft: lines[lines.length - 1]!.left,
       seps,
       chips,
+      numberTops,
       widgets: content.querySelectorAll('.ved-page-gap').length,
       text: (window as unknown as { __vedText(): string }).__vedText(),
     };
@@ -115,6 +126,30 @@ try {
 
   assert.equal(m.chips.length, 3, 'a folio chip per page');
   step('page-number chips on all three pages');
+
+  // The partial last page (2 of 6 lines) is RESERVED as a whole: the content
+  // extends ~4 line pitches past its last line, and the folio centers on the
+  // ENTIRE page area, not on the two lines that exist.
+  const deficitSpace = m.lastLineLeft - m.contentLeft;
+  assert.ok(
+    Math.abs(deficitSpace - 4 * m.linePitch) < m.linePitch / 2,
+    `partial page reserved as a whole: ${deficitSpace.toFixed(1)}px ≈ 4 × ${m.linePitch}px past the last line`,
+  );
+  const lastSep = m.seps[1]!.x;
+  const chip3 = m.chips[2]!.x;
+  assert.ok(
+    Math.abs(chip3 - (lastSep + m.contentLeft) / 2) < 1.5,
+    `last folio centers on the WHOLE page: ${chip3.toFixed(1)} ≈ ${((lastSep + m.contentLeft) / 2).toFixed(1)}`,
+  );
+  step('partial last page reserved whole; folio at the middle of the entire page');
+
+  // All line numbers hang from ONE gutter line (the band's text top) — empty
+  // lines and glyph jitter must not shift them.
+  const tops = m.numberTops;
+  assert.ok(tops.length >= 14, `all lines numbered (${tops.length})`);
+  const spread = Math.max(...tops) - Math.min(...tops);
+  assert.ok(spread < 1, `line numbers share one gutter line (top spread ${spread.toFixed(2)}px)`);
+  step('line numbers anchored uniformly at the top gutter');
 
   // The caret crosses the gap one visual line per move (single long paragraph
   // so the within-paragraph move path is exercised across the widget).

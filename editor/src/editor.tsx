@@ -1179,6 +1179,7 @@ export const VedEditor = (props: VedEditorProps): React.JSX.Element => {
     // compositionend) and outside the paged modes (where the set empties).
     let pageGapRaf = 0;
     let lastGapPositions: number[] = [];
+    let measuredLineCount = 0; // visual lines seen by the last measurePageGaps
     const measurePageGaps = (pagesPerBand: number): number[] => {
       const linesPerPage = Number.parseFloat(getComputedStyle(mount).getPropertyValue('--page-lines')) || 20;
       const pitch = Number.parseFloat(getComputedStyle(view.dom).lineHeight) || 28;
@@ -1194,6 +1195,17 @@ export const VedEditor = (props: VedEditorProps): React.JSX.Element => {
           off += line.length + 1;
         });
       items.sort((a, z) => a.endOff - z.endOff);
+      // Count the visual lines with the same clustering rule pageBoundaryEnds
+      // uses (a new line = a block jump over half a pitch from the line's
+      // representative coordinate).
+      measuredLineCount = items.length ? 1 : 0;
+      let lineB = items[0]?.b ?? 0;
+      for (const it of items) {
+        if (Math.abs(it.b - lineB) > pitch / 2) {
+          measuredLineCount++;
+          lineB = it.b;
+        }
+      }
       return pageBoundaryEnds(items, linesPerPage, pitch, pagesPerBand).map((end) =>
         posAfterEnclosingRuby(view.state.doc.resolve(offsetToPos(view.state.doc, end))),
       );
@@ -1216,10 +1228,28 @@ export const VedEditor = (props: VedEditorProps): React.JSX.Element => {
         : multiColHere && pagesPerRow > 1
           ? measurePageGaps(pagesPerRow)
           : [];
-      if (positions.length === lastGapPositions.length && positions.every((p, i) => p === lastGapPositions[i])) return;
+      // Rows: RESERVE the remainder of a partial last page as block-end
+      // padding, so the page exists as a whole (scrollable blank space) and
+      // the folio centers on the entire page. Padding never re-wraps lines
+      // (it extends the box past them), so one pass is stable.
+      let reserve = '';
+      if (rowsHere && measuredLineCount > 0) {
+        const linesPerPage = Number.parseFloat(getComputedStyle(mount).getPropertyValue('--page-lines')) || 20;
+        const pitch = Number.parseFloat(getComputedStyle(view.dom).lineHeight) || 28;
+        const deficit = (linesPerPage - (measuredLineCount % linesPerPage)) % linesPerPage;
+        if (deficit > 0) reserve = `${deficit * pitch}px`;
+      }
+      const reserveChanged = view.dom.style.paddingLeft !== reserve;
+      if (reserveChanged) view.dom.style.paddingLeft = reserve;
+      if (
+        !reserveChanged &&
+        positions.length === lastGapPositions.length &&
+        positions.every((p, i) => p === lastGapPositions[i])
+      )
+        return;
       lastGapPositions = positions;
       view.dispatch(pageGapTr(view.state, positions));
-      // The widgets shift every following page — re-measure the numbers.
+      // The widgets/reservation shift the layout — re-measure the numbers.
       lineNumbersRef.current?.schedule();
     };
     const pageGaps = {

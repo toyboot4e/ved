@@ -97,13 +97,35 @@ export const mountLineNumbers = (
 
     lines = collectVisualLines(content, range, vertical, colJump, bandLen, o);
 
+    // Vertical modes: anchor every line number at its BAND's text top — one
+    // consistent line along the top gutter — instead of each line's own rect
+    // top (empty lines report their paragraph-box top and glyphs jitter a few
+    // px, hanging numbers at slightly different heights). A band break is a
+    // top jump larger than half the line length; within a band the anchor is
+    // the minimum top.
+    const anchors: number[] = new Array(lines.length);
+    if (vertical) {
+      let bandTop = Number.POSITIVE_INFINITY;
+      let bandStart = 0;
+      lines.forEach((ln, i) => {
+        const prev = lines[i - 1];
+        if (prev && Math.abs(ln.top - prev.top) > ln.bandLen / 2) {
+          anchors.fill(bandTop, bandStart, i);
+          bandTop = Number.POSITIVE_INFINITY;
+          bandStart = i;
+        }
+        bandTop = Math.min(bandTop, ln.top);
+      });
+      anchors.fill(bandTop, bandStart, lines.length);
+    }
+
     // Number each line, CENTERED on the line's block extent: above the column
-    // (centered on its width) in vertical-rl, left of the row (centered on its
-    // height) in horizontal. Coords are already overlay-relative.
+    // (at the band's gutter line) in vertical-rl, left of the row (centered on
+    // its height) in horizontal. Coords are already overlay-relative.
     lines.forEach((ln, i) => {
       const el = pool[i] ?? makeNumber(overlay, pool);
       const x = vertical ? (ln.left + ln.right) / 2 : ln.left;
-      const y = vertical ? ln.top : (ln.top + ln.bottom) / 2;
+      const y = vertical ? (anchors[i] ?? ln.top) : (ln.top + ln.bottom) / 2;
       el.style.transform = vertical
         ? `translate(${x}px, ${y}px) translate(-50%, -100%)`
         : `translate(${x}px, ${y}px) translate(-100%, -50%)`;
@@ -139,7 +161,7 @@ export const mountLineNumbers = (
       // hairline centered in the measured blank BEFORE the page — absent for
       // page 1 and across a band wrap (the previous line is not to this
       // line's right in the same band; fragmentation separates those).
-      type PageMark = { first: VisualLine; last: VisualLine; sepX: number | undefined };
+      type PageMark = { first: VisualLine; last: VisualLine; sepX: number | undefined; anchor: number };
       const pages: PageMark[] = [];
       for (let page = 0; page * linesPerPage < lines.length; page++) {
         const first = lines[page * linesPerPage];
@@ -147,12 +169,12 @@ export const mountLineNumbers = (
         const last = lines[Math.min((page + 1) * linesPerPage, lines.length) - 1] ?? first;
         const prev = page > 0 ? lines[page * linesPerPage - 1] : undefined;
         const sepX = prev && prev.left > first.right ? (prev.left + first.right) / 2 : undefined;
-        pages.push({ first, last, sepX });
+        pages.push({ first, last, sepX, anchor: anchors[page * linesPerPage] ?? first.top });
       }
       for (const pg of pages) {
         if (pg.sepX === undefined) continue;
         const el = sepPool[seps] ?? makePageSeparator(overlay, sepPool);
-        el.style.transform = `translate(${pg.sepX}px, ${pg.first.top}px)`;
+        el.style.transform = `translate(${pg.sepX}px, ${pg.anchor}px)`;
         el.style.height = `${pg.first.bandLen}px`;
         el.style.display = '';
         seps++;
@@ -168,6 +190,12 @@ export const mountLineNumbers = (
         const rightEdge = pg.sepX ?? cRight;
         const bandEnd = Number.isFinite(pagesPerRow) && p % pagesPerRow === pagesPerRow - 1;
         let leftEdge = pages[p + 1]?.sepX ?? (bandEnd ? cLeft : undefined);
+        if (leftEdge === undefined && !multiCol && p === pages.length - 1) {
+          // Rows: the editor RESERVES the remainder of a partial last page
+          // (editor.tsx pads the content's block end), so the page area runs
+          // to the content edge and the folio centers on the WHOLE page.
+          leftEdge = cLeft;
+        }
         if (leftEdge === undefined && Number.isFinite(pagesPerRow)) {
           // A partial page in a non-final slot has no boundary of its own,
           // but the slice layout repeats across bands — borrow the same slot
@@ -188,8 +216,8 @@ export const mountLineNumbers = (
               : (pg.first.left + pg.first.right) / 2;
         const chip = pagePool[chips] ?? makePageNumber(overlay, pagePool);
         chip.style.transform = multiCol
-          ? `translate(${chipX}px, ${pg.first.top + pg.first.bandLen + bandGutter / 4}px) translate(-50%, -50%)`
-          : `translate(${chipX}px, ${pg.first.top + pg.first.bandLen}px) translate(-50%, 0) translateY(0.4em)`;
+          ? `translate(${chipX}px, ${pg.anchor + pg.first.bandLen + bandGutter / 4}px) translate(-50%, -50%)`
+          : `translate(${chipX}px, ${pg.anchor + pg.first.bandLen}px) translate(-50%, 0) translateY(0.4em)`;
         chip.textContent = `${p + 1}`;
         chip.style.display = '';
         chips++;
