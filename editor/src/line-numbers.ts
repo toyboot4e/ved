@@ -129,9 +129,7 @@ export const mountLineNumbers = (
     // paragraph inset constants are not what they appear; calibrating on the
     // base glyphs is exact by construction.) Band tops likewise: fixed
     // period from band 0's measured text top.
-    const bandPeriod = multiCol
-      ? (Number.parseFloat(cs.columnWidth) || 0) + (Number.parseFloat(cs.columnGap) || 0)
-      : 0;
+    const bandPeriod = multiCol ? (Number.parseFloat(cs.columnWidth) || 0) + (Number.parseFloat(cs.columnGap) || 0) : 0;
     let anchorX = 0;
     let bandTop0 = 0;
     if (vertical && lines.length > 0) {

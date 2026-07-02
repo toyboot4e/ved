@@ -3,7 +3,7 @@
 // the plain edits. After every op, serialize(doc) must equal the same op applied
 // to a plain-string model. Deterministic seeds; widen with
 // `node test/e2e/pbt-ops.ts <seed> <trials>`.
-import { fail, finish, launchVed, pressMod, step } from './harness.ts';
+import { fail, finish, launchVed, step } from './harness.ts';
 
 const ved = await launchVed({ env: () => ({ VED_SMOKE_CLOSE_RESPONSE: 'discard', VED_SMOKE_HIDDEN: '1' }) });
 const { page } = ved;

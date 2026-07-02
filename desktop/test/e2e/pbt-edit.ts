@@ -44,18 +44,21 @@ const apply = (m: string, op: Op): string => {
   if (op.kind === 'backspace') return c > 0 ? m.slice(0, c - 1) + m.slice(c) : m;
   return c < m.length ? m.slice(0, c) + m.slice(c + 1) : m;
 };
+// A paste-like multi-line insert: Enter for each newline, insertText between.
+const typeMulti = async (s: string): Promise<void> => {
+  for (const part of s.split('\n').map((p, i) => (i ? `\n${p}` : p))) {
+    if (part.startsWith('\n')) {
+      await page.keyboard.press('Enter');
+      if (part.length > 1) await page.keyboard.insertText(part.slice(1));
+    } else if (part) await page.keyboard.insertText(part);
+  }
+};
 const run = async (op: Op): Promise<void> => {
   await setCaret(op.at);
   await page.waitForTimeout(20);
   if (op.kind === 'type') await page.keyboard.insertText(op.s!);
-  else if (op.kind === 'multitype') {
-    for (const part of op.s!.split('\n').map((p, i) => (i ? `\n${p}` : p))) {
-      if (part.startsWith('\n')) {
-        await page.keyboard.press('Enter');
-        if (part.length > 1) await page.keyboard.insertText(part.slice(1));
-      } else if (part) await page.keyboard.insertText(part);
-    }
-  } else if (op.kind === 'enter') await page.keyboard.press('Enter');
+  else if (op.kind === 'multitype') await typeMulti(op.s!);
+  else if (op.kind === 'enter') await page.keyboard.press('Enter');
   else await page.keyboard.press(op.kind === 'delete' ? 'Delete' : 'Backspace');
   await page.waitForTimeout(45);
 };
