@@ -32,8 +32,8 @@ export class RubyView {
   }
 
   /** The DOM (node, offset) for a node-LOCAL content offset. The ruby content is
-   *  [rubyBase, rubyText]: rubyBase occupies local [0, baseLen+2] with its text at
-   *  1..baseLen+1; rubyText follows. We map onto the actual text nodes so the caret
+   *  [rubyBase, rubyReading]: rubyBase occupies local [0, baseLen+2] with its text at
+   *  1..baseLen+1; rubyReading follows. We map onto the actual text nodes so the caret
    *  sits INSIDE the base (or reading), not on a collapsible element boundary. */
   private domPos(local: number): [Node, number] {
     // local 0 is the ruby's content START — which is where PM (forward side) sends
@@ -57,7 +57,7 @@ export class RubyView {
       if (text && text.nodeType === Node.TEXT_NODE) return [text, Math.max(0, Math.min(local - 1, this.baseLen))];
       return [baseSpan ?? this.dom, 0]; // empty base
     }
-    const rtLocal = local - (this.baseLen + 2) - 1; // into rubyText content
+    const rtLocal = local - (this.baseLen + 2) - 1; // into rubyReading content
     const text = rt?.firstChild;
     if (text && text.nodeType === Node.TEXT_NODE) {
       return [text, Math.max(0, Math.min(rtLocal, text.textContent?.length ?? 0))];

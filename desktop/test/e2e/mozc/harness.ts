@@ -73,7 +73,7 @@ export interface ImePlatform {
 //      ordering is what makes engagement deterministic.
 //
 // STEALS X focus while active (windowactivate) — don't type on the same machine.
-// TODO (see /TODO.org): isolate on an Xvfb virtual display so it stops doing so.
+// TODO: isolate on an Xvfb virtual display so it stops doing so.
 const x11FcitxMozc: ImePlatform = {
   name: 'fcitx5 + mozc (X11 / xdotool)',
   available: () =>

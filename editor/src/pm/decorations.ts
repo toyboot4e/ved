@@ -3,7 +3,7 @@
 // (bold/italic/縦中横, future Hameln syntax) is one entry in RULES — a parse rule
 // + a CSS class, no schema, no structure repair.
 //
-// Ruby is the exception: it is a NODE (rubyBase + rubyText children), so its
+// Ruby is the exception: it is a NODE (rubyBase + rubyReading children), so its
 // markup `|`,`(`,`)` is NOT editable DOM text — it is reconstructed by
 // `serialize` and DISPLAYED (in the expanded appear policies) as CSS
 // pseudo-elements driven by the `rubyExpanded` node class. The native caret and
@@ -177,7 +177,7 @@ const buildBase = (parse: Parse): DecorationSet => {
  *     the reading out inline as editable text — set when the appear policy
  *     reveals this ruby (Plain: always; ByParagraph: the caret paragraph;
  *     ByCharacter: the caret ruby; Rich: never).
- *   - on a COLLAPSED ruby the READING (`rubyText` child) gets `contenteditable=
+ *   - on a COLLAPSED ruby the READING (`rubyReading` child) gets `contenteditable=
  *     false` — the caret model already skips it, and read-only keeps an IME from
  *     leaking into the reading at the trailing edge. The BASE usually stays editable
  *     (the caret steps its interior). EXCEPTION: an ATOM ruby (no editable plain
@@ -218,7 +218,7 @@ const buildRubyStatic = (
         Decoration.widget(r.pos + r.size, closeDelim, { side: -1, key: `rclose-${idx}`, ignoreSelection: true }),
       );
     } else {
-      // Read-only reading on a collapsed ruby: the rubyText child is at
+      // Read-only reading on a collapsed ruby: the rubyReading child is at
       // pos + 1 (into the ruby) + the rubyBase's size.
       const rtFrom = r.pos + 1 + r.baseSize;
       nodes.push(Decoration.node(rtFrom, rtFrom + r.rtSize, { contenteditable: 'false' }));

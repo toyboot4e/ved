@@ -1,10 +1,12 @@
-// The ProseMirror document model for ved's identity text model.
+// The ProseMirror document model for ved's identity rich text model: the rich
+// document encodes exactly the plain text — conversion between them is
+// lossless.
 //
 // The document is plaintext: `serialize` reproduces the source string character
 // for character (markup included). A ruby is an inline NODE, but — unlike the
 // earlier design — its MARKUP (`|`, `(`, `)`) is NOT editable text inside the
 // node. The node holds two editable child nodes: `rubyBase` (the base) and
-// `rubyText` (the reading); `serialize` RECONSTRUCTS `|base(reading)`. So the
+// `rubyReading` (the reading); `serialize` RECONSTRUCTS `|base(reading)`. So the
 // hidden delimiters never exist as zero-sized DOM text — which is what broke the
 // IME (no caret position among zero-size spans, IME box at the viewport corner).
 // Rich mode renders just the base + a read-only <rt>; the caret and IME live in
@@ -29,13 +31,13 @@ export const schema = new Schema({
       toDOM: () => ['span', { class: 'rubyBase' }, 0],
       parseDOM: [{ tag: 'span.rubyBase' }],
     },
-    rubyText: {
+    rubyReading: {
       content: 'text*',
       inline: true,
       toDOM: () => ['rt', 0],
       parseDOM: [{ tag: 'rt' }],
     },
-    // Ruby: an inline node whose content is [rubyBase, rubyText]. The default
+    // Ruby: an inline node whose content is [rubyBase, rubyReading]. The default
     // rendering is <ruby class=rubyWrap><span.rubyBase>base</span><rt>reading
     // </rt></ruby> — both children editable; no custom node view needed. The
     // markup `|`,`(`,`)` is shown (in the expanded policies) as CSS
@@ -43,7 +45,7 @@ export const schema = new Schema({
     ruby: {
       group: 'inline',
       inline: true,
-      content: 'rubyBase rubyText',
+      content: 'rubyBase rubyReading',
       toDOM: () => ['ruby', { class: 'rubyWrap' }, 0],
       parseDOM: [{ tag: 'ruby.rubyWrap' }],
     },
@@ -62,7 +64,7 @@ const rubyMarkup = (ruby: PMNode): string =>
 const rubyNode = (base: string, reading: string): PMNode =>
   schema.node('ruby', null, [
     schema.node('rubyBase', null, base ? [schema.text(base)] : []),
-    schema.node('rubyText', null, reading ? [schema.text(reading)] : []),
+    schema.node('rubyReading', null, reading ? [schema.text(reading)] : []),
   ]);
 
 /** The canonical inline content for one plain line: plain runs as text nodes,
@@ -96,7 +98,7 @@ export const docFromText = (text: string): PMNode =>
 // clicks on large docs (see the docIndex/paraMaps consumers below).
 const paraTextCache = new WeakMap<PMNode, string>();
 
-/** The plain text of one paragraph. Identity-exact: a ruby contributes its
+/** The plain text of one paragraph. Lossless: a ruby contributes its
  *  RECONSTRUCTED markup `|base(reading)`, every other child its text content.
  *  This is the per-line analogue of `serialize`; structure repair uses it
  *  because a ruby's `textContent` is now `base+reading` (NOT the markup).
@@ -114,7 +116,7 @@ export const paragraphText = (para: PMNode): string => {
 
 const serializeCache = new WeakMap<PMNode, string>();
 
-/** The plain document string. Identity-exact: paragraphs join with `\n`.
+/** The plain document string. Lossless: paragraphs join with `\n`.
  *  Memoized by doc identity — repeat calls on the same doc version return the
  *  SAME string instance (callers key their own caches on it), and an edit pays
  *  only the changed paragraph plus the join. */
@@ -130,7 +132,7 @@ export const serialize = (doc: PMNode): string => {
   return text;
 };
 
-/** Identity text for a COPIED slice (the PM clipboardTextSerializer). The ruby
+/** The exact plain text for a COPIED slice (the PM clipboardTextSerializer). The ruby
  *  markup `|`,`(`,`)` is never DOM text — it's reconstructed by `serialize` — so
  *  PM's default copy (node text content) would drop it. This rebuilds it for the
  *  selection, so copying a ruby (or a range spanning one) yields the literal
@@ -138,7 +140,7 @@ export const serialize = (doc: PMNode): string => {
  *  only its selected text, NOT half-markup like `|漢(`. */
 export const serializeSlice = (slice: Slice): string => {
   const frag = slice.content;
-  // Block-level (multi-paragraph) selection: one identity line per paragraph.
+  // Block-level (multi-paragraph) selection: one exact plain line per paragraph.
   if (frag.childCount > 0 && frag.firstChild?.type.name === 'paragraph') {
     const lines: string[] = [];
     frag.forEach((para) => {
@@ -180,7 +182,7 @@ export const rubyEdgeOutsidePos = ($h: ResolvedPos): number | null => {
  *   - the rubyBase INTERIOR (between chars) is a real, editable caret spot → stay
  *     (`null`);
  *   - a rubyBase EDGE → before/after the ruby;
- *   - the READING (`rubyText`) → after the ruby (it is read-only in Rich);
+ *   - the READING (`rubyReading`) → after the ruby (it is read-only in Rich);
  *   - the RUBY NODE level — where a click resolves when the base is read-only (a
  *     LEADING/adjacent atom ruby), since the DOM caret can't enter the base — →
  *     before the ruby if the click is at/before the base, else after it.
@@ -193,7 +195,7 @@ export const rubyClickOutsidePos = ($h: ResolvedPos): number | null => {
     if ($h.parentOffset > 0 && $h.parentOffset < $h.parent.content.size) return null; // editable interior
     return $h.parentOffset === 0 ? $h.before(d - 1) : $h.after(d - 1);
   }
-  if (name === 'rubyText') return $h.after(d - 1); // the reading → after the ruby
+  if (name === 'rubyReading') return $h.after(d - 1); // the reading → after the ruby
   if (name === 'ruby') {
     // The atom base is read-only, so the click landed at the ruby's content level;
     // pick the boundary on the side of the base the click fell past.
@@ -229,7 +231,7 @@ export const rubyPasteOutsidePos = ($h: ResolvedPos): number | null => {
 // boundary where it belongs:
 //   - `|` when ENTERING a ruby (before-ruby → ruby content),
 //   - `(` when LEAVING the base (rubyBase end),
-//   - `)` when LEAVING the reading (rubyText end).
+//   - `)` when LEAVING the reading (rubyReading end).
 // `posToOff[pmPos]` is dense (every position); `offToPos[offset]` records the
 // FIRST position at each offset (so an interior offset lands inside the editable
 // region, a boundary offset on the element edge). This whole-doc walk now backs
@@ -285,11 +287,11 @@ const buildMaps = (doc: PMNode): Maps => {
         markBoth(); // after the base = the `(` boundary (end of the base region)
         off += 1; // spend `(`
         pos += 1; // out of rubyBase
-        markPos(); // between rubyBase and rubyText (wrapper edge)
-        pos += 1; // into rubyText content
+        markPos(); // between rubyBase and rubyReading (wrapper edge)
+        pos += 1; // into rubyReading content
         walkChars(rubyReadingText(child));
         markBoth(); // after the reading = the `)` boundary (end of the reading)
-        pos += 1; // out of rubyText
+        pos += 1; // out of rubyReading
         markPos(); // ruby content end (wrapper edge, still before the `)`)
         off += 1; // spend `)` — leaving the RUBY (so offset+1 lands AFTER the node)
         pos += 1; // out of the ruby node
@@ -358,11 +360,11 @@ const paraMaps = (para: PMNode): ParaMaps => {
       markBoth(); // after the base = the `(` boundary (end of the base region)
       off += 1; // spend `(`
       pos += 1; // out of rubyBase
-      markPos(); // between rubyBase and rubyText (wrapper edge)
-      pos += 1; // into rubyText content
+      markPos(); // between rubyBase and rubyReading (wrapper edge)
+      pos += 1; // into rubyReading content
       walkChars(rubyReadingText(child));
       markBoth(); // after the reading = the `)` boundary (end of the reading)
-      pos += 1; // out of rubyText
+      pos += 1; // out of rubyReading
       markPos(); // ruby content end (wrapper edge, still before the `)`)
       off += 1; // spend `)` — leaving the RUBY (so offset+1 lands AFTER the node)
       pos += 1; // out of the ruby node

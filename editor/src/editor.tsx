@@ -135,7 +135,7 @@ const moveChar = (view: EditorView, policy: Appear, reverse: boolean, extend: bo
   view.dispatch(view.state.tr.setSelection(sel).scrollIntoView());
 };
 
-/** The IDENTITY-EXACT deletion of a PM range: the plain string loses exactly
+/** The EXACT plain-string deletion of a PM range: the plain string loses exactly
  *  the corresponding offset range, and the touched paragraphs are rebuilt as
  *  the canonical projection of their merged text (`inlineNodesFor`). A raw
  *  STRUCTURAL `tr.delete`/`deleteSelection` across ruby children leaves debris
@@ -176,7 +176,7 @@ const plainDeleteTr = (state: EditorState, from: number, to: number, split = fal
   return tr;
 };
 
-/** Identity-exact BULK insert (paste, multi-line insertText): the plain string
+/** Exact BULK insert (paste, multi-line insertText): the plain string
  *  gains exactly `data` at the insertion point and the touched paragraphs are
  *  rebuilt canonically — the structural `replaceSelection` it replaces left
  *  phantom markup on a selection crossing ruby children (the plainDeleteTr
@@ -219,7 +219,7 @@ const plainInsertTr = (state: EditorState, data: string, policy: Appear): Transa
  *  leaves a mid-paragraph single-char delete to NATIVE contenteditable, which —
  *  with hidden markup at display:none — deletes the out-of-layout delimiters/
  *  syntax markers along with the visible char (so e.g. Backspace next to a
- *  bold `*` ate the `*` too). Deleting a plain offset range keeps identity exact
+ *  bold `*` ate the `*` too). Deleting a plain offset range keeps the plain string exact
  *  and lets structure-repair re-form rubies. */
 const deleteChar = (view: EditorView, forward: boolean, policy: Appear): void => {
   const { doc, selection } = view.state;
@@ -276,7 +276,7 @@ const deleteChar = (view: EditorView, forward: boolean, policy: Appear): void =>
  *  change can reset the IM context while the key is in flight, and the first
  *  character then falls through RAW (uncomposed). At compositionstart the IME
  *  has committed to composing, so the collapse is safe. The deletion is the
- *  identity-exact plainDeleteTr — canonical by construction, which matters
+ *  exact plainDeleteTr — canonical by construction, which matters
  *  HERE specifically: ruby structure repair is skipped while composing, so a
  *  structural delete's debris (the phantom empty `()` reading) would survive
  *  the whole composition. Verified with real mozc
@@ -300,7 +300,7 @@ const deleteSelectionForIme = (view: EditorView): void => {
  *  selection leads the model). Delete the range (DOM selection first, like
  *  `deleteChar`, else the model selection), then split at the caret. A collapsed
  *  caret in plain text returns false → baseKeymap splits normally; a collapsed
- *  caret INSIDE a ruby takes the identity split below (splitBlock can't split
+ *  caret INSIDE a ruby takes the exact split below (splitBlock can't split
  *  the inline ruby node, so Enter was a no-op there). */
 const enterReplacingSelection: Command = (state, dispatch, view) => {
   let range: [number, number] | null = null;
@@ -318,7 +318,7 @@ const enterReplacingSelection: Command = (state, dispatch, view) => {
   if (!range) {
     // Collapsed caret INSIDE a ruby: baseKeymap's splitBlock cannot split an
     // inline ruby node, so Enter was a NO-OP there. EXPANDED (markup visible):
-    // identity split AT the caret — the plain string gains the '\n' exactly
+    // exact split AT the caret — the plain string gains the '\n' exactly
     // where it sits, and the torn markup renders literally, the same as if it
     // had been typed. COLLAPSED (Rich &c. — the markup is invisible): split
     // OUTSIDE the ruby (`rubyPasteOutsidePos`, the paste rule) — tearing
@@ -336,7 +336,7 @@ const enterReplacingSelection: Command = (state, dispatch, view) => {
     return true;
   }
   if (dispatch) {
-    // Identity-exact: the plain range is replaced by a paragraph break (the
+    // Exact: the plain range is replaced by a paragraph break (the
     // same canonical rebuild as every selection deletion — plainDeleteTr).
     const tr = plainDeleteTr(state, range[0], range[1], true);
     if (tr) dispatch(tr.scrollIntoView());
@@ -1051,7 +1051,7 @@ export const VedEditor = (props: VedEditorProps): React.JSX.Element => {
           imePendingSel = null;
           if (ie.data.includes('\n')) {
             // Multi-line insertText (some IMEs, programmatic input): a bulk
-            // insert, handled like a paste — identity-exact, outside a
+            // insert, handled like a paste — exact, outside a
             // collapsed ruby (`tr.insertText` would inline the \n, and a
             // structural replaceSelection left phantom markup; plainInsertTr).
             v.dispatch(plainInsertTr(v.state, ie.data, policyClassRef.current).scrollIntoView());
@@ -1070,12 +1070,12 @@ export const VedEditor = (props: VedEditorProps): React.JSX.Element => {
           return true;
         },
       },
-      // Copy as IDENTITY TEXT: reconstruct the ruby markup `|base(reading)` for
-      // the selection. The delimiters are not DOM text (they're pseudo-elements /
-      // a widget), so PM's default copy drops them — this puts them on the
+      // Copy as the EXACT PLAIN TEXT: reconstruct the ruby markup `|base(reading)` for
+      // the selection. The delimiters are not DOM text (shown ones are widget
+      // decorations), so PM's default copy drops them — this puts them on the
       // clipboard, and a paste back round-trips through structure repair.
       clipboardTextSerializer: (slice) => serializeSlice(slice),
-      // Paste as PLAIN TEXT (the identity model): the plain string gains
+      // Paste as PLAIN TEXT (lossless): the plain string gains
       // exactly the clipboard text — never the copied ruby NODES (pasting a
       // ruby node into another ruby's content violates the schema and PM drops
       // the caret to the document start). plainInsertTr rebuilds the touched
@@ -1113,7 +1113,7 @@ export const VedEditor = (props: VedEditorProps): React.JSX.Element => {
       // lines in vertical writing) never does: the reading is
       // `contenteditable=false`, so the browser seats no caret and the click
       // dies silently. PM still hit-tests the point (posAtCoords resolves into
-      // the rubyText), so snap it outside the ruby here, exactly like a
+      // the rubyReading), so snap it outside the ruby here, exactly like a
       // DOM-selection click would have been.
       handleClick: (v, pos, _event) => {
         if (pointerDraggingRef.current || policyClassRef.current !== 'rich') return false;
@@ -1151,7 +1151,7 @@ export const VedEditor = (props: VedEditorProps): React.JSX.Element => {
         return null;
       }
     };
-    //  - __vedText: the identity plain text (serialize). The PBT oracle.
+    //  - __vedText: the exact plain text (serialize). The PBT oracle.
     //  - __vedSetCaret: set the caret by plain offset (positions edits in PBT).
     w.__vedText = () => serialize(view.state.doc);
     w.__vedSetCaret = (off: number) => {

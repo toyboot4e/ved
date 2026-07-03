@@ -1,4 +1,4 @@
-// The identity model, expressed as *ranges over the plaintext* — backend
+// The document model, expressed as *ranges over the plaintext* — backend
 // neutral (imports only parse.ts). A document is a plain string; each line is
 // parsed into plain/ruby spans, and every character keeps its own document
 // offset. This turns a document into the ordered list of "leaves" the caret

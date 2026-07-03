@@ -66,7 +66,7 @@ _Avoid_: band (implementation word), grid row.
 
 **Document**:
 A single plain-text string. Outside the editor core, a document is *always*
-a string — never a Slate value.
+a string — never a ProseMirror doc.
 _Avoid_: file (a document may be unsaved), content, value.
 
 **Buffer**:
@@ -75,23 +75,26 @@ scroll, history }`). Dirty ⇔ `text !== savedText`.
 _Avoid_: tab (a tab is the buffer's UI), file.
 
 **Ruby**:
-An annotated run, written `|body(reading)`. The **body** is the annotated
+An annotated run, written `|base(reading)`. The **base** is the annotated
 text; the **reading** is the small gloss shown alongside it.
-_Avoid_: furigana (use "reading"), annotation (too broad).
+_Avoid_: furigana (use "reading"), annotation (too broad), body (use "base",
+as in `rubyBase`).
 
 **Rt**:
 The reading's leaf/element (after the HTML `<rt>` tag). Distinct from the
-**body** leaf and the **delim** leaves (`|`, `(`, `)`).
+**base** leaf and the **delim** leaves (`|`, `(`, `)`).
 _Avoid_: ruby text (collides with **ruby**), furigana.
 
 ### Model
 
-**Identity text model**:
-The invariant that the editor tree holds the document character for
-character — including the markup characters `|`, `(`, `)` — so a paragraph's
-`getTextContent()` *is* the plain line. Displayed text and model text can
+**Identity rich text model**:
+The invariant that the rich (PM) representation encodes exactly the plain
+string — conversion between them is lossless, character for character, including
+the markup characters `|`, `(`, `)`, which are never model text: `serialize`
+reconstructs them at the node boundaries. Displayed text and model text can
 never diverge.
-_Avoid_: source model, WYSIWYG (it is explicitly not WYSIWYG).
+_Avoid_: identity text model (the former name — it dropped the "rich"),
+source model, WYSIWYG (it is explicitly not WYSIWYG).
 
 **Appear policy**:
 How much ruby markup renders as visible syntax vs. as an annotation:
@@ -135,11 +138,11 @@ _Avoid_: project (means the whole), module (means a single file), subproject.
 >
 > **Maintainer:** No — appear policy is orthogonal to writing mode. The page
 > geometry doesn't move; only the ruby under the cursor expands. The model
-> text is identical either way — that's the identity text model. Expansion is
-> a CSS class on that one ruby.
+> text is identical either way — that's the identity rich text model.
+> Expansion is a CSS class on that one ruby.
 >
 > **Dev:** And the reading still round-trips into the document string?
 >
-> **Maintainer:** Always. The rt leaf holds the reading as real characters
-> inside `|body(reading)`; `Node.string` gives you the exact plain line back.
-> A buffer is just that string plus cursor and scroll.
+> **Maintainer:** Always. The reading is real editable text inside the ruby
+> node; `serialize` reconstructs the exact plain line `|base(reading)`,
+> markup included. A buffer is just that string plus cursor and scroll.

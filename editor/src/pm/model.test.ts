@@ -10,7 +10,7 @@ import {
   serializeSlice,
 } from './model';
 
-describe('ProseMirror identity model', () => {
+describe('ProseMirror identity rich text model', () => {
   const CASES = [
     '字は|漢(かん)字',
     '|漢(かん)',
@@ -35,10 +35,10 @@ describe('ProseMirror identity model', () => {
     const ruby = para.child(1);
     expect(ruby.type.name).toBe('ruby');
     // The markup `|`,`(`,`)` is NOT editable text — the node holds two children:
-    // rubyBase (the base) and rubyText (the reading). serialize reconstructs it.
+    // rubyBase (the base) and rubyReading (the reading). serialize reconstructs it.
     expect(ruby.child(0).type.name).toBe('rubyBase');
     expect(ruby.child(0).textContent).toBe('漢');
-    expect(ruby.child(1).type.name).toBe('rubyText');
+    expect(ruby.child(1).type.name).toBe('rubyReading');
     expect(ruby.child(1).textContent).toBe('かん');
     expect(para.child(2).isText).toBe(true);
   });
@@ -81,7 +81,7 @@ describe('ProseMirror identity model', () => {
     // base region (rubyBase), so editing/IME happen in normal text.
     expect(doc.resolve(offsetToPos(doc, 1)).parent.type.name).toBe('rubyBase');
     // The reading char (offset 3, か) lands inside the reading region.
-    expect(doc.resolve(offsetToPos(doc, 3)).parent.type.name).toBe('rubyText');
+    expect(doc.resolve(offsetToPos(doc, 3)).parent.type.name).toBe('rubyReading');
   });
 
   it('buildPosMap equals offsetToPos for every offset (the decoration fast path)', () => {
@@ -94,7 +94,7 @@ describe('ProseMirror identity model', () => {
 
   it('serializes a COPIED slice with the ruby markup reconstructed', () => {
     // Copy must put the literal `|`,`(`,`)` on the clipboard even though they are
-    // never DOM text. A slice over plain offsets [a,b) → identity substring.
+    // never DOM text. A slice over plain offsets [a,b) → the exact substring.
     const sliceText = (t: string, a: number, b: number): string => {
       const doc = docFromText(t);
       return serializeSlice(doc.slice(offsetToPos(doc, a), offsetToPos(doc, b)));
@@ -106,7 +106,7 @@ describe('ProseMirror identity model', () => {
     // A selection CUT INTO the base copies just the selected text, NOT half-markup.
     expect(sliceText('字は|漢(かん)字', 3, 4)).toBe('漢'); // the base char only
     expect(sliceText('|漢(かん)', 4, 5)).toBe('ん'); // a reading char only (|0 漢1 (2 か3 ん4 )5)
-    // Multi-paragraph: one identity line per paragraph, joined by \n.
+    // Multi-paragraph: one exact plain line per paragraph, joined by \n.
     // もう|一行(いちぎょう) is offsets 0..11 (the \n is 12); 二 is 13.
     expect(sliceText('もう|一行(いちぎょう)\n二行目', 0, 14)).toBe('もう|一行(いちぎょう)\n二');
   });
@@ -163,7 +163,7 @@ describe('ProseMirror identity model', () => {
           basePos = pos;
           baseSize = node.content.size;
         }
-        if (node.type.name === 'rubyText') rtPos = pos;
+        if (node.type.name === 'rubyReading') rtPos = pos;
       });
       return { rubyPos, rubyEnd, basePos, baseSize, rtPos };
     };

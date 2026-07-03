@@ -35,131 +35,43 @@ Task runner is `just`:
 
 ## Invariants
 
-- **Identity text model.** The document is plaintext. A ruby is the one inline
-  NODE; its content is two EDITABLE child nodes — `rubyBase` + `rubyText` — and
-  `serialize` RECONSTRUCTS the literal markup `|base(reading)` (custom, not
-  `textBetween`), so the plain string is identity-exact, character for character.
-  The markup `|`,`(`,`)` is NEVER MODEL TEXT — no PM text node holds it, so no
-  edit, IME composition, or DOM-sync can ever touch it; it exists only in
-  `serialize`'s output (it still occupies plain-string offsets). While collapsed
-  (Rich &c.) it renders NOTHING; in the expanded appear policies each delimiter
-  is a READ-ONLY WIDGET decoration — an inert `contenteditable=false` `<span>`
-  (`pm/decorations.ts` `openDelim`/`parenDelim`/`closeDelim`). Real elements,
-  NOT CSS pseudo-elements: generated content has no DOM positions around it, so
-  the caret painted at the same spot on both sides of a delimiter. (Markup as
-  *hidden editable text* — `font-size:0` or `display:none` boxes — is a verified
-  dead end: a zero-sized or out-of-flow box has no honest caret/IME geometry.
-  Don't reintroduce it.) Every other
-  inline format (bold/italic/縦中横, …) is a view-only **decoration**, not a node —
-  a parse rule + a CSS class, no structure repair. Never add state where
-  displayed text and model text can diverge. Outside the editor core a document
-  is always a plain string. Typed text is still taken over: `editor.tsx` applies
-  the `beforeinput` event's literal `data` at the PM model selection (PM's DOM-diff
-  reconciliation can reorder characters), and Backspace/Delete delete a model
-  offset range (`deleteChar`). IME goes through PM's native composition path into
-  editable plain text. Verified by PBT (`test/e2e/pbt-edit.ts`).
-- **In Rich, a ruby BOUNDARY writes OUTSIDE; the base INTERIOR is editable. NO
-  zero-width-space anchor.** Spec: with the markup collapsed (Rich, or a non-active
-  paragraph/ruby under ByParagraph/ByCharacter), a caret at a ruby's boundary
-  writes OUTSIDE the ruby. To write at the EDGE of the rubied text (prepend/append
-  to the base), EXPAND the markup. The caret STILL steps through the base INTERIOR
-  — the `rubyActive` highlight is on there (`headOffset > from && headOffset < to`,
-  the markup span, `pm/decorations.ts`) and editing the middle characters lands in
-  the base — but a single-char base has NO interior, so the caret steps from before
-  it to after it (over the one glyph). The caret steps through EVERY collapsed ruby's
-  base char-by-char this way — leading, adjacent, or mid-paragraph. `pm/caret-model.ts`
-  makes a collapsed ruby's base contribute only its INTERIOR offsets
-  (`from+1..to-1`) as caret stops; the START/END edges
-  coincide with the ruby's outer boundary (the markup offsets `|`,`(`,`)`,
-  which render nothing while collapsed).
-  An ATOM ruby (one with NO plain text immediately before it for an IME to anchor to:
-  it LEADS its paragraph, OR immediately FOLLOWS another ruby — `pm/decorations.ts`
-  `$pos.parentOffset===0 || $pos.nodeBefore` is a ruby) keeps its base read-only
-  ONLY WHILE the caret is OUTSIDE it (not strictly inside the markup span). So at the
-  boundary an IME composes OUTSIDE (paragraph start / BETWEEN the rubies) instead of
-  into the base, but once the caret steps INTO the interior the base is editable and
-  the IME edits it char-by-char — the read-only toggle is keyed to the SAME
-  `rubyActive` strictly-inside condition as the highlight, so they can't drift.
-  `pm/leaves.ts isHidden` hides `delim`/`rt`; the READING (`rubyText`) is also
-  `contenteditable=false` on a collapsed ruby so an IME can't leak in. The browser
-  affinity can still drop the DOM caret (and PM's synced model) at the base START
-  INSIDE the ruby, so `editor.tsx`'s `beforeinput` redirects a keystroke at a
-  collapsed-ruby base edge to OUTSIDE the ruby (`pm/model.ts rubyEdgeOutsidePos`;
-  only when collapsed — in expanded policies the edges are editable). A CLICK that
-  resolves INSIDE a collapsed ruby (clicking the empty space past a ruby-ending
-  paragraph) is likewise snapped OUTSIDE by `editor.tsx createSelectionBetween`
-  (`pm/model.ts rubyClickOutsidePos` — the editable base INTERIOR stays; a base edge,
-  the reading, or the RUBY NODE level for an atom ruby whose base is read-only go
-  before/after). And the current-line highlight at a paragraph ENDING in a ruby
-  anchors into the trailing ruby's BASE, not `head-1` (which is the reading — a
-  different column, so the highlight slipped one column back); see `editor.tsx
-  caretRect`. IME at a
-  boundary works because the OUTSIDE side always has an editable plain-text anchor,
-  OR — when it would not (doc start, between two adjacent rubies) — the ruby is an
-  ATOM with a read-only base, so mozc can't compose into it and lands outside. All
-  boundary cases are verified with real mozc (`mozc/ruby-composition`), including
-  `|語(ご)ね|句(く)` between two adjacent rubies. (History: the ZWSP IME anchor and
-  the `compositionend` re-home are both GONE — they were a hack; collapsed markup
-  still renders nothing.)
-- **Keep the caret in view after edits.** PM's `scrollIntoView` doesn't survive
-  the post-commit ruby repair (a second transaction) or the vertical-rl
-  multi-column page layouts, so `editor.tsx revealCaretInScroller` scrolls the
-  caret back into view after every doc change and — synchronously, after the
-  re-decoration reflow — on an appear-policy change. It is a no-op when the caret
-  is already visible. When the DOM range rect is degenerate (a collapsed range at
-  a node boundary), it falls back to `coordsAtPos` — NOT the focus node's element
-  rect, which at a boundary is the whole (huge) paragraph and over-scrolls.
-  In the PAGED modes the paged axis instead SNAPS the caret's page START to
-  the viewport start (`caretPageSpan` + `pageSnapDelta` — a page turn); it is
-  a no-op when the WHOLE page is already visible (typing inside a framed page
-  never scrolls), a page LARGER than the viewport degrades to the minimal
-  caret reveal, and at the doc end the browser's scroll-range clamp leaves the
-  page fully visible at the far edge.
-  VerticalColumns bands are exact arithmetic (multicol fragments);
-  VerticalRows page bounds are the MEASURED `.ved-page-gap` widget centers
-  (arithmetic drifts — page positions move with paragraph paddings).
-  (`test/e2e/page-reveal.ts`, visible window — the reveal is rAF-deferred.)
+Binding rules; the mechanisms behind them are catalogued in
+`docs/architecture.md` — read it before changing how any of these work.
+
+- **Identity rich text model.** The rich (PM) document encodes EXACTLY the
+  plain text — conversion between them is lossless, character for character. A ruby is the
+  ONE inline node (`rubyBase` + `rubyReading`); the
+  markup `|`,`(`,`)` is NEVER model text — `serialize` reconstructs it.
+  Collapsed it renders nothing; expanded, each delimiter is a read-only widget
+  decoration, never editable text. Every other inline format (bold/italic/
+  縦中横, …) is a view-only decoration, not a node. Never add state where
+  displayed text and model text can diverge. Outside the editor core a
+  document is always a plain string. Verified by PBT (`test/e2e/pbt-edit.ts`).
+- **Collapsed ruby: a caret at the BOUNDARY writes OUTSIDE; the base INTERIOR
+  is editable.** To write at the edge of the ruby base, expand the markup.
+  The caret still steps through the base char-by-char. Mechanisms (interior
+  caret stops, atom-ruby read-only base, edge/click snapping) in
+  architecture.md "Caret at ruby boundaries". Verified with real mozc
+  (`mozc/ruby-composition`).
 - **IME safety.** Never repair structure, steal focus, or remount the editor
-  during an IME composition (`view.composing`, `event.isComposing`). Ruby
-  structure repair (`pm/structure.ts repair`, run from `dispatchTransaction`)
-  is skipped while composing. Composing over a NON-EMPTY selection deletes the
-  MODEL selection at IME entry: the range is RECORDED on the keydown-229 that
-  precedes the composition and DELETED at compositionstart (`editor.tsx`
-  `imePendingSel` + `deleteRangeForIme`; deleting during the keydown itself
-  races the IME handshake and leaks the first character RAW) — the native
-  selection replace chokes on a collapsed ruby's read-only islands, and PM
-  resets a mismatched model selection at compositionstart. Every SELECTION
-  deletion (IME entry, Backspace/Delete, Enter-replace) is IDENTITY-EXACT
-  (`plainDeleteTr`): the plain string loses exactly the offset range and the
-  touched paragraphs are rebuilt canonically — a structural
-  `tr.delete`/`deleteSelection` left phantom markup the string never contained
-  (e.g. an empty `()` reading), which survived composition because repair is
-  skipped then. Verified with real mozc (`mozc/selection-composition`).
-- **Never fix IME by revealing the ruby's markup in Rich.** The markup stays
-  hidden in Rich (only the base + read-only reading show); editing the reading, and
-  prepending/appending at the base EDGES, with the markup VISIBLE is the EXPANDED
-  policies' job. Do not "fix" an IME issue by expanding the ruby in Rich or by
-  making the READING editable there. (Hidden-text markup scrambled mozc; that
-  whole class is gone — collapsed markup is not rendered at all, and shown markup
-  is never editable text.) Verified with real mozc (`mozc/ruby-composition`), the
-  ONLY faithful check.
-- **Test IME composition with REAL mozc — DON'T assume it's un-automatable.**
-  When touching anything IME-related, FIRST reproduce with real mozc; don't reach
-  for CDP `Input.imeSetComposition` (it does NOT faithfully model mozc — it
-  scrambles differently, giving false greens/reds). The recipe is codified in
-  `test/e2e/mozc/harness.ts`: CDP/Playwright keys bypass the system IME, but X11
-  keys from `xdotool type` are intercepted by fcitx5 + mozc. So launch with the
-  IME ATTACHED + visible (the harness normally detaches it via `GTK_IM_MODULE=''`
-  for determinism), `xdotool windowactivate` the window (this STEALS X focus —
-  warn before running on a live desktop), `fcitx5-remote -o`, `xdotool key
-  Henkan_Mode` (→ hiragana), then `xdotool type aiueo` → 「あいうえお」, commit with
-  `Return`. Guard on `mozcAvailable()`; ALWAYS `fcitx5-remote -c` to restore.
-  The platform mechanics live behind the harness's `ImePlatform` registry: X11
-  is the VERIFIED entry; Wayland (ydotool/wtype), macOS (osascript + im-select),
-  and Windows (SendInput) are guarded best-effort entries that self-skip where
-  their stack is absent — a new platform is one appended entry, no test changes.
-  (Verified: composing inside a ruby base scrambles — `|ルビ(ruby)` + `aiueo` →
-  `|あルいうえおビ(ruby)` — exactly the in-app bug, which CDP could not reproduce.)
+  during a composition (`view.composing`, `event.isComposing`). Every
+  selection deletion (IME entry, Backspace/Delete, Enter-replace) edits the
+  plain string exactly (`plainDeleteTr`) — structural deletes leave phantom
+  markup.
+  Verified with real mozc (`mozc/selection-composition`).
+- **Never fix IME by revealing the ruby's markup in Rich.** Editing the
+  reading and the base edges with visible markup is the EXPANDED policies'
+  job; shown markup is never editable text.
+- **Test IME composition with REAL mozc** — never CDP `Input.imeSetComposition`
+  (unfaithful: false greens/reds). The recipe is codified in
+  `test/e2e/mozc/harness.ts` (xdotool + fcitx5 behind the `ImePlatform`
+  registry). It STEALS X focus — warn before running on a live desktop;
+  always `fcitx5-remote -c` to restore.
+- **Keep the caret in view after edits.** `editor.tsx revealCaretInScroller`
+  runs after every doc change and on appear-policy changes (PM's
+  `scrollIntoView` doesn't survive repair or the multicol layouts); paged
+  modes snap the caret's page start instead. Details in architecture.md
+  "Keeping the caret in view".
 - **Process boundaries.** All fs and dialog access lives in the main process
   behind the typed IPC contract in `desktop/src/shared/ipc.ts` (exposed to the
   renderer as `window.ved` by the preload). The renderer never touches Node.
@@ -175,23 +87,14 @@ Task runner is `just`:
 - **Character counts are ASCII columns.** When a size is given as "N
   characters", it means halfwidth columns: N columns = N/2 fullwidth (全角)
   characters = N/2 em. E.g. the vertical line cap of 80 characters is 40em.
-- **Per-caret-move work must not scale with the document.** PM nodes are
-  immutable, so doc/paragraph-identity-keyed caches never go stale — `serialize`
-  /`docLeaves`/the offset↔pos maps are memoized that way (per paragraph), and
-  decorations split into cached caret-independent layers + an O(1) delta.
-  Glyph-rect walks (one layout read PER GLYPH — the most expensive operation in
-  the editor) are scoped to the viewport (hit-tests) or the selection span
-  (overlay); a plain in-content click measures nothing; the page-gap measure is
-  suffix-incremental per EDIT (cached visual-line end offsets + re-walk from
-  the first changed line — Rich/Plain only; a non-edit layout change schedules
-  full). Guarded by counter seams, not timing: `__vedGlyphWalks`,
-  `__vedBaseRebuilds`, `__vedRubyRebuilds`, `__vedGapLines`
-  (`test/e2e/caret-move-perf.ts`, `click-perf.ts`, `page-gap-suffix.ts`).
-  Latency benchmarks live in
-  `desktop/bench/` (`node bench/click-bench.ts [paras] [ruby] [show]` — `show`
-  spawns a visible window; hidden windows throttle frames and distort latency).
-  The remaining per-click floor is Chromium's hit-test/PrePaint over the one
-  multicol flow — O(rendered tree), fixable only by page windowing (TODO.org).
+- **Per-caret-move work must not scale with the document.** Caches key on PM
+  node identity (immutable, never stale); glyph-rect walks (the most
+  expensive operation) are scoped to the viewport or the selection span; the
+  page-gap measure is suffix-incremental per edit. Guarded by counter seams,
+  not timing: `__vedGlyphWalks`, `__vedBaseRebuilds`, `__vedRubyRebuilds`,
+  `__vedGapLines` (`test/e2e/caret-move-perf.ts`, `click-perf.ts`,
+  `page-gap-suffix.ts`). Latency benchmarks in `desktop/bench/` (visible
+  windows — hidden ones throttle frames and distort latency).
 
 ## Current work: editor UI shell
 
@@ -203,7 +106,7 @@ Working agreement for this effort:
    first. Do exactly one step, then **stop for user review** — do not start
    the next step unasked.
 2. Keep shell code decoupled from the editor core: plaintext strings cross
-   the boundary, never Lexical values. Prefer new modules over edits to
+   the boundary, never ProseMirror values. Prefer new modules over edits to
    existing ones; when an editor-core edit is unavoidable, keep it to a
    minimal, optional surface (e.g. one optional prop).
 3. A step is done when `just test-all` passes and the smoke test exercises

@@ -1,9 +1,10 @@
 # Plan: editor UI (app shell)
 
-Status: **in progress** (2026-06) — phase 0 is complete; phase 1 (buffers
-and tab bar) is next. The app is a single buffer with open/save
-(Ctrl+O/S/Shift+S over the `window.ved` IPC layer), a dirty marker in the
-window title, and a dirty-close confirm guard.
+Status: **in progress** (2026-07) — phases 0–1 are complete; the view-config
+interlude and phase 6 (VerticalRows) shipped out of order. Phase 2
+(file-browser sidebar) is next. The app is a multi-buffer tabbed editor with
+open/save (Ctrl+O/S/Shift+S over the `window.ved` IPC layer), dirty markers,
+and a dirty-close confirm guard.
 
 Goal: grow ved from "an editor surface" into "an editor app" — file open/save,
 a tab bar, a file-browser sidebar, Ctrl+P quick open, and configuration —
@@ -18,13 +19,13 @@ are enormous and bring their own document models, which would fight the
 identity model). The shell pieces we need — tab bar, tree view, fuzzy overlay,
 settings file — are each small in React, and ved already prefers small
 hand-rolled components over frameworks (`PlainTextHistory` instead of
-slate-history, for the same reason: the plaintext-centric model makes the
-hand-rolled version *simpler* than the library).
+prosemirror-history, for the same reason: the plaintext-centric model makes
+the hand-rolled version *simpler* than the library).
 
 The identity model is the big lever here too: **a buffer is just
 `{ plaintext, cursor }`**. Multi-tab state, history, dirty tracking, session
-restore, and file round-tripping all operate on strings — no Slate trees ever
-leave the editor component.
+restore, and file round-tripping all operate on strings — no ProseMirror docs
+ever leave the editor component.
 
 Build in vertical slices, each independently shippable and each ending with
 `just test-all` green (unit + lint + build + smoke). The smoke test grows a
@@ -35,7 +36,8 @@ step per phase.
 ### 1. All file system access lives in the main process
 
 Keep `contextIsolation` on; the renderer never touches Node. The preload
-exposes one narrow, typed API (replacing the current `ping` stub):
+exposes one narrow, typed API (sketch — the live contract is
+`src/shared/ipc.ts`):
 
 ```ts
 // src/preload — window.ved
@@ -74,8 +76,8 @@ type Buffer = {
 ```
 
 Render a single `<VedEditor key={activeBufferId} initialText={buffer.text}>`.
-Switching tabs unmounts and remounts the editor — `plaintextToTree` is cheap,
-and remounting sidesteps every hard problem of keeping N live Slate instances
+Switching tabs unmounts and remounts the editor — `docFromText` is cheap,
+and remounting sidesteps every hard problem of keeping N live editor views
 (IME composition state, selection restoration, memory). On switch-away,
 flush `{ text, cursor }` into the store.
 
@@ -87,9 +89,9 @@ Two small refactors of `VedEditor` enable this:
   can track dirty state and the footer can count characters. The editor
   already computes both in `onChange`; this is one callback.
 
-Rejected alternative: one mounted Slate editor per tab, hidden with CSS.
+Rejected alternative: one mounted editor view per tab, hidden with CSS.
 Keeps scroll position for free, but multiplies IME edge cases and fights
-`syncParagraphs`'s assumptions. Scroll restoration can be done later by
+structure repair's assumptions. Scroll restoration can be done later by
 saving `scrollTop/Left` per buffer at switch time.
 
 ### 3. App state: Zustand
@@ -103,19 +105,20 @@ over alternatives:
 - fine-grained selectors keep tab-bar re-renders away from the editor;
 - ~1 kB, no lock-in — it's a `useSyncExternalStore` wrapper, easy to remove.
 
-Plain React context (current approach) starts prop-drilling badly at three
+Plain React context starts prop-drilling badly at three
 features; Redux/Jotai are fine but bring more concept than this needs.
-Editor-internal state (Slate tree, selection, composition guards) stays where
+Editor-internal state (PM doc, selection, composition guards) stays where
 it is — the store only ever sees plaintext.
 
 ### 4. One keymap registry, IME-safe
 
-Today shortcuts live inside `useOnKeyDown` in `editor.tsx`. Shell shortcuts
+Today shortcuts live in `editor.tsx`'s key handling plus an app-level
+listener (`app.tsx`). Shell shortcuts
 (Ctrl+P, Ctrl+S, Ctrl+W, Ctrl+Tab…) must work when the editor is *not*
 focused, so: a single `keymap.ts` registry with scopes
 (`global` / `editor` / `overlay`), dispatched from one `keydown` listener at
 the app root. The editor's caret-movement handling stays local (it needs
-Slate context), but mod-key chords move into the registry.
+the editor view), but mod-key chords move into the registry.
 
 Rules learned from the editor core that the shell must respect:
 
@@ -149,10 +152,10 @@ Sidebar resize is a hand-rolled pointer-drag handle writing a CSS variable
 (~30 lines). `react-resizable-panels` is the fallback if we ever need real
 split panes (e.g. two editors side by side) — not now.
 
-Note for vertical writing: the editor currently fixes its content width
-(`$content-width + padding`). With a sidebar the editor pane becomes
-variable-width; the column layout (dankumi) must be checked against that
-early in phase 2.
+Note for vertical writing: page geometry is fixed in cells
+(`--page-line-chars` / `--page-lines`), not to the pane. With a sidebar the
+editor pane becomes variable-width; the dankumi layouts must be checked
+against that early in phase 2.
 
 ## Phases
 
@@ -181,7 +184,7 @@ one optional prop (step 0.2).
     `Ctrl+O` open, `Ctrl+S` save (falls back to save-as when untitled),
     `Ctrl+Shift+S` save as. IME-guarded (`isComposing` / keyCode 229).
   - Open replaces the document by remounting `VedEditor` with a new `key`
-    (never mutate the live Slate tree from outside).
+    (never mutate the live editor doc from outside).
   - Editor-core touch: one optional prop `onTextChange(plaintext)` called
     from the existing `onChange`, so the shell can know the current text.
   - Window title shows the file name.
@@ -198,7 +201,7 @@ one optional prop (step 0.2).
     over IPC, and shows a native confirm dialog (with its own env stub).
   - Smoke: edit → close → cancel keeps the window; save → close quits.
 
-### Phase 1 — buffers and tab bar
+### Phase 1 — buffers and tab bar *(done 2026-06-13)*
 
 The `Buffer` store and the `VedEditor` refactor (history lifted out, cursor
 and scroll snapshotted on switch-away). Tab bar: hand-rolled flex row —
@@ -268,8 +271,9 @@ directory, and the Ctrl+P index (phase 3) invalidates.
   rendering and focus behavior we need to control ourselves next to Slate.)
 - **UI**: hand-rolled modal overlay — input + result list, render top ~50
   matches, arrow keys + Enter, Esc closes. Focus discipline is the whole
-  trick: opening saves the editor selection, closing restores focus and
-  selection (`ReactEditor.focus` + `restoreCursorSync` already exist).
+  trick: opening saves the editor selection as a plain-offset cursor, closing
+  refocuses the view and restores it (the history/tab-switch cursor-restore
+  path already exists).
   The overlay registers the `overlay` keymap scope so editor chords are
   inert while it's open.
 
@@ -298,7 +302,7 @@ panel stays out of scope until the schema stops churning; the toolbar debug
 view-config controls (the interlude step above) are the schema-churning
 sandbox, and this phase's `config.json` hydrates the same store they write.
 
-### Phase 6 — vertical page layouts (`VerticalRows`)
+### Phase 6 — vertical page layouts (`VerticalRows`) *(done 2026-06-16, refined through 2026-07)*
 
 Add the leftward-tiled "book-style" page layout as a sibling of today's
 downward-tiled `VerticalColumns`, exposed in the toolbar with a four-mode
@@ -309,28 +313,26 @@ rows per column) is **not** part of this phase — it stays deferred (docs/archi
 Each step lands an independently-shippable change with `just test-all`
 green.
 
-- **6a. Generalize `scroll-keep` to two paged axes.** Extend `ScrollMode`
+- [x] **6a. Generalize `scroll-keep` to two paged axes.** Extend `ScrollMode`
   with a `'rows'` value (mirror of the existing `'columns'`); add the
   scroll-offset ↔ line-index math for the horizontal axis. Pure unit
   refactor — no UI yet. (`scroll-keep.ts` + `scroll-keep.test.ts`.)
-- **6b. Add the `VerticalRows` writing-mode value and its CSS.** New
+- [x] **6b. Add the `VerticalRows` writing-mode value and its CSS.** New
   enum value in `editor.tsx`; new `.rowsMode` SCSS rules mirroring
   `.multiColMode` but with `overflow-x: scroll` and a vertical-divider
   background gradient. `toScrollMode` learns the new mapping. Toolbar
   not yet updated — the mode is reachable only via direct enum if you
   hack at it (kept dormant for the next step).
-- **6c. Icon toolbar.** Four custom inline SVG components in
+- [x] **6c. Icon toolbar.** Four custom inline SVG components in
   `src/renderer/src/components/icons/`, one per writing mode (frame +
   text-stroke content + divider perpendicular to the scroll axis for
   the two paged modes). `toolbar.tsx` switches from text labels to
   icons; each button keeps a `title` for the native hover tooltip.
-- **6d. Smoke test and architecture.** A new `test/e2e/writing-mode-rows.ts`
-  exercises `VerticalRows`: enter the mode, type past one page, confirm
-  horizontal scroll appears, switch back to `VerticalColumns` and
-  confirm the line index is preserved (scroll-keep extension actually
-  works end-to-end). `docs/architecture.md` writing-mode table grows a
-  fourth row, and the `CONTEXT.md` entry for the new mode gets
-  cross-referenced.
+- [x] **6d. Smoke test and architecture.** `VerticalRows` e2e coverage lives
+  in `test/e2e/writing-mode-rows.ts` plus `rows-fill.ts`, `rows-separator.ts`,
+  `page-reveal.ts`, and the rows cases of the line-move suites.
+  `docs/architecture.md`'s writing-mode table has the fourth row, and
+  `CONTEXT.md` defines the mode.
 
 The deferred 2D case is noted in `editor.tsx` next to the new CSS, so a future
 contributor who wants N≥2 pages per row finds the documented constraint (docs/architecture.md) rather than re-deriving
@@ -366,11 +368,11 @@ Everything else is React + SCSS modules, as today.
 ## Risks / watch list
 
 - **IME × overlays**: any focus steal during composition can cancel the
-  session. Overlays must check `ReactEditor.isComposing` before opening via
+  session. Overlays must check `view.composing` before opening via
   keyboard, and the smoke test should grow a composition-overlap case.
-- **Tab switch vs. pending IME sync**: `pendingSyncRef` work must flush
-  before the editor unmounts (add a flush on unmount in the phase-1
-  refactor).
+- **Tab switch mid-composition**: unmounting the editor cancels a
+  composition (IME-safety invariant) — the switch path must flush text and
+  never remount while `view.composing`.
 - **Editor width**: dankumi layout under a variable-width pane (phase 2).
 - **Dialog testability**: every native dialog needs a test seam (env-flag
   stub in main) or the smoke test stalls.

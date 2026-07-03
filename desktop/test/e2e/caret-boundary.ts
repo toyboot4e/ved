@@ -1,7 +1,7 @@
 // Caret behavior at ruby boundaries (ProseMirror editor).
 //
 // In the markup-out-of-DOM model (ADR-0007 / the no-zero-sized-font redesign)
-// a ruby node holds editable rubyBase + rubyText children; the delimiters
+// a ruby node holds editable rubyBase + rubyReading children; the delimiters
 // `|`,`(`,`)` are NOT DOM text. So the native caret + IME live on REAL,
 // full-size glyphs at EVERY position — including the outer boundaries — and the
 // old overlay-caret / delimAnchor machinery is gone. We assert:
