@@ -19,16 +19,25 @@
 // Re-measuring every paragraph (a getClientRects + getComputedStyle each) is
 // O(document) and must NOT run on every caret move, or a large doc stalls for
 // ~100ms per arrow key (the highlight "lags", and queued keypresses then apply
-// in a burst that looks like the caret jumping several lines). So `schedule`
-// has two levels: a FULL measure (rebuild lines + numbers) on layout changes
-// (edit/mode/policy/resize/font), and a cheap HIGHLIGHT-ONLY pass on a
-// selection-only change that reuses the cached line geometry — just re-pick the
-// caret's line and move the highlight, O(lines) of plain math, no layout reads
-// per paragraph.
+// in a burst that looks like the caret jumping several lines). So there are two
+// paths: a FULL measure (rebuild lines + numbers), rAF-scheduled on layout
+// changes (edit/mode/policy/resize/font), and a SYNCHRONOUS highlight-only pass
+// (`refreshCaret`) on a selection-only change that reuses the cached line
+// geometry — re-pick the caret's line (O(lines) of plain math, no layout reads
+// per paragraph) and, only if the line actually changed, move the highlight.
+// Synchronous so the highlight lands in the same frame as the caret.
 
 import styles from './editor.module.scss';
 
-export type LineNumbers = { schedule: (full?: boolean) => void; destroy: () => void };
+export type LineNumbers = {
+  schedule: (full?: boolean) => void;
+  /** Reposition the caret highlight NOW, synchronously, from the cached line
+   *  geometry — for selection-only changes, where waiting for the next
+   *  animation frame adds a visible frame of lag between the caret and its
+   *  highlight. A same-line caret move skips the DOM writes entirely. */
+  refreshCaret: () => void;
+  destroy: () => void;
+};
 
 /** Viewport-space rect of a caret, as `view.coordsAtPos` returns it. */
 export type CaretRect = { top: number; bottom: number; left: number; right: number };
@@ -78,11 +87,13 @@ export const mountLineNumbers = (
   let raf = 0;
   let pendingFull = false;
   let lines: VisualLine[] = []; // cached geometry from the last full measure
+  let vertical = false; // cached from the last full measure (mode changes re-measure)
+  let lastHit: VisualLine | null = null; // the line the highlight last painted
 
   // FULL measure: re-collect every visual line and re-place the numbers. O(doc).
   const measure = (): void => {
     const cs = getComputedStyle(content);
-    const vertical = cs.writingMode.startsWith('vertical');
+    vertical = cs.writingMode.startsWith('vertical');
     overlay.style.fontSize = cs.fontSize; // numbers scale with the body
     const o = overlay.getBoundingClientRect();
     // A block-axis jump bigger than this — but against the reading direction —
@@ -193,17 +204,20 @@ export const mountLineNumbers = (
     for (const el of pagePool.slice(chips)) el.style.display = 'none';
     for (const el of sepPool.slice(seps)) el.style.display = 'none';
 
-    refreshHighlight(vertical, o);
+    refreshHighlight(o);
     refreshSelection(o);
   };
 
   // Move the highlight to the caret's visual line, reusing the cached `lines`.
-  const refreshHighlight = (vertical: boolean, o: DOMRect): void => {
+  const refreshHighlight = (o: DOMRect): void => {
     // No highlight on an EMPTY document: the band over the blank first line (with
     // the placeholder showing) reads as a stray "ghost" cursor — most visible
-    // right after Ctrl+A then delete.
-    if (!content.textContent) {
+    // right after Ctrl+A then delete. An empty document is exactly one <p>
+    // holding a <br> — check THAT, not `content.textContent`, which builds the
+    // whole document string on every caret move.
+    if (content.childElementCount === 1 && !content.firstElementChild?.textContent) {
       highlight.style.display = 'none';
+      lastHit = null;
       return;
     }
     const caret = getCaret();
@@ -215,6 +229,10 @@ export const mountLineNumbers = (
       bottom: caret.bottom - o.top,
     };
     const hit = rel && pickLine(lines, rel, vertical);
+    // Same visual line as the last paint (the cached objects are stable between
+    // full measures, so identity suffices) → the styles are already right.
+    if (hit === lastHit) return;
+    lastHit = hit;
     if (hit) {
       // Anchor at the line's start corner (its top-left character) — for a
       // column that is the page's content top, so the band fills the current
@@ -251,9 +269,11 @@ export const mountLineNumbers = (
 
   // HIGHLIGHT-ONLY: a selection change didn't move any line, so skip the O(doc)
   // re-measure and just re-pick + reposition the highlight from cached geometry.
+  // (`vertical` is cached from the last full measure — a mode change re-measures
+  // before any selection change can observe a stale value.)
   const highlightOnly = (): void => {
     const o = overlay.getBoundingClientRect();
-    refreshHighlight(getComputedStyle(content).writingMode.startsWith('vertical'), o);
+    refreshHighlight(o);
     refreshSelection(o);
   };
 
@@ -280,6 +300,7 @@ export const mountLineNumbers = (
 
   return {
     schedule,
+    refreshCaret: highlightOnly,
     destroy: () => {
       if (raf) cancelAnimationFrame(raf);
       clearTimeout(timer);

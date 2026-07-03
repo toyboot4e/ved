@@ -147,6 +147,19 @@ Task runner is `just`:
 - **Character counts are ASCII columns.** When a size is given as "N
   characters", it means halfwidth columns: N columns = N/2 fullwidth (全角)
   characters = N/2 em. E.g. the vertical line cap of 80 characters is 40em.
+- **Per-caret-move work must not scale with the document.** PM nodes are
+  immutable, so doc/paragraph-identity-keyed caches never go stale — `serialize`
+  /`docLeaves`/the offset↔pos maps are memoized that way (per paragraph), and
+  decorations split into cached caret-independent layers + an O(1) delta.
+  Glyph-rect walks (one layout read PER GLYPH — the most expensive operation in
+  the editor) are scoped to the viewport (hit-tests) or the selection span
+  (overlay); a plain in-content click measures nothing. Guarded by counter
+  seams, not timing: `__vedGlyphWalks`, `__vedBaseRebuilds`, `__vedRubyRebuilds`
+  (`test/e2e/caret-move-perf.ts`, `click-perf.ts`). Latency benchmarks live in
+  `desktop/bench/` (`node bench/click-bench.ts [paras] [ruby] [show]` — `show`
+  spawns a visible window; hidden windows throttle frames and distort latency).
+  The remaining per-click floor is Chromium's hit-test/PrePaint over the one
+  multicol flow — O(rendered tree), fixable only by page windowing (TODO.org).
 
 ## Current work: editor UI shell
 

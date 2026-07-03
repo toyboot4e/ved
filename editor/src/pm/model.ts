@@ -89,25 +89,45 @@ export const docFromText = (text: string): PMNode =>
     text.split('\n').map((line) => schema.node('paragraph', null, inlineNodesFor(line))),
   );
 
+// PM nodes are IMMUTABLE, so node identity is a perfect cache key: an edit
+// produces a new doc that SHARES every untouched paragraph node. Caching
+// per-paragraph derivations in WeakMaps makes the per-event cost O(changed
+// paragraph), not O(document) — the whole-doc rebuild stalled caret moves and
+// clicks on large docs (see the docIndex/paraMaps consumers below).
+const paraTextCache = new WeakMap<PMNode, string>();
+
 /** The plain text of one paragraph. Identity-exact: a ruby contributes its
  *  RECONSTRUCTED markup `|base(reading)`, every other child its text content.
  *  This is the per-line analogue of `serialize`; structure repair uses it
- *  because a ruby's `textContent` is now `base+reading` (NOT the markup). */
+ *  because a ruby's `textContent` is now `base+reading` (NOT the markup).
+ *  Cached by node identity (immutable). */
 export const paragraphText = (para: PMNode): string => {
+  const hit = paraTextCache.get(para);
+  if (hit !== undefined) return hit;
   let line = '';
   para.forEach((child) => {
     line += child.type.name === 'ruby' ? rubyMarkup(child) : child.textContent;
   });
+  paraTextCache.set(para, line);
   return line;
 };
 
-/** The plain document string. Identity-exact: paragraphs join with `\n`. */
+const serializeCache = new WeakMap<PMNode, string>();
+
+/** The plain document string. Identity-exact: paragraphs join with `\n`.
+ *  Memoized by doc identity — repeat calls on the same doc version return the
+ *  SAME string instance (callers key their own caches on it), and an edit pays
+ *  only the changed paragraph plus the join. */
 export const serialize = (doc: PMNode): string => {
+  const hit = serializeCache.get(doc);
+  if (hit !== undefined) return hit;
   const lines: string[] = [];
   doc.forEach((para) => {
     lines.push(paragraphText(para));
   });
-  return lines.join('\n');
+  const text = lines.join('\n');
+  serializeCache.set(doc, text);
+  return text;
 };
 
 /** Identity text for a COPIED slice (the PM clipboardTextSerializer). The ruby
@@ -194,7 +214,10 @@ export const rubyClickOutsidePos = ($h: ResolvedPos): number | null => {
 //   - `)` when LEAVING the reading (rubyText end).
 // `posToOff[pmPos]` is dense (every position); `offToPos[offset]` records the
 // FIRST position at each offset (so an interior offset lands inside the editable
-// region, a boundary offset on the element edge). Built once per call.
+// region, a boundary offset on the element edge). This whole-doc walk now backs
+// only the batch `buildPosMap` (one call per doc version, in buildBase); the
+// per-event converters below decompose the same walk PER PARAGRAPH, cached by
+// node identity — model.test asserts the two stay equivalent.
 // ---------------------------------------------------------------------------
 
 type Maps = { offToPos: number[]; posToOff: number[] };
@@ -265,15 +288,137 @@ const buildMaps = (doc: PMNode): Maps => {
   return { offToPos, posToOff };
 };
 
-/** Plain document offset of a ProseMirror position. */
+// ---------------------------------------------------------------------------
+// Per-paragraph decomposition of the offset↔position maps. The whole-doc
+// `buildMaps` walk was O(document) PER CALL — and posToOffset/offsetToPos run
+// several times per caret move — so large docs paid an O(N) tree walk on every
+// click and arrow key. A conversion only needs (a) the summed plain length of
+// the paragraphs BEFORE the target (the doc-level index below, O(#paragraphs)
+// once per doc version from cached per-paragraph lengths) and (b) the one
+// containing paragraph's LOCAL map (cached by node identity, so it survives
+// every edit that doesn't touch that paragraph).
+//
+// Local coordinates: position 0 = BEFORE the paragraph node (content starts at
+// local 1); offset 0 = the paragraph's first character. The local walk applies
+// the same markBoth/markPos discipline as `buildMaps`, so the assembled global
+// answers are identical (model.test asserts equivalence via buildPosMap).
+// ---------------------------------------------------------------------------
+
+type ParaMaps = { offToPos: number[]; posToOff: (number | undefined)[] };
+
+const paraMapsCache = new WeakMap<PMNode, ParaMaps>();
+
+const paraMaps = (para: PMNode): ParaMaps => {
+  const hit = paraMapsCache.get(para);
+  if (hit) return hit;
+  const offToPos: number[] = [];
+  const posToOff: (number | undefined)[] = [];
+  let off = 0;
+  let pos = 1; // into the paragraph content
+  const markBoth = (): void => {
+    posToOff[pos] = off;
+    if (offToPos[off] === undefined) offToPos[off] = pos;
+  };
+  const markPos = (): void => {
+    posToOff[pos] = off;
+  };
+  const walkChars = (s: string): void => {
+    for (let i = 0; i < s.length; i++) {
+      markBoth();
+      off += 1;
+      pos += 1;
+    }
+  };
+  para.forEach((child) => {
+    if (child.type.name === 'ruby') {
+      markBoth(); // the `|` boundary (before the ruby node — logically outside)
+      off += 1; // spend `|`
+      pos += 1; // into the ruby content
+      markPos(); // ruby content start (wrapper edge)
+      pos += 1; // into rubyBase content
+      walkChars(rubyBaseText(child));
+      markBoth(); // after the base = the `(` boundary (end of the base region)
+      off += 1; // spend `(`
+      pos += 1; // out of rubyBase
+      markPos(); // between rubyBase and rubyText (wrapper edge)
+      pos += 1; // into rubyText content
+      walkChars(rubyReadingText(child));
+      markBoth(); // after the reading = the `)` boundary (end of the reading)
+      pos += 1; // out of rubyText
+      markPos(); // ruby content end (wrapper edge, still before the `)`)
+      off += 1; // spend `)` — leaving the RUBY (so offset+1 lands AFTER the node)
+      pos += 1; // out of the ruby node
+    } else {
+      walkChars(child.textContent);
+    }
+  });
+  markBoth(); // paragraph content end (also the empty-paragraph caret)
+  const maps = { offToPos, posToOff };
+  paraMapsCache.set(para, maps);
+  return maps;
+};
+
+/** Doc-level paragraph index: position and cumulative plain offset of each
+ *  paragraph. O(#paragraphs) once per doc version (lengths come from the
+ *  per-paragraph text cache). */
+type DocIndex = { paras: PMNode[]; paraPos: number[]; prefixOff: number[]; total: number };
+
+const docIndexCache = new WeakMap<PMNode, DocIndex>();
+
+const docIndex = (doc: PMNode): DocIndex => {
+  const hit = docIndexCache.get(doc);
+  if (hit) return hit;
+  const paras: PMNode[] = [];
+  const paraPos: number[] = [];
+  const prefixOff: number[] = [];
+  let pos = 0;
+  let off = 0;
+  doc.forEach((para) => {
+    paras.push(para);
+    paraPos.push(pos);
+    prefixOff.push(off);
+    pos += para.nodeSize;
+    off += paragraphText(para).length + 1; // +1 for the joining `\n`
+  });
+  const index = { paras, paraPos, prefixOff, total: off - 1 }; // no `\n` after the last
+  docIndexCache.set(doc, index);
+  return index;
+};
+
+/** Index of the last element in ascending `arr` that is <= `x` (-1 if none). */
+const lastAtOrBelow = (arr: number[], x: number): number => {
+  let lo = 0;
+  let hi = arr.length - 1;
+  let best = -1;
+  while (lo <= hi) {
+    const mid = (lo + hi) >> 1;
+    if (arr[mid]! <= x) {
+      best = mid;
+      lo = mid + 1;
+    } else hi = mid - 1;
+  }
+  return best;
+};
+
+/** Plain document offset of a ProseMirror position. O(log P + one paragraph). */
 export const posToOffset = (doc: PMNode, pos: number): number => {
-  const { posToOff } = buildMaps(doc);
+  const { paras, paraPos, prefixOff } = docIndex(doc);
+  // The containing paragraph: the last one STARTING BEFORE pos. A position ON a
+  // paragraph boundary (pos === paraPos[i], an unmarked spot) belongs to the
+  // PREVIOUS paragraph's clamp-down, matching the old whole-doc scan.
+  const i = lastAtOrBelow(paraPos, pos - 1);
+  if (i < 0) return 0; // at/before the doc start
+  const { posToOff } = paraMaps(paras[i]!);
   // Positions inside a ruby's structure that we didn't explicitly `mark` fall
   // between marked ones; clamp to the nearest marked position at or before.
-  for (let p = Math.min(pos, posToOff.length - 1); p >= 0; p--) {
-    if (posToOff[p] !== undefined) return posToOff[p]!;
+  // (Also clamps a beyond-doc-end pos into the last paragraph.)
+  for (let p = Math.min(pos - paraPos[i]!, posToOff.length - 1); p >= 0; p--) {
+    const o = posToOff[p];
+    if (o !== undefined) return prefixOff[i]! + o;
   }
-  return 0;
+  // No mark at or below local pos (pos sat between paragraph i and i+1): the
+  // nearest marked spot is paragraph i's content end — its full text length.
+  return prefixOff[i]! + paragraphText(paras[i]!).length;
 };
 
 /** The O(n) batch form: `map[o]` is the PM position for plain offset `o`. MUST
@@ -281,9 +426,12 @@ export const posToOffset = (doc: PMNode, pos: number): number => {
 export const buildPosMap = (doc: PMNode): number[] => buildMaps(doc).offToPos;
 
 /** ProseMirror position for a plain document offset (the inverse of
- *  `posToOffset`). */
+ *  `posToOffset`). O(log P + one paragraph). */
 export const offsetToPos = (doc: PMNode, offset: number): number => {
-  const { offToPos } = buildMaps(doc);
-  const o = Math.max(0, Math.min(offset, offToPos.length - 1));
-  return offToPos[o] ?? doc.content.size;
+  const { paras, paraPos, prefixOff, total } = docIndex(doc);
+  const o = Math.max(0, Math.min(offset, total));
+  const i = lastAtOrBelow(prefixOff, o);
+  if (i < 0) return doc.content.size; // unreachable: prefixOff[0] === 0
+  const local = paraMaps(paras[i]!).offToPos[o - prefixOff[i]!];
+  return local === undefined ? doc.content.size : paraPos[i]! + local;
 };

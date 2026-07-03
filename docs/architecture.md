@@ -140,7 +140,12 @@ inline format (bold/italic/縦中横, planned Hameln syntax) is just an inline
 decoration class — one `RULES` entry in `decorations.ts`, no node, no repair.
 
 Because rendering is decoration-only, switching modes never touches the
-document: no rebuild, no cursor restore, no IME hazard.
+document: no rebuild, no cursor restore, no IME hazard. And because
+`buildDecorations` runs on every caret move, everything caret-INDEPENDENT
+(the inline-format set, the per-ruby expanded/read-only decorations) is cached
+in layers keyed by doc identity / expanded-set value; a caret move builds only
+an O(1) delta (see the `pm/decorations.ts` header and its
+`__vedBaseRebuilds`/`__vedRubyRebuilds` test seams).
 
 ## Structure repair (`pm/structure.ts repair`)
 
@@ -166,17 +171,25 @@ ruby-only.
 ProseMirror positions count node boundaries, so they are not plain string
 offsets; the editor speaks plain offsets and converts at the edges:
 
-- `posToOffset(doc, pos)` — walks the doc, spending one offset per reconstructed
-  delimiter (`|`,`(`,`)`) at the node boundary where it belongs.
-- `offsetToPos(doc, offset)` — the inverse (a DFS in `model.ts buildMaps`). A
-  ruby's BOUNDARY offset maps OUTSIDE the node (BEFORE it at the leading edge,
-  AFTER it at the trailing); an interior offset maps to the innermost editable
-  region (`rubyBase`/`rubyText`). In Rich the caret never USES the interior
-  positions — the ruby is an atom — but the map still defines them (for the
-  expanded policies and for decorations).
+- `posToOffset(doc, pos)` — spends one offset per reconstructed delimiter
+  (`|`,`(`,`)`) at the node boundary where it belongs.
+- `offsetToPos(doc, offset)` — the inverse. A ruby's BOUNDARY offset maps
+  OUTSIDE the node (BEFORE it at the leading edge, AFTER it at the trailing); an
+  interior offset maps to the innermost editable region (`rubyBase`/`rubyText`).
+  In Rich the caret never USES the interior positions — the ruby is an atom —
+  but the map still defines them (for the expanded policies and for
+  decorations).
+- Both converters run several times per caret move, so they are decomposed PER
+  PARAGRAPH: a doc-level index of paragraph positions/cumulative plain lengths
+  (O(#paragraphs) once per doc version) plus per-paragraph local maps cached by
+  NODE IDENTITY in WeakMaps — PM nodes are immutable, so an edit re-derives only
+  the touched paragraph. `serialize`/`docLeaves`/`lineOf` are memoized the same
+  way (serialize returns the same string instance per doc version; the leaf/line
+  caches key on it).
 - `buildPosMap(doc)` — the O(n) batch form of `offsetToPos` (an `offset → pos`
-  array), used by the decoration pass so it isn't O(n²). A unit test pins it to
-  `offsetToPos` for every offset.
+  array from the original whole-doc walk), used by the decoration pass so it
+  isn't O(n²). A unit test pins it to `offsetToPos` for every offset — which is
+  also what keeps the per-paragraph decomposition honest.
 - `pm/cursor.ts` — `offsetToCursor` / `cursorToOffset` map a plain offset to the
   backend-neutral `{para, offset}` the history and tab snapshots speak.
 
@@ -376,11 +389,14 @@ multicol page wrap, where the next page's first column lands back across the
 page); the band length is the paragraph's computed `inline-size` (one page), not
 its multi-page bounding rect. The overlay is a scroll-invariant child of the
 scroller. Re-measuring every paragraph is O(document), so it runs only on
-layout changes (edit/mode/policy/resize/font); a **selection-only** change takes
-a cheap *highlight-only* path that reuses the cached line geometry and just
-re-picks the caret's line — otherwise a large doc stalls ~100ms per arrow key
-(the highlight lags and queued keypresses burst, looking like the caret jumping
-several lines). Both are debounced to one frame.
+layout changes (edit/mode/policy/resize/font), debounced to one frame; a
+**selection-only** change takes a cheap *highlight-only* path
+(`refreshCaret`) that reuses the cached line geometry, runs SYNCHRONOUSLY in
+the dispatch (so the highlight lands in the same frame as the caret, no rAF
+lag), and skips the DOM writes entirely when the caret stays on the same
+visual line — otherwise a large doc stalls ~100ms per arrow key (the highlight
+lags and queued keypresses burst, looking like the caret jumping several
+lines).
 
 The highlight follows the caret's `coordsAtPos` rect, but at the **end of a
 paragraph whose last visual line is full** that rect (either side) reports the
@@ -557,7 +573,14 @@ ships its own postinstall, so this project's `postinstall` runs
   the native selection either — it can't extend across a collapsed atom ruby's
   read-only base (`contenteditable=false`) — so `editor.tsx` drives the drag from a
   GEOMETRIC hit-test over the base glyphs (`pm/drag-select.ts`, unit-tested).
-  (Tested in `test/e2e/ruby-selection-thin.ts`, `drag-select-ruby.ts`.)
+  Both walks are SCOPED so they never measure the whole document: the hit-test
+  measures only the paragraphs intersecting the viewport (falling back to a full
+  walk only when no text is visible near the point), and the selection overlay
+  measures only the paragraphs the selection spans. A plain in-content click
+  measures NOTHING (the browser/PM place the caret) — `test/e2e/click-perf.ts`
+  pins all of this via the `__vedGlyphWalks` seam; latency benchmarks live in
+  `desktop/bench/`. (Behavior tested in `test/e2e/ruby-selection-thin.ts`,
+  `drag-select-ruby.ts`.)
 - **Click on NON-TEXT may not place the caret.** Clicking empty space (the gap
   between rows, or past a line's text) can land on no text node, leaving the
   cursor put — easy to mis-click. In the harness the browser already snaps clicks

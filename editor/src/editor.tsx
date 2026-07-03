@@ -13,8 +13,8 @@ import { nextCaretOffset } from './pm/caret-model';
 import { type CursorState, cursorToOffset, offsetToCursor } from './pm/cursor';
 import { buildDecorations } from './pm/decorations';
 import { type DragGlyph, glyphOffsets, nearestGlyphOffset } from './pm/drag-select';
-import type { Appear } from './pm/leaves';
-import { docLeaves, snapToGlyph } from './pm/leaves';
+import type { Appear, Leaf } from './pm/leaves';
+import { docLeaves, lineOf, snapToGlyph } from './pm/leaves';
 import {
   docFromText,
   offsetToPos,
@@ -772,11 +772,12 @@ export const VedEditor = (props: VedEditorProps): React.JSX.Element => {
         }
         view.updateState(next);
         // An edit re-wraps lines → full re-measure. A caret-only move keeps the
-        // geometry → cheap highlight-only pass (no O(doc) re-measure, so large
-        // docs don't stall on every arrow key).
+        // geometry → SYNCHRONOUS highlight-only pass from the cached lines (no
+        // O(doc) re-measure, and no rAF wait — the highlight lands in the same
+        // frame as the caret instead of one frame behind it).
         if (tr.docChanged) lineNumbersRef.current?.schedule();
         if (tr.docChanged) pageGapsRef.current?.schedule();
-        else if (tr.selectionSet) lineNumbersRef.current?.schedule(false);
+        else if (tr.selectionSet) lineNumbersRef.current?.refreshCaret();
         // Keep the caret in view after edits — PM's scrollIntoView doesn't
         // survive the post-commit repair, nor handle vertical-rl multicol.
         if (tr.docChanged && !view.composing) {
@@ -1100,9 +1101,10 @@ export const VedEditor = (props: VedEditorProps): React.JSX.Element => {
     const glyphWalkRange = document.createRange();
     const walkGlyphs = (): { off: number; rect: DOMRect }[] => {
       // Test seam: count O(document) glyph walks (one layout read PER GLYPH — the
-      // most expensive operation in the editor). A plain in-content click must not
-      // trigger one (click-perf asserts this); only a drag, an empty-area press,
-      // a doc-change page-gap measure, or a non-empty-selection repaint may.
+      // most expensive operation in the editor). Clicks AND drags must not trigger
+      // one (click-perf asserts this; they hit-test viewport-scoped via
+      // walkGlyphsNear); only the blank-page fallback, a doc-change page-gap
+      // measure, or a non-empty-selection repaint may.
       const w = globalThis as unknown as { __vedGlyphWalks?: number };
       w.__vedGlyphWalks = (w.__vedGlyphWalks ?? 0) + 1;
       const offs = glyphOffsets(docLeaves(serialize(view.state.doc)));
@@ -1130,16 +1132,19 @@ export const VedEditor = (props: VedEditorProps): React.JSX.Element => {
     // line (their block-axis coord matches) are MERGED into one span: this both
     // fills the sub-pixel hairline between adjacent glyphs/rubies and spans the gap
     // a collapsed ruby's hidden markup/reading leaves between two bases. Empty for
-    // a caret.
+    // a caret. Measures only the paragraphs the selection SPANS (this runs on
+    // every selection change during a drag — the whole-doc walk froze drags on
+    // large docs); a select-all still spans everything, necessarily.
     const selectedGlyphRects = (): DOMRect[] => {
       const sel = view.state.selection;
       if (sel.empty) return [];
       const from = posToOffset(view.state.doc, sel.from);
       const to = posToOffset(view.state.doc, sel.to);
+      const text = serialize(view.state.doc);
       const vertical = getComputedStyle(view.dom).writingMode.startsWith('vertical');
       const out: DOMRect[] = [];
       let cur: { l: number; t: number; r: number; b: number } | null = null;
-      for (const g of walkGlyphs()) {
+      for (const g of walkGlyphsLines(lineOf(text, from), lineOf(text, to))) {
         if (g.off < from || g.off >= to) continue;
         const r = g.rect;
         // Same line ⇔ same block-axis position (left in vertical-rl, top in
@@ -1160,29 +1165,119 @@ export const VedEditor = (props: VedEditorProps): React.JSX.Element => {
     };
     selectedGlyphRectsRef.current = selectedGlyphRects;
 
-    // Drag-selection: a CACHE of the glyphs as block/inline bounds, built LAZILY
-    // by the first `offsetAtPoint` hit-test of a gesture (see pm/drag-select.ts)
-    // and dropped when the gesture ends. Building it measures EVERY glyph in the
-    // document — O(document) layout reads, ~1s at 400k chars — so it must never
-    // run on a plain in-content click (which doesn't consume it: the browser/PM
-    // place the caret). Only a real drag move or an empty-area press pays.
-    let dragCache: { vertical: boolean; glyphs: DragGlyph[] } | null = null;
-    // Where the current gesture pressed, for resolving the drag ANCHOR lazily on
-    // the first drag move (the press itself must not hit-test).
-    let dragStartPt: { x: number; y: number } | null = null;
-    const buildGlyphCache = (): { vertical: boolean; glyphs: DragGlyph[] } => {
-      const vertical = getComputedStyle(view.dom).writingMode.startsWith('vertical');
-      const glyphs = walkGlyphs().map(({ off, rect: r }) => ({
+    // Drag-selection hit-testing (see pm/drag-select.ts), built LAZILY by the
+    // first `offsetAtPoint` call of a gesture — never on a plain in-content
+    // click, which doesn't consume it (the browser/PM place the caret). The
+    // hit-test point is always in the viewport, so the primary path measures
+    // only the paragraphs INTERSECTING the viewport (one element rect per
+    // paragraph to filter, then per-glyph rects for the few that remain) —
+    // O(visible page), not O(document). The full-document walk survives only
+    // as the fallback for a point with no visible text at all (a blank page).
+    const toDragGlyphs = (items: { off: number; rect: DOMRect }[], vertical: boolean): DragGlyph[] =>
+      items.map(({ off, rect: r }) => ({
         off,
         bLo: vertical ? r.left : r.top,
         bHi: vertical ? r.right : r.bottom,
         iLo: vertical ? r.top : r.left,
         iHi: vertical ? r.bottom : r.right,
       }));
-      return { vertical, glyphs };
+    // Model offsets of each visual line's glyphs (body + plain chars, in order)
+    // — the per-paragraph analogue of `glyphOffsets`, memoized on the leaves
+    // (which `docLeaves` memoizes per doc version).
+    let lineOffsCache: { leaves: Leaf[]; byLine: number[][] } | null = null;
+    const lineGlyphOffsets = (): number[][] => {
+      const leaves = docLeaves(serialize(view.state.doc));
+      if (lineOffsCache?.leaves === leaves) return lineOffsCache.byLine;
+      const byLine: number[][] = [];
+      for (const l of leaves) {
+        if (l.kind !== 'body' && l.kind !== 'plain') continue;
+        let arr = byLine[l.line];
+        if (!arr) {
+          arr = [];
+          byLine[l.line] = arr;
+        }
+        for (let o = l.from; o < l.to; o++) arr.push(o);
+      }
+      lineOffsCache = { leaves, byLine };
+      return byLine;
+    };
+    // Measure ONE paragraph's glyphs (text nodes sans `rt`, paired with that
+    // line's model offsets) into `out` — the per-paragraph unit both scoped
+    // walks below share.
+    const paraGlyphs = (p: Element, offs: number[], out: { off: number; rect: DOMRect }[]): void => {
+      const walker = document.createTreeWalker(p, NodeFilter.SHOW_TEXT, {
+        acceptNode: (n) => (n.parentElement?.closest('rt') ? NodeFilter.FILTER_REJECT : NodeFilter.FILTER_ACCEPT),
+      });
+      let k = 0;
+      for (let n = walker.nextNode(); n; n = walker.nextNode()) {
+        const len = (n.textContent ?? '').length;
+        for (let j = 0; j < len; j++, k++) {
+          if (k >= offs.length) break;
+          glyphWalkRange.setStart(n, j);
+          glyphWalkRange.setEnd(n, j + 1);
+          const rect = glyphWalkRange.getBoundingClientRect();
+          if (rect.width === 0 && rect.height === 0) continue;
+          out.push({ off: offs[k]!, rect });
+        }
+      }
+    };
+    // Glyphs of the paragraphs intersecting the scroller viewport (+ a margin so
+    // a drag can step slightly past an edge). One <p> per model line, in order —
+    // page-gap widgets between them are not `p` elements, so indexes align.
+    const walkGlyphsNear = (): { off: number; rect: DOMRect }[] => {
+      const byLine = lineGlyphOffsets();
+      const box = mount.getBoundingClientRect();
+      const margin = Math.max(mount.clientWidth, mount.clientHeight) / 2;
+      const out: { off: number; rect: DOMRect }[] = [];
+      const paras = view.dom.querySelectorAll(':scope > p');
+      for (let i = 0; i < paras.length; i++) {
+        const offs = byLine[i];
+        if (!offs?.length) continue;
+        const pr = paras[i]!.getBoundingClientRect();
+        if (
+          pr.right < box.left - margin ||
+          pr.left > box.right + margin ||
+          pr.bottom < box.top - margin ||
+          pr.top > box.bottom + margin
+        )
+          continue;
+        paraGlyphs(paras[i]!, offs, out);
+      }
+      return out;
+    };
+    // Glyphs of the model lines `l0..l1` (inclusive) — the selection overlay's
+    // scope: exactly the paragraphs the selection spans.
+    const walkGlyphsLines = (l0: number, l1: number): { off: number; rect: DOMRect }[] => {
+      const byLine = lineGlyphOffsets();
+      const out: { off: number; rect: DOMRect }[] = [];
+      const paras = view.dom.querySelectorAll(':scope > p');
+      for (let i = Math.max(0, l0); i <= l1 && i < paras.length; i++) {
+        const offs = byLine[i];
+        if (offs?.length) paraGlyphs(paras[i]!, offs, out);
+      }
+      return out;
+    };
+    let dragCache: { vertical: boolean; glyphs: DragGlyph[] } | null = null;
+    // The scoped glyphs, keyed by scroll position (a drag without scrolling
+    // reuses them; a wheel-scroll mid-drag re-measures the new viewport).
+    let scopedCache: { key: string; vertical: boolean; glyphs: DragGlyph[] } | null = null;
+    // Where the current gesture pressed, for resolving the drag ANCHOR lazily on
+    // the first drag move (the press itself must not hit-test).
+    let dragStartPt: { x: number; y: number } | null = null;
+    const buildGlyphCache = (): { vertical: boolean; glyphs: DragGlyph[] } => {
+      const vertical = getComputedStyle(view.dom).writingMode.startsWith('vertical');
+      return { vertical, glyphs: toDragGlyphs(walkGlyphs(), vertical) };
     };
     const offsetAtPoint = (px: number, py: number): number | null => {
-      dragCache ??= buildGlyphCache();
+      if (!dragCache) {
+        const key = `${mount.scrollLeft},${mount.scrollTop}`;
+        if (scopedCache?.key !== key) {
+          const vertical = getComputedStyle(view.dom).writingMode.startsWith('vertical');
+          scopedCache = { key, vertical, glyphs: toDragGlyphs(walkGlyphsNear(), vertical) };
+        }
+        if (scopedCache.glyphs.length) return nearestGlyphOffset(scopedCache.glyphs, px, py, scopedCache.vertical);
+        dragCache = buildGlyphCache(); // no visible text near the point — full fallback
+      }
       return nearestGlyphOffset(dragCache.glyphs, px, py, dragCache.vertical);
     };
 
@@ -1306,6 +1401,7 @@ export const VedEditor = (props: VedEditorProps): React.JSX.Element => {
       dragAnchorRef.current = null;
       pointerDraggingRef.current = false;
       dragCache = null;
+      scopedCache = null;
       dragStartPt = null;
     };
     // A press ends any line-move run and arms a drag (left button): cache the glyph

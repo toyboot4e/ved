@@ -26,9 +26,17 @@ export type Leaf = {
   edge: 'lead' | 'trail' | null;
 };
 
+// Single-slot memo: `serialize` (pm/model.ts) is memoized per doc version and
+// returns the SAME string instance for repeat calls, so the identity check here
+// makes every same-version docLeaves/lineOf call O(1) instead of re-parsing the
+// whole text — these run on every caret move (decorations, caret model).
+let leavesCache: { doc: string; leaves: Leaf[] } | null = null;
+
 /** All leaves of a document in offset order, including a `nl` leaf per line
- *  break so caret movement crosses paragraphs uniformly. */
+ *  break so caret movement crosses paragraphs uniformly. Memoized on the text
+ *  (one slot — callers pass the memoized `serialize` result). */
 export const docLeaves = (doc: string): Leaf[] => {
+  if (leavesCache?.doc === doc) return leavesCache.leaves;
   const out: Leaf[] = [];
   const lines = doc.split('\n');
   let base = 0;
@@ -77,14 +85,34 @@ export const docLeaves = (doc: string): Leaf[] => {
       base += 1;
     }
   }
+  leavesCache = { doc, leaves: out };
   return out;
 };
 
-/** The 0-based line index containing `offset`. */
+let lineStartsCache: { doc: string; starts: number[] } | null = null;
+
+/** The 0-based line index containing `offset`. Memoized line starts (same
+ *  single-slot discipline as docLeaves) + binary search — the old per-call
+ *  char scan was O(offset) on every caret move. The `\n` itself belongs to the
+ *  line it ends, exactly like the scan it replaces. */
 export const lineOf = (doc: string, offset: number): number => {
-  let line = 0;
-  for (let i = 0; i < offset && i < doc.length; i++) if (doc[i] === '\n') line++;
-  return line;
+  if (lineStartsCache?.doc !== doc) {
+    const starts = [0];
+    for (let i = 0; i < doc.length; i++) if (doc[i] === '\n') starts.push(i + 1);
+    lineStartsCache = { doc, starts };
+  }
+  const starts = lineStartsCache.starts;
+  let lo = 0;
+  let hi = starts.length - 1;
+  let best = 0;
+  while (lo <= hi) {
+    const mid = (lo + hi) >> 1;
+    if (starts[mid]! <= offset) {
+      best = mid;
+      lo = mid + 1;
+    } else hi = mid - 1;
+  }
+  return best;
 };
 
 /** The ruby id whose span contains `offset` (inclusive of both edges so that,
