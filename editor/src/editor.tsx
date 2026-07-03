@@ -2,7 +2,7 @@ import { clsx } from 'clsx';
 import { baseKeymap } from 'prosemirror-commands';
 import { keymap } from 'prosemirror-keymap';
 import { Fragment, Slice } from 'prosemirror-model';
-import { AllSelection, type Command, EditorState, Plugin, TextSelection } from 'prosemirror-state';
+import { AllSelection, type Command, EditorState, Plugin, TextSelection, type Transaction } from 'prosemirror-state';
 import { EditorView } from 'prosemirror-view';
 import type React from 'react';
 import { useCallback, useEffect, useLayoutEffect, useRef } from 'react';
@@ -17,6 +17,7 @@ import type { Appear, Leaf } from './pm/leaves';
 import { docLeaves, lineOf, snapToGlyph } from './pm/leaves';
 import {
   docFromText,
+  inlineNodesFor,
   offsetToPos,
   posToOffset,
   rubyClickOutsidePos,
@@ -127,6 +128,45 @@ const moveChar = (view: EditorView, policy: Appear, reverse: boolean, extend: bo
   view.dispatch(view.state.tr.setSelection(sel).scrollIntoView());
 };
 
+/** The IDENTITY-EXACT deletion of a PM range: the plain string loses exactly
+ *  the corresponding offset range, and the touched paragraphs are rebuilt as
+ *  the canonical projection of their merged text (`inlineNodesFor`). A raw
+ *  STRUCTURAL `tr.delete`/`deleteSelection` across ruby children leaves debris
+ *  the plain string never contained — e.g. deleting from a base interior to
+ *  the paragraph end kept the ruby node with an EMPTY reading, serializing a
+ *  phantom `()` that the parser then accepts as canonical (repair keeps it).
+ *  Rebuilding from text makes every selection deletion mean exactly "delete
+ *  the selected plain characters". With `split`, a paragraph break replaces
+ *  the range instead (Enter over a selection). The caret lands at the deletion
+ *  point by PLAIN OFFSET — `offsetToPos` maps a ruby boundary OUTSIDE the
+ *  node, the same rule as every other insert. Collapsing to a TextSelection
+ *  also drops a Ctrl+A AllSelection, whose ghost otherwise paints a blue bar
+ *  over the emptied paragraph. */
+const plainDeleteTr = (state: EditorState, from: number, to: number, split = false): Transaction | null => {
+  const { doc } = state;
+  if (from >= to || to > doc.content.size) return null;
+  const fromOff = posToOffset(doc, from);
+  const toOff = posToOffset(doc, to);
+  if (fromOff >= toOff) return null;
+  const text = serialize(doc);
+  // The paragraphs touched by [fromOff, toOff) collapse into ONE line (or a
+  // split pair): rebuild that span canonically from its post-deletion text.
+  const lineStart = fromOff === 0 ? 0 : text.lastIndexOf('\n', fromOff - 1) + 1;
+  const lineEndIdx = text.indexOf('\n', toOff);
+  const lineEnd = lineEndIdx < 0 ? text.length : lineEndIdx;
+  const head = text.slice(lineStart, fromOff);
+  const tail = text.slice(toOff, lineEnd);
+  const paras = split
+    ? [schema.node('paragraph', null, inlineNodesFor(head)), schema.node('paragraph', null, inlineNodesFor(tail))]
+    : [schema.node('paragraph', null, inlineNodesFor(head + tail))];
+  const $a = doc.resolve(offsetToPos(doc, fromOff));
+  const $b = doc.resolve(offsetToPos(doc, toOff));
+  const tr = state.tr.replaceWith($a.before(1), $b.after(1), paras);
+  const caretOff = split ? fromOff + 1 : fromOff;
+  tr.setSelection(TextSelection.create(tr.doc, offsetToPos(tr.doc, caretOff)));
+  return tr;
+};
+
 /** Delete one MODEL character at the caret (Backspace = the char before, Delete
  *  = the char after), or the whole selection. Taken over because PM's baseKeymap
  *  leaves a mid-paragraph single-char delete to NATIVE contenteditable, which —
@@ -145,24 +185,19 @@ const deleteChar = (view: EditorView, forward: boolean, policy: Appear): void =>
       const a = view.posAtDOM(ds.anchorNode, ds.anchorOffset);
       const f = view.posAtDOM(ds.focusNode, ds.focusOffset);
       if (a !== f) {
-        const lo = Math.min(a, f);
-        const tr = view.state.tr.delete(lo, Math.max(a, f));
-        // COLLAPSE to a caret: deleting a Ctrl+A AllSelection otherwise leaves an
-        // AllSelection over the now-empty paragraph, which paints a blue
-        // selection "ghost" bar over the blank line. `near` snaps to a valid TEXT
-        // position INSIDE a paragraph — a raw `create(doc, 0)` lands on the doc
-        // boundary (no textblock), and the next insert then splits a paragraph
-        // (a stray trailing newline on the first insert).
-        tr.setSelection(TextSelection.near(tr.doc.resolve(Math.min(lo, tr.doc.content.size))));
-        view.dispatch(tr.scrollIntoView());
-        return;
+        const tr = plainDeleteTr(view.state, Math.min(a, f), Math.max(a, f));
+        if (tr) {
+          view.dispatch(tr.scrollIntoView());
+          return;
+        }
       }
     } catch {
       // fall through to the model-selection path
     }
   }
   if (!selection.empty) {
-    view.dispatch(view.state.tr.deleteSelection().scrollIntoView());
+    const tr = plainDeleteTr(view.state, selection.from, selection.to);
+    if (tr) view.dispatch(tr.scrollIntoView());
     return;
   }
   const head = posToOffset(doc, selection.head);
@@ -176,6 +211,40 @@ const deleteChar = (view: EditorView, forward: boolean, policy: Appear): void =>
   const from = offsetToPos(doc, Math.min(head, target));
   const to = offsetToPos(doc, Math.max(head, target));
   if (from < to) view.dispatch(view.state.tr.delete(from, to).scrollIntoView());
+};
+
+/** Delete a model range at IME ENTRY so the composition starts at a collapsed
+ *  caret. Chromium natively replaces the selected range when a composition
+ *  starts, and for PLAIN text it does — but a collapsed ruby always contains
+ *  `contenteditable=false` islands (the reading; an atom ruby's base), where
+ *  the native range deletion fails or clamps (the same reason Backspace/Delete
+ *  and drag-selection are taken over), leaving the selected text in place
+ *  beside the composition. PM itself also re-reads the DOM selection at
+ *  compositionstart (`endComposition` → `selectionFromDOM`) and RESETS a
+ *  mismatched model selection, silently dropping a model-led range.
+ *
+ *  TIMING: the deletion runs AT `compositionstart` — the range is only
+ *  RECORDED on the keydown-229 that precedes it (see handleKeyDown). Mutating
+ *  the DOM during the keydown itself races the IME handshake: the selection
+ *  change can reset the IM context while the key is in flight, and the first
+ *  character then falls through RAW (uncomposed). At compositionstart the IME
+ *  has committed to composing, so the collapse is safe. The deletion is the
+ *  identity-exact plainDeleteTr — canonical by construction, which matters
+ *  HERE specifically: ruby structure repair is skipped while composing, so a
+ *  structural delete's debris (the phantom empty `()` reading) would survive
+ *  the whole composition. Verified with real mozc
+ *  (`mozc/selection-composition.ts`). */
+const deleteRangeForIme = (view: EditorView, from: number, to: number): void => {
+  const tr = plainDeleteTr(view.state, from, to);
+  if (tr) view.dispatch(tr.scrollIntoView());
+};
+
+/** deleteRangeForIme over the CURRENT model selection — the compositionstart
+ *  fallback for IME paths that skip keydown-229 (PM's own compositionstart
+ *  handler may have clamped the selection by then; best effort). */
+const deleteSelectionForIme = (view: EditorView): void => {
+  const sel = view.state.selection;
+  if (!sel.empty) deleteRangeForIme(view, sel.from, sel.to);
 };
 
 /** Enter must REPLACE a non-empty selection with a paragraph split. PM's
@@ -199,12 +268,10 @@ const enterReplacingSelection: Command = (state, dispatch, view) => {
   if (!range && !state.selection.empty) range = [state.selection.from, state.selection.to];
   if (!range) return false; // collapsed → baseKeymap handles the split
   if (dispatch) {
-    const tr = state.tr.delete(range[0], range[1]);
-    // After clearing the whole doc the caret lands at the doc boundary, where
-    // split() is invalid — clamp it INSIDE the (now empty) paragraph.
-    const pos = Math.min(Math.max(tr.selection.from, 1), Math.max(1, tr.doc.content.size - 1));
-    tr.split(pos);
-    dispatch(tr.scrollIntoView());
+    // Identity-exact: the plain range is replaced by a paragraph break (the
+    // same canonical rebuild as every selection deletion — plainDeleteTr).
+    const tr = plainDeleteTr(state, range[0], range[1], true);
+    if (tr) dispatch(tr.scrollIntoView());
   }
   return true;
 };
@@ -762,6 +829,13 @@ export const VedEditor = (props: VedEditorProps): React.JSX.Element => {
       live.current.onTextChange?.(text);
     };
 
+    // The model selection recorded on an IME-entry keydown-229, deleted at the
+    // matching compositionstart (see deleteRangeForIme). Fresh only for one
+    // handshake: cleared on use, on raw insertText, and by a 500ms expiry so a
+    // 229 that never composes (candidate-window chrome &c.) can't delete a
+    // later, unrelated selection.
+    let imePendingSel: { from: number; to: number; at: number } | null = null;
+
     const view = new EditorView(mount, {
       state,
       // The ruby renders via the schema's toDOM (markup shown as pseudo-elements
@@ -818,6 +892,9 @@ export const VedEditor = (props: VedEditorProps): React.JSX.Element => {
           const ie = event as InputEvent;
           if (v.composing || ie.inputType !== 'insertText' || ie.data == null) return false;
           ie.preventDefault();
+          // Raw text arrived, so the recorded IME-entry range (if any) never
+          // composed — tr.insertText below replaces the live selection anyway.
+          imePendingSel = null;
           if (ie.data.includes('\n')) {
             // Multi-line insertText (some IMEs, programmatic input): split into
             // paragraphs, like a paste — `tr.insertText` would inline the \n.
@@ -903,6 +980,7 @@ export const VedEditor = (props: VedEditorProps): React.JSX.Element => {
       __vedCaretRect?: () => { top: number; bottom: number; left: number; right: number } | null;
       __vedText?: () => string;
       __vedSetCaret?: (off: number) => void;
+      __vedSetSelection?: (anchor: number, head: number) => void;
     };
     w.__vedCaret = () => posToOffset(view.state.doc, view.state.selection.head);
     w.__vedAnchor = () => posToOffset(view.state.doc, view.state.selection.anchor);
@@ -924,6 +1002,23 @@ export const VedEditor = (props: VedEditorProps): React.JSX.Element => {
       goalInlineRef.current = null;
       view.dispatch(
         view.state.tr.setSelection(TextSelection.create(view.state.doc, offsetToPos(view.state.doc, clamped))),
+      );
+    };
+    //  - __vedSetSelection: set a model RANGE selection by plain offsets — what a
+    //    Shift+arrow run or a geometric drag produces (PM syncs the DOM selection
+    //    the same way). Drives the IME-over-selection mozc cases.
+    w.__vedSetSelection = (anchor: number, head: number) => {
+      const len = serialize(view.state.doc).length;
+      const clamp = (o: number) => Math.max(0, Math.min(o, len));
+      goalInlineRef.current = null;
+      view.dispatch(
+        view.state.tr.setSelection(
+          TextSelection.create(
+            view.state.doc,
+            offsetToPos(view.state.doc, clamp(anchor)),
+            offsetToPos(view.state.doc, clamp(head)),
+          ),
+        ),
       );
     };
     view.dom.id = 'editor-content';
@@ -1017,6 +1112,18 @@ export const VedEditor = (props: VedEditorProps): React.JSX.Element => {
         event.preventDefault();
         live.current.setAppearPolicy(mode);
         return true;
+      }
+      // IME ENTRY over a non-empty selection: the first composing keypress
+      // arrives as keyCode 229 ("Process") BEFORE compositionstart. RECORD the
+      // model range now — BEFORE PM's compositionstart handler can clamp it —
+      // and let onCompositionStart delete it once the IME has committed to
+      // composing (mutating the DOM during this keydown races the IME
+      // handshake and leaks the first character raw; see deleteRangeForIme).
+      // NOT handled (return false): the key itself must still reach the IME.
+      if (event.keyCode === 229 && !v.composing && !event.isComposing) {
+        const sel = v.state.selection;
+        imePendingSel = sel.empty ? null : { from: sel.from, to: sel.to, at: performance.now() };
+        return false;
       }
       // Take over plain Backspace/Delete (see deleteChar). Word-delete chords and
       // IME composition keep the default path.
@@ -1547,6 +1654,15 @@ export const VedEditor = (props: VedEditorProps): React.JSX.Element => {
     // selector regardless of whether the pre-edit reached the DOM.
     const onCompositionStart = (): void => {
       view.dom.classList.add('composing');
+      // Composing over a selection: delete the range RECORDED on the entry
+      // keydown-229 (captured before PM's compositionstart handler could clamp
+      // the model selection), now that the IME has committed to composing —
+      // see deleteRangeForIme for why not during the keydown itself. IME paths
+      // that skip 229 fall back to whatever selection is still standing.
+      const pending = imePendingSel;
+      imePendingSel = null;
+      if (pending && performance.now() - pending.at < 500) deleteRangeForIme(view, pending.from, pending.to);
+      else deleteSelectionForIme(view);
     };
     const onCompositionEnd = (): void => {
       view.dom.classList.remove('composing');

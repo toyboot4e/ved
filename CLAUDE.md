@@ -106,7 +106,19 @@ Task runner is `just`:
 - **IME safety.** Never repair structure, steal focus, or remount the editor
   during an IME composition (`view.composing`, `event.isComposing`). Ruby
   structure repair (`pm/structure.ts repair`, run from `dispatchTransaction`)
-  is skipped while composing.
+  is skipped while composing. Composing over a NON-EMPTY selection deletes the
+  MODEL selection at IME entry: the range is RECORDED on the keydown-229 that
+  precedes the composition and DELETED at compositionstart (`editor.tsx`
+  `imePendingSel` + `deleteRangeForIme`; deleting during the keydown itself
+  races the IME handshake and leaks the first character RAW) — the native
+  selection replace chokes on a collapsed ruby's read-only islands, and PM
+  resets a mismatched model selection at compositionstart. Every SELECTION
+  deletion (IME entry, Backspace/Delete, Enter-replace) is IDENTITY-EXACT
+  (`plainDeleteTr`): the plain string loses exactly the offset range and the
+  touched paragraphs are rebuilt canonically — a structural
+  `tr.delete`/`deleteSelection` left phantom markup the string never contained
+  (e.g. an empty `()` reading), which survived composition because repair is
+  skipped then. Verified with real mozc (`mozc/selection-composition`).
 - **Never fix IME by revealing the ruby's markup in Rich.** The markup stays
   hidden in Rich (only the base + read-only reading show); editing the reading, and
   prepending/appending at the base EDGES, with the markup VISIBLE is the EXPANDED
