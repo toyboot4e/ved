@@ -88,6 +88,13 @@ export type VedEditorProps = {
   readonly initialCursor?: CursorState | null;
   readonly initialScroll?: { top: number; left: number };
   readonly onSnapshot?: (snapshot: EditorSnapshot) => void;
+  /** Any value that CHANGES when the shell's view config changes (the config
+   *  object itself works). The overlay/page-gap measures re-run on layout
+   *  changes they can OBSERVE (content/scroller resizes), but a size-NEUTRAL
+   *  config change — e.g. moving the page border by rebalancing gap上/gap下
+   *  under the same total — resizes nothing, so this prop is the re-measure
+   *  signal. Optional: without it those knobs just need a later layout event. */
+  readonly viewConfigEpoch?: unknown;
 };
 
 // Digits, not letters: Ctrl+S/O are file shortcuts (handled app-level).
@@ -1167,6 +1174,26 @@ export const VedEditor = (props: VedEditorProps): React.JSX.Element => {
       pageGapsRef.current?.schedule();
     });
     resizeObserver.observe(mount);
+    // The scroller box misses layout shifts that only resize the CONTENT — a
+    // `--page-gap` change fattens the gap widgets (pure CSS) and every page
+    // border/separator moves, but the scroller keeps its size and the overlay
+    // never re-measured (stale separators/folios/highlight). Observe the
+    // content box too, split by axis: the BLOCK-GROWTH axis (width in the
+    // vertical modes, height in horizontal) changes on every edit — those are
+    // already scheduled (suffix-cached) by dispatchTransaction, so re-measure
+    // only the overlay. A CROSS-axis change is a geometry shift (page-line
+    // count, gap, font) → also re-derive the page-gap widgets in FULL (the
+    // suffix cache can't see a wrap-cap change: same text, same pitch).
+    let lastCross: number | null = null;
+    const contentObserver = new ResizeObserver(() => {
+      const horizontal = live.current.writingMode === WritingMode.Horizontal;
+      const cross = horizontal ? view.dom.offsetWidth : view.dom.offsetHeight;
+      const crossChanged = lastCross !== null && cross !== lastCross;
+      lastCross = cross;
+      lineNumbers.schedule();
+      if (crossChanged) pageGapsRef.current?.schedule();
+    });
+    contentObserver.observe(view.dom);
 
     const scroller = scrollerRef.current;
     if (scroller && initialScroll) {
@@ -1790,6 +1817,7 @@ export const VedEditor = (props: VedEditorProps): React.JSX.Element => {
       view.dom.removeEventListener('compositionstart', onCompositionStart);
       view.dom.removeEventListener('compositionend', onCompositionEnd);
       resizeObserver.disconnect();
+      contentObserver.disconnect();
       lineNumbers.destroy();
       lineNumbersRef.current = null;
       cancelAnimationFrame(pageGapRaf);
@@ -1824,6 +1852,17 @@ export const VedEditor = (props: VedEditorProps): React.JSX.Element => {
       if (s) revealCaretInScroller(s, view, toScrollMode(writingMode));
     }
   }, [appearPolicy, vert, multiCol, rows, writingMode]);
+
+  // View-config change (see VedEditorProps.viewConfigEpoch): re-measure the
+  // overlay and the page-gap widgets. Size-AFFECTING config changes are also
+  // caught by the resize observers; this covers the size-NEUTRAL ones (e.g.
+  // rebalancing gap上/gap下 under the same total moves only the border).
+  const epoch = props.viewConfigEpoch;
+  useEffect(() => {
+    if (epoch === undefined) return;
+    lineNumbersRef.current?.schedule();
+    pageGapsRef.current?.schedule();
+  }, [epoch]);
 
   return (
     <div

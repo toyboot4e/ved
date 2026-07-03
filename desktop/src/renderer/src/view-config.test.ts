@@ -31,7 +31,8 @@ describe('viewConfigToCss', () => {
       lineSpaceRatio: 0.6,
       pageLineChars: 30,
       pageLines: 15,
-      pageGapCells: 2,
+      pageGapTopCells: 2,
+      pageGapBottomCells: 0.5,
       pagesPerRow: 2,
       fontFamily: 'Noto Serif CJK JP',
     }) as Record<string, string>;
@@ -39,9 +40,21 @@ describe('viewConfigToCss', () => {
     expect(css['--line-space-ratio']).toBe('0.6');
     expect(css['--page-line-chars']).toBe('30');
     expect(css['--page-lines']).toBe('15');
-    expect(css['--page-gap-cells']).toBe('2');
+    expect(css['--page-gap-top-cells']).toBe('2');
+    expect(css['--page-gap-bottom-cells']).toBe('0.5');
     expect(css['--pages-per-row']).toBe('2');
-    expect(css['--font-family']).toBe('Noto Serif CJK JP');
+    // Quoted: unquoted multi-word names with digit tokens are invalid CSS.
+    expect(css['--font-family']).toBe('"Noto Serif CJK JP"');
+  });
+
+  it('passes generic keywords and hand-authored stacks through unquoted', () => {
+    const generic = viewConfigToCss({ ...VIEW_CONFIG_DEFAULTS, fontFamily: 'monospace' }) as Record<string, string>;
+    expect(generic['--font-family']).toBe('monospace');
+    const stack = viewConfigToCss({ ...VIEW_CONFIG_DEFAULTS, fontFamily: 'Noto Serif, serif' }) as Record<
+      string,
+      string
+    >;
+    expect(stack['--font-family']).toBe('Noto Serif, serif');
   });
 
   it('omits --font-family when empty, so the shell stack inherits', () => {

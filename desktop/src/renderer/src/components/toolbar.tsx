@@ -101,7 +101,7 @@ export const Toolbar = ({
           </button>
         ))}
       </fieldset>
-      <ViewConfigControls />
+      <ViewConfigControls writingMode={writingMode} />
     </div>
   );
 };

@@ -457,7 +457,14 @@ column) is deferred; see [ADR 0004](adr/0004-vertical-page-layouts.md).
 
 The two paged modes are structurally DIFFERENT, not mirrors: `VerticalColumns`
 has real fragmentation (multicol overflow columns stack along the inline axis
-= downward, with a physical `column-gap` gutter), but multicol can never stack
+= downward, with a physical `column-gap` gutter — `--band-gap`, the folio
+strip + `--page-gap` total, FLOORED at the line-number gutter so the numbers
+always keep their room. The FIRST band's start padding is `gap A` ONLY —
+page 1's top space is exactly its head margin, with no extra gutter and no
+border: `gap B` (a preceding page's tail) is inert at the lead, and the
+lattice's phantom `repeat-y` tile above the origin — which would paint a
+stray line there — is masked by an opaque first background layer over the
+lead strip), but multicol can never stack
 columns along the BLOCK axis (= leftward), and Chromium does not fragment an
 orthogonal-flow child either — so `VerticalRows` is one continuous vertical-rl
 block flow where a "page" is arithmetic (every `--page-lines` lines). The
@@ -477,10 +484,26 @@ caret-independent appear policies (Rich/Plain) — under ByParagraph/ByCharacter
 a caret move re-wraps the (un)expanded paragraph with no doc change — and any
 non-edit layout change (mode/policy/resize/fonts) schedules a full pass.
 Pinned by `test/e2e/page-gap-suffix.ts` via the `__vedGapLines` /
-`__vedGapLineEnds` seams, including suffix ≡ full equivalence. The separator
-hairline is a right-anchored background lattice with period
-`--page-width + --page-gap`, centered in each gap. See
-[ADR 0010](adr/0010-verticalrows-arithmetic-pages.md).
+`__vedGapLineEnds` seams, including suffix ≡ full equivalence.
+
+The page-gap knobs are the PAGE'S MARGINS around the border (view config
+`gap A`/`gap B` → `--page-gap-top`/`--page-gap-bottom`, default 1 cell each):
+`gap A` is the head margin (the border above/right → the page's TEXT — page 1
+included) and `gap B` the tail margin (the page's FOLIO → the next border).
+The VerticalColumns gap anatomy, top→bottom, is
+`text | folio strip (1 cell) | gap B | BORDER | gap A | next text`
+(`--band-gap = max(gutter, cell + A + B)`; the folio centers in its strip;
+the lattice border sits at `--band-gap × --page-gap-ratio`, a registered
+`<number>` so a floored gap scales the anatomy proportionally). VerticalRows
+has no folio in the leftward gap (its folio sits under the page), so there the
+anatomy is `last line | gap B | BORDER | gap A | first line` — `--page-gap`
+(A+B) drives the widgets/scroll pitch and the overlay's measured separators
+shift `(A − B)/2` from the mid-blank. A SIZE-NEUTRAL config change (moving
+the border under the same total) resizes nothing an observer can see, so the
+shell passes `viewConfigEpoch` (an optional editor prop) to trigger the
+re-measure. Pinned by `test/e2e/gap-config-reflow.ts` (pitch follows the
+total; the split moves the border without moving text; the lattice border is
+pixel-scanned). See [ADR 0010](adr/0010-verticalrows-arithmetic-pages.md).
 
 The same widget trick generalizes VerticalColumns into a page GRID: a band
 holds `--pages-per-row` arithmetic pages side by side (band width =

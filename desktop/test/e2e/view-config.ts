@@ -27,15 +27,18 @@ const contentStyle = () =>
 const near = (actual: number, expected: number, what: string) =>
   assert.ok(Math.abs(actual - expected) < 1, `${what}: ${actual} ≈ ${expected}`);
 
-// $line-gutter = 2.2 * 18px, deliberately compile-time (editor.module.scss)
+// The VerticalColumns content height = page height + start padding, where
+// the padding is gap A ONLY (page 1's head margin, 1 cell at the default) —
+// no gutter, no border (the phantom lattice tile is masked).
 const GUTTER = 2.2 * 18;
+const leadPad = (cell: number): number => cell;
 
 try {
   // Launch defaults (VerticalColumns): 18px cell, 0.55 leading, 40字 × 20行
   const initial = await contentStyle();
   near(initial.fontSize, 18, 'default font size');
   near(initial.lineHeight, 18 * 1.55, 'default line pitch');
-  near(initial.height, 40 * 18 + GUTTER, 'default page height (40 cells + gutter)');
+  near(initial.height, 40 * 18 + leadPad(18), 'default page height (40 cells + lead padding)');
   step('defaults render (18px, 0.55, 40×20)');
 
   // Font size drives the cell: the line pitch and the page box scale with it
@@ -44,7 +47,7 @@ try {
   let s = await contentStyle();
   near(s.fontSize, 24, 'font size follows the input');
   near(s.lineHeight, 24 * 1.55, 'line pitch scales with the cell');
-  near(s.height, 40 * 24 + GUTTER, 'page height scales with the cell');
+  near(s.height, 40 * 24 + leadPad(24), 'page height scales with the cell');
   step('font size input rescales cell, pitch, and page');
 
   // Line-space ratio drives the pitch (and the page width = lines × pitch)
@@ -62,7 +65,7 @@ try {
   await page.waitForTimeout(150);
   s = await contentStyle();
   assert.equal(s.pageLineChars, 20, '--page-line-chars follows the input');
-  near(s.height, 20 * 24 + GUTTER, 'page height follows cells per line');
+  near(s.height, 20 * 24 + leadPad(24), 'page height follows cells per line');
   near(s.width, 10 * 48 + 24, 'page width follows lines per page (plus rt allowance)');
   step('page geometry inputs resize the page box');
 
@@ -73,21 +76,42 @@ try {
   near(s.fontSize, 8, 'font size clamps to the lower bound');
   step('out-of-range font size clamps instead of breaking the layout');
 
-  // Font family applies to the editor content only; empty inherits
+  // Font family applies to the editor content only; inherit inherits
   const bodyFont = await page.evaluate(() => getComputedStyle(document.body).fontFamily);
   const chromeFont = () =>
     page.evaluate(() => getComputedStyle(document.querySelector('button[aria-label="Horizontal"]')!).fontFamily);
   const chromeFontBefore = await chromeFont();
-  await page.fill('#view-config-fontFamily', 'monospace');
+  await page.selectOption('#view-config-fontFamily', 'monospace');
   await page.waitForTimeout(150);
   s = await contentStyle();
-  assert.equal(s.fontFamily, 'monospace', 'editor font follows the input');
+  assert.equal(s.fontFamily, 'monospace', 'editor font follows the picker');
   assert.equal(await chromeFont(), chromeFontBefore, 'shell chrome keeps its font');
-  await page.fill('#view-config-fontFamily', '');
+  await page.selectOption('#view-config-fontFamily', '');
   await page.waitForTimeout(150);
   s = await contentStyle();
-  assert.equal(s.fontFamily, bodyFont, 'empty font input inherits the app stack');
+  assert.equal(s.fontFamily, bodyFont, 'the inherit option inherits the app stack');
   step('font family applies to editor content only and inherits when empty');
+
+  // The picker lists the INSTALLED fonts (queryLocalFonts), and picking one
+  // applies it. The list loads async; wait past inherit + the 3 generics.
+  await page.waitForFunction(() => document.querySelectorAll('#view-config-fontFamily option').length > 4, undefined, {
+    timeout: 5000,
+  });
+  const installed = await page.evaluate(() =>
+    [...document.querySelectorAll<HTMLOptionElement>('#view-config-fontFamily option')]
+      .map((o) => o.value)
+      .filter((v) => v !== '' && v !== 'serif' && v !== 'sans-serif' && v !== 'monospace'),
+  );
+  assert.ok(installed.length > 0, `picker lists installed fonts (${installed.length})`);
+  const pick = installed[0]!;
+  await page.selectOption('#view-config-fontFamily', pick);
+  await page.waitForTimeout(150);
+  s = await contentStyle();
+  // Computed style may or may not quote the name; compare unquoted.
+  assert.equal(s.fontFamily.replaceAll('"', ''), pick, 'picked installed font applies to the editor');
+  await page.selectOption('#view-config-fontFamily', '');
+  await page.waitForTimeout(150);
+  step('installed fonts are enumerated and selectable');
 
   // Reset restores every default
   await page.click('#view-config-reset');
@@ -95,7 +119,7 @@ try {
   s = await contentStyle();
   near(s.fontSize, 18, 'reset font size');
   near(s.lineHeight, 18 * 1.55, 'reset line pitch');
-  near(s.height, 40 * 18 + GUTTER, 'reset page height');
+  near(s.height, 40 * 18 + leadPad(18), 'reset page height');
   step('reset returns to the defaults');
 
   // The editor still edits after a restyle (the config is pure view)

@@ -146,17 +146,26 @@ export const mountLineNumbers = (
     });
     for (const el of pool.slice(lines.length)) el.style.display = 'none';
 
-    // Page separators and folios, from the same measured lines. The separator
-    // before page p is the midpoint between the LAST line of page p−1 and the
-    // FIRST line of page p — the true center of the rendered blank, whatever
-    // the gap or the font does — skipped when the two lines sit in different
-    // bands (a multiCol band break separates those physically). The folio
+    // Page separators and folios, from the same measured lines. The gap
+    // knobs are the PAGE'S MARGINS around the border: gap下 = the earlier
+    // page's side (its folio → the border), gap上 = the border → the next
+    // page's text. So the separator between the last line of page p−1 and
+    // the first line of page p sits gap下 from the earlier (right) side and
+    // gap上 from the next — the measured midpoint shifted by (top − bottom)/2
+    // (zero for a symmetric split), whatever the font does to the real pitch.
+    // Skipped when the two lines sit in different bands (a multiCol band
+    // break separates those physically — the scroller lattice draws the
+    // border there, after the folio strip; see editor.module.scss). The folio
     // centers on the WHOLE page area (the page's slots exist physically even
     // when empty — the rows reservation / band width guarantee them): the
     // missing tail of a partial page is extrapolated at the page's OWN
     // measured line step, so a real-pitch deviation stays page-local.
     const pitch = Number.parseFloat(cs.lineHeight) || 28;
-    const bandGutter = multiCol ? Number.parseFloat(cs.columnGap) || 0 : 0;
+    const cell = Number.parseFloat(cs.fontSize) || 18;
+    // Registered @property lengths — evaluated px (editor.module.scss).
+    const gapTop = paged ? Number.parseFloat(cs.getPropertyValue('--page-gap-top')) || 0 : 0;
+    const gapBottom = paged ? Number.parseFloat(cs.getPropertyValue('--page-gap-bottom')) || 0 : 0;
+    const sepShift = (gapTop - gapBottom) / 2;
     let chips = 0;
     let seps = 0;
     if (linesPerPage > 0 && lines.length > 0) {
@@ -168,7 +177,7 @@ export const mountLineNumbers = (
         const bandAnchor = bandTopAt(first);
         if (prev && (!multiCol || bandTopAt(prev) === bandAnchor)) {
           const el = sepPool[seps] ?? makePageSeparator(overlay, sepPool);
-          const x = (centerX(prev) + centerX(first)) / 2;
+          const x = (centerX(prev) + centerX(first)) / 2 + sepShift;
           el.style.transform = `translate(${x}px, ${bandAnchor}px)`;
           el.style.height = `${bandLen}px`;
           el.style.display = '';
@@ -177,8 +186,10 @@ export const mountLineNumbers = (
         const chip = pagePool[chips] ?? makePageNumber(overlay, pagePool);
         const step = count >= 2 ? (centerX(first) - centerX(last)) / (count - 1) : pitch;
         const chipX = centerX(first) - (step * (linesPerPage - 1)) / 2;
+        // Columns: the folio centers in its RESERVED STRIP — the first cell of
+        // the band gap, right under the page (gap下 then runs folio → border).
         chip.style.transform = multiCol
-          ? `translate(${chipX}px, ${bandAnchor + bandLen + bandGutter / 4}px) translate(-50%, -50%)`
+          ? `translate(${chipX}px, ${bandAnchor + bandLen + cell / 2}px) translate(-50%, -50%)`
           : `translate(${chipX}px, ${bandAnchor + bandLen}px) translate(-50%, 0) translateY(0.4em)`;
         chip.textContent = `${p + 1}`;
         chip.style.display = '';

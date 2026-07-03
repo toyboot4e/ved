@@ -129,8 +129,10 @@ try {
   step('folios center on their page slots, including the partial page');
 
   // The PAINTED band border (pixel-scanned, not computed — the phase once
-  // painted it 10px high, through the folio) sits mid-gutter between the two
-  // bands' texts, and the folio ends clearly BEFORE it.
+  // painted it 10px high, through the folio) sits at the GAP ANATOMY's split
+  // — text | folio strip (1 cell) | gap下 | BORDER | gap上 | next text, i.e.
+  // (1 + 下)/(1 + 上 + 下) into the band gap — and the folio ends clearly
+  // BEFORE it.
   const bounds = await page.evaluate(() => {
     const content = document.getElementById('editor-content')!;
     const range = document.createRange();
@@ -183,12 +185,17 @@ try {
   );
   assert.ok(borderYs.length > 0, 'the band border paints between the bands');
   const borderY = borderYs.reduce((a, z) => a + z, 0) / borderYs.length;
-  near(borderY, (bounds.band1Bottom + bounds.band2Top) / 2, 'painted band border sits mid-gutter');
+  // Default 上=下=1 → the border sits 2/3 into the gap (after folio strip + 下).
+  near(
+    borderY,
+    bounds.band1Bottom + ((bounds.band2Top - bounds.band1Bottom) * 2) / 3,
+    'painted band border sits at the anatomy split (2/3)',
+  );
   assert.ok(
     bounds.chipBottom < borderY - 2,
     `folio ends before the painted border: ${bounds.chipBottom.toFixed(1)} < ${borderY.toFixed(1)} − 2`,
   );
-  step('painted band border mid-gutter; folio clearly before it');
+  step('painted band border at the anatomy split; folio clearly before it');
 } catch (e) {
   fail(e instanceof Error ? e.message : String(e));
 } finally {

@@ -10,6 +10,27 @@ $font-size: 18px;
   inherits: true;
   initial-value: 0px;
 }
+// The two SIDES of the inter-page gap (the border splits it): registered so
+// the line-number overlay can read back evaluated px lengths (the separator
+// sits gap-top from the earlier page, not necessarily mid-gap).
+@property --page-gap-top {
+  syntax: '<length>';
+  inherits: true;
+  initial-value: 0px;
+}
+@property --page-gap-bottom {
+  syntax: '<length>';
+  inherits: true;
+  initial-value: 0px;
+}
+// The border's fractional position inside the gap. Registered as a NUMBER so
+// the lattice gradient's `var(--band-gap) * var(--page-gap-ratio)` is typed
+// math (and tests can read the evaluated value back).
+@property --page-gap-ratio {
+  syntax: '<number>';
+  inherits: true;
+  initial-value: 0.5;
+}
 $pad-x: 20px;
 $pad-y: 10px;
 // Breathing room at the line start so the caret at the document start has a
@@ -53,12 +74,29 @@ $footer-height: $font-size + $pad-y * 2;
   --line-pitch: calc(var(--cell-size) + var(--line-space));
   --line-length: calc(var(--page-line-chars) * var(--cell-size));
   --lines-extent: calc(var(--page-lines) * var(--line-pitch));
-  // Physical space between VerticalRows pages, in cells (ADR 0010 solution v2:
-  // rendered by the .ved-page-gap widgets, pm/page-gap.ts). Registered via
-  // @property below so its computed value is an EVALUATED px length —
-  // measureGeom reads it back for the rows scroll pitch.
-  --page-gap-cells: 1;
-  --page-gap: calc(var(--cell-size) * var(--page-gap-cells));
+  // The page's own MARGINS around the border, in cells (the user model):
+  //   gap上 (--page-gap-top)    = border → the page's TEXT (head margin);
+  //   gap下 (--page-gap-bottom) = the page's FOLIO (page number) → the next
+  //                               border (tail margin).
+  // VerticalColumns gap anatomy, top→bottom:
+  //   page text | folio strip (1 cell) | gap下 | BORDER | gap上 | next text
+  // VerticalRows has no folio in the leftward gap (its folio sits under the
+  // page), so there: last line | gap下 | BORDER | gap上 | first line.
+  // --page-gap (top + bottom) drives the ROWS widgets/scroll pitch; the
+  // columns band gap adds the folio strip (--band-gap below). Registered
+  // @property above so computed values are EVALUATED px lengths — measureGeom
+  // reads the total, the overlay reads the sides for the separators.
+  --page-gap-top-cells: 1;
+  --page-gap-bottom-cells: 1;
+  --page-gap-top: calc(var(--cell-size) * var(--page-gap-top-cells));
+  --page-gap-bottom: calc(var(--cell-size) * var(--page-gap-bottom-cells));
+  --page-gap: calc(var(--page-gap-top) + var(--page-gap-bottom));
+  // The border's fractional position inside the COLUMNS band gap (a NUMBER,
+  // so a FLOORED band gap scales the anatomy proportionally): the border sits
+  // after the folio strip (1 cell) + gap下, out of 1 + 上 + 下 cells total.
+  --page-gap-ratio: calc(
+    (1 + var(--page-gap-bottom-cells)) / max(0.001, 1 + var(--page-gap-top-cells) + var(--page-gap-bottom-cells))
+  );
   // Pages per page ROW in VerticalColumns (ADR 0011): a multicol band holds
   // this many pages side by side (arithmetic within the band, separated by
   // page-gap widgets). Meaningless in the other modes — the shell pins it to
@@ -73,6 +111,11 @@ $footer-height: $font-size + $pad-y * 2;
   &.vertMode {
     --page-width: var(--lines-extent);
     --page-height: var(--line-length);
+    // VerticalColumns inter-band (page-row) gap: the folio strip (1 cell) +
+    // gap下 + gap上, FLOORED at the line-number gutter — the gap doubles as
+    // the numbers' room, so it can never shrink below it (line numbers would
+    // clip).
+    --band-gap: max(#{$line-gutter}, calc(var(--cell-size) + var(--page-gap)));
     // One page ROW: --pages-per-row pages side by side with a --page-gap
     // between each (= --page-width when --pages-per-row is 1).
     --page-row-width: calc(var(--pages-per-row) * var(--page-width) + (var(--pages-per-row) - 1) * var(--page-gap));
@@ -191,6 +234,16 @@ $footer-height: $font-size + $pad-y * 2;
 
 .toolbarTextInput {
   width: 9em;
+}
+
+// Dropdown cell (the font picker): the input look on a native select.
+.toolbarSelect {
+  font-size: 12px;
+  padding: 1px 2px;
+  border: 1px solid #c0c0c0;
+  border-radius: 2px;
+  background: #fff;
+  max-width: 11em;
 }
 
 // Icon-only variant of toolbarButton, for the writing-mode row. Shares the
@@ -340,25 +393,37 @@ $footer-height: $font-size + $pad-y * 2;
       // attachment-local repeating gradients depending on the scroll
       // position (lines vanish at certain depths).
       // A band is page-height tall (= column-width) and bands are separated by
-      // $line-gutter (= column-gap, which doubles as the line-number space), so
-      // the band PERIOD is page-height + gutter. Match the separator pitch to
-      // it exactly — any other pitch drifts a fixed amount PER PAGE and lines
-      // overrun the separator by page 3-4. The gap-line sits mid-gutter, and
-      // the phase skips the first band's start padding ($line-gutter) AND the
-      // content's top margin ($pad-y — both are inside the scroll area the
-      // local background is positioned against; without the margin the line
-      // painted 10px above mid-gutter, straight through the folio).
-      background-image: linear-gradient(
-        to bottom,
-        transparent calc(var(--page-height) + #{$line-gutter} / 2 - 0.5px),
-        #808080 calc(var(--page-height) + #{$line-gutter} / 2 - 0.5px),
-        #808080 calc(var(--page-height) + #{$line-gutter} / 2 + 0.5px),
-        transparent calc(var(--page-height) + #{$line-gutter} / 2 + 0.5px)
-      );
-      background-size: 100% calc(var(--page-height) + #{$line-gutter});
-      background-repeat: repeat-y;
-      background-attachment: local;
-      background-position: 0 #{$line-gutter + $pad-y};
+      // --band-gap (= column-gap — the configurable page-row gap, floored at
+      // the line-number gutter; see .root.vertMode), so the band PERIOD is
+      // page-height + band-gap. Match the separator pitch to it exactly — any
+      // other pitch drifts a fixed amount PER PAGE and lines overrun the
+      // separator by page 3-4. The gap-line sits at the CONFIGURED SPLIT of
+      // the gap (after the folio strip + gap下, as a fraction so a floored
+      // band gap scales the anatomy proportionally), and the phase skips the
+      // first band's FIXED start padding ($line-gutter) AND the content's top
+      // margin ($pad-y — both are inside the scroll area the local background
+      // is positioned against). `repeat-y` also paints a PHANTOM tile above
+      // the origin, which drew a stray border line in the lead area — the
+      // FIRST layer below is an opaque MASK over the lead strip (page 1
+      // starts borderless, user spec); it ends exactly at page 1's text top,
+      // well above the first real border.
+      background-image:
+        linear-gradient(#fff, #fff),
+        linear-gradient(
+          to bottom,
+          transparent calc(var(--page-height) + var(--band-gap) * var(--page-gap-ratio) - 0.5px),
+          #808080 calc(var(--page-height) + var(--band-gap) * var(--page-gap-ratio) - 0.5px),
+          #808080 calc(var(--page-height) + var(--band-gap) * var(--page-gap-ratio) + 0.5px),
+          transparent calc(var(--page-height) + var(--band-gap) * var(--page-gap-ratio) + 0.5px)
+        );
+      background-size:
+        100% calc(#{$pad-y} + var(--page-gap-top)),
+        100% calc(var(--page-height) + var(--band-gap));
+      background-repeat: no-repeat, repeat-y;
+      background-attachment: local, local;
+      background-position:
+        0 0,
+        0 calc(#{$pad-y} + var(--page-gap-top));
     }
 
     // VerticalRows — pages tile leftward; the user scrolls along the
@@ -417,12 +482,14 @@ $footer-height: $font-size + $pad-y * 2;
       // gutter MUST be column-gap, not padding — else later pages drift):
       //   column-width = page-height (the line), so it equals the content area
       //     (height - start padding) and is never clamped;
-      //   column-gap   = $line-gutter — the inter-band gap that holds the line
-      //     numbers, uniform across every band;
-      //   start padding = $line-gutter — matches the gap so the FIRST band's
-      //     numbers get the same room (and the separator phase skips it).
-      // Band period = page-height + $line-gutter; the separator pitch matches.
-      height: calc(var(--page-height) + #{$line-gutter});
+      //   column-gap   = --band-gap — the configurable inter-band gap that
+      //     holds the folio + border + line numbers, uniform per band;
+      //   start padding = gap A ONLY — page 1's top space is exactly its head
+      //     margin, borderless, with no extra gutter (user spec; at a small A
+      //     the first band's line numbers simply sit tight to the top). gap B
+      //     and the folio strip belong to a preceding page and stay out.
+      // Band period = page-height + --band-gap; the separator pitch matches.
+      height: calc(var(--page-height) + var(--page-gap-top));
       // Horizontal margins are AUTO, not $pad-x: the scroller's always-shown
       // vertical scrollbar eats ~15px from the client area, and fixed margins
       // then leave the whole page block (text, folios, everything) sitting
@@ -436,11 +503,11 @@ $footer-height: $font-size + $pad-y * 2;
       // stays centered in the band.
       width: calc(var(--page-row-width) + var(--rt-allowance) * 2);
       padding: 0;
-      padding-inline-start: $line-gutter;
+      padding-inline-start: var(--page-gap-top);
       padding-right: var(--rt-allowance);
       box-sizing: border-box;
       column-width: var(--page-height);
-      column-gap: $line-gutter;
+      column-gap: var(--band-gap);
     }
 
     // VerticalRows — pages tile leftward, the editor scrolls horizontally.

@@ -188,6 +188,7 @@ export const App = (): React.JSX.Element => {
         setAppearPolicy={setAppearPolicy}
         onTextChange={onTextChange}
         onSnapshot={(snapshot) => handleSnapshot(active.id, snapshot)}
+        viewConfigEpoch={viewConfig}
       />
       <div className={styles.footer}>
         <p id='counter' className={styles.footerCounter}></p>
