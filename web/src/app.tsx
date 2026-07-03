@@ -1,9 +1,12 @@
 import { AppearPolicy, PlainTextHistory, editorStyles as styles, VedEditor, WritingMode } from '@ved/editor';
 import { clsx } from 'clsx';
 import { useEffect, useMemo, useState } from 'react';
+import { type ViewConfig, viewConfigFromPersisted, viewConfigToCss } from './view-config';
+import { ViewConfigControls } from './view-config-controls';
 
 // A throwaway preview: one in-memory buffer plus controls for both axes
-// (writing mode + appear policy). Not for real use — no files, no tabs, no IPC.
+// (writing mode + appear policy) and the debug view config (font size, 字/行,
+// gaps, 頁/段, font). Not for real use — no files, no tabs, no IPC.
 // State survives a reload via localStorage so a mis-reload doesn't lose text.
 
 const STORAGE_KEY = 'ved.web.preview';
@@ -17,6 +20,7 @@ type Persisted = {
   text: string;
   writingMode: WritingMode;
   appearPolicy: AppearPolicy;
+  viewConfig: ViewConfig;
 };
 
 const WRITING_MODES: ReadonlyArray<readonly [WritingMode, string]> = [
@@ -38,6 +42,7 @@ const loadPersisted = (): Persisted => {
     text: SEED_TEXT,
     writingMode: WritingMode.Vertical,
     appearPolicy: AppearPolicy.Rich,
+    viewConfig: viewConfigFromPersisted(undefined),
   };
   try {
     const raw = localStorage.getItem(STORAGE_KEY);
@@ -47,6 +52,7 @@ const loadPersisted = (): Persisted => {
       text: typeof parsed.text === 'string' ? parsed.text : fallback.text,
       writingMode: parsed.writingMode ?? fallback.writingMode,
       appearPolicy: parsed.appearPolicy ?? fallback.appearPolicy,
+      viewConfig: viewConfigFromPersisted(parsed.viewConfig),
     };
   } catch {
     return fallback;
@@ -58,17 +64,18 @@ export const App = (): React.JSX.Element => {
   const [text, setText] = useState(initial.text);
   const [writingMode, setWritingMode] = useState(initial.writingMode);
   const [appearPolicy, setAppearPolicy] = useState(initial.appearPolicy);
+  const [viewConfig, setViewConfig] = useState(initial.viewConfig);
   // One history instance for the buffer's lifetime, seeded from the loaded text.
   const history = useMemo(() => new PlainTextHistory(initial.text), [initial.text]);
 
-  // Persist text + both axes on every change (text restored on a mis-reload).
+  // Persist text + the control axes on every change (text restored on a mis-reload).
   useEffect(() => {
     try {
-      localStorage.setItem(STORAGE_KEY, JSON.stringify({ text, writingMode, appearPolicy }));
+      localStorage.setItem(STORAGE_KEY, JSON.stringify({ text, writingMode, appearPolicy, viewConfig }));
     } catch {
       // Storage unavailable (private mode / quota) — the preview still works.
     }
-  }, [text, writingMode, appearPolicy]);
+  }, [text, writingMode, appearPolicy, viewConfig]);
 
   return (
     <>
@@ -93,10 +100,25 @@ export const App = (): React.JSX.Element => {
             ))}
           </select>
         </label>
+        <ViewConfigControls writingMode={writingMode} config={viewConfig} setConfig={setViewConfig} />
       </div>
       <div className='stage'>
-        {/* vertMode on the root transposes the page geometry (CSS custom props). */}
-        <div className={clsx(styles.root, writingMode !== WritingMode.Horizontal && styles.vertMode)}>
+        {/* vertMode on the root transposes the page geometry (CSS custom props);
+            the view config overrides the geometry custom props inline.
+            pagesPerRow only means something in VerticalColumns (ADR 0011) —
+            pin it to 1 elsewhere so the root/page widths stay one page.
+            rowsMode widens the root to the window: VerticalRows scrolls along
+            the horizontal axis, so a wide window shows more lines. */}
+        <div
+          className={clsx(
+            styles.root,
+            writingMode !== WritingMode.Horizontal && styles.vertMode,
+            writingMode === WritingMode.VerticalRows && styles.rowsMode,
+          )}
+          style={viewConfigToCss(
+            writingMode === WritingMode.VerticalColumns ? viewConfig : { ...viewConfig, pagesPerRow: 1 },
+          )}
+        >
           <VedEditor
             initialText={text}
             history={history}
@@ -104,6 +126,7 @@ export const App = (): React.JSX.Element => {
             appearPolicy={appearPolicy}
             setAppearPolicy={setAppearPolicy}
             onTextChange={setText}
+            viewConfigEpoch={viewConfig}
           />
         </div>
       </div>
