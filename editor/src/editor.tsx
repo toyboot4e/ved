@@ -1027,9 +1027,14 @@ export const VedEditor = (props: VedEditorProps): React.JSX.Element => {
       // the ruby (pm/model.ts rubyEdgeOutsidePos; null for an interior click, which
       // stays). Rich only — the expanded policies keep the edges editable.
       createSelectionBetween: (v, $anchor, $head) => {
-        // We drive drag-selection ourselves (the pointer handlers); stay out of
-        // the way mid-drag so the ruby click-snap can't collapse it.
-        if (pointerDraggingRef.current) return null;
+        // We drive drag-selection ourselves (the pointer handlers). While a
+        // drag is underway the DOM selection is NATIVE NOISE — Chromium's own
+        // drag can't extend across a collapsed ruby's read-only base and sits
+        // COLLAPSED at the pointer, and PM reads it back on selectionchange /
+        // mouseup, clobbering the geometric range (returning null here meant
+        // "accept the DOM selection"). KEEP the model selection instead; the
+        // drag's own dispatches are the only writers until endDrag.
+        if (pointerDraggingRef.current) return v.state.selection;
         if (policyClassRef.current !== 'rich' || $anchor.pos !== $head.pos) return null;
         const out = rubyClickOutsidePos($head);
         return out == null ? null : TextSelection.create(v.state.doc, out);

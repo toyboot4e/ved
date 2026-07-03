@@ -605,6 +605,10 @@ ships its own postinstall, so this project's `postinstall` runs
   the native selection either — it can't extend across a collapsed atom ruby's
   read-only base (`contenteditable=false`) — so `editor.tsx` drives the drag from a
   GEOMETRIC hit-test over the base glyphs (`pm/drag-select.ts`, unit-tested).
+  While that drag is underway, `createSelectionBetween` RETURNS THE MODEL
+  SELECTION (not null): Chromium's parallel native drag sits collapsed at the
+  pointer (it can't cross the read-only base), and PM's DOM read-back would
+  otherwise clobber the geometric range on selectionchange/mouseup.
   Both walks are SCOPED so they never measure the whole document: the hit-test
   measures only the paragraphs intersecting the viewport (falling back to a full
   walk only when no text is visible near the point), and the selection overlay
