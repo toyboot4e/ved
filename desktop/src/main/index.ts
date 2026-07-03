@@ -50,7 +50,16 @@ const createWindow = () => {
   mainWindow.on('ready-to-show', () => {
     // e2e runs keep the window hidden (layout and input still work)
     if (!process.env.VED_SMOKE_HIDDEN) {
-      mainWindow.show();
+      // A VISIBLE smoke window (rAF/compositing tests: VED_SMOKE_HIDDEN set but
+      // empty) must not STEAL the user's OS focus while the suite runs: show it
+      // WITHOUT activating. CDP/Playwright input needs no OS focus; the one
+      // suite that does (mozc — real IME keys) activates the window itself
+      // (xdotool windowactivate / osascript / AppActivate; the best-effort
+      // Wayland entry relied on launch-focus and, if it breaks, is fixed in the
+      // mozc harness per its own comment). Production launches (no VED_SMOKE_*
+      // seams) keep the normal focusing show.
+      if ('VED_SMOKE_HIDDEN' in process.env) mainWindow.showInactive();
+      else mainWindow.show();
     }
   });
 

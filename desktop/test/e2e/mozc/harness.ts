@@ -140,7 +140,10 @@ const x11FcitxMozc: ImePlatform = {
 // keyboard are inherently focus-targeted, so footgun #1 has no equivalent), no
 // re-activation per keystroke (#2 — there is no Wayland activation call at
 // all; the freshly launched, visible window holds the compositor's keyboard
-// focus), and the same GTK IM-context warm-up before the mode switch (#3).
+// focus — NOTE: smoke windows now show INACTIVE (main/index.ts, so visible
+// tests stop stealing focus), and if the compositor honors that at launch this
+// entry needs an activation step here), and the same GTK IM-context warm-up
+// before the mode switch (#3).
 // First run on a real Wayland host validates; fix here, not in tests.
 const fcitxMozcConfigured = (): boolean =>
   !sh('fcitx5-remote').startsWith('ERR') && sh("grep -l 'Name=mozc' ~/.config/fcitx5/profile") !== '';

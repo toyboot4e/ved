@@ -576,7 +576,11 @@ ships its own postinstall, so this project's `postinstall` runs
   silently no-op under that flag, and tests that only assert "the caret
   didn't jump" can falsely pass. When adding/changing RAF-deferred logic,
   drop `VED_SMOKE_HIDDEN` for the relevant probe and assert the EXPECTED
-  destination rather than just "stayed put".
+  destination rather than just "stayed put". A VISIBLE smoke window shows
+  INACTIVE (`main/index.ts` — `VED_SMOKE_HIDDEN` present but empty →
+  `showInactive()`), so it never steals the user's OS focus while the suite
+  runs; CDP input needs no OS focus, and the mozc suite — the one that does —
+  activates the window itself.
 - `pm/structure.ts repair` compares every paragraph on every change; fine at
   current sizes, trivially limitable to dirty paragraphs if profiling flags it.
   (The decoration pass is already O(n) via `buildPosMap`.)
