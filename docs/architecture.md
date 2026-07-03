@@ -409,7 +409,15 @@ visual line on a reading-direction block jump *or* a large reverse jump (a
 multicol page wrap, where the next page's first column lands back across the
 page); the band length is the paragraph's computed `inline-size` (one page), not
 its multi-page bounding rect. The overlay is a scroll-invariant child of the
-scroller. Re-measuring every paragraph is O(document), so it runs only on
+scroller. Every mark (number, page separator, folio) is placed from ITS OWN
+line's measured, rt-excluded rects — never from index arithmetic extrapolated
+across the document: `line-height` is a MINIMUM, not a cap, so a ruby line
+whose reading doesn't fit the leading (low ratio, a heavy webfont) is really
+taller than the computed pitch, and a pure slot grid (anchor + k·pitch, tried)
+drifted whole bands by line ~1700 — the numbers visibly "disappeared" at
+scale. Only the band top is quantized (multicol fragmentation IS physically
+periodic), and a partial last page's folio extrapolates the missing tail at
+the page's own measured step. Re-measuring every paragraph is O(document), so it runs only on
 layout changes (edit/mode/policy/resize/font), debounced to one frame; a
 **selection-only** change takes a cheap *highlight-only* path
 (`refreshCaret`) that reuses the cached line geometry, runs SYNCHRONOUSLY in

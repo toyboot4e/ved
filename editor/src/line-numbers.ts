@@ -108,60 +108,36 @@ export const mountLineNumbers = (
 
     lines = collectVisualLines(content, range, vertical, colJump, bandLen, o);
 
-    // THE FIXED GRID. The layout is enforced-periodic — fixed line pitch,
-    // exact page period from the gap widgets (ADR 0010), exact band capacity
-    // from the rt allowance — and the grid itself is PURE ARITHMETIC over the
-    // content box and computed constants: no text measurement anywhere in
-    // mark placement (glyph-derived anchors leaned toward the ruby readings;
-    // per-line rects wobbled on empty paragraphs). Slot k's center:
-    //   x = anchor − (k · pitch + gapsBefore(k))   [within its band]
-    //   band b sits b · bandPeriod below band 0 (multiCol fragmentation).
-    // Measurement's only remaining job here is HOW MANY lines exist (and the
-    // caret highlight, which must follow the real caret).
+    // MEASURED, PER-LINE placement. Every mark derives from ITS OWN line's
+    // measured (rt-excluded) rects — never from index arithmetic extrapolated
+    // across the document. A pure slot grid (anchor + k·pitch) was tried and
+    // DETACHED at scale: `line-height` is a MINIMUM, not a cap, so a ruby line
+    // whose reading doesn't fit the leading (low --line-space-ratio, a heavy
+    // webfont) is REALLY taller than the computed lineHeight — band capacity
+    // deviates from the arithmetic and the numbers drifted whole bands away by
+    // line ~1700 (they "disappeared"). Measured centers are exact by
+    // construction: the rects exclude `rt`, so ruby text cannot lean a number,
+    // and an empty paragraph's box center coincides with a glyph column's.
+    // Only the BAND top is quantized — multicol fragmentation IS physically
+    // periodic (bandPeriod = columnWidth + columnGap), so snapping each line's
+    // measured top to the nearest band keeps the numbers on the gutter line.
     const multiCol = content.classList.contains(styles.multiColMode ?? '');
     const paged = multiCol || content.classList.contains(styles.rowsMode ?? '');
     const linesPerPage = paged ? Number.parseFloat(cs.getPropertyValue('--page-lines')) || 20 : 0;
-    const bandGutter = multiCol ? Number.parseFloat(cs.columnGap) || 0 : 0;
-    const pitch = Number.parseFloat(cs.lineHeight) || 28;
-    const pageGap = paged ? Number.parseFloat(cs.getPropertyValue('--page-gap')) || 0 : 0;
-    const pagesPerRow = multiCol ? Number.parseFloat(cs.getPropertyValue('--pages-per-row')) || 1 : 1;
-    const linesPerBand = multiCol && linesPerPage > 0 ? linesPerPage * pagesPerRow : Number.POSITIVE_INFINITY;
-    // Block-axis grid offset of slot k from the anchor (leftward positive).
-    const gridOff = (k: number): number => {
-      const j = Number.isFinite(linesPerBand) ? k % linesPerBand : k;
-      const gaps = linesPerPage > 0 ? Math.floor(j / linesPerPage) * pageGap : 0;
-      return j * pitch + gaps;
-    };
-    // The anchor calibrates the grid to the real layout ONCE: the median of
-    // the first lines' BASE-glyph centers regressed back to slot 0. The line
-    // rects exclude rt (readings), so ruby text cannot lean the anchor; the
-    // median rides over an empty first paragraph's off-grid box. (A pure
-    // content-box-arithmetic anchor was tried and measured ~5px off — the
-    // paragraph inset constants are not what they appear; calibrating on the
-    // base glyphs is exact by construction.) Band tops likewise: fixed
-    // period from band 0's measured text top.
     const bandPeriod = multiCol ? (Number.parseFloat(cs.columnWidth) || 0) + (Number.parseFloat(cs.columnGap) || 0) : 0;
-    let anchorX = 0;
-    let bandTop0 = 0;
-    if (vertical && lines.length > 0) {
-      const samples = lines
-        .slice(0, 8)
-        .map((ln, k) => (ln.left + ln.right) / 2 + gridOff(k))
-        .sort((a, z) => a - z);
-      anchorX = samples[Math.floor(samples.length / 2)] ?? 0;
-      bandTop0 = Math.min(...lines.slice(0, Math.min(lines.length, 8)).map((ln) => ln.top));
-    }
-    const slotX = (k: number): number => anchorX - gridOff(k);
-    const bandTopOf = (k: number): number =>
-      bandTop0 + (Number.isFinite(linesPerBand) ? Math.floor(k / linesPerBand) : 0) * bandPeriod;
+    const bandTop0 = vertical && lines.length > 0 ? Math.min(...lines.slice(0, 8).map((ln) => ln.top)) : 0;
+    // The line's band top: its measured top snapped to the exact band period.
+    const bandTopAt = (ln: VisualLine): number =>
+      multiCol && bandPeriod > 0 ? bandTop0 + Math.round((ln.top - bandTop0) / bandPeriod) * bandPeriod : bandTop0;
+    const centerX = (ln: VisualLine): number => (ln.left + ln.right) / 2;
 
-    // Number each line at its SLOT (grid) position in vertical modes — above
+    // Number each line at its measured column center in vertical modes — above
     // the column, on the band's gutter line — or left of the row (measured)
     // in horizontal. Coords are already overlay-relative.
     lines.forEach((ln, i) => {
       const el = pool[i] ?? makeNumber(overlay, pool);
-      const x = vertical ? slotX(i) : ln.left;
-      const y = vertical ? bandTopOf(i) : (ln.top + ln.bottom) / 2;
+      const x = vertical ? centerX(ln) : ln.left;
+      const y = vertical ? bandTopAt(ln) : (ln.top + ln.bottom) / 2;
       el.style.transform = vertical
         ? `translate(${x}px, ${y}px) translate(-50%, -100%)`
         : `translate(${x}px, ${y}px) translate(-100%, -50%)`;
@@ -170,29 +146,37 @@ export const mountLineNumbers = (
     });
     for (const el of pool.slice(lines.length)) el.style.display = 'none';
 
-    // Page separators and folios: pure slot arithmetic. The separator before
-    // page p is the midpoint of the blank between slots pN−1 and pN (skipped
-    // across a multiCol band break — fragmentation separates those). The
-    // folio is the midpoint of the page's FIRST and LAST slot centers — the
-    // middle of the whole page area regardless of how much text exists (the
-    // rows reservation and the band width guarantee the slots physically).
+    // Page separators and folios, from the same measured lines. The separator
+    // before page p is the midpoint between the LAST line of page p−1 and the
+    // FIRST line of page p — the true center of the rendered blank, whatever
+    // the gap or the font does — skipped when the two lines sit in different
+    // bands (a multiCol band break separates those physically). The folio
+    // centers on the WHOLE page area (the page's slots exist physically even
+    // when empty — the rows reservation / band width guarantee them): the
+    // missing tail of a partial page is extrapolated at the page's OWN
+    // measured line step, so a real-pitch deviation stays page-local.
+    const pitch = Number.parseFloat(cs.lineHeight) || 28;
+    const bandGutter = multiCol ? Number.parseFloat(cs.columnGap) || 0 : 0;
     let chips = 0;
     let seps = 0;
     if (linesPerPage > 0 && lines.length > 0) {
       for (let p = 0; p * linesPerPage < lines.length; p++) {
-        const firstSlot = p * linesPerPage;
-        const lastSlot = (p + 1) * linesPerPage - 1;
-        const bandAnchor = bandTopOf(firstSlot);
-        if (p > 0 && firstSlot % linesPerBand !== 0) {
+        const count = Math.min((p + 1) * linesPerPage, lines.length) - p * linesPerPage;
+        const first = lines[p * linesPerPage] as VisualLine;
+        const last = lines[p * linesPerPage + count - 1] as VisualLine;
+        const prev = p > 0 ? (lines[p * linesPerPage - 1] as VisualLine) : null;
+        const bandAnchor = bandTopAt(first);
+        if (prev && (!multiCol || bandTopAt(prev) === bandAnchor)) {
           const el = sepPool[seps] ?? makePageSeparator(overlay, sepPool);
-          const x = (slotX(firstSlot - 1) + slotX(firstSlot)) / 2;
+          const x = (centerX(prev) + centerX(first)) / 2;
           el.style.transform = `translate(${x}px, ${bandAnchor}px)`;
           el.style.height = `${bandLen}px`;
           el.style.display = '';
           seps++;
         }
         const chip = pagePool[chips] ?? makePageNumber(overlay, pagePool);
-        const chipX = (slotX(firstSlot) + slotX(lastSlot)) / 2;
+        const step = count >= 2 ? (centerX(first) - centerX(last)) / (count - 1) : pitch;
+        const chipX = centerX(first) - (step * (linesPerPage - 1)) / 2;
         chip.style.transform = multiCol
           ? `translate(${chipX}px, ${bandAnchor + bandLen + bandGutter / 4}px) translate(-50%, -50%)`
           : `translate(${chipX}px, ${bandAnchor + bandLen}px) translate(-50%, 0) translateY(0.4em)`;
