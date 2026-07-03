@@ -212,12 +212,15 @@ ruby.rubyExpanded > .rubyBase::after {
 
 /* Selection: the shown markup `|`,`(`,`)` is a pseudo-element / widget, neither
  * of which receives the browser's native text-selection highlight — so when the
- * whole ruby is selected (Ctrl+A &c., `rubySelected`/`rubyDelimSelected` set in
- * pm/decorations.ts) we paint them with the OS selection colours to match the
- * blue over the base/reading glyphs. */
+ * whole ruby is selected (Ctrl+A &c., `rubySelected` set in pm/decorations.ts)
+ * we paint them with the OS selection colours to match the blue over the
+ * base/reading glyphs. The close `)` widget sits directly AFTER its ruby (a
+ * widget at the ruby's end position, side -1), so the adjacent-sibling selector
+ * keys its tint off the ruby's own class — the widget itself is
+ * selection-independent and lives in the CACHED static decoration set. */
 ruby.rubySelected > .rubyBase::before,
 ruby.rubySelected > .rubyBase::after,
-.rubyDelimClose.rubyDelimSelected {
+ruby.rubySelected + .rubyDelimClose {
   background-color: Highlight;
   color: HighlightText;
 }

@@ -12,9 +12,16 @@
 // gone (ADR-0007 fallout — see the model.ts header).
 //
 // PERFORMANCE: this runs on EVERY editor state change, including a bare caret
-// move. The bold/italic/縦中横 "base" decorations depend only on the doc, so they
-// are cached and reused across caret moves; only the few caret-dependent ruby
-// node classes (expanded / active) are rebuilt per move.
+// move, so per-move work must not scale with the document. Three layers:
+//   1. parseCache — text/leaves/maps/ruby geometry, keyed by doc identity.
+//   2. The STATIC decoration set — the bold/italic/縦中横 base set (doc-keyed,
+//      `baseCache`) plus every caret-INDEPENDENT ruby decoration (`rubyCache`,
+//      keyed by doc + policy + expanded-set value, so a caret move under a
+//      fixed policy always reuses it).
+//   3. A per-move DELTA — O(active ruby + selection): the rubyActive tint, the
+//      active atom-base unlock, rubySelected, the boundary caret.
+// The `__vedBaseRebuilds`/`__vedRubyRebuilds` seams count layer-2 rebuilds;
+// caret-move-perf and click-perf assert caret moves cause none.
 import type { Node as PMNode } from 'prosemirror-model';
 import { Decoration, DecorationSet } from 'prosemirror-view';
 import { type Appear, activeRuby, docLeaves, isHidden, type Leaf, lineOf } from './leaves';
@@ -29,12 +36,13 @@ const RULES: { re: RegExp; cls: string }[] = [
 const TCY = /\d{2,}/g; // 縦中横: runs of 2+ digits
 
 /** The closing `)` of an expanded ruby, as a real (caret-traversable) element —
- *  see the widget in buildRubyNodes for why it can't be `rt::after`. `selected`
- *  paints it with the selection colours: a widget gets no native selection
- *  highlight, so when the ruby is fully selected we tint it ourselves to match. */
-const closeDelim = (selected: boolean): HTMLElement => {
+ *  see the widget in buildRubyStatic for why it can't be `rt::after`. Its
+ *  selected tint is pure CSS (`ruby.rubySelected + .rubyDelimClose`), keyed off
+ *  the ruby's own class — so the widget itself is selection-independent and
+ *  lives in the CACHED static set, never re-rendered by a caret move. */
+const closeDelim = (): HTMLElement => {
   const s = document.createElement('span');
-  s.className = selected ? 'rubyDelimClose rubyDelimSelected' : 'rubyDelimClose';
+  s.className = 'rubyDelimClose';
   s.textContent = ')';
   return s;
 };
@@ -50,17 +58,39 @@ const boundaryCaret = (): HTMLElement => {
   return s;
 };
 
+/** One ruby node's tree geometry, indexed by ruby id (docLeaves numbers rubies
+ *  in text order — the same order `descendants` visits them). */
+type RubyInfo = {
+  pos: number;
+  size: number;
+  baseSize: number;
+  rtSize: number;
+  /** No editable plain text immediately before it (leads its paragraph, or
+   *  follows another ruby) — the IME-safety atom (see buildRubyStatic). */
+  atom: boolean;
+};
+
 type Parse = {
   doc: PMNode;
   text: string;
   leaves: Leaf[];
+  /** Leaves grouped by line index — the per-caret-move scans (active ruby,
+   *  expanded set, boundary-caret neighbours) touch ONE line's leaves, not the
+   *  whole document's (which scales with ruby count). */
+  leavesByLine: Leaf[][];
+  /** Every ruby id — the Plain policy's expanded set, one shared instance so
+   *  the rubyCache key check is an identity hit. */
+  allRubies: Set<number>;
   posMap: number[];
   /** ruby id → [from, to] of its whole markup span (offset coordinates). */
   span: Map<number, [number, number]>;
+  /** ruby id → the node's positions/sizes/atom-ness (one walk per doc). */
+  rubies: RubyInfo[];
 };
 
 /** Serialize + parse the doc into the leaf model and the offset→position map,
- *  plus the per-ruby span range. Cached by doc identity (see below). */
+ *  plus the per-ruby span range and node geometry. Cached by doc identity (see
+ *  below). */
 const parseDoc = (doc: PMNode): Parse => {
   const text = serialize(doc);
   const leaves = docLeaves(text);
@@ -72,7 +102,30 @@ const parseDoc = (doc: PMNode): Parse => {
     if (s) s[1] = Math.max(s[1], l.to);
     else span.set(l.ruby, [l.from, l.to]);
   }
-  return { doc, text, leaves, posMap, span };
+  const rubies: RubyInfo[] = [];
+  doc.descendants((node, pos) => {
+    if (node.type.name !== 'ruby') return;
+    const $p = doc.resolve(pos);
+    rubies.push({
+      pos,
+      size: node.nodeSize,
+      baseSize: node.child(0).nodeSize,
+      rtSize: node.child(1).nodeSize,
+      atom: $p.parentOffset === 0 || $p.nodeBefore?.type.name === 'ruby',
+    });
+  });
+  const leavesByLine: Leaf[][] = [];
+  const allRubies = new Set<number>();
+  for (const l of leaves) {
+    let line = leavesByLine[l.line];
+    if (!line) {
+      line = [];
+      leavesByLine[l.line] = line;
+    }
+    line.push(l);
+    if (l.ruby >= 0) allRubies.add(l.ruby);
+  }
+  return { doc, text, leaves, leavesByLine, allRubies, posMap, span, rubies };
 };
 
 /** The BULK, caret- and policy-independent decorations: the inline formats
@@ -105,44 +158,35 @@ const buildBase = (parse: Parse): DecorationSet => {
   return DecorationSet.create(doc, decos);
 };
 
-/** The caret-/policy-dependent ruby node decorations (rebuilt per caret move):
+/** The CARET-INDEPENDENT ruby decorations — everything determined by (doc,
+ *  expanded-set) alone, so it is CACHED and reused across caret moves (per-move
+ *  cost was O(rubies) Decoration allocations + a full DecorationSet
+ *  redistribution — ~100ms/click at 9k rubies):
  *   - `rubyExpanded` shows the markup `|`,`(`,`)` (CSS pseudo-elements) and lays
  *     the reading out inline as editable text — set when the appear policy
  *     reveals this ruby (Plain: always; ByParagraph: the caret paragraph;
  *     ByCharacter: the caret ruby; Rich: never).
- *   - `rubyActive` highlights the ruby when the caret is strictly INSIDE it (the
- *     SHARED "logically in the ruby" condition: the caret steps through the
- *     editable base, lighting the highlight, and an IME composing there adds to
- *     the base; a caret at the outer boundary is outside and does not highlight).
  *   - on a COLLAPSED ruby the READING (`rubyText` child) gets `contenteditable=
  *     false` — the caret model already skips it, and read-only keeps an IME from
  *     leaking into the reading at the trailing edge. The BASE usually stays editable
- *     (the caret steps its interior). EXCEPTION: a LEADING ruby (first inline node
- *     of its paragraph) also gets its base read-only — with no editable text before
- *     it, an IME composed INTO the base at the paragraph start; read-only makes the
- *     IME compose BEFORE the ruby (the caret model treats a leading ruby as an
- *     atom). An expanded ruby is fully editable. */
-const buildRubyNodes = (
+ *     (the caret steps its interior). EXCEPTION: an ATOM ruby (no editable plain
+ *     text immediately before it — it LEADS its paragraph, or FOLLOWS another
+ *     ruby) also gets its base read-only, so an IME at its boundary composes
+ *     OUTSIDE instead of into the base. The one caret-dependent exception — the
+ *     base un-locks while the caret is strictly INSIDE — is applied per move by
+ *     REMOVING that ruby's deco (returned in `atomBase`) from the cached set.
+ *     An expanded ruby is fully editable.
+ *  The caret-dependent classes (`rubyActive`, `rubySelected`) are a separate,
+ *  O(1)-ish DELTA added on top in buildDecorations. */
+const buildRubyStatic = (
   parse: Parse,
-  headOffset: number,
   expanded: Set<number>,
-  selFrom: number,
-  selTo: number,
-): Decoration[] => {
-  const { doc, span } = parse;
-  const decos: Decoration[] = [];
-  let rubyIdx = 0;
-  doc.descendants((node, pos) => {
-    if (node.type.name !== 'ruby') return;
-    const cls: string[] = [];
-    const isExpanded = expanded.has(rubyIdx);
-    // The whole ruby node lies inside a non-empty selection: its shown delimiters
-    // (pseudo-elements + the close widget) get no native selection highlight, so
-    // we tint them to match (CSS `.rubySelected`). Only matters when expanded.
-    const fullySelected = selFrom < selTo && selFrom <= pos && pos + node.nodeSize <= selTo;
-    if (isExpanded) {
-      cls.push('rubyExpanded');
-      if (fullySelected) cls.push('rubySelected');
+): { nodes: Decoration[]; atomBase: Map<number, Decoration> } => {
+  const nodes: Decoration[] = [];
+  const atomBase = new Map<number, Decoration>();
+  parse.rubies.forEach((r, idx) => {
+    if (expanded.has(idx)) {
+      nodes.push(Decoration.node(r.pos, r.pos + r.size, { class: 'rubyExpanded' }));
       // The closing `)` is a WIDGET (a real <span>), NOT `rt::after` generated
       // content: generated content has no caret-traversable position after it, so
       // the native caret at the ruby's trailing boundary (offset just after the
@@ -152,54 +196,49 @@ const buildRubyNodes = (
       // the caret a true after-`)` position. The leading `|` and inner `(` stay as
       // pseudo-elements: they have real content after them (the base / the
       // reading), so their boundary carets already resolve correctly.
-      const closePos = pos + node.nodeSize;
-      decos.push(
-        Decoration.widget(closePos, () => closeDelim(fullySelected), {
-          side: -1,
-          // The selected state is in the key so PM re-renders the widget when the
-          // selection starts/stops covering this ruby (same-key widgets are reused).
-          key: `rclose-${rubyIdx}${fullySelected ? '-sel' : ''}`,
-          ignoreSelection: true,
-        }),
+      nodes.push(
+        Decoration.widget(r.pos + r.size, closeDelim, { side: -1, key: `rclose-${idx}`, ignoreSelection: true }),
       );
-    }
-    const sp = span.get(rubyIdx);
-    // "Strictly inside" — the caret offset is between the markup edges, not on
-    // them (the boundary offsets map OUTSIDE the node in pm/model.ts; the
-    // highlight, the read-only-base toggle, and the insertion mapping share this
-    // rule so they can't drift).
-    const caretInside = !!sp && headOffset > sp[0] && headOffset < sp[1];
-    // The `rubyActive` tint marks the ruby the EDITING caret sits in. Suppress it
-    // while a non-empty selection is active (`selFrom !== selTo`): there is no
-    // single editing position then, and its (yellow) tint would clash with — and
-    // visually override — the (blue) text-selection highlight on that ruby.
-    if (caretInside && selFrom === selTo) cls.push('rubyActive');
-    if (cls.length) decos.push(Decoration.node(pos, pos + node.nodeSize, { class: cls.join(' ') }));
-    // Read-only reading on a collapsed ruby: the rubyText child is node.child(1),
-    // at pos + 1 (into the ruby) + the rubyBase's size.
-    if (!isExpanded) {
-      const rtFrom = pos + 1 + node.child(0).nodeSize;
-      decos.push(Decoration.node(rtFrom, rtFrom + node.child(1).nodeSize, { contenteditable: 'false' }));
-      // An ATOM ruby has NO editable plain text immediately before it for an IME to
-      // anchor to (it LEADS its paragraph, or FOLLOWS another ruby — two adjacent
-      // rubies), so an IME would compose INTO its base at the boundary. Keep its base
-      // read-only UNTIL the caret is INSIDE it: at the boundary the IME composes
-      // OUTSIDE (paragraph start / between the rubies), but once the caret steps into
-      // the interior the base is editable and navigates/edits char-by-char. (Non-atom
-      // rubies always have a plain-text anchor outside, so their base stays editable.)
-      const $p = doc.resolve(pos);
-      const isAtom = $p.parentOffset === 0 || $p.nodeBefore?.type.name === 'ruby';
-      if (isAtom && !caretInside) {
-        decos.push(Decoration.node(pos + 1, pos + 1 + node.child(0).nodeSize, { contenteditable: 'false' }));
+    } else {
+      // Read-only reading on a collapsed ruby: the rubyText child is at
+      // pos + 1 (into the ruby) + the rubyBase's size.
+      const rtFrom = r.pos + 1 + r.baseSize;
+      nodes.push(Decoration.node(rtFrom, rtFrom + r.rtSize, { contenteditable: 'false' }));
+      if (r.atom) {
+        const d = Decoration.node(r.pos + 1, r.pos + 1 + r.baseSize, { contenteditable: 'false' });
+        nodes.push(d);
+        atomBase.set(idx, d);
       }
     }
-    rubyIdx++;
   });
-  return decos;
+  return { nodes, atomBase };
+};
+
+/** The Rich policy's expanded set — one shared instance so the rubyCache key
+ *  check is an identity hit on every caret move. */
+const EMPTY_EXPANDED: Set<number> = new Set();
+
+const setsEq = (a: Set<number>, b: Set<number>): boolean => {
+  if (a === b) return true; // the shared plain/rich instances hit here
+  if (a.size !== b.size) return false;
+  for (const x of a) if (!b.has(x)) return false;
+  return true;
 };
 
 let parseCache: Parse | null = null;
 let baseCache: { doc: PMNode; set: DecorationSet } | null = null;
+// The cached static layer: the base (bold/italic/縦中横) set PLUS the ruby static
+// decorations, keyed by (doc, policy, expanded-set VALUE). Under Rich/Plain the
+// expanded set never changes (none/all), so every caret move reuses it; under
+// ByParagraph/ByCharacter it rebuilds only when the caret crosses into another
+// line/ruby (which re-renders those rubies anyway).
+let rubyCache: {
+  doc: PMNode;
+  policy: Appear;
+  expanded: Set<number>;
+  set: DecorationSet;
+  atomBase: Map<number, Decoration>;
+} | null = null;
 
 /** Build the decoration set for the document under `policy` and caret `head`
  *  (a ProseMirror position, which fixes the active paragraph/ruby for
@@ -213,20 +252,34 @@ export const buildDecorations = (
   selTo: number = head,
 ): DecorationSet => {
   if (!parseCache || parseCache.doc !== doc) parseCache = parseDoc(doc);
-  const { text, leaves } = parseCache;
+  const { text, leavesByLine, allRubies } = parseCache;
 
   const headOffset = posToOffset(doc, head);
   const activeLine = lineOf(text, headOffset);
-  const active = activeRuby(leaves, headOffset);
+  // The caret's neighbours all live on its own line (no leaf crosses a `\n`),
+  // so every per-move scan below reads ONE line's leaves — the whole-doc list
+  // scales with the ruby count and stalled ruby-dense docs.
+  const lineLeaves = leavesByLine[activeLine] ?? [];
+  const active = activeRuby(lineLeaves, headOffset);
   // A ruby is "expanded" (markup shown) when its delimiter is NOT hidden under
-  // the policy — the same source of truth the caret model uses to decide whether
-  // the reading is a caret stop.
-  const expanded = new Set<number>();
-  for (const l of leaves) {
-    if (l.ruby >= 0 && l.kind === 'delim' && !isHidden(l, policy, activeLine, active)) {
-      expanded.add(l.ruby);
+  // the policy — this switch MIRRORS `isHidden` (pm/leaves.ts) case for case,
+  // resolved per policy so the common policies are O(1)/O(line), not a scan of
+  // every delimiter in the document. Keep the two in sync.
+  const expanded = ((): Set<number> => {
+    switch (policy) {
+      case 'plain':
+        return allRubies; // every delimiter shown — the one shared instance
+      case 'rich':
+        return EMPTY_EXPANDED; // every delimiter hidden
+      case 'paragraph': {
+        const set = new Set<number>();
+        for (const l of lineLeaves) if (l.ruby >= 0) set.add(l.ruby);
+        return set;
+      }
+      case 'char':
+        return active >= 0 ? new Set([active]) : EMPTY_EXPANDED;
     }
-  }
+  })();
 
   // The bold/italic/縦中横 base set depends only on the doc — reuse it across every
   // caret move and policy change.
@@ -242,7 +295,52 @@ export const buildDecorations = (
   // line (one wrapped column/row), which a node decoration on the <p> can't
   // express. editor/line-numbers.ts measures and draws it in the overlay.
 
-  const nodes = buildRubyNodes(parseCache, headOffset, expanded, selFrom, selTo);
+  // The static layer (base formats + caret-independent ruby decorations) —
+  // rebuilt only when the doc/policy/expanded-set actually changed.
+  if (!rubyCache || rubyCache.doc !== doc || rubyCache.policy !== policy || !setsEq(rubyCache.expanded, expanded)) {
+    const { nodes, atomBase } = buildRubyStatic(parseCache, expanded);
+    rubyCache = { doc, policy, expanded, set: baseCache.set.add(doc, nodes), atomBase };
+    // Test seam: count O(rubies) static rebuilds. A caret move under a fixed
+    // policy must reuse the cache (no increment). click-perf asserts this.
+    const w = globalThis as unknown as { __vedRubyRebuilds?: number };
+    w.__vedRubyRebuilds = (w.__vedRubyRebuilds ?? 0) + 1;
+  }
+  let set = rubyCache.set;
+
+  // The per-caret DELTA — O(active ruby + selection), not O(rubies).
+  const delta: Decoration[] = [];
+  // "Strictly inside" — the caret offset is between the markup edges, not on
+  // them (the boundary offsets map OUTSIDE the node in pm/model.ts; the
+  // highlight, the read-only-base toggle, and the insertion mapping share this
+  // rule so they can't drift). At most ONE ruby can contain the offset strictly,
+  // and `activeRuby` (edge-inclusive) finds it if it exists.
+  const sp = active >= 0 ? parseCache.span.get(active) : undefined;
+  const caretInside = !!sp && headOffset > sp[0] && headOffset < sp[1];
+  if (caretInside) {
+    const r = parseCache.rubies[active];
+    if (r) {
+      // The `rubyActive` tint marks the ruby the EDITING caret sits in. Suppress
+      // it while a non-empty selection is active (`selFrom !== selTo`): there is
+      // no single editing position then, and its (yellow) tint would clash with —
+      // and visually override — the (blue) text-selection highlight on that ruby.
+      if (selFrom === selTo) delta.push(Decoration.node(r.pos, r.pos + r.size, { class: 'rubyActive' }));
+      // An atom ruby's base un-locks while the caret is strictly inside it (the
+      // IME then edits the base char-by-char) — drop its cached read-only deco.
+      const ab = rubyCache.atomBase.get(active);
+      if (ab) set = set.remove([ab]);
+    }
+  }
+  // A whole EXPANDED ruby inside a non-empty selection: its shown delimiters
+  // (pseudo-elements + the close widget) get no native selection highlight, so
+  // tint them to match — `rubySelected` on the node; the close widget follows
+  // via CSS (`ruby.rubySelected + .rubyDelimClose`).
+  if (selFrom < selTo) {
+    for (const idx of expanded) {
+      const r = parseCache.rubies[idx];
+      if (r && selFrom <= r.pos && r.pos + r.size <= selTo)
+        delta.push(Decoration.node(r.pos, r.pos + r.size, { class: 'rubySelected' }));
+    }
+  }
 
   // Boundary caret: a COLLAPSED caret BETWEEN two adjacent collapsed rubies sits at
   // a seam with hidden ruby delimiters on BOTH sides and no DOM text node, so the
@@ -253,12 +351,14 @@ export const buildDecorations = (
   // a widget there would double the caret.)
   if (selFrom === selTo) {
     const hidden = (l?: Leaf): boolean => !!l && l.kind === 'delim' && isHidden(l, policy, activeLine, active);
-    const lb = leaves.find((l) => l.to === headOffset);
-    const la = leaves.find((l) => l.from === headOffset);
+    // Delimiter leaves never cross a `\n`, so both neighbours of the head sit on
+    // the head's own line — scan just that line.
+    const lb = lineLeaves.find((l) => l.to === headOffset);
+    const la = lineLeaves.find((l) => l.from === headOffset);
     if (hidden(lb) && hidden(la) && lb?.ruby !== la?.ruby) {
-      nodes.push(Decoration.widget(head, boundaryCaret, { key: `bcaret-${head}`, side: 0, ignoreSelection: true }));
+      delta.push(Decoration.widget(head, boundaryCaret, { key: `bcaret-${head}`, side: 0, ignoreSelection: true }));
     }
   }
 
-  return baseCache.set.add(doc, nodes);
+  return delta.length ? set.add(doc, delta) : set;
 };

@@ -56,7 +56,9 @@ try {
       // The `|` and `(` are ::before/::after on .rubyBase.
       beforeBg: ruby ? getComputedStyle(ruby.querySelector('.rubyBase')!, '::before').backgroundColor : '',
       afterBg: ruby ? getComputedStyle(ruby.querySelector('.rubyBase')!, '::after').backgroundColor : '',
-      closeSelected: close?.classList.contains('rubyDelimSelected') ?? false,
+      // The close `)` tint is CSS-driven off the ruby's class (adjacent sibling —
+      // the widget itself is selection-independent and cached): the rule must match.
+      closeSelected: !!document.querySelector('ruby.rubySelected + .rubyDelimClose'),
       closeBg: close ? getComputedStyle(close).backgroundColor : '',
       opaque,
     } as const;
@@ -65,7 +67,7 @@ try {
   assert.ok(sel.rubySelected, 'the fully-selected ruby gets the rubySelected class');
   assert.ok(opaque(sel.beforeBg), `the "|" pseudo-element is tinted (got ${sel.beforeBg})`);
   assert.ok(opaque(sel.afterBg), `the "(" pseudo-element is tinted (got ${sel.afterBg})`);
-  assert.ok(sel.closeSelected, 'the ")" close widget gets the rubyDelimSelected class');
+  assert.ok(sel.closeSelected, 'the ")" close widget directly follows the selected ruby (the CSS tint rule matches)');
   assert.ok(opaque(sel.closeBg), `the ")" close widget is tinted (got ${sel.closeBg})`);
   step('Plain Ctrl+A tints the markup | ( ) with the selection colour');
 
