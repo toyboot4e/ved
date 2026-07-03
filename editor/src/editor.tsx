@@ -25,7 +25,14 @@ import {
   serialize,
   serializeSlice,
 } from './pm/model';
-import { type LineItem, pageBoundaryEnds, pageGapPlugin, pageGapTr, posAfterEnclosingRuby } from './pm/page-gap';
+import {
+  type LineItem,
+  pageEndsFromLines,
+  pageGapPlugin,
+  pageGapTr,
+  posAfterEnclosingRuby,
+  visualLineEnds,
+} from './pm/page-gap';
 import { RubyView } from './pm/ruby-view';
 import { repair } from './pm/structure';
 import { lineToScroll, type ScrollGeom, type ScrollMode, scrollToLine } from './scroll-keep';
@@ -683,8 +690,10 @@ export const VedEditor = (props: VedEditorProps): React.JSX.Element => {
   const goalInlineRef = useRef<number | null>(null);
   const lineNumbersRef = useRef<LineNumbers | null>(null);
   // Re-measures the VerticalRows page-gap widget positions (pm/page-gap.ts)
-  // after layout-affecting events; a no-op in the other modes.
-  const pageGapsRef = useRef<{ schedule: () => void } | null>(null);
+  // after layout-affecting events; a no-op in the other modes. `full` (the
+  // default) drops the suffix cache — pass false ONLY for a doc edit, whose
+  // layout change is bounded to its own lines (see measurePageGaps).
+  const pageGapsRef = useRef<{ schedule: (full?: boolean) => void } | null>(null);
   // Mouse drag-selection is DRIVEN BY US (see the pointer handlers): the native
   // selection can't extend across a collapsed ruby's READ-ONLY base
   // (`contenteditable=false`, the atom-ruby IME-safety rule), so a native drag
@@ -776,7 +785,8 @@ export const VedEditor = (props: VedEditorProps): React.JSX.Element => {
         // O(doc) re-measure, and no rAF wait — the highlight lands in the same
         // frame as the caret instead of one frame behind it).
         if (tr.docChanged) lineNumbersRef.current?.schedule();
-        if (tr.docChanged) pageGapsRef.current?.schedule();
+        // An edit's layout change starts at its own line — suffix re-measure.
+        if (tr.docChanged) pageGapsRef.current?.schedule(false);
         else if (tr.selectionSet) lineNumbersRef.current?.refreshCaret();
         // Keep the caret in view after edits — PM's scrollIntoView doesn't
         // survive the post-commit repair, nor handle vertical-rl multicol.
@@ -938,7 +948,12 @@ export const VedEditor = (props: VedEditorProps): React.JSX.Element => {
     const lineNumbers = mountLineNumbers(mount, view.dom, caretRect, () => selectedGlyphRectsRef.current?.() ?? []);
     lineNumbersRef.current = lineNumbers;
     lineNumbers.schedule();
-    document.fonts?.ready.then(() => lineNumbers.schedule());
+    document.fonts?.ready.then(() => {
+      lineNumbers.schedule();
+      // A late webfont changes glyph advances → wraps move; also drops the
+      // page-gap suffix cache, which a font swap would silently invalidate.
+      pageGapsRef.current?.schedule();
+    });
     // Also fires on a view-config change (font size / line space / page
     // geometry): the content box resizes, so the line numbers re-measure and
     // the page-gap widgets re-derive (wraps may have moved).
@@ -1103,8 +1118,9 @@ export const VedEditor = (props: VedEditorProps): React.JSX.Element => {
       // Test seam: count O(document) glyph walks (one layout read PER GLYPH — the
       // most expensive operation in the editor). Clicks AND drags must not trigger
       // one (click-perf asserts this; they hit-test viewport-scoped via
-      // walkGlyphsNear); only the blank-page fallback, a doc-change page-gap
-      // measure, or a non-empty-selection repaint may.
+      // walkGlyphsNear), and the page-gap measure walks per paragraph with a
+      // cached prefix (measurePageGaps) — only the blank-page drag fallback
+      // still takes the full walk.
       const w = globalThis as unknown as { __vedGlyphWalks?: number };
       w.__vedGlyphWalks = (w.__vedGlyphWalks ?? 0) + 1;
       const offs = glyphOffsets(docLeaves(serialize(view.state.doc)));
@@ -1286,36 +1302,96 @@ export const VedEditor = (props: VedEditorProps): React.JSX.Element => {
     // the page-boundary positions, and swap the widget set when it changed.
     // rAF-coalesced; skipped during IME composition (reconciled on
     // compositionend) and outside the paged modes (where the set empties).
+    //
+    // SUFFIX RE-MEASURE. An edit can only move layout from its own model line
+    // onward: earlier paragraphs are separate blocks whose wrapping is
+    // untouched, and the gap widgets before the edit cannot change (boundaries
+    // derive from the line structure, stable before the edit; a widget is
+    // zero-inline-size, so it never re-wraps what it was measured from). So
+    // the measure caches the visual-line END OFFSETS — offsets, never rects:
+    // an offset is frame-independent, immune to scrolls and widget-induced
+    // shifts — and glyph-walks only the lines from the first CHANGED one.
+    // Typing at the end of a large document measures one paragraph instead of
+    // the whole text (the full walk is one layout read per glyph, ~1s at 400k
+    // chars, paid per keystroke). A model-line break is always a visual-line
+    // break (block boxes stack a pitch apart), so prefix ++ fresh-suffix
+    // preserves the clustering with no cross-epoch coordinate comparison.
+    // Sound only while the expanded set is caret-INDEPENDENT (Rich: none;
+    // Plain: all) — under ByParagraph/ByCharacter a caret MOVE re-wraps the
+    // newly (un)expanded paragraph with no doc change, so those policies take
+    // the full pass. Any non-edit layout change (mode/policy/resize/fonts)
+    // schedules with `full`, dropping the cache.
     let pageGapRaf = 0;
     let lastGapPositions: number[] = [];
     let measuredLineCount = 0; // visual lines seen by the last measurePageGaps
+    let gapCache: {
+      text: string;
+      pitch: number;
+      linesPerPage: number;
+      pagesPerBand: number;
+      lineEnds: number[];
+    } | null = null;
     const measurePageGaps = (pagesPerBand: number): number[] => {
       const linesPerPage = Number.parseFloat(getComputedStyle(mount).getPropertyValue('--page-lines')) || 20;
       const pitch = Number.parseFloat(getComputedStyle(view.dom).lineHeight) || 28;
-      const items: LineItem[] = walkGlyphs().map(({ off, rect }) => ({ endOff: off + 1, b: rect.left }));
-      // Empty paragraphs are visual lines with no glyphs — add them by offset.
-      const paras = view.dom.querySelectorAll(':scope > p');
-      let off = 0;
-      serialize(view.state.doc)
-        .split('\n')
-        .forEach((line, i) => {
-          const p = paras[i];
-          if (line.length === 0 && p) items.push({ endOff: off, b: p.getBoundingClientRect().left });
-          off += line.length + 1;
-        });
-      items.sort((a, z) => a.endOff - z.endOff);
-      // Count the visual lines with the same clustering rule pageBoundaryEnds
-      // uses (a new line = a block jump over half a pitch from the line's
-      // representative coordinate).
-      measuredLineCount = items.length ? 1 : 0;
-      let lineB = items[0]?.b ?? 0;
-      for (const it of items) {
-        if (Math.abs(it.b - lineB) > pitch / 2) {
-          measuredLineCount++;
-          lineB = it.b;
+      const text = serialize(view.state.doc);
+      const lines = text.split('\n');
+      const policy = policyClassRef.current;
+      const usable =
+        gapCache !== null &&
+        (policy === 'rich' || policy === 'plain') &&
+        gapCache.pitch === pitch &&
+        gapCache.linesPerPage === linesPerPage &&
+        gapCache.pagesPerBand === pagesPerBand;
+      // The reusable prefix: cached visual-line ends strictly before the first
+      // changed model line. `serialize` is memoized per doc version (same
+      // string instance), so the identity check catches a text-preserving
+      // transaction (ruby repair, decoration meta) outright — measure nothing.
+      let fromLine = 0;
+      let fromOff = 0;
+      let prefixEnds: number[] = [];
+      if (usable && gapCache) {
+        if (gapCache.text === text) {
+          fromLine = lines.length;
+          prefixEnds = gapCache.lineEnds;
+        } else {
+          const old = gapCache.text;
+          const n = Math.min(old.length, text.length);
+          let i = 0;
+          while (i < n && old.charCodeAt(i) === text.charCodeAt(i)) i++;
+          fromOff = text.lastIndexOf('\n', i - 1) + 1; // start of the first changed line
+          fromLine = lineOf(text, fromOff);
+          prefixEnds = gapCache.lineEnds.filter((e) => e < fromOff);
         }
       }
-      return pageBoundaryEnds(items, linesPerPage, pitch, pagesPerBand).map((end) =>
+      // Glyph-measure the suffix lines. Empty paragraphs are visual lines with
+      // no glyphs — they contribute their own offset instead.
+      const byLine = lineGlyphOffsets();
+      const paras = view.dom.querySelectorAll(':scope > p');
+      const items: LineItem[] = [];
+      const buf: { off: number; rect: DOMRect }[] = [];
+      let off = fromOff;
+      for (let i = fromLine; i < lines.length && i < paras.length; i++) {
+        const p = paras[i]!;
+        if (lines[i]!.length === 0) items.push({ endOff: off, b: p.getBoundingClientRect().left });
+        else if (byLine[i]?.length) {
+          buf.length = 0;
+          paraGlyphs(p, byLine[i]!, buf);
+          for (const g of buf) items.push({ endOff: g.off + 1, b: g.rect.left });
+        }
+        off += lines[i]!.length + 1;
+      }
+      const lineEnds = prefixEnds.concat(visualLineEnds(items, pitch));
+      // Test seams: `__vedGapLines` counts the model lines glyph-measured per
+      // gap pass (an end-of-doc edit must measure only the tail, not the
+      // document); `__vedGapLineEnds` exposes the maintained visual-line ends
+      // so page-gap-suffix can pin suffix ≡ full re-measure exactly.
+      const w = globalThis as unknown as { __vedGapLines?: number; __vedGapLineEnds?: readonly number[] };
+      w.__vedGapLines = (w.__vedGapLines ?? 0) + (lines.length - fromLine);
+      w.__vedGapLineEnds = lineEnds;
+      gapCache = { text, pitch, linesPerPage, pagesPerBand, lineEnds };
+      measuredLineCount = lineEnds.length;
+      return pageEndsFromLines(lineEnds, linesPerPage, pagesPerBand).map((end) =>
         posAfterEnclosingRuby(view.state.doc.resolve(offsetToPos(view.state.doc, end))),
       );
     };
@@ -1365,7 +1441,10 @@ export const VedEditor = (props: VedEditorProps): React.JSX.Element => {
       // rAF for frame alignment, with a timeout fallback: rAF does NOT fire in
       // hidden/throttled windows (the e2e harness runs hidden), where the
       // widgets must still land. Whichever fires first runs; both are cleared.
-      schedule: (): void => {
+      // `full` (the default) drops the suffix cache — for layout changes that
+      // move lines without editing text; a doc edit passes false.
+      schedule: (full = true): void => {
+        if (full) gapCache = null;
         cancelAnimationFrame(pageGapRaf);
         clearTimeout(pageGapTimer);
         pageGapRaf = requestAnimationFrame(runPageGaps);
@@ -1467,7 +1546,9 @@ export const VedEditor = (props: VedEditorProps): React.JSX.Element => {
         // Re-anchor for the next edit now that the IME word has settled.
         beforeOffsetRef.current = posToOffset(view.state.doc, view.state.selection.head);
         // Page-gap re-measures were skipped during the composition — reconcile.
-        pageGapsRef.current?.schedule();
+        // The composition was an edit: its layout change starts at its own
+        // line, so the suffix cache stays valid.
+        pageGapsRef.current?.schedule(false);
       });
     };
     view.dom.addEventListener('compositionstart', onCompositionStart);

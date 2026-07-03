@@ -259,6 +259,30 @@ try {
     `[bench]   sync=${last.syncMs.toFixed(1)}ms toFrame=${last.toFrameMs.toFixed(1)}ms highlight=${last.highlightMs.toFixed(1)}ms`,
   );
 
+  // Click RIGHT AFTER a keystroke: a real editing session clicks into a pending
+  // edit-path pipeline (full line-number re-measure, page gaps, multicol
+  // relayout) — the click's handlers and highlight queue BEHIND that O(doc)
+  // work, so perceived click latency after typing is edit-path latency.
+  await page.waitForTimeout(500);
+  for (let i = 0; i < 3; i++) {
+    await page.keyboard.type('あ');
+    await page.waitForTimeout(120); // enough to dispatch, not enough to settle
+    const t0 = Date.now();
+    await page.mouse.click(x - 30 - i * 25, y + 15);
+    const perfNow = await page.evaluate(() => (window as unknown as { __perf: Entry[] }).__perf);
+    const last = perfNow[perfNow.length - 1];
+    console.log(
+      `[bench] click ${Date.now() - t0}ms after typing: sync=${last?.syncMs.toFixed(1)}ms (highlight settles below)`,
+    );
+    await page.waitForTimeout(600);
+  }
+  const perfTail = await page.evaluate(() => (window as unknown as { __perf: Entry[] }).__perf);
+  for (const p of perfTail.slice(-3)) {
+    console.log(
+      `[bench] type-then-click: sync=${p.syncMs.toFixed(1)}ms toFrame=${p.toFrameMs.toFixed(1)}ms highlight=${p.highlightMs.toFixed(1)}ms`,
+    );
+  }
+
   // Hit-test scaling: N bare mousemoves at distinct points, no DOM writes, no
   // script — if Task scales ~linearly with N, the per-event cost is Chromium's
   // event-target hit-test over the fragmented multicol flow.

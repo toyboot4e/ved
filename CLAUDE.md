@@ -153,9 +153,13 @@ Task runner is `just`:
   decorations split into cached caret-independent layers + an O(1) delta.
   Glyph-rect walks (one layout read PER GLYPH — the most expensive operation in
   the editor) are scoped to the viewport (hit-tests) or the selection span
-  (overlay); a plain in-content click measures nothing. Guarded by counter
-  seams, not timing: `__vedGlyphWalks`, `__vedBaseRebuilds`, `__vedRubyRebuilds`
-  (`test/e2e/caret-move-perf.ts`, `click-perf.ts`). Latency benchmarks live in
+  (overlay); a plain in-content click measures nothing; the page-gap measure is
+  suffix-incremental per EDIT (cached visual-line end offsets + re-walk from
+  the first changed line — Rich/Plain only; a non-edit layout change schedules
+  full). Guarded by counter seams, not timing: `__vedGlyphWalks`,
+  `__vedBaseRebuilds`, `__vedRubyRebuilds`, `__vedGapLines`
+  (`test/e2e/caret-move-perf.ts`, `click-perf.ts`, `page-gap-suffix.ts`).
+  Latency benchmarks live in
   `desktop/bench/` (`node bench/click-bench.ts [paras] [ruby] [show]` — `show`
   spawns a visible window; hidden windows throttle frames and distort latency).
   The remaining per-click floor is Chromium's hit-test/PrePaint over the one

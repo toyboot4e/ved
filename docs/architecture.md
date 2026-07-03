@@ -437,7 +437,18 @@ decoration (zero inline size, width = line pitch + `--page-gap`,
 `vertical-align: top`) fattens each page's LAST line one-sidedly, opening a
 real gap before the next page without touching the text model; the editor
 re-measures the widget positions from the glyph rects after layout-affecting
-events (`pm/page-gap.ts`, `measurePageGaps` in editor.tsx). The separator
+events (`pm/page-gap.ts`, `measurePageGaps` in editor.tsx). The measure is
+**suffix-incremental**: an edit's layout change starts at its own model line
+(earlier paragraphs are separate blocks; widgets before the edit can't move),
+so the visual-line END OFFSETS — offsets, never rects, so a cached prefix
+survives scrolls and widget shifts — are cached and only the lines from the
+first changed one are re-walked; typing at the end of a large document
+measures one paragraph, not the text. Suffix reuse is gated to the
+caret-independent appear policies (Rich/Plain) — under ByParagraph/ByCharacter
+a caret move re-wraps the (un)expanded paragraph with no doc change — and any
+non-edit layout change (mode/policy/resize/fonts) schedules a full pass.
+Pinned by `test/e2e/page-gap-suffix.ts` via the `__vedGapLines` /
+`__vedGapLineEnds` seams, including suffix ≡ full equivalence. The separator
 hairline is a right-anchored background lattice with period
 `--page-width + --page-gap`, centered in each gap. See
 [ADR 0010](adr/0010-verticalrows-arithmetic-pages.md).

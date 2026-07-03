@@ -64,40 +64,61 @@ export const pageGapPlugin = (): Plugin<DecorationSet> =>
  *  (decreasing per line in vertical-rl). */
 export type LineItem = { readonly endOff: number; readonly b: number };
 
-/** Text offsets of the page boundaries: the end of every `linesPerPage`-th
- *  visual line that has a following line — EXCEPT every `pagesPerBand`-th page
- *  (a VerticalColumns band break separates those physically via multicol
- *  fragmentation, and a widget there would overflow the band's exact width and
- *  push a line into the next band — an oscillating re-measure). Rows mode is
- *  one endless band: leave `pagesPerBand` at Infinity so every boundary gets a
- *  widget. Items are in reading order; a new line starts when the block
- *  coordinate moves by more than half a pitch. */
+/** The END OFFSET of each visual line, in reading order — items cluster into a
+ *  line until the block coordinate jumps by more than half a pitch (per-glyph
+ *  jitter stays under that; a real line break is a whole pitch). The offsets
+ *  (not the rects) are what the editor CACHES between measures for the suffix
+ *  re-measure: an offset is frame-independent, so a prefix of this list
+ *  survives scrolls and widget-induced geometry shifts that would invalidate
+ *  any cached coordinate. */
+export const visualLineEnds = (items: readonly LineItem[], linePitch: number): number[] => {
+  if (items.length === 0) return [];
+  const ends: number[] = [];
+  let lineB = items[0]!.b;
+  let lastEnd = items[0]!.endOff;
+  for (const it of items) {
+    if (Math.abs(it.b - lineB) > linePitch / 2) {
+      ends.push(lastEnd);
+      lineB = it.b;
+    }
+    lastEnd = it.endOff;
+  }
+  ends.push(lastEnd);
+  return ends;
+};
+
+/** Page-boundary offsets from the visual-line ends: the end of every
+ *  `linesPerPage`-th line that has a following line — EXCEPT every
+ *  `pagesPerBand`-th page (a VerticalColumns band break separates those
+ *  physically via multicol fragmentation, and a widget there would overflow
+ *  the band's exact width and push a line into the next band — an oscillating
+ *  re-measure). Rows mode is one endless band: leave `pagesPerBand` at
+ *  Infinity so every boundary gets a widget. */
+export const pageEndsFromLines = (
+  lineEnds: readonly number[],
+  linesPerPage: number,
+  pagesPerBand: number = Number.POSITIVE_INFINITY,
+): number[] => {
+  if (linesPerPage < 1 || pagesPerBand < 1) return [];
+  const out: number[] = [];
+  for (let i = 0; i + 1 < lineEnds.length; i++) {
+    if (i % linesPerPage === linesPerPage - 1) {
+      const page = (i + 1) / linesPerPage; // 1-based finished page
+      if (page % pagesPerBand !== 0) out.push(lineEnds[i]!);
+    }
+  }
+  return out;
+};
+
+/** Text offsets of the page boundaries, straight from measured items — the
+ *  composition of the two halves above (the editor calls them separately so
+ *  the visual-line ends can be cached across measures). */
 export const pageBoundaryEnds = (
   items: readonly LineItem[],
   linesPerPage: number,
   linePitch: number,
   pagesPerBand: number = Number.POSITIVE_INFINITY,
-): number[] => {
-  if (linesPerPage < 1 || pagesPerBand < 1 || items.length === 0) return [];
-  const out: number[] = [];
-  let line = 0;
-  let lineB = items[0]!.b;
-  let lastEnd = items[0]!.endOff;
-  for (const it of items) {
-    if (Math.abs(it.b - lineB) > linePitch / 2) {
-      // A line break BEFORE this item: emit the finished line if it ends a
-      // page that is not also a band end.
-      if (line % linesPerPage === linesPerPage - 1) {
-        const page = (line + 1) / linesPerPage; // 1-based finished page
-        if (page % pagesPerBand !== 0) out.push(lastEnd);
-      }
-      line++;
-      lineB = it.b;
-    }
-    lastEnd = it.endOff;
-  }
-  return out;
-};
+): number[] => pageEndsFromLines(visualLineEnds(items, linePitch), linesPerPage, pagesPerBand);
 
 /** The position itself, or — when it landed inside a ruby (a page's last glyph
  *  can be a base's last character, whose end offset maps into the hidden
