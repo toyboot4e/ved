@@ -9,7 +9,7 @@
 // pseudo-elements driven by the `rubyExpanded` node class. The native caret and
 // IME therefore live in real, full-size text at every position, including a
 // ruby boundary; the old overlay caret / font-size:0 / delimAnchor machinery is
-// gone (ADR-0007 fallout — see the model.ts header).
+// gone (see the model.ts header).
 //
 // PERFORMANCE: this runs on EVERY editor state change, including a bare caret
 // move, so per-move work must not scale with the document. Three layers:
@@ -18,8 +18,8 @@
 //      `baseCache`) plus every caret-INDEPENDENT ruby decoration (`rubyCache`,
 //      keyed by doc + policy + expanded-set value, so a caret move under a
 //      fixed policy always reuses it).
-//   3. A per-move DELTA — O(active ruby + selection): the rubyActive tint, the
-//      active atom-base unlock, rubySelected, the boundary caret.
+//   3. A per-move DELTA — O(active ruby): the rubyActive tint, the active
+//      atom-base unlock, the boundary caret.
 // The `__vedBaseRebuilds`/`__vedRubyRebuilds` seams count layer-2 rebuilds;
 // caret-move-perf and click-perf assert caret moves cause none.
 import type { Node as PMNode } from 'prosemirror-model';
@@ -35,17 +35,28 @@ const RULES: { re: RegExp; cls: string }[] = [
 ];
 const TCY = /\d{2,}/g; // 縦中横: runs of 2+ digits
 
-/** The closing `)` of an expanded ruby, as a real (caret-traversable) element —
- *  see the widget in buildRubyStatic for why it can't be `rt::after`. Its
- *  selected tint is pure CSS (`ruby.rubySelected + .rubyDelimClose`), keyed off
- *  the ruby's own class — so the widget itself is selection-independent and
- *  lives in the CACHED static set, never re-rendered by a caret move. */
-const closeDelim = (): HTMLElement => {
+/** The shown delimiters of an expanded ruby, as real (caret-separating)
+ *  elements — pseudo-element delimiters (the former `::before`/`::after`)
+ *  have no DOM positions AROUND them, so the caret painted identically on
+ *  both sides of a delimiter (moving across `|` or `(` showed no cursor
+ *  change). A real element between two text positions renders the two carets
+ *  apart. Selection paint comes from the OVERLAY (editor.tsx walkGlyphsLines
+ *  measures the widgets like any visible glyph), and the caret-adjacent
+ *  `rubyActive` tint reaches the close widget via a sibling CSS rule — so the
+ *  widgets are selection-independent and live in the CACHED static set, never
+ *  re-rendered by a caret move. */
+const delim = (cls: string, ch: string) => (): HTMLElement => {
   const s = document.createElement('span');
-  s.className = 'rubyDelimClose';
-  s.textContent = ')';
+  s.className = cls;
+  s.textContent = ch;
+  // Not model text: the glyph walks (editor.tsx paraGlyphs) skip these by
+  // class, and the caret must not enter them.
+  s.setAttribute('contenteditable', 'false');
   return s;
 };
+const openDelim = delim('rubyDelimOpen', '|');
+const parenDelim = delim('rubyDelimParen', '(');
+const closeDelim = delim('rubyDelimClose', ')');
 
 /** A rendered caret for a TEXT-LESS seam — between two collapsed rubies (or a
  *  collapsed ruby against a paragraph edge) the markup is not DOM text, so the
@@ -176,7 +187,7 @@ const buildBase = (parse: Parse): DecorationSet => {
  *     base un-locks while the caret is strictly INSIDE — is applied per move by
  *     REMOVING that ruby's deco (returned in `atomBase`) from the cached set.
  *     An expanded ruby is fully editable.
- *  The caret-dependent classes (`rubyActive`, `rubySelected`) are a separate,
+ *  The caret-dependent class (`rubyActive`) is a separate,
  *  O(1)-ish DELTA added on top in buildDecorations. */
 const buildRubyStatic = (
   parse: Parse,
@@ -187,15 +198,22 @@ const buildRubyStatic = (
   parse.rubies.forEach((r, idx) => {
     if (expanded.has(idx)) {
       nodes.push(Decoration.node(r.pos, r.pos + r.size, { class: 'rubyExpanded' }));
-      // The closing `)` is a WIDGET (a real <span>), NOT `rt::after` generated
-      // content: generated content has no caret-traversable position after it, so
-      // the native caret at the ruby's trailing boundary (offset just after the
-      // `)`) collapsed onto the rt's text end — BEFORE the `)` — and the user
-      // could not place the caret after it (it rendered at the same spot as the
-      // position before the `)`). A real element placed right after the ruby gives
-      // the caret a true after-`)` position. The leading `|` and inner `(` stay as
-      // pseudo-elements: they have real content after them (the base / the
-      // reading), so their boundary carets already resolve correctly.
+      // ALL THREE delimiters are WIDGETS (real <span>s), NOT generated content:
+      // generated content has no caret-traversable positions around it, so the
+      // caret painted at the SAME spot on both sides of a pseudo delimiter —
+      // after `)` it collapsed onto the rt's text end, and moving across `|`
+      // or `(` showed no cursor change at all. A real element between the two
+      // text positions renders the two carets apart. `|` sits at the ruby's
+      // content start (before the base), `(` between the base and the reading,
+      // `)` right after the ruby.
+      nodes.push(Decoration.widget(r.pos + 1, openDelim, { side: -1, key: `ropen-${idx}`, ignoreSelection: true }));
+      nodes.push(
+        Decoration.widget(r.pos + 1 + r.baseSize, parenDelim, {
+          side: -1,
+          key: `rparen-${idx}`,
+          ignoreSelection: true,
+        }),
+      );
       nodes.push(
         Decoration.widget(r.pos + r.size, closeDelim, { side: -1, key: `rclose-${idx}`, ignoreSelection: true }),
       );
@@ -330,17 +348,10 @@ export const buildDecorations = (
       if (ab) set = set.remove([ab]);
     }
   }
-  // A whole EXPANDED ruby inside a non-empty selection: its shown delimiters
-  // (pseudo-elements + the close widget) get no native selection highlight, so
-  // tint them to match — `rubySelected` on the node; the close widget follows
-  // via CSS (`ruby.rubySelected + .rubyDelimClose`).
-  if (selFrom < selTo) {
-    for (const idx of expanded) {
-      const r = parseCache.rubies[idx];
-      if (r && selFrom <= r.pos && r.pos + r.size <= selTo)
-        delta.push(Decoration.node(r.pos, r.pos + r.size, { class: 'rubySelected' }));
-    }
-  }
+  // (Selected shown markup needs NO decoration: the selection overlay
+  // (editor.tsx walkGlyphsLines) measures the delimiter widgets and the inline
+  // reading like any other visible glyph, so they get the SAME overlay tint —
+  // a separate CSS tint stacked on the overlay rect and painted them darker.)
 
   // Boundary caret: a COLLAPSED caret BETWEEN two adjacent collapsed rubies sits at
   // a seam with hidden ruby delimiters on BOTH sides and no DOM text node, so the

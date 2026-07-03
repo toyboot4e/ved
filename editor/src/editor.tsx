@@ -1,7 +1,6 @@
 import { clsx } from 'clsx';
 import { baseKeymap } from 'prosemirror-commands';
 import { keymap } from 'prosemirror-keymap';
-import { Fragment, Slice } from 'prosemirror-model';
 import { AllSelection, type Command, EditorState, Plugin, TextSelection, type Transaction } from 'prosemirror-state';
 import { EditorView } from 'prosemirror-view';
 import type React from 'react';
@@ -14,7 +13,7 @@ import { type CursorState, cursorToOffset, offsetToCursor } from './pm/cursor';
 import { buildDecorations } from './pm/decorations';
 import { type DragGlyph, glyphOffsets, nearestGlyphOffset } from './pm/drag-select';
 import type { Appear, Leaf } from './pm/leaves';
-import { docLeaves, lineOf, snapToGlyph } from './pm/leaves';
+import { activeRuby, docLeaves, isHidden, lineOf, snapToGlyph } from './pm/leaves';
 import {
   docFromText,
   inlineNodesFor,
@@ -22,6 +21,7 @@ import {
   posToOffset,
   rubyClickOutsidePos,
   rubyEdgeOutsidePos,
+  rubyPasteOutsidePos,
   schema,
   serialize,
   serializeSlice,
@@ -151,10 +151,12 @@ const moveChar = (view: EditorView, policy: Appear, reverse: boolean, extend: bo
  *  over the emptied paragraph. */
 const plainDeleteTr = (state: EditorState, from: number, to: number, split = false): Transaction | null => {
   const { doc } = state;
-  if (from >= to || to > doc.content.size) return null;
+  // A collapsed range is meaningful only as a SPLIT (Enter at a caret inside a
+  // ruby, where splitBlock can't split the inline node).
+  if (from > to || to > doc.content.size || (from === to && !split)) return null;
   const fromOff = posToOffset(doc, from);
   const toOff = posToOffset(doc, to);
-  if (fromOff >= toOff) return null;
+  if (fromOff > toOff || (fromOff === toOff && !split)) return null;
   const text = serialize(doc);
   // The paragraphs touched by [fromOff, toOff) collapse into ONE line (or a
   // split pair): rebuild that span canonically from its post-deletion text.
@@ -171,6 +173,44 @@ const plainDeleteTr = (state: EditorState, from: number, to: number, split = fal
   const tr = state.tr.replaceWith($a.before(1), $b.after(1), paras);
   const caretOff = split ? fromOff + 1 : fromOff;
   tr.setSelection(TextSelection.create(tr.doc, offsetToPos(tr.doc, caretOff)));
+  return tr;
+};
+
+/** Identity-exact BULK insert (paste, multi-line insertText): the plain string
+ *  gains exactly `data` at the insertion point and the touched paragraphs are
+ *  rebuilt canonically — the structural `replaceSelection` it replaces left
+ *  phantom markup on a selection crossing ruby children (the plainDeleteTr
+ *  rationale, see above), and pasting INTO a collapsed ruby spliced the raw
+ *  pasted markup mid-base, tearing the host ruby open into `|`/`(` debris the
+ *  user can't see in Rich. A non-empty selection is removed as plain
+ *  characters; in Rich a collapsed caret inside a collapsed ruby (base edge or
+ *  interior, the read-only reading) redirects OUTSIDE the ruby first
+ *  (`rubyPasteOutsidePos`). The caret lands after the inserted text. */
+const plainInsertTr = (state: EditorState, data: string, policy: Appear): Transaction => {
+  const { doc, selection } = state;
+  let from = selection.from;
+  let to = selection.to;
+  if (selection.empty && policy === 'rich') {
+    const outside = rubyPasteOutsidePos(selection.$head);
+    if (outside != null) {
+      from = outside;
+      to = outside;
+    }
+  }
+  const fromOff = posToOffset(doc, from);
+  const toOff = posToOffset(doc, to);
+  const text = serialize(doc);
+  // The paragraphs touched by the replaced span, rebuilt canonically from the
+  // spliced text (the pasted `\n`s become paragraph breaks).
+  const lineStart = fromOff === 0 ? 0 : text.lastIndexOf('\n', fromOff - 1) + 1;
+  const lineEndIdx = text.indexOf('\n', toOff);
+  const lineEnd = lineEndIdx < 0 ? text.length : lineEndIdx;
+  const spliced = text.slice(lineStart, fromOff) + data + text.slice(toOff, lineEnd);
+  const paras = spliced.split('\n').map((line) => schema.node('paragraph', null, inlineNodesFor(line)));
+  const $a = doc.resolve(offsetToPos(doc, fromOff));
+  const $b = doc.resolve(offsetToPos(doc, toOff));
+  const tr = state.tr.replaceWith($a.before(1), $b.after(1), paras);
+  tr.setSelection(TextSelection.create(tr.doc, offsetToPos(tr.doc, fromOff + data.length)));
   return tr;
 };
 
@@ -259,7 +299,9 @@ const deleteSelectionForIme = (view: EditorView): void => {
  *  NO-OP on the Ctrl+A `AllSelection` (and on a programmatic select-all whose DOM
  *  selection leads the model). Delete the range (DOM selection first, like
  *  `deleteChar`, else the model selection), then split at the caret. A collapsed
- *  caret returns false → baseKeymap splits normally. */
+ *  caret in plain text returns false → baseKeymap splits normally; a collapsed
+ *  caret INSIDE a ruby takes the identity split below (splitBlock can't split
+ *  the inline ruby node, so Enter was a no-op there). */
 const enterReplacingSelection: Command = (state, dispatch, view) => {
   let range: [number, number] | null = null;
   const ds = view?.dom.ownerDocument.getSelection();
@@ -273,7 +315,26 @@ const enterReplacingSelection: Command = (state, dispatch, view) => {
     }
   }
   if (!range && !state.selection.empty) range = [state.selection.from, state.selection.to];
-  if (!range) return false; // collapsed → baseKeymap handles the split
+  if (!range) {
+    // Collapsed caret INSIDE a ruby: baseKeymap's splitBlock cannot split an
+    // inline ruby node, so Enter was a NO-OP there. EXPANDED (markup visible):
+    // identity split AT the caret — the plain string gains the '\n' exactly
+    // where it sits, and the torn markup renders literally, the same as if it
+    // had been typed. COLLAPSED (Rich &c. — the markup is invisible): split
+    // OUTSIDE the ruby (`rubyPasteOutsidePos`, the paste rule) — tearing
+    // markup the user cannot see leaves invisible `|`/`(` debris.
+    const $h = state.selection.$head;
+    if ($h.depth <= 1) return false; // plain text — baseKeymap splits normally
+    if (dispatch && view) {
+      const domNode = view.domAtPos($h.pos).node;
+      const el = domNode.nodeType === Node.TEXT_NODE ? domNode.parentElement : (domNode as Element);
+      const expanded = !!el?.closest('ruby')?.classList.contains('rubyExpanded');
+      const at = expanded ? $h.pos : (rubyPasteOutsidePos($h) ?? $h.pos);
+      const tr = plainDeleteTr(state, at, at, true);
+      if (tr) dispatch(tr.scrollIntoView());
+    }
+    return true;
+  }
   if (dispatch) {
     // Identity-exact: the plain range is replaced by a paragraph break (the
     // same canonical rebuild as every selection deletion — plainDeleteTr).
@@ -649,7 +710,7 @@ const measureGeom = (scroller: HTMLElement): ScrollGeom => {
   const linePitch = (contentCs && Number.parseFloat(contentCs.lineHeight)) || fontSize + 2;
   // columns: band period = page height (the line length) + the multicol gap
   // (the line-number gutter). columnGap is only meaningful under multiCol —
-  // rows has no multicol (ADR 0010): its pitch is the contiguous lines plus
+  // rows has no multicol: its pitch is the contiguous lines plus
   // the physical page gap (--page-gap is @property-registered, so the
   // computed value is an evaluated px length).
   const colGap = (contentCs && Number.parseFloat(contentCs.columnGap)) || 20;
@@ -707,7 +768,7 @@ const revealDelta = (lo: number, hi: number, viewLo: number, viewHi: number, cus
  *    periodic (colsPagePitch) — so its vertical span is exact arithmetic over
  *    the content box.
  *  - `rows`: pages are arithmetic LINES whose physical positions drift with
- *    paragraph paddings (ADR 0010), so the boundaries are read from the
+ *    paragraph paddings, so the boundaries are read from the
  *    MEASURED `.ved-page-gap` widgets already in the DOM — each widget's rect
  *    spans its fattened last line + gap, so its center lies in the gap blank. */
 const caretPageSpan = (
@@ -989,12 +1050,11 @@ export const VedEditor = (props: VedEditorProps): React.JSX.Element => {
           // composed — tr.insertText below replaces the live selection anyway.
           imePendingSel = null;
           if (ie.data.includes('\n')) {
-            // Multi-line insertText (some IMEs, programmatic input): split into
-            // paragraphs, like a paste — `tr.insertText` would inline the \n.
-            const paras = ie.data
-              .split('\n')
-              .map((line) => schema.node('paragraph', null, line ? [schema.text(line)] : []));
-            v.dispatch(v.state.tr.replaceSelection(new Slice(Fragment.fromArray(paras), 1, 1)).scrollIntoView());
+            // Multi-line insertText (some IMEs, programmatic input): a bulk
+            // insert, handled like a paste — identity-exact, outside a
+            // collapsed ruby (`tr.insertText` would inline the \n, and a
+            // structural replaceSelection left phantom markup; plainInsertTr).
+            v.dispatch(plainInsertTr(v.state, ie.data, policyClassRef.current).scrollIntoView());
           } else {
             // New spec: in Rich a ruby's base EDGE writes OUTSIDE the ruby. The
             // caret rests at the boundary, but the browser's affinity can drop the
@@ -1015,15 +1075,17 @@ export const VedEditor = (props: VedEditorProps): React.JSX.Element => {
       // a widget), so PM's default copy drops them — this puts them on the
       // clipboard, and a paste back round-trips through structure repair.
       clipboardTextSerializer: (slice) => serializeSlice(slice),
-      // Paste as PLAIN TEXT (the identity model): split on newlines into
-      // paragraphs of text, never the copied ruby NODES — pasting a ruby node
-      // into another ruby's content violates the schema and PM drops the caret
-      // to the document start. Structure repair then re-forms the rubies.
+      // Paste as PLAIN TEXT (the identity model): the plain string gains
+      // exactly the clipboard text — never the copied ruby NODES (pasting a
+      // ruby node into another ruby's content violates the schema and PM drops
+      // the caret to the document start). plainInsertTr rebuilds the touched
+      // paragraphs canonically (a structural replaceSelection left phantom
+      // markup over a selection, and spliced pasted markup INTO a collapsed
+      // ruby's base) and, in Rich, lands a paste at a collapsed ruby OUTSIDE it.
       handlePaste: (v, event) => {
         const text = event.clipboardData?.getData('text/plain');
         if (!text) return false;
-        const paras = text.split('\n').map((line) => schema.node('paragraph', null, line ? [schema.text(line)] : []));
-        v.dispatch(v.state.tr.replaceSelection(new Slice(Fragment.fromArray(paras), 1, 1)).scrollIntoView());
+        v.dispatch(plainInsertTr(v.state, text, policyClassRef.current).scrollIntoView());
         return true;
       },
       // A pointer click that lands at a COLLAPSED ruby's base EDGE (start/end) — e.g.
@@ -1458,12 +1520,32 @@ export const VedEditor = (props: VedEditorProps): React.JSX.Element => {
       lineOffsCache = { leaves, byLine };
       return byLine;
     };
-    // Measure ONE paragraph's glyphs (text nodes sans `rt`, paired with that
-    // line's model offsets) into `out` — the per-paragraph unit both scoped
-    // walks below share.
-    const paraGlyphs = (p: Element, offs: number[], out: { off: number; rect: DOMRect }[]): void => {
+    // Measure ONE paragraph's glyphs (text nodes paired with that line's model
+    // offsets) into `out` — the per-paragraph unit the scoped walks below
+    // share. The delimiter WIDGETS (`|`,`(`,`)` — real spans, not model text)
+    // and `rt` text are skipped by default: their characters are not in the
+    // default offset lists, so counting them would shift the DOM-char ↔ offset
+    // pairing. `withShownMarkup` admits an EXPANDED ruby's shown markup — the
+    // inline READING and the delimiter widgets (which only exist expanded) —
+    // for callers whose `offs` include those leaf offsets (the selection
+    // overlay, which must paint them like any other visible glyph).
+    const paraGlyphs = (
+      p: Element,
+      offs: number[],
+      out: { off: number; rect: DOMRect }[],
+      withShownMarkup = false,
+    ): void => {
       const walker = document.createTreeWalker(p, NodeFilter.SHOW_TEXT, {
-        acceptNode: (n) => (n.parentElement?.closest('rt') ? NodeFilter.FILTER_REJECT : NodeFilter.FILTER_ACCEPT),
+        acceptNode: (n) => {
+          const el = n.parentElement;
+          if (el?.closest('.rubyDelimOpen, .rubyDelimParen, .rubyDelimClose'))
+            return withShownMarkup ? NodeFilter.FILTER_ACCEPT : NodeFilter.FILTER_REJECT;
+          const rt = el?.closest('rt');
+          if (!rt) return NodeFilter.FILTER_ACCEPT;
+          return withShownMarkup && rt.closest('ruby')?.classList.contains('rubyExpanded')
+            ? NodeFilter.FILTER_ACCEPT
+            : NodeFilter.FILTER_REJECT;
+        },
       });
       let k = 0;
       for (let n = walker.nextNode(); n; n = walker.nextNode()) {
@@ -1503,14 +1585,46 @@ export const VedEditor = (props: VedEditorProps): React.JSX.Element => {
       return out;
     };
     // Glyphs of the model lines `l0..l1` (inclusive) — the selection overlay's
-    // scope: exactly the paragraphs the selection spans.
+    // scope: exactly the paragraphs the selection spans. Unlike the other
+    // walks, this one includes an EXPANDED ruby's whole SHOWN MARKUP — the
+    // inline reading AND the `|`,`(`,`)` delimiter widgets: there they are
+    // visible body-level glyphs, so a selection covering them must paint them
+    // with the SAME overlay tint as every other glyph (a separate CSS tint
+    // stacked on the bridging overlay rect and painted the delimiters darker).
+    // A collapsed ruby's annotation reading stays excluded — base-only
+    // highlight, by design. The per-line offsets mirror `isHidden`, the same
+    // visibility rule the decorations resolve, so the DOM walk and the offset
+    // list stay paired.
     const walkGlyphsLines = (l0: number, l1: number): { off: number; rect: DOMRect }[] => {
-      const byLine = lineGlyphOffsets();
+      const text = serialize(view.state.doc);
+      const leaves = docLeaves(text);
+      const policy = policyClassRef.current;
+      const headOffset = posToOffset(view.state.doc, view.state.selection.head);
+      const activeLine = lineOf(text, headOffset);
+      const active = activeRuby(
+        leaves.filter((l) => l.line === activeLine),
+        headOffset,
+      );
+      const byLine: number[][] = [];
+      for (const l of leaves) {
+        if (l.line < l0 || l.line > l1) continue;
+        const visible =
+          l.kind === 'body' ||
+          l.kind === 'plain' ||
+          ((l.kind === 'rt' || l.kind === 'delim') && !isHidden(l, policy, activeLine, active));
+        if (!visible) continue;
+        let arr = byLine[l.line];
+        if (!arr) {
+          arr = [];
+          byLine[l.line] = arr;
+        }
+        for (let o = l.from; o < l.to; o++) arr.push(o);
+      }
       const out: { off: number; rect: DOMRect }[] = [];
       const paras = view.dom.querySelectorAll(':scope > p');
       for (let i = Math.max(0, l0); i <= l1 && i < paras.length; i++) {
         const offs = byLine[i];
-        if (offs?.length) paraGlyphs(paras[i]!, offs, out);
+        if (offs?.length) paraGlyphs(paras[i]!, offs, out, true);
       }
       return out;
     };
@@ -1645,7 +1759,7 @@ export const VedEditor = (props: VedEditorProps): React.JSX.Element => {
       if (view.composing) return;
       // Rows: one endless band — every page boundary gets a widget. Columns
       // with pages-per-row > 1: widgets at INTRA-band boundaries only (the
-      // band break itself separates pages via fragmentation, ADR 0011).
+      // band break itself separates pages via fragmentation).
       const rowsHere = view.dom.classList.contains(styles.rowsMode ?? '');
       const multiColHere = view.dom.classList.contains(styles.multiColMode ?? '');
       const pagesPerRow = Number.parseFloat(getComputedStyle(mount).getPropertyValue('--pages-per-row')) || 1;

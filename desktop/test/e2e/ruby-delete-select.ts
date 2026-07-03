@@ -3,8 +3,10 @@
 //     ruby. deleteChar deletes one CARET STEP (not one plain offset); a step jumps
 //     over a collapsed ruby, so the boundary no longer maps to an empty range.
 //  2. Plain mode: when the whole ruby is selected (Ctrl+A), the shown markup
-//     `|`,`(`,`)` (CSS pseudo-elements + the close widget — neither gets the native
-//     selection highlight) is tinted with the OS selection colours to match.
+//     `|`,`(`,`)` (real widget elements — no native selection highlight) is
+//     painted by the SAME selection-overlay rects as every other glyph — no
+//     separate (darker) CSS tint. And the yellow rubyActive tint covers the
+//     close `)` widget, which sits outside the tinted <ruby> box.
 import assert from 'node:assert/strict';
 import { caretToStart, fail, finish, launchVed, pressMod, step } from './harness.ts';
 
@@ -48,37 +50,81 @@ try {
   await page.waitForTimeout(150);
 
   const sel = await page.evaluate(() => {
-    const ruby = document.querySelector('ruby.rubyWrap');
-    const close = document.querySelector('.rubyDelimClose');
-    const opaque = (c: string) => c !== 'rgba(0, 0, 0, 0)' && c !== 'transparent';
+    const transparent = (c: string) => c === 'rgba(0, 0, 0, 0)' || c === 'transparent';
+    const rects = [...document.querySelectorAll('.vedSelectionRect')]
+      .filter((el) => (el as HTMLElement).style.display !== 'none')
+      .map((el) => el.getBoundingClientRect());
+    // Is the element's box covered by some overlay selection rect?
+    const covered = (q: string) => {
+      const el = document.querySelector(q);
+      if (!el) return false;
+      const r = el.getBoundingClientRect();
+      const cx = r.x + r.width / 2;
+      const cy = r.y + r.height / 2;
+      return rects.some((s) => cx >= s.left - 1 && cx <= s.right + 1 && cy >= s.top - 1 && cy <= s.bottom + 1);
+    };
+    // No delimiter carries its OWN background — the overlay is the only paint,
+    // so the markup can never render darker than the surrounding selection.
+    const ownBg = (q: string) => getComputedStyle(document.querySelector(q)!).backgroundColor;
     return {
-      rubySelected: ruby?.classList.contains('rubySelected') ?? false,
-      // The `|` and `(` are ::before/::after on .rubyBase.
-      beforeBg: ruby ? getComputedStyle(ruby.querySelector('.rubyBase')!, '::before').backgroundColor : '',
-      afterBg: ruby ? getComputedStyle(ruby.querySelector('.rubyBase')!, '::after').backgroundColor : '',
-      // The close `)` tint is CSS-driven off the ruby's class (adjacent sibling —
-      // the widget itself is selection-independent and cached): the rule must match.
-      closeSelected: !!document.querySelector('ruby.rubySelected + .rubyDelimClose'),
-      closeBg: close ? getComputedStyle(close).backgroundColor : '',
-      opaque,
+      openCovered: covered('.rubyDelimOpen'),
+      parenCovered: covered('.rubyDelimParen'),
+      closeCovered: covered('.rubyDelimClose'),
+      openOwnTint: !transparent(ownBg('.rubyDelimOpen')),
+      parenOwnTint: !transparent(ownBg('.rubyDelimParen')),
+      closeOwnTint: !transparent(ownBg('.rubyDelimClose')),
     } as const;
   });
-  const opaque = (c: string) => c !== 'rgba(0, 0, 0, 0)' && c !== 'transparent' && c !== '';
-  assert.ok(sel.rubySelected, 'the fully-selected ruby gets the rubySelected class');
-  assert.ok(opaque(sel.beforeBg), `the "|" pseudo-element is tinted (got ${sel.beforeBg})`);
-  assert.ok(opaque(sel.afterBg), `the "(" pseudo-element is tinted (got ${sel.afterBg})`);
-  assert.ok(sel.closeSelected, 'the ")" close widget directly follows the selected ruby (the CSS tint rule matches)');
-  assert.ok(opaque(sel.closeBg), `the ")" close widget is tinted (got ${sel.closeBg})`);
-  step('Plain Ctrl+A tints the markup | ( ) with the selection colour');
+  assert.ok(sel.openCovered, 'the "|" widget is covered by the selection overlay');
+  assert.ok(sel.parenCovered, 'the "(" widget is covered by the selection overlay');
+  assert.ok(sel.closeCovered, 'the ")" widget is covered by the selection overlay');
+  assert.ok(!sel.openOwnTint && !sel.parenOwnTint && !sel.closeOwnTint, 'no delimiter paints its own (darker) tint');
+  step('Plain Ctrl+A paints the markup | ( ) with the overlay tint only — no darker layer');
 
-  // Collapsing the selection drops the tint again.
+  // Collapsing the selection drops the overlay rects again.
   await setCaret(0);
   await page.waitForTimeout(120);
-  const after = await page.evaluate(
-    () => document.querySelector('ruby.rubyWrap')?.classList.contains('rubySelected') ?? false,
+  const rectsAfter = await page.evaluate(
+    () =>
+      [...document.querySelectorAll('.vedSelectionRect')].filter((el) => (el as HTMLElement).style.display !== 'none')
+        .length,
   );
-  assert.ok(!after, 'rubySelected clears when the selection collapses');
+  assert.equal(rectsAfter, 0, 'selection rects clear when the selection collapses');
   step('tint clears when the selection collapses');
+
+  // ── The yellow rubyActive tint covers the close `)` widget too ──────────────
+  await setCaret(2); // strictly inside |漢(かん)'s markup span — rubyActive on
+  await page.waitForTimeout(120);
+  const active = await page.evaluate(() => {
+    const close = document.querySelector('ruby.rubyActive + .rubyDelimClose');
+    return close ? getComputedStyle(close).backgroundColor : null;
+  });
+  assert.ok(active, 'the ")" widget directly follows the active ruby (the sibling rule matches)');
+  assert.ok(active?.startsWith('rgba(255, 200, 50'), `the ")" widget carries the yellow tint (got ${active})`);
+  step('rubyActive yellow covers the close ")" widget');
+
+  // ── Enter inside a ruby (splitBlock can't split the inline node) ────────────
+  // Plain (markup shown): the identity split lands the '\n' AT the caret; the
+  // torn markup renders literally, exactly as if it had been typed.
+  await setText('あ|漢(かん)い');
+  await setCaret(5); // between か and ん, inside the shown reading
+  await page.waitForTimeout(80);
+  await page.keyboard.press('Enter');
+  await page.waitForTimeout(150);
+  assert.equal(await W(), 'あ|漢(か\nん)い', 'Plain Enter splits the plain string at the caret');
+  step('Plain: Enter inside the ruby markup inserts the newline at the caret');
+
+  // Rich (markup hidden): tearing invisible markup would leave `|`/`(` debris —
+  // the split lands OUTSIDE the ruby instead (the paste rule).
+  await pressMod(page, '4'); // Rich
+  await page.waitForTimeout(120);
+  await setText('あ|漢字(かんじ)い');
+  await setCaret(3); // base interior (漢|字), strictly inside the markup span
+  await page.waitForTimeout(80);
+  await page.keyboard.press('Enter');
+  await page.waitForTimeout(150);
+  assert.equal(await W(), 'あ|漢字(かんじ)\nい', 'Rich Enter splits after the collapsed ruby');
+  step('Rich: Enter inside a collapsed ruby splits outside it, keeping the markup intact');
 } catch (e) {
   fail(e instanceof Error ? e.message : String(e));
 } finally {

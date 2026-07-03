@@ -202,6 +202,24 @@ export const rubyClickOutsidePos = ($h: ResolvedPos): number | null => {
   return null;
 };
 
+/** Where a PASTE (or any BULK text insert) with a collapsed caret inside a
+ *  COLLAPSED ruby should land: OUTSIDE the ruby — before it at the base start,
+ *  after it anywhere else. Unlike a single typed character (which legitimately
+ *  edits the base interior, char by char), bulk text spliced into the base
+ *  breaks the markup the user cannot even see in Rich: pasted `|…(…)` inside a
+ *  base tears the host ruby open into raw `|`/`(` debris. Returns `null` when
+ *  the caret is not inside a ruby. The caller applies this only when the ruby
+ *  is COLLAPSED (Rich) — in the expanded policies the markup is visible text
+ *  and pasting into it is an ordinary, visible edit. */
+export const rubyPasteOutsidePos = ($h: ResolvedPos): number | null => {
+  const edge = rubyClickOutsidePos($h);
+  if (edge != null) return edge;
+  // Editable base interior — a real caret spot for char edits, but not for bulk.
+  const d = $h.depth;
+  if ($h.parent.type.name === 'rubyBase' && $h.node(d - 1)?.type.name === 'ruby') return $h.after(d - 1);
+  return null;
+};
+
 // ---------------------------------------------------------------------------
 // Plain-offset ↔ PM-position mapping.
 //

@@ -47,8 +47,11 @@ export class RubyView {
       if (parent) return [parent, Math.max(0, Array.prototype.indexOf.call(parent.childNodes, this.dom))];
       return [this.dom, 0];
     }
-    const baseSpan = this.dom.firstChild as HTMLElement;
-    const rt = this.dom.lastChild as HTMLElement;
+    // By CLASS, not first/lastChild: in the expanded policies the delimiter
+    // WIDGETS (`|`, `(` — pm/decorations.ts) render inside the <ruby> around
+    // the children, so positional lookups would land the caret in a delimiter.
+    const baseSpan = this.dom.querySelector(':scope > .rubyBase') as HTMLElement | null;
+    const rt = this.dom.querySelector(':scope > rt') as HTMLElement | null;
     if (local <= this.baseLen + 1) {
       const text = baseSpan?.firstChild;
       if (text && text.nodeType === Node.TEXT_NODE) return [text, Math.max(0, Math.min(local - 1, this.baseLen))];

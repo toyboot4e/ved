@@ -135,7 +135,7 @@
  * the markup `|`,`(`,`)` is never DOM text (it lives only in serialize()). So
  * the native caret + IME always sit on real, full-size glyphs, even at a ruby
  * boundary. No overlay caret, no font-size:0, no display:none delimiters — the
- * machinery that broke the IME (ADR-0007) is gone.
+ * machinery that broke the IME is gone.
  *
  * RICH (default, collapsed): the <rt> is the small annotation above the base. */
 ruby.rubyWrap > rt {
@@ -196,38 +196,29 @@ ruby.rubyExpanded > rt {
   user-select: auto;
   -webkit-user-select: auto;
 }
-ruby.rubyExpanded > .rubyBase::before {
-  content: "|";
-  color: #808080;
-}
-ruby.rubyExpanded > .rubyBase::after {
-  content: "(";
-  color: #808080;
-}
-/* The closing `)` is a real widget element (pm/decorations.ts), not generated
- * content — so the caret can sit AFTER it. Styled to match the gray delimiters. */
+/* The delimiters `|`,`(`,`)` are real widget elements (pm/decorations.ts), not
+ * generated content — so the caret has distinct positions on BOTH sides of each
+ * (pseudo-element delimiters painted the caret at the same spot on both sides).
+ * `|` and `(` live inside the <ruby>; `)` directly after it. */
+.rubyDelimOpen,
+.rubyDelimParen,
 .rubyDelimClose {
   color: #808080;
 }
 
-/* Selection: the shown markup `|`,`(`,`)` is a pseudo-element / widget, neither
- * of which receives the browser's native text-selection highlight — so when the
- * whole ruby is selected (Ctrl+A &c., `rubySelected` set in pm/decorations.ts)
- * we paint them with the OS selection colours to match the blue over the
- * base/reading glyphs. The close `)` widget sits directly AFTER its ruby (a
- * widget at the ruby's end position, side -1), so the adjacent-sibling selector
- * keys its tint off the ruby's own class — the widget itself is
- * selection-independent and lives in the CACHED static decoration set. */
-ruby.rubySelected > .rubyBase::before,
-ruby.rubySelected > .rubyBase::after,
-ruby.rubySelected + .rubyDelimClose {
-  background-color: Highlight;
-  color: HighlightText;
-}
+/* Selection paint for the delimiters needs NO rule of its own: the selection
+ * overlay (editor.tsx walkGlyphsLines) measures the widgets and the inline
+ * reading like every other visible glyph and paints them with the same
+ * `.vedSelectionRect` tint — a dedicated CSS tint stacked on the overlay rect
+ * and painted the delimiters darker than the surrounding selection. */
 
 /* The ruby holding the caret. Strictly inside only — a caret resting at the
- * outer boundary (logically outside the ruby) does not highlight it. */
-ruby.rubyActive {
+ * outer boundary (logically outside the ruby) does not highlight it. The close
+ * `)` widget sits directly AFTER its ruby (a widget at the ruby's end position,
+ * side -1), OUTSIDE the tinted <ruby> box — the sibling rule extends the tint
+ * over it so the whole shown markup `|base(reading)` highlights as one span. */
+ruby.rubyActive,
+ruby.rubyActive + .rubyDelimClose {
   background-color: rgba(255, 200, 50, 0.25);
 }
 
@@ -266,8 +257,7 @@ ruby.rubyActive {
   }
 }
 
-/* Physical inter-page space in VerticalRows (ADR 0010, solution v2 —
- * pm/page-gap.ts): a widget decoration in the LAST line of each page. Zero
+/* Physical inter-page space in VerticalRows (pm/page-gap.ts): a widget decoration in the LAST line of each page. Zero
  * inline size (height, in vertical-rl) so it can never change the wrapping it
  * was measured from; its width fattens the line box by --page-gap, and
  * vertical-align: top pins the line's glyphs to the line-over (right) side so
