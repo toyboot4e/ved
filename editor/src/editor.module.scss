@@ -97,7 +97,7 @@ $footer-height: $font-size + $pad-y * 2;
   --page-gap-ratio: calc(
     (1 + var(--page-gap-bottom-cells)) / max(0.001, 1 + var(--page-gap-top-cells) + var(--page-gap-bottom-cells))
   );
-  // Pages per page ROW in VerticalColumns (ADR 0011): a multicol band holds
+  // Pages per page ROW in VerticalColumns: a multicol band holds
   // this many pages side by side (arithmetic within the band, separated by
   // page-gap widgets). Meaningless in the other modes — the shell pins it to
   // 1 outside VerticalColumns (view-config.ts).
@@ -141,6 +141,15 @@ $footer-height: $font-size + $pad-y * 2;
   margin: auto;
   display: flex;
   flex-direction: column;
+
+  // VerticalRows: the scroll axis is HORIZONTAL, so the viewport width is the
+  // free dimension — the page settings fix the PAGE box, not the window's use
+  // of space. Fill the window so a wide viewport shows more lines (pages).
+  // The other modes' scroll axis (height) already fills via the flex column;
+  // their widths ARE page-fixed and stay put.
+  &.rowsMode {
+    width: 100%;
+  }
 }
 
 .header {
@@ -339,7 +348,7 @@ $footer-height: $font-size + $pad-y * 2;
     // line of ~20+ consecutive |ルビ(ruby) overruns by one ruby per column in
     // Rich + VerticalColumns. No CSS cap value fixes it: the cap can't exceed
     // column-width, and reducing it wraps the legitimate Nth char too. Likely a
-    // Chromium ruby line-break bug. See docs/adr/0006.
+    // Chromium ruby line-break bug.
     inline-size: var(--line-length);
     overflow-wrap: anywhere;
   }
@@ -427,11 +436,10 @@ $footer-height: $font-size + $pad-y * 2;
     }
 
     // VerticalRows — pages tile leftward; the user scrolls along the
-    // horizontal axis to read further. See ADR 0004 and ADR 0010.
+    // horizontal axis to read further. See docs/architecture.md "Layout".
     //
     // Pages here are ARITHMETIC, not fragmented: the content is one continuous
-    // vertical-rl block flow (Chromium cannot fragment along the block axis,
-    // see ADR 0010), so every --page-lines lines is "a page". The physical
+    // vertical-rl block flow (Chromium cannot fragment along the block axis), so every --page-lines lines is "a page". The physical
     // inter-page space comes from the .ved-page-gap widgets (pm/page-gap.ts).
     // The separator lattice lives on the CONTENT (see .editorContent.rowsMode
     // below) — a scroller-attached `background-attachment: local` version
@@ -443,6 +451,11 @@ $footer-height: $font-size + $pad-y * 2;
       overflow-x: scroll;
       writing-mode: vertical-rl;
       -webkit-writing-mode: vertical-rl;
+      // Fill the (window-wide, .root.rowsMode) root so the viewport shows as
+      // many lines as fit — the fixed --editor-width only caps the PAGE, and
+      // horizontal overflow scrolls regardless of the viewport width.
+      width: auto;
+      align-self: stretch;
     }
   }
 
@@ -471,7 +484,7 @@ $footer-height: $font-size + $pad-y * 2;
     // The height is increased by the same amount so the line still fits the
     // configured character count.
     &.multiColMode {
-      // Intra-band page-boundary separators (--pages-per-row > 1, ADR 0011)
+      // Intra-band page-boundary separators (--pages-per-row > 1)
       // are DRAWN BY THE LINE-NUMBER OVERLAY from the measured visual lines
       // (.vedPageSeparator) — a periodic CSS lattice cannot track real
       // documents, whose paragraph paddings and empty lines shift the physical
@@ -516,7 +529,7 @@ $footer-height: $font-size + $pad-y * 2;
     // is NO fragmentation — pages are arithmetic (every --page-lines lines).
     // (A previous version declared column-width/column-gap here; the multicol
     // was INERT — one column spanning the full inline size — and its
-    // column-gap never rendered, see ADR 0010.)
+    // column-gap never rendered.)
     //
     // The page-boundary separators are DRAWN BY THE LINE-NUMBER OVERLAY from
     // the measured visual lines (.vedPageSeparator, centered in each

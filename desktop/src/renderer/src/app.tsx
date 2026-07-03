@@ -150,10 +150,17 @@ export const App = (): React.JSX.Element => {
   return (
     // vertMode on the root transposes the page geometry (CSS custom props);
     // the view config overrides the geometry custom props inline
-    // (view-config.ts). pagesPerRow only means something in VerticalColumns
-    // (ADR 0011) — pin it to 1 elsewhere so the root/page widths stay one page.
+    // (view-config.ts). pagesPerRow only means something in VerticalColumns —
+    // pin it to 1 elsewhere so the root/page widths stay one page.
+    // rowsMode widens the root to the window: VerticalRows scrolls along the
+    // horizontal axis, so the viewport is free there — a wide window shows
+    // more lines (editor.module.scss .root.rowsMode).
     <div
-      className={clsx(styles.root, writingMode !== WritingMode.Horizontal && styles.vertMode)}
+      className={clsx(
+        styles.root,
+        writingMode !== WritingMode.Horizontal && styles.vertMode,
+        writingMode === WritingMode.VerticalRows && styles.rowsMode,
+      )}
       style={viewConfigToCss(
         writingMode === WritingMode.VerticalColumns ? viewConfig : { ...viewConfig, pagesPerRow: 1 },
       )}
