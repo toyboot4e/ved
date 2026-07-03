@@ -871,6 +871,22 @@ export const VedEditor = (props: VedEditorProps): React.JSX.Element => {
         const out = rubyClickOutsidePos($head);
         return out == null ? null : TextSelection.create(v.state.doc, out);
       },
+      // createSelectionBetween only fires when the browser produced a DOM
+      // selection — a click ON a collapsed ruby's READING (`<rt>`, between two
+      // lines in vertical writing) never does: the reading is
+      // `contenteditable=false`, so the browser seats no caret and the click
+      // dies silently. PM still hit-tests the point (posAtCoords resolves into
+      // the rubyText), so snap it outside the ruby here, exactly like a
+      // DOM-selection click would have been.
+      handleClick: (v, pos, _event) => {
+        if (pointerDraggingRef.current || policyClassRef.current !== 'rich') return false;
+        const out = rubyClickOutsidePos(v.state.doc.resolve(pos));
+        if (out == null) return false;
+        const sel = TextSelection.create(v.state.doc, out);
+        if (!sel.eq(v.state.selection)) v.dispatch(v.state.tr.setSelection(sel));
+        v.focus();
+        return true;
+      },
     });
     viewRef.current = view;
 
