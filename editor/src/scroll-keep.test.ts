@@ -2,9 +2,9 @@ import { describe, expect, it } from 'vitest';
 import { lineToScroll, revealDelta, type ScrollGeom, scrollToLine } from './scroll-keep';
 
 // 20px lines, 20 lines per page; columns bands pitch 740px (720 + 20 gutter),
-// rows pages pitch 400px (contiguous: 20 lines × 20px, no gap — ADR 0010)
+// rows pages pitch 400px (contiguous: 20 lines × 20px, no gap)
 const geom: ScrollGeom = { linePitch: 20, colsPagePitch: 740, rowsPagePitch: 400, linesPerRow: 20, pagesPerRow: 1 };
-// Columns with 2 pages per band (ADR 0011): a band holds 40 lines.
+// Columns with 2 pages per band: a band holds 40 lines.
 const grid2: ScrollGeom = { ...geom, pagesPerRow: 2 };
 
 describe('scrollToLine', () => {

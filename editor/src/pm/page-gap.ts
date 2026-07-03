@@ -1,4 +1,4 @@
-// Physical inter-page space for VerticalRows (ADR 0010, solution v2).
+// Physical inter-page space for VerticalRows.
 //
 // VerticalRows cannot FRAGMENT (pages are arithmetic — every N visual lines of
 // one continuous vertical-rl flow), but a line box can be FATTENED one-sidedly:

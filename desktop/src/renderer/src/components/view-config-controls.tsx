@@ -84,8 +84,8 @@ export const ViewConfigControls = ({ writingMode }: { readonly writingMode: Writ
       </span>
       {numberFields.map(({ field, label, title, step }) => {
         // 頁/段 only means something under VerticalColumns (app.tsx pins it to 1
-        // elsewhere; a VerticalRows page GRID is a Chromium impossibility —
-        // ADR-0011). Gray it out so it doesn't present as broken.
+        // elsewhere; a VerticalRows page GRID is a Chromium impossibility).
+        // Gray it out so it doesn't present as broken.
         const inert = field === 'pagesPerRow' && writingMode !== WritingMode.VerticalColumns;
         return (
           <label key={field} className={styles.toolbarField} title={inert ? `${title} — inert in this mode` : title}>

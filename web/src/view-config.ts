@@ -21,7 +21,7 @@ export type ViewConfig = {
    *  border, in cells (`--page-gap-bottom-cells`). */
   readonly pageGapBottomCells: number;
   /** Pages side by side per page row — VerticalColumns only
-   *  (`--pages-per-row`; pinned to 1 in the other modes, ADR 0011). */
+   *  (`--pages-per-row`; pinned to 1 in the other modes). */
   readonly pagesPerRow: number;
   /** Editor content font family (`--font-family`); '' inherits the shell's stack. */
   readonly fontFamily: string;

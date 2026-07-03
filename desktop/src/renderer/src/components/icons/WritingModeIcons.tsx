@@ -5,7 +5,6 @@
 // inside. The two paged modes additionally show a page-boundary divider
 // perpendicular to the scroll axis — horizontal divider for VerticalColumns
 // (vertical scroll), vertical divider for VerticalRows (horizontal scroll).
-// See docs/adr/0004-vertical-page-layouts.md.
 import type React from 'react';
 
 const VIEW = 24;

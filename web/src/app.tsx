@@ -105,7 +105,7 @@ export const App = (): React.JSX.Element => {
       <div className='stage'>
         {/* vertMode on the root transposes the page geometry (CSS custom props);
             the view config overrides the geometry custom props inline.
-            pagesPerRow only means something in VerticalColumns (ADR 0011) —
+            pagesPerRow only means something in VerticalColumns —
             pin it to 1 elsewhere so the root/page widths stay one page.
             rowsMode widens the root to the window: VerticalRows scrolls along
             the horizontal axis, so a wide window shows more lines. */}

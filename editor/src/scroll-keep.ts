@@ -14,12 +14,11 @@ export type ScrollGeom = {
    *  page height (the line length) + the gutter gap between bands, px. */
   readonly colsPagePitch: number;
   /** `rows`: distance between page starts along scrollLeft (absolute px) —
-   *  the flow is CONTIGUOUS (pages are arithmetic, no physical gap; see
-   *  ADR 0010), so the pitch is exactly lines-per-page × line pitch. */
+   *  the flow is CONTIGUOUS (pages are arithmetic, no physical gap), so the pitch is exactly lines-per-page × line pitch. */
   readonly rowsPagePitch: number;
   /** Lines per page in the paged modes. */
   readonly linesPerRow: number;
-  /** `columns`: pages side by side per band (ADR 0011) — a band holds
+  /** `columns`: pages side by side per band — a band holds
    *  `linesPerRow × pagesPerRow` lines. Always 1 in the other modes. */
   readonly pagesPerRow: number;
 };

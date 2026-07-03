@@ -302,9 +302,9 @@ sandbox, and this phase's `config.json` hydrates the same store they write.
 
 Add the leftward-tiled "book-style" page layout as a sibling of today's
 downward-tiled `VerticalColumns`, exposed in the toolbar with a four-mode
-SVG icon row. Design recorded in [ADR 0004](adr/0004-vertical-page-layouts.md);
-this phase is the implementation. The 2D generalization (N pages per row / M
-rows per column) is **not** part of this phase — it stays deferred (ADR 0004).
+SVG icon row (design: docs/architecture.md "Layout"); this phase is the
+implementation. The 2D generalization (N pages per row / M
+rows per column) is **not** part of this phase — it stays deferred (docs/architecture.md "Layout").
 
 Each step lands an independently-shippable change with `just test-all`
 green.
@@ -333,8 +333,8 @@ green.
   cross-referenced.
 
 The deferred 2D case is noted in `editor.tsx` next to the new CSS, so a future
-contributor who wants N≥2 pages per row finds ADR 0004 rather than re-deriving
-the constraint.
+contributor who wants N≥2 pages per row finds the documented constraint (docs/architecture.md) rather than re-deriving
+it.
 
 ### Phase 5 — polish (each independent, grab as needed)
 

@@ -3,15 +3,15 @@
 ved is an Electron + React + **ProseMirror** editor for Japanese vertical
 writing (tategaki). Two decisions define the design:
 
-1. **Plain text is the document model.** Lines are paragraphs; inline markup
-   is lightweight syntax (ruby `|身体(からだ)`, and the planned `*bold*`,
-   `/italic/`, 縦中横, …).
+1. **Plain text is the document model.** Lines are paragraphs; inline markup is
+   lightweight syntax (ruby `|身体(からだ)`, and the planned `*bold*`, `/italic/`,
+   縦中横, …).
 2. **Identity text model.** The document is plaintext *character for character*
    — including the markup characters — in every view mode. `serialize`
-   RECONSTRUCTS the source exactly: the markup `|`,`(`,`)` is never DOM text, it
-   is rebuilt at the node boundaries (ADR-0008). Everything visual (annotations,
-   hidden syntax, highlighting, bold/italic) is CSS over the same text, driven by
-   decorations.
+   RECONSTRUCTS the source exactly: the markup `|`,`(`,`)` is never model text;
+   it is rebuilt at the node boundaries. Everything visual
+   (annotations, hidden syntax, highlighting, bold/italic) is decorations + CSS
+   over the same text.
 
 ```
 plaintext   "字は|漢(かん)字"
@@ -19,105 +19,146 @@ plaintext   "字は|漢(かん)字"
    ▼
 PM doc      paragraph[ text "字は", ruby[ rubyBase "漢", rubyText "かん" ], text "字" ]
    │   ruby is ONE inline node with two editable children (base + reading);
-   │   the markup |,(,) is NOT DOM text — serialize reconstructs it. Default
-   │   rendering: <ruby><span.rubyBase>漢</span><rt>かん</rt></ruby>. Everything
-   │   else (bold/italic/縦中横) is a view-only DECORATION, never a node.
+   │   the markup |,(,) is never MODEL text — serialize reconstructs it. When an
+   │   expanded policy shows it, each delimiter is an inert contenteditable=false
+   │   widget <span>. Everything else (bold/italic/縦中横) is a view-only
+   │   DECORATION, never a node.
    ▼
 plaintext   "字は|漢(かん)字"        (identical, by construction)
 ```
 
-ved is built on **ProseMirror** (ADR-0005 records the framework decision and its
-history). Two of its properties are decisive for the rich-syntax roadmap:
-view-only decorations, so a new inline format is a parse rule + a CSS class with
-no per-format structure repair; and full-document DOM rendering, so the
-CSS-multicol page layouts (ADR-0004) keep working (a virtualized editor could
-not).
+ProseMirror is decisive for the rich-syntax roadmap on two properties:
+view-only decorations, so a new inline format is a parse rule + a CSS class
+with no per-format structure repair; and full-document DOM rendering, so the
+CSS-multicol page layouts keep working (a virtualized editor could not). Ruby
+is the ONE node — PM widgets can't nest inside an inline-decoration wrapper —
+so structure repair is scoped to that single format. PM is used directly, not
+via TipTap: ved wants a minimal plaintext schema, and TipTap's mark model
+fights the identity invariant.
+
+Sections: [overrides](#what-we-override-in-contenteditable-and-why) ·
+[module map](#module-map) · [document model](#document-model) ·
+[view modes](#view-modes-appearpolicy) · [repair](#structure-repair) ·
+[offset mapping](#offset-mapping) · [caret movement](#caret-movement) ·
+[ruby boundaries & IME](#caret-at-ruby-boundaries) ·
+[caret reveal](#keeping-the-caret-in-view) · [history](#history) ·
+[layout](#layout-writing-modes-and-the-page) ·
+[dead ends](#constraints--verified-dead-ends) ·
+[papercuts](#known-papercuts--future-work).
 
 ## What we override in `contenteditable` (and why)
 
 The ideal is "just a `contenteditable`": let the browser lay out vertical text
 and move the caret, and keep the document as the plain string the user typed.
-We get most of that; every override below is a consequence of **one of four
-invariants** (the binding statements live in `CLAUDE.md` — this is the summary
-and the catalogue of what each one costs us):
+We get most of that; every override below defends **one of four invariants**
+(binding statements in `CLAUDE.md` — this is the catalogue of what each costs):
 
-1. **Identity text model** — the plaintext IS the model, character for
-   character; the markup `|`,`(`,`)` is never DOM text. So native editing that
-   reorders text or would edit hidden markup is taken over.
+1. **Identity text model** — the plaintext IS the model; the markup is never
+   model text. Native editing that reorders text or would edit markup is taken
+   over.
 2. **IME safety** — never repair structure, steal focus, or remount during a
-   composition, and a collapsed ruby must not let an IME compose into it.
+   composition; a collapsed ruby must not let an IME compose into it.
 3. **Multicol page layout** — `Selection.modify` and `scrollIntoView` don't
-   understand the CSS-multicol pages, so line movement, caret-reveal, and the
+   understand the CSS-multicol pages, so line movement, caret reveal, and the
    line-number/highlight overlay are measured ourselves.
 4. **Backend-neutral string model** — a document is a plain string and a caret
    is `{para, offset}`, so history and tabs snapshot strings, not PM state.
 
-The table is the full catalogue, indexed by the native behaviour each override
-replaces and tagged with the invariant (1–4) it defends; the linked sections
-carry the detail.
-
 | Inv | Override | Native behaviour it replaces | Why | Where |
 |---|---|---|---|---|
-| 1 | **Typed text re-applied from `beforeinput`** | native CE inserts the character into the DOM | native insertion can reorder text via its DOM diff; we insert the literal `data` at the PM model selection and let PM reconcile, keeping identity exact | `editor.tsx` (`beforeinput`) |
-| 1 | **Backspace/Delete delete a model offset range (`deleteChar`)** | `baseKeymap` lets a mid-paragraph single-char delete fall to native CE | native CE's single-char delete around a ruby node is unreliable; deleting a model offset range keeps identity and lets structure-repair re-form rubies | `editor.tsx`, `pm/cursor.ts` |
-| 1 | **Character arrow movement is model-driven (`nextCaretOffset`)** | native caret steps DOM positions | the cursor steps the base INTERIOR (a collapsed ruby's edges rest on its outer boundary) and skips the hidden markup + reading, landing on model offsets | `pm/caret-model.ts`, `cursor.ts` |
-| 3 | **Line arrow movement is taken over (`moveCaretByLine`)** | `Selection.modify('move','line')` | `modify` mis-steps across multicol PAGE rows and at short columns / paragraph edges / the doc end; we measure columns (excluding `<rt>` annotation rects) and step in reading order (RAF-deferred) | `editor.tsx`, `paragraphCols` |
-| 1,2 | **A collapsed ruby keeps the IME out at the boundary** | native caret enters the ruby's editable base/reading | an IME composes into the DOM at the caret; an editable ruby boundary let it compose INTO the reading or sit on the wrong side. The caret steps the base interior char-by-char, but the READING is `contenteditable=false`, and an ATOM ruby (no plain text before it) keeps its base read-only UNTIL the caret is inside it — so the IME composes outside at the boundary. Verified with real mozc (`mozc/ruby-composition`, `ruby-ime-rect`) | `pm/decorations.ts`, `pm/leaves.ts`, `ruby.css` |
-| 1,2 | **Structure repair after each transaction (`repair`)** | none — PM keeps the doc as edited | re-parses typed text into the ruby node (e.g. `X|漢(かん)` → text + ruby); **skipped while composing** | `pm/structure.ts` |
-| 3 | **Caret re-revealed after every doc change (`revealCaretInScroller`)** | `EditorView.scrollIntoView` | PM's scroll doesn't survive the post-commit ruby repair (a 2nd transaction) or the vertical-rl multi-page columns; in the paged modes the paged axis SNAPS the caret's page START to the viewport start (`caretPageSpan` + `pageSnapDelta` — a page turn; no-op when the whole page is visible) | `editor.tsx` |
-| 1,2 | **Composing over a selection deletes the MODEL selection at IME entry** | the browser replaces the selected range when a composition starts | the native replace chokes on a collapsed ruby's `contenteditable=false` islands (reading; atom base), and PM resets a mismatched model selection at compositionstart — the selected text survived beside the composition. The range is RECORDED on keydown-229 and DELETED at compositionstart (`imePendingSel` + `deleteRangeForIme`; deleting during the keydown races the IME handshake and leaks the first char raw). Verified with real mozc (`mozc/selection-composition`) | `editor.tsx` |
-| 1 | **Selection deletion is IDENTITY-EXACT (`plainDeleteTr`)** | `Transaction.deleteSelection` (structural) | a structural delete across ruby children leaves debris the plain string never contained — deleting from a base interior to the paragraph end kept a ruby with an EMPTY reading (a phantom `()` the parser then accepts, so repair keeps it; and repair is skipped while composing). `plainDeleteTr` removes exactly the plain offset range and rebuilds the touched paragraphs canonically (`inlineNodesFor`); used by Backspace/Delete over a selection, Enter-replace, and the IME-entry deletion | `editor.tsx` |
-| 3 | **Line numbers + current-line highlight are a measured overlay** | a CSS counter on `<p>` | a counter can only address the logical `<p>`; a wrapped paragraph needs one number + a highlight per VISUAL line (column/row), which only measurement gives | `editor/line-numbers.ts` |
-| 4 | **Custom plain-text history (`PlainTextHistory`)** | `prosemirror-history` | the model is a plain string; tabs snapshot/restore strings, and undo granularity is per plain-text edit | `editor/history.ts` |
-| 2 | **IME composition is sacrosanct** | — | never repair structure, steal focus, or remount while `view.composing`/`isComposing` — it cancels composition and drops text | throughout (`structure.ts`, `editor.tsx`) |
+| 1 | **Typed text re-applied from `beforeinput`** | native CE inserts the character into the DOM | native insertion can reorder text via its DOM diff; we insert the literal `data` at the PM model selection and let PM reconcile | `editor.tsx` (`beforeinput`) |
+| 1 | **Backspace/Delete delete a model offset range (`deleteChar`)** | `baseKeymap` lets a mid-paragraph single-char delete fall to native CE | native single-char delete around a ruby node is unreliable; a model offset range keeps identity and lets repair re-form rubies | `editor.tsx`, `pm/cursor.ts` |
+| 1 | **Character arrow movement is model-driven (`nextCaretOffset`)** | native caret steps DOM positions | the cursor steps the base INTERIOR (a collapsed ruby's edges rest on its outer boundary) and skips the markup offsets + reading | `pm/caret-model.ts`, `cursor.ts` |
+| 3 | **Line arrow movement is taken over (`moveCaretByLine`)** | `Selection.modify('move','line')` | `modify` mis-steps across multicol PAGE rows and at short columns / paragraph edges / the doc end; we measure columns (excluding `<rt>` rects) and step in reading order (RAF-deferred) | `editor.tsx`, `paragraphCols` |
+| 1,2 | **A collapsed ruby keeps the IME out at the boundary** | native caret enters the ruby's editable base/reading | an IME composes at the DOM caret; an editable boundary let it compose INTO the reading or sit on the wrong side. Reading is read-only; an ATOM ruby's base is read-only until the caret is inside. Verified with real mozc | `pm/decorations.ts`, `pm/leaves.ts`, `pm/ruby-view.ts` |
+| 1,2 | **Structure repair after each transaction (`repair`)** | none — PM keeps the doc as edited | re-parses typed text into the ruby node (e.g. `X\|漢(かん)` → text + ruby); **skipped while composing** | `pm/structure.ts` |
+| 3 | **Caret re-revealed after every doc change (`revealCaretInScroller`)** | `EditorView.scrollIntoView` | PM's scroll doesn't survive the post-commit repair (a 2nd transaction) or the vertical-rl pages; paged modes SNAP the caret's page start to the viewport (`caretPageSpan` + `pageSnapDelta`) | `editor.tsx` |
+| 1,2 | **Composing over a selection deletes the MODEL selection at IME entry** | the browser replaces the selected range at composition start | the native replace chokes on a collapsed ruby's read-only islands and PM resets a mismatched model selection; the range is RECORDED on keydown-229, DELETED at compositionstart (`imePendingSel` + `deleteRangeForIme` — deleting during the keydown leaks the first char raw). Verified with real mozc | `editor.tsx` |
+| 1 | **Selection deletion is IDENTITY-EXACT (`plainDeleteTr`)** | `Transaction.deleteSelection` (structural) | a structural delete across ruby children leaves debris the string never contained (a phantom empty `()` the parser then accepts — and repair is skipped while composing). `plainDeleteTr` removes exactly the offset range and rebuilds the touched paragraphs canonically (`inlineNodesFor`); used by Backspace/Delete over a selection, Enter-replace, IME entry | `editor.tsx` |
+| 3 | **Line numbers + current-line highlight are a measured overlay** | a CSS counter on `<p>` | a counter addresses the logical `<p>`; a wrapped paragraph needs one number + highlight per VISUAL line (column/row), which only measurement gives | `line-numbers.ts` |
+| 4 | **Custom plain-text history (`PlainTextHistory`)** | `prosemirror-history` | operation-level undo is meaningless across structure repair; tabs snapshot/restore strings; undo granularity is per plain-text edit | `history.ts` |
+| 2 | **IME composition is sacrosanct** | — | never repair, steal focus, or remount while `view.composing`/`isComposing` — it cancels the composition and drops text | throughout |
 
 Everything else — bold/italic/縦中横, ruby annotation rendering, the page
 columns — is plain CSS/decoration over the same text and needs no override.
 
-## The ProseMirror core (`editor/pm/`)
+## Module map
 
-| module | role |
-|---|---|
-| `model.ts` | the schema (`doc`/`paragraph`/`text` + the `ruby` inline node with `rubyBase`/`rubyText` children), `docFromText` / `serialize` (identity round-trip — `serialize` RECONSTRUCTS the markup), and `offsetToPos`/`posToOffset` mapping plain document offsets ↔ PM positions (which count node boundaries) |
-| `decorations.ts` | view-only decorations: per appear policy mark a ruby `rubyExpanded` (delimiters shown as CSS pseudo-elements, reading editable) or leave it a `contenteditable=false` atom, render bold/italic/縦中横 (one `RULES` entry per format), and the `rubyActive` highlight. Runs on every state change, so the bold/italic base set is **cached** by doc identity — only the few caret-dependent ruby node decorations rebuild per move |
-| `structure.ts` | `repair` — the IME-safe ruby reconcile (the only structure repair left), run from `dispatchTransaction`, skipped while composing |
-| `leaves.ts` / `caret-model.ts` / `cursor.ts` | backend-neutral plain-offset logic: the leaf model, `nextCaretOffset` (model-driven character movement), and the `{para,offset}` cursor map |
-| `ruby.css` | global ruby/syntax styles (decorations emit literal class names a CSS module can't match) |
+Monorepo (pnpm workspace); paths relative to the package roots.
 
-`editor.tsx` wires these into an `EditorView`: `baseKeymap` (Enter splits a
-paragraph, Backspace/Delete), a `handleKeyDown` for arrows + Ctrl chords, the
-decoration plugin, `dispatchTransaction` (apply → ruby repair → history push +
-`onTextChange`), and the React shell (writing-mode classes, scroll-keep,
-reveal-on-policy, tab snapshot/restore). It mounts directly into the scroller
-so the contenteditable is `#editor-content`, a direct child of the scroll box.
+```
+editor/                @ved/editor — the editor core (the ONLY prosemirror consumer)
+  src/editor.tsx         VedEditor: EditorView wiring — beforeinput/keys, dispatchTransaction
+                         (apply → ruby repair → history push + onTextChange), caret reveal,
+                         drag selection, React shell (modes, scroll-keep, tab snapshot/restore)
+  src/parse.ts           plaintext → format spans; the ONLY syntax knowledge (delimiter
+                         constants RUBY_DELIM_FRONT/RUBY_SEP_MID/RUBY_DELIM_END)
+  src/history.ts         PlainTextHistory (backend-neutral; unit-tested)
+  src/scroll-keep.ts     scroll offset ↔ line index per mode (unit-tested)
+  src/line-numbers.ts    measured per-VISUAL-line overlay: numbers, current-line highlight,
+                         base-only selection, page separators/folios
+  src/editor.module.scss page geometry, layout modes
+  src/pm/
+    model.ts             schema (ruby = rubyBase+rubyText), docFromText, serialize,
+                         offset ↔ PM position maps, ruby snap helpers
+    ruby-view.ts         ruby node view (default rendering; exists ONLY for caret affinity)
+    decorations.ts       per-policy ruby decorations + delimiter widgets, bold/italic/縦中横
+                         RULES, rubyActive, boundary caret; cached in layers
+    structure.ts         repair — the IME-safe ruby reconcile (the only structure repair)
+    leaves.ts            leaf model (isHidden per policy)
+    caret-model.ts       nextCaretOffset — model-driven character movement
+    cursor.ts            plain offset ↔ backend-neutral {para, offset}
+    page-gap.ts          VerticalRows page-gap widgets; suffix-incremental measure
+    drag-select.ts       geometric drag selection across read-only ruby bases (unit-tested)
+    ruby.css             global ruby/syntax styles (decorations emit literal class names)
+desktop/               @ved/desktop — the Electron product
+  src/shared/ipc.ts      typed IPC contract (channels + VedApi); renderer sees window.ved
+  src/main/              index.ts (Wayland/IME Chromium switches), file-service.ts (dialogs +
+                         IO, VED_SMOKE_* stub seams), fs-io.ts (atomic write), close-guard.ts
+  src/preload/           contextBridge: electron-toolkit defaults + window.ved
+  src/renderer/src/      app.tsx (state owner: buffers, WritingMode, AppearPolicy, shortcuts),
+                         buffers.ts, file-commands.ts, view-config.ts, local-fonts.ts,
+                         components/ (tab-bar, toolbar, view-config-controls)
+  test/e2e/              Playwright suites against the built app (hidden windows);
+                         mozc/ — the real-IME suites
+  bench/                 latency benchmarks (visible windows; hidden ones distort latency)
+web/                   @ved/web — throwaway Vite preview site
+```
+
+NixOS specifics live in `flake.nix`: Electron's runtime libs via
+`LD_LIBRARY_PATH`, plus a generated GTK immodules cache (`GTK_IM_MODULE_FILE`)
+so the prebuilt Electron's gtk3 loads the fcitx5 IM module on X11. Main also
+sets `ozone-platform-hint=auto`, `enable-wayland-ime`,
+`wayland-text-input-version=3` for Wayland. Package manager is **pnpm**;
+electron@42 ships no postinstall, so the project's `postinstall` runs
+`node node_modules/electron/install.js`.
 
 ## Document model
 
-`src/renderer/src/parse.ts` scans a line and returns `Format` spans with the
-offsets of each syntactic part. The syntax characters are defined once there
-(`RUBY_DELIM_FRONT` / `RUBY_SEP_MID` / `RUBY_DELIM_END`) and shared by the
-parser, `docFromText`, and the structure-repair reconcile.
+`editor/src/parse.ts` scans a line into `Format` spans; the syntax characters
+are defined once there and shared by the parser, `docFromText`, and repair.
 
-A ruby is a single inline **node** (`editor/pm/model.ts schema`) whose content is
-two EDITABLE child nodes — `rubyBase` (the base) and `rubyText` (the reading).
-The markup `|`,`(`,`)` is NOT stored as text; `serialize` RECONSTRUCTS
-`|base(reading)` so the plain string is identity-exact (ADR-0008).
-`inlineNodesFor(line)` builds a line's canonical inline content (plain text-node
-runs + ruby nodes); `docFromText` uses it to build the document and the
-structure-repair reconcile uses it to fix up after edits.
+A ruby is a single inline **node** (`pm/model.ts`) with two EDITABLE child
+nodes — `rubyBase` + `rubyText`. The markup is not stored; `serialize`
+reconstructs `|base(reading)` so the plain string is identity-exact.
+`inlineNodesFor(line)` builds a line's canonical inline content (text runs +
+ruby nodes); `docFromText` and repair both use it.
 
-No custom node view: the schema's `toDOM` renders `<ruby class="rubyWrap"><span
-class="rubyBase">漢</span><rt>かん</rt></ruby>`, both children editable PM content.
-In Rich the `<rt>` is the small superscript annotation; in the expanded policies
-a node decoration (`rubyExpanded`) lays the reading inline and shows the markup as
-gray CSS pseudo-elements (`::before`/`::after`).
+Rendering is the schema default — `<ruby class=rubyWrap><span
+class=rubyBase>漢</span><rt>かん</rt></ruby>`, both children editable PM content.
+`pm/ruby-view.ts` is a node view that keeps that default; it exists ONLY to fix
+caret AFFINITY: PM's `domFromPos(pos, -1)` at the base's content start lands the
+native caret on the text BEFORE the ruby, so an IME composed outside while the
+caret was logically inside. The view re-homes the DOM selection into the
+base/reading text nodes itself (looked up BY CLASS — in the expanded policies
+the delimiter widgets render inside the `<ruby>`, so positional child lookups
+would land in a delimiter), and sends local offset 0 — logically OUTSIDE —
+before the `<ruby>` element.
 
-## Rendering: view modes (`AppearPolicy`)
+## View modes (`AppearPolicy`)
 
-The text is identical in all modes; only decorations change. `pm/decorations.ts
-buildDecorations` runs on every doc/selection/policy change and, per ruby, marks
-it `rubyExpanded` (editable, markup shown) or leaves it a `contenteditable=false`
-atom — decided by `pm/leaves.ts isHidden(leaf, policy, activeLine, activeRuby)`.
+The text is identical in all modes; only decorations change, so switching modes
+never touches the document — no rebuild, no cursor restore, no IME hazard.
 
 | Mode | Shortcut | Expanded rubies |
 |---|---|---|
@@ -126,538 +167,375 @@ atom — decided by `pm/leaves.ts isHidden(leaf, policy, activeLine, activeRuby)
 | `ByCharacter` | Ctrl+3 | the one containing the cursor |
 | `Rich` | Ctrl+4 | none |
 
-(The mod key is Cmd on macOS. Letter chords are reserved for file shortcuts
-— Ctrl+O/S/Shift+S — handled at the app level; see `app.tsx`.)
+(Cmd on macOS. Letter chords are file shortcuts — Ctrl+O/S/Shift+S — handled at
+the app level, `app.tsx`.)
 
-Collapsed (Rich, or any inactive ruby): the base shows with the read-only `<rt>`
-superscript annotation, the delimiters are not rendered, and the ruby is a
-**non-editable atom** (`contenteditable=false`; the caret model stops only at its
-outer edges). So the native caret + IME stay in the surrounding plain text — see
-"Caret at ruby boundaries". Typed text is still taken over (`beforeinput` applies
-it at the model selection; `deleteChar` for Backspace/Delete). Expanded: a node
-decoration adds `rubyExpanded` — the markup shows as gray pseudo-elements, the
-reading lays out inline, and the base/reading become editable. The annotation is
-presentation-only; the node's children are the source of truth. Every OTHER
-inline format (bold/italic/縦中横, planned Hameln syntax) is just an inline
-decoration class — one `RULES` entry in `decorations.ts`, no node, no repair.
+- **Collapsed** (Rich, or any inactive ruby): the base shows with the read-only
+  `<rt>` superscript annotation; the delimiters are not rendered at all; the
+  reading is `contenteditable=false`. The caret model stops only at the base's
+  interior offsets — see "Caret at ruby boundaries".
+- **Expanded**: a node decoration adds `rubyExpanded`; the reading lays out
+  inline and becomes editable, and the delimiters `|`,`(`,`)` render as gray
+  READ-ONLY WIDGET `<span>`s (`pm/decorations.ts` `openDelim`/`parenDelim`/
+  `closeDelim`). Real elements, NOT CSS pseudo-elements: generated content has
+  no DOM positions around it, so the caret painted at the same spot on both
+  sides of a delimiter. `|` and `(` sit inside the `<ruby>`; `)` directly after
+  it (hence its selection tint via `ruby.rubySelected + .rubyDelimClose`).
+- Every OTHER inline format (bold/italic/縦中横, planned Hameln syntax) is one
+  `RULES` entry in `decorations.ts` — an inline decoration class; no node, no
+  repair.
 
-Because rendering is decoration-only, switching modes never touches the
-document: no rebuild, no cursor restore, no IME hazard. And because
-`buildDecorations` runs on every caret move, everything caret-INDEPENDENT
-(the inline-format set, the per-ruby expanded/read-only decorations) is cached
-in layers keyed by doc identity / expanded-set value; a caret move builds only
-an O(1) delta (see the `pm/decorations.ts` header and its
-`__vedBaseRebuilds`/`__vedRubyRebuilds` test seams).
+`buildDecorations` runs on every state change, so everything caret-INDEPENDENT
+(the inline-format set; the per-ruby expanded/read-only decorations incl. the
+delimiter widgets) is **cached** in layers keyed by doc identity /
+expanded-set value; a caret move builds only an O(1) delta (`rubyActive`,
+`rubySelected`). Seams: `__vedBaseRebuilds`/`__vedRubyRebuilds`.
 
-## Structure repair (`pm/structure.ts repair`)
+## Structure repair
 
-The one structural job, and the only place structure repair survives: when
-typing completes or breaks ruby syntax, the ruby nodes must follow the text.
-`editor.tsx dispatchTransaction` applies the edit, then — in the SAME flush,
-before `updateState` — runs `repair(state)`:
+`pm/structure.ts repair` is the one structural job left: when typing completes
+or breaks ruby syntax, the nodes must follow the text. `dispatchTransaction`
+applies the edit, then in the same flush: (1) capture the caret as a plain
+offset; (2) for each paragraph whose inline content differs from
+`inlineNodesFor(line)`, replace its content — text preserved, only node
+boundaries move, rewritten LAST→FIRST so positions stay valid; (3) restore the
+caret at the same offset. **Skipped while `view.composing`** (restructuring
+cancels the IME session); the composition-end transaction repairs.
 
-1. Capture the caret as a plain document offset (`posToOffset`).
-2. For each paragraph whose inline content differs from `inlineNodesFor(line)`
-   (the canonical text-nodes-and-ruby-nodes projection of its own text),
-   replace its content. Text is preserved; only node boundaries move.
-   Rewritten LAST→FIRST so earlier positions stay valid.
-3. Restore the caret at the same plain offset (`offsetToPos`).
+## Offset mapping
 
-The repair is **skipped while `view.composing`** (restructuring would cancel
-the IME session); the composition-end transaction repairs. Bold/italic/縦中横
-and every other format are decorations, so they need none of this — repair is
-ruby-only.
+PM positions count node boundaries, so they are not plain offsets; the editor
+speaks plain offsets and converts at the edges (`pm/model.ts`):
 
-## Cursor mapping (`pm/model.ts`, `pm/cursor.ts`)
+- `posToOffset` spends one offset per reconstructed delimiter at the node
+  boundary where it belongs; `offsetToPos` is the inverse — a ruby's BOUNDARY
+  offset maps OUTSIDE the node, an interior offset to the innermost editable
+  region.
+- Both run several times per caret move, so they are decomposed PER PARAGRAPH:
+  a doc-level index (O(#paragraphs) per doc version) plus per-paragraph maps
+  cached by NODE IDENTITY in WeakMaps — PM nodes are immutable, so an edit
+  re-derives only the touched paragraph. `serialize`/`docLeaves`/`lineOf` are
+  memoized the same way.
+- `buildPosMap(doc)` is the O(n) batch form used by the decoration pass (else
+  O(n²)); a unit test pins it to `offsetToPos` for every offset, which also
+  keeps the per-paragraph decomposition honest.
+- `pm/cursor.ts` maps plain offset ↔ the `{para, offset}` cursor that history
+  and tab snapshots speak.
 
-ProseMirror positions count node boundaries, so they are not plain string
-offsets; the editor speaks plain offsets and converts at the edges:
+## Caret movement
 
-- `posToOffset(doc, pos)` — spends one offset per reconstructed delimiter
-  (`|`,`(`,`)`) at the node boundary where it belongs.
-- `offsetToPos(doc, offset)` — the inverse. A ruby's BOUNDARY offset maps
-  OUTSIDE the node (BEFORE it at the leading edge, AFTER it at the trailing); an
-  interior offset maps to the innermost editable region (`rubyBase`/`rubyText`).
-  In Rich the caret never USES the interior positions — the ruby is an atom —
-  but the map still defines them (for the expanded policies and for
-  decorations).
-- Both converters run several times per caret move, so they are decomposed PER
-  PARAGRAPH: a doc-level index of paragraph positions/cumulative plain lengths
-  (O(#paragraphs) once per doc version) plus per-paragraph local maps cached by
-  NODE IDENTITY in WeakMaps — PM nodes are immutable, so an edit re-derives only
-  the touched paragraph. `serialize`/`docLeaves`/`lineOf` are memoized the same
-  way (serialize returns the same string instance per doc version; the leaf/line
-  caches key on it).
-- `buildPosMap(doc)` — the O(n) batch form of `offsetToPos` (an `offset → pos`
-  array from the original whole-doc walk), used by the decoration pass so it
-  isn't O(n²). A unit test pins it to `offsetToPos` for every offset — which is
-  also what keeps the per-paragraph decomposition honest.
-- `pm/cursor.ts` — `offsetToCursor` / `cursorToOffset` map a plain offset to the
-  backend-neutral `{para, offset}` the history and tab snapshots speak.
+**Character** (`pm/caret-model.ts nextCaretOffset`, dispatched by `editor.tsx
+moveChar`) is model-driven and pure: over the text + leaves + policy it returns
+the next stop offset. A collapsed ruby's base is stepped char-by-char (interior
+offsets only; the edges rest on the ruby's outer boundary, so a single-char base
+steps over as one glyph); markup offsets + reading are skipped. Expanded, they
+are stops too. In vertical modes the axes rotate (Up/Down → character,
+Left/Right → line).
 
-Character caret movement (`pm/caret-model.ts nextCaretOffset`, dispatched by
-`editor.tsx moveChar`) is model-driven and pure: over the plain text + parsed
-leaves + appear policy it returns the next stop offset. A COLLAPSED ruby's base is
-stepped char-by-char (its INTERIOR offsets are stops; the START/END edges rest on
-the ruby's outer boundary, so a single-char base steps over as one glyph); the
-hidden markup + reading are skipped. In the expanded policies the markup/reading
-are stops too. In vertical modes the axes rotate (`ArrowUp/Down` → character,
-`ArrowLeft/Right` → line).
+**A non-empty selection resolves to its directional edge** before either move
+(`handleKeyDown`): a plain arrow takes the selection START going backward, END
+going forward — a char-axis arrow collapses there and stops; a line-axis arrow
+collapses there then steps ONE line. `AllSelection` (Ctrl+A) instead jumps to
+the document start/end. Shift still extends. (The rule lives in the key handler
+because our model-driven movers only move the head; PM's default keymap, which
+we override, normally supplies the collapse. Tests:
+`selection-collapse-char-edge.ts`, `line-move-selection-edge.ts`.)
 
-Before either move, a **non-empty selection resolves to its directional edge**
-(`editor.tsx handleKeyDown`): a plain (non-Shift) arrow takes the selection's START
-when moving backward and its END when moving forward. A CHAR-axis arrow collapses
-there and stops; a LINE-axis arrow collapses there and then steps ONE line — so the
-caret lands above the selection's start or below its end, never by nudging
-`selection.head`. The `AllSelection` from Ctrl+A is the exception: it jumps to the
-document START (backward) / END (forward), the standard select-all behavior. Shift
-still extends. (This rule lives in the key handler because our model-driven
-`moveChar`/`moveCaretByLine` only move the head — PM's default keymap, which we
-override for the vertical-axis mapping + ruby-aware movement, is what normally
-supplies the collapse. Tested in `test/e2e/selection-collapse-char-edge.ts` and
-`line-move-selection-edge.ts`.)
+**Line** (`editor.tsx moveCaretByLine`) starts with `Selection.modify('line')`
+— the browser handles the common wrap-within-paragraph step — and accepts it on
+a fast path when it made a real block-axis step within the paragraph. Otherwise
+modify mis-stepped in one of these vertical-rl modes, and we MEASURE columns
+(`paragraphCols`, the same grouping as the line-number overlay) and step in
+reading order:
 
-Line movement (`editor.tsx moveCaretByLine`) starts with `Selection.modify
-('line')` over the contenteditable — the browser handles the common
-wrap-within-paragraph step — but post-processes its result for several
-vertical-rl failure modes. A **fast path** accepts modify when it made a real
-block-axis step within the paragraph (the mid-paragraph common case); otherwise
-modify mis-stepped and we MEASURE columns and step in reading order:
+- **No-op / element point** (document edge, single-line paragraph): revert —
+  else the caret sits at Chromium's end-of-line fallback.
+- **Slid to the paragraph edge** at a first/last visual line (same column,
+  against the block direction): rejected by a block-advance +
+  not-at-paragraph-terminal check, so the caret STAYS at the first/last column
+  (`line-move-edge.ts`).
+- **Mis-stepped within/off a multi-column paragraph** (short last column, doc
+  end): step to the ADJACENT column at the goal depth, crossing paragraphs only
+  at the first/last column. The caret's column is read from the live DOM caret
+  rect — at the doc end the model rect `coordsAtPos(head)` reports the empty
+  next column (`line-move-doc-end.ts`).
+- **Crossed paragraphs but landed at the far end / wrong column**: Chromium
+  doesn't preserve the inline coordinate, and a multi-row paragraph's
+  bounding-box centre is a MIDDLE column — hit-test the target's first
+  (forward) / last (backward) column at the goal depth.
 
-- modify is a **no-op or lands on an element point** (document edge / a
-  single-line paragraph). The cursor would otherwise sit at Chromium's
-  end-of-line fallback ("ArrowLeft jumped to end of doc"); with no adjacent
-  paragraph we revert.
-- modify **slid to the paragraph EDGE** at a first/last visual line (it has no
-  line to step to, so it slides to the line start/end — the same column, against
-  the block direction). Rejected by a block-advance + not-at-paragraph-terminal
-  (`$head.start()/.end()`, model space) check, so the caret STAYS at the
-  first/last column instead of jumping to offset 0 / the paragraph end. (Tested
-  in `test/e2e/line-move-edge.ts`.)
-- modify **mis-stepped within / off a multi-column paragraph** — at a SHORT last
-  column or the doc end it clamps to the wrong line or jumps a whole paragraph.
-  So for EVERY multi-column paragraph (plain or ruby, not just the cross-
-  paragraph case) we **measure the visual columns in reading order**
-  (`paragraphCols`, the same grouping as the line-number overlay, incl. the
-  multicol page wrap) and step to the ADJACENT column at the **goal column**
-  depth — only crossing to the sibling paragraph at the paragraph's first/last
-  column. This is what lets a forward move clamp into a short last column to
-  reach the doc end, and a backward move off the last column land on the
-  previous column rather than the previous paragraph. The caret's column is read
-  from the live DOM caret rect (`beforeRect`), reliable at the doc end where the
-  *model* rect `coordsAtPos(head)` instead reports the empty next column.
-  (Tested in `test/e2e/line-move-doc-end.ts`.)
-- modify **crossed paragraphs but landed at the FAR end** (or wrong column) of
-  the target — Chromium's `modify('line')` doesn't preserve the inline-axis
-  coordinate, and the target's *bounding-box* centre is a MIDDLE column once it
-  spans several page rows. We hit-test the target paragraph's FIRST (forward) /
-  LAST (backward) column at the goal depth.
+The goal column (`goalInlineRef`) is the caret's **depth into the column**,
+held across consecutive line moves, reset by any other caret change. Relative
+depth, not a screen coordinate, so it survives page-row boundaries; a short
+line doesn't drag the column up. (Tests: `line-movement.ts`,
+`line-move-multirow.ts` — both VISIBLE: the mover defers via RAF, throttled in
+hidden windows.)
 
-The goal column (`goalInlineRef`) is the caret's **depth into the column** (its
-inline-axis distance from the line's start), held across a run of consecutive
-line moves and reset by any other caret change (a char-axis move, a click, an
-edit). Holding it means stepping through a SHORT line — where the caret lands at
-that line's end — doesn't drag the column up; the next long line restores it.
-It is a *relative* depth, not an absolute screen coordinate, so it stays correct
-across a page-row boundary, where the next column sits at a different origin.
-(Tested in `test/e2e/line-movement.ts` — short single-column lines — and
-`test/e2e/line-move-multirow.ts` — two long paragraphs that each span several
-page rows, asserting every step is exactly one visual line across rows and the
-paragraph boundary. Both run **visible**: the mover defers via RAF, throttled in
-hidden windows; see the RAF gotcha below.)
+**Extend (Shift+line)** runs the same measurement, differing at commit: native
+`modify('extend')` slides the focus over a read-only base to the paragraph END,
+so we probe with a plain `move` from the head and re-apply the original anchor
+(`shift-line-move-ruby.ts`).
 
-**Extend (Shift+line)** runs the SAME measurement, only differing at commit: native
-`modify('extend','line')` slides the focus over a collapsed ruby's read-only base
-all the way to the paragraph END (it can't seat a caret inside the base), so we
-probe with a plain `move` from the head (collapsing the DOM selection to its focus
-first) and re-apply the original anchor. The progress clamp applies too, so at the
-last line the selection stays put instead of swallowing to the end. (Tested in
-`test/e2e/shift-line-move-ruby.ts`.)
+## Caret at ruby boundaries
 
-## Caret at ruby boundaries (ADR-0008)
+**Spec** (binding text in `CLAUDE.md`): with the markup collapsed, a caret at a
+ruby BOUNDARY writes OUTSIDE the ruby; to write at the EDGE of the rubied text,
+expand the markup. The caret still steps the base INTERIOR (where `rubyActive`
+highlights and edits land in the base). Five mechanisms:
 
-The markup is not DOM text, so the native caret rests on real, full-size glyphs —
-no `.delimAnchor`, no zero-sized boxes. The ONE exception is the seam BETWEEN two
-adjacent collapsed rubies: it has no text node either side, so the native caret is
-degenerate (invisible) there. A `pm/decorations.ts` widget renders a `.vedBoundaryCaret`
-at that head (the model offset is unchanged) — a thin CSS line that blinks while
-focused. This is the only rendered caret (the ADR-0008 overlay caret is still gone;
-this is a single targeted widget, not a general overlay). **Spec:** with
-the markup collapsed (Rich), a caret at a ruby BOUNDARY writes OUTSIDE the ruby; to
-write at the EDGE of the rubied text, expand the markup. The caret still steps
-through the base INTERIOR (the `rubyActive` highlight, `headOffset > from &&
-headOffset < to`, tracking it) and editing the middle characters lands in the base;
-a single-char base has no interior, so the caret steps over the one glyph. The caret
-steps through EVERY collapsed ruby's base char-by-char this way — leading, adjacent,
-or mid-paragraph. Five mechanisms:
+- **Interior-only caret stops** (`pm/leaves.ts isHidden` +
+  `pm/caret-model.ts`): a collapsed ruby contributes `from+1..to-1`; the base
+  edges coincide with the ruby's outer boundary (the markup offsets, which
+  render nothing while collapsed).
+- **Read-only reading when collapsed** (`pm/decorations.ts`): keeps an IME from
+  leaking into the reading at the trailing edge.
+- **Keystroke at a base edge redirected OUTSIDE** (`editor.tsx beforeinput` →
+  `pm/model.ts rubyEdgeOutsidePos`): browser affinity can drop the DOM caret at
+  the base START inside the ruby; the takeover inserts before/after the ruby
+  instead (collapsed only).
+- **An ATOM ruby's base is read-only while the caret is outside it**: a ruby
+  with no editable plain text immediately before it (leads its paragraph, or
+  follows another ruby) would otherwise have mozc anchor INTO its base at the
+  boundary. The base unlocks when the caret is strictly inside (the same
+  `rubyActive` condition, so they can't drift) — navigation granularity and IME
+  safety coexist.
+- **A click resolving inside a collapsed ruby is snapped OUTSIDE**
+  (`createSelectionBetween` → `pm/model.ts rubyClickOutsidePos`): clicking past
+  a ruby-ending paragraph hit-tests into the ruby. The editable base INTERIOR
+  stays; a base edge, the reading, or the ruby-node level (a leading/adjacent
+  atom whose base is read-only — `click-end-ruby.ts`) snap before/after.
 
-- **The caret model gives a collapsed ruby's base only its INTERIOR stops
-  (`pm/leaves.ts`, `pm/caret-model.ts`).** `isHidden` hides a collapsed ruby's
-  `delim`/`rt` leaves; `caretStops` then contributes only `from+1..to-1` of the
-  `body` (the base START/END edges coincide with the ruby's outer boundary — the
-  hidden zero-width `|`,`(`,`)`). In the EXPANDED policies the whole base and the
-  reading are stops (editable, including the edges).
-- **The reading is `contenteditable=false` when collapsed (`pm/decorations.ts`).**
-  A node decoration on the `rubyText` child keeps an IME from leaking into the
-  reading at the trailing edge.
-- **A keystroke at a collapsed-ruby base edge is redirected OUTSIDE
-  (`editor.tsx beforeinput`, `pm/model.ts rubyEdgeOutsidePos`).** The browser
-  affinity can drop the DOM caret (and PM's synced model) at the base START inside
-  the ruby; the `beforeinput` takeover detects that and inserts before/after the
-  ruby instead (only when collapsed).
-- **An ATOM ruby's base is `contenteditable=false` ONLY while the caret is outside
-  it (`pm/decorations.ts`).** The `beforeinput` redirect handles TYPED text, but an
-  IME composes through PM's native path with no such hook — so a ruby with NO plain
-  text immediately before it (it LEADS its paragraph, or immediately FOLLOWS another
-  ruby — `$pos.parentOffset===0 || $pos.nodeBefore` is a ruby) would have mozc anchor
-  the composition INTO its base at the boundary (nothing editable on the outside).
-  Such a ruby's base is read-only UNTIL the caret is strictly inside it (the same
-  `rubyActive` condition): at the boundary the IME composes OUTSIDE (paragraph start,
-  or BETWEEN two adjacent rubies), but once the caret steps into the interior the base
-  is editable and the IME edits it char-by-char. So navigation granularity and IME
-  safety coexist — the caret still stops at every base char (previous bullet), only
-  the base's editability toggles by caret position.
-- **A CLICK that resolves INSIDE a collapsed ruby is snapped OUTSIDE
-  (`editor.tsx createSelectionBetween`, `pm/model.ts rubyClickOutsidePos`).** Clicking
-  the empty space past a paragraph that ends in a ruby hit-tests to the ruby, so the
-  model head lands in the ruby span — `rubyActive` lights with no visible caret. The
-  redirect keeps the editable base INTERIOR (a real caret spot), but snaps a base
-  EDGE / the READING / the RUBY NODE level out to before/after the ruby. The
-  ruby-node case matters for a LEADING or adjacent ATOM ruby: its base is
-  `contenteditable=false`, so the click resolves to `parent==='ruby'` (not
-  `rubyBase`), which the base-edge-only `rubyEdgeOutsidePos` missed (`click-end-ruby`).
+So an IME at a boundary always has an editable plain-text anchor OUTSIDE — or,
+where none exists (doc start, between adjacent rubies), the base is read-only
+and mozc composes outside it. NO zero-width-space anchor, NO `compositionend`
+re-home (both removed as fragile). The one rendered caret: the seam between two
+adjacent collapsed rubies (or against a paragraph edge) has no text node either
+side, so the native caret is invisible there — a `.vedBoundaryCaret` widget
+draws a blinking CSS caret at that head. Verified by `ruby-ime-rect.ts`,
+`caret-boundary.ts`, and real mozc (`mozc/ruby-composition.ts`, incl.
+`|語(ご)ね|句(く)` between adjacent rubies).
 
-So an IME (mozc) at a boundary always has an editable plain-text anchor on the
-OUTSIDE side — or, where it would not (doc start, between two adjacent rubies), the
-ruby's base is read-only at that boundary and mozc composes outside it. There is NO
-zero-width-space anchor and NO `compositionend` re-home (both were removed as
-fragile). Verified with the model caret rect (`ruby-ime-rect.ts`), the caret stops
-(`caret-boundary.ts`), and REAL mozc (`mozc/ruby-composition.ts`, including
-`|語(ご)ね|句(く)` typed between two adjacent rubies).
+## Keeping the caret in view
 
-## Keeping the caret in view (`editor.tsx revealCaretInScroller`)
+`editor.tsx revealCaretInScroller`: minimal adjustment on both axes
+(`revealDelta`, no-op when visible), after every doc change and —
+synchronously, after the re-decoration reflow (Plain can grow the text ~4×) —
+on a policy change (`ruby-reveal.ts`). When the DOM range rect is degenerate (a
+collapsed range at a node boundary) it falls back to `coordsAtPos` — NOT the
+focus element's rect, which at a boundary is the whole paragraph and
+over-scrolls.
 
-PM's own `scrollIntoView` doesn't survive the post-commit ruby repair (a second
-transaction drops the scroll flag) and doesn't handle the vertical-rl
-multi-column page layouts, so the editor scrolls the caret back into view
-itself: minimal adjustment on both axes (`revealDelta`, a no-op when already
-visible), run after every doc change, and — synchronously, after the
-re-decoration reflow (Plain can grow the text ~4×) — on an appear-policy
-change. The single-burst-insert and reflow cases are covered by
-`test/e2e/ruby-reveal.ts`.
-
-In the PAGED modes the paged axis does not minimally reveal — it SNAPS the
-caret's page START (the band top in VerticalColumns, the page's right edge in
-VerticalRows — the reading start) to the viewport start: a page turn
-(`caretPageSpan` + `pageSnapDelta`). A minimal caret-only reveal after a paste
-parked the caret at the viewport edge with its page half-shown, which read as
-"nothing happened". The snap is a NO-OP when the whole page is already
+In the PAGED modes the paged axis instead SNAPS the caret's page START to the
+viewport start (`caretPageSpan` + `pageSnapDelta` — a page turn; a minimal
+reveal after a paste parked the caret at the viewport edge with its page
+half-shown, reading as "nothing happened"). No-op when the whole page is
 visible (typing inside a framed page never scrolls); a page LARGER than the
-viewport degrades to the minimal caret reveal — including its
-no-op-when-visible rule, which the policy-switch invariant ("a visible caret
-never scrolls") depends on; and at the doc end the browser's scroll-range
-clamp leaves the page fully visible at the viewport's far edge — the physical
-maximum. A VerticalColumns band is a real multicol
-fragment, so its span is exact arithmetic (`colsPagePitch` over the content
-box); VerticalRows page bounds drift non-arithmetically (paragraph paddings,
-ADR-0010), so they are read from the MEASURED `.ved-page-gap` widgets already
-in the DOM (each widget's center lies in its gap blank). Covered by
-`test/e2e/page-reveal.ts` (visible window — the post-edit reveal is
-rAF-deferred, which hidden windows throttle).
+viewport degrades to the minimal reveal incl. its no-op rule (which the
+policy-switch "a visible caret never scrolls" invariant depends on); at the doc
+end the scroll-range clamp leaves the page at the far edge. VerticalColumns
+band spans are exact arithmetic (`colsPagePitch` — real multicol fragments);
+VerticalRows page bounds are read from the MEASURED `.ved-page-gap` widget
+centers (arithmetic drifts — page positions move with paragraph paddings).
+(`page-reveal.ts`, visible window — the reveal is rAF-deferred.)
 
-## History (`editor/history.ts PlainTextHistory`)
+## History
 
-No framework history: operation-level undo is meaningless across structure
-repair, and it is backend-neutral (a document is a string, a caret is
-`{para, offset}`). `{ plaintext, cursor, cursorBefore }` snapshots with a 500 ms
-debounce; undo/redo rebuilds the document from text (`docFromText`) and re-resolves
-the caret (`offsetToPos`). Each entry stores the caret BOTH after its edit (`cursor`,
-where REDO lands) and just before it (`cursorBefore`, in the previous text — where
-UNDO lands); without the latter, undo would restore the caret to wherever the
-*earlier* edit left it (e.g. the end of a paste), not where the user actually was.
-`editor.tsx` feeds `cursorBefore` from a `beforeOffsetRef` that tracks the caret
-across plain moves and freezes during IME composition. A debounced push replaces the
-newest entry (preserving the batch's original `cursorBefore`); after an undo it
-truncates the redo tail. (Unit-tested in `editor/history.test.ts`; end to end in
-`test/e2e/undo-cursor-restore.ts`.)
+`history.ts PlainTextHistory` — no framework history: operation-level undo is
+meaningless across structure repair, and it is backend-neutral. `{ plaintext,
+cursor, cursorBefore }` snapshots with a 500 ms debounce; undo/redo rebuilds
+via `docFromText` + `offsetToPos`. Each entry stores the caret both after its
+edit (`cursor`, where REDO lands) and just before it (`cursorBefore` — where
+UNDO lands; without it undo restored the caret to wherever the *earlier* edit
+left it). `editor.tsx` feeds `cursorBefore` from a ref that tracks plain moves
+and freezes during composition. A debounced push replaces the newest entry
+(keeping the batch's original `cursorBefore`); undo truncates the redo tail.
+(`history.test.ts`, `undo-cursor-restore.ts`.)
 
-## Layout: writing modes (`WritingMode`) and the page
+## Layout: writing modes and the page
 
 The text area is a **page**: N characters per line × M lines, counted in
-fullwidth characters ("80 characters" means 80 ASCII columns = 40 zenkaku).
-The geometry lives in CSS custom properties on the app root
-(`--page-line-chars`, `--page-lines` in `editor.module.scss`); everything else
-derives via `calc()`. A `vertMode` class on the root transposes the page box.
-
-One zenkaku is one **cell** (`--cell-size`, = the body `font-size`/1em), so a
-line is a **fixed `--line-length` = N × cell pixels**. Every line
-(`editorContent > *`) is pinned to that `inline-size`, so it **wraps at exactly
-N cells in every mode** and can never spill past the page border — regardless of
-the font's actual glyph advance (a wide CJK font wraps; it does not overflow).
-The page box is *not* resized to the rendered text, so the border and the
-paged-mode separators stay put. (The line-number gutter is reserved *outside*
-the cell track: on the height in vertical modes, on `--editor-width` in
-horizontal.)
-
-`editor/line-numbers.ts` fills that gutter with a **measured overlay**, not a
-decoration: it groups each paragraph's `Range.getClientRects()` into visual
-lines and draws one centered number per **visual** line (a wrapped column/row,
-which a CSS counter on `<p>` cannot address) plus the **current-line
-highlight** — bounded to the caret's visual line (one column/row, on its page in
-the multi-page column layouts), not its whole paragraph. Grouping splits a new
-visual line on a reading-direction block jump *or* a large reverse jump (a
-multicol page wrap, where the next page's first column lands back across the
-page); the band length is the paragraph's computed `inline-size` (one page), not
-its multi-page bounding rect. The overlay is a scroll-invariant child of the
-scroller. Every mark (number, page separator, folio) is placed from ITS OWN
-line's measured, rt-excluded rects — never from index arithmetic extrapolated
-across the document: `line-height` is a MINIMUM, not a cap, so a ruby line
-whose reading doesn't fit the leading (low ratio, a heavy webfont) is really
-taller than the computed pitch, and a pure slot grid (anchor + k·pitch, tried)
-drifted whole bands by line ~1700 — the numbers visibly "disappeared" at
-scale. Only the band top is quantized (multicol fragmentation IS physically
-periodic), and a partial last page's folio extrapolates the missing tail at
-the page's own measured step. Re-measuring every paragraph is O(document), so it runs only on
-layout changes (edit/mode/policy/resize/font), debounced to one frame; a
-**selection-only** change takes a cheap *highlight-only* path
-(`refreshCaret`) that reuses the cached line geometry, runs SYNCHRONOUSLY in
-the dispatch (so the highlight lands in the same frame as the caret, no rAF
-lag), and skips the DOM writes entirely when the caret stays on the same
-visual line — otherwise a large doc stalls ~100ms per arrow key (the highlight
-lags and queued keypresses burst, looking like the caret jumping several
-lines).
-
-The highlight follows the caret's `coordsAtPos` rect, but at the **end of a
-paragraph whose last visual line is full** that rect (either side) reports the
-*start of the empty next column/page* — the previous reading column from where
-the native caret renders — so the highlight would snap one column back. The
-overlay's caret accessor (`editor.tsx caretRect`) detects the paragraph end
-(`head === $head.end()`, non-empty) and anchors the line-pick to the last
-character (`head - 1`), which is reliably inside the real last column. EXCEPT when
-the paragraph ENDS IN A RUBY: `head - 1` is inside the ruby's content — the reading
-`<rt>` end, a superscript in a *different* column — so it anchors into the trailing
-ruby's BASE instead (`head - before.nodeSize + 2`, the base content start), which
-renders in the ruby's real column (`line-highlight-para-end`). This is the same
-boundary-affinity family as the line-move clamp; it touches only the overlay, not
-the native-caret/IME rect.
-
-Orthogonal to view modes; pure CSS:
+fullwidth characters ("80 characters" = 80 ASCII columns = 40 zenkaku).
+Geometry lives in CSS custom properties on the app root (`--page-line-chars`,
+`--page-lines`, `editor.module.scss`); everything derives via `calc()`. One
+zenkaku is one **cell** (`--cell-size` = 1em), so a line is a fixed
+`--line-length` = N × cell pixels: every line is pinned to that `inline-size`
+and wraps at exactly N cells in every mode — regardless of the font's actual
+glyph advance (a wide CJK font wraps, never overflows), and the page box never
+resizes to the text. The line-number gutter is reserved OUTSIDE the cell track.
 
 | Mode | CSS | Page | Scroll |
 |---|---|---|---|
 | `Horizontal` | normal flow | line-length wide × lines tall | vertical |
 | `Vertical` | `vertical-rl` | transposed, one fixed page box | both axes |
-| `VerticalColumns` | `vertical-rl` + CSS multi-column (*dankumi*) | page ROWS tile DOWNWARD; `--pages-per-row` pages per row (ADR 0011) | vertical |
-| `VerticalRows` | `vertical-rl`, plain block flow (*dankumi*) | pages tile LEFTWARD; ARITHMETIC pages (every N lines) | horizontal |
+| `VerticalColumns` | `vertical-rl` + CSS multicol (段組) | page ROWS tile DOWNWARD; `--pages-per-row` pages per row | vertical |
+| `VerticalRows` | `vertical-rl`, plain block flow (段組) | pages tile LEFTWARD; ARITHMETIC pages (every N lines) | horizontal |
 
-Both paged modes (`VerticalColumns`, `VerticalRows`) are 1D arrangements
-— there is no CSS primitive that wraps multi-column into a 2D grid over
-one contenteditable. The 2D generalization (N pages per row OR per
-column) is deferred; see [ADR 0004](adr/0004-vertical-page-layouts.md).
+Both paged modes are 1D — no CSS primitive wraps multicol into a 2D grid over
+one contenteditable (see the dead-ends section). And they are structurally DIFFERENT, not
+mirrors:
 
-The two paged modes are structurally DIFFERENT, not mirrors: `VerticalColumns`
-has real fragmentation (multicol overflow columns stack along the inline axis
-= downward, with a physical `column-gap` gutter — `--band-gap`, the folio
-strip + `--page-gap` total, FLOORED at the line-number gutter so the numbers
-always keep their room. The FIRST band's start padding is `gap A` ONLY —
-page 1's top space is exactly its head margin, with no extra gutter and no
-border: `gap B` (a preceding page's tail) is inert at the lead, and the
-lattice's phantom `repeat-y` tile above the origin — which would paint a
-stray line there — is masked by an opaque first background layer over the
-lead strip), but multicol can never stack
-columns along the BLOCK axis (= leftward), and Chromium does not fragment an
-orthogonal-flow child either — so `VerticalRows` is one continuous vertical-rl
-block flow where a "page" is arithmetic (every `--page-lines` lines). The
-physical inter-page space is a different primitive: a `.ved-page-gap` widget
-decoration (zero inline size, width = line pitch + `--page-gap`,
-`vertical-align: top`) fattens each page's LAST line one-sidedly, opening a
-real gap before the next page without touching the text model; the editor
-re-measures the widget positions from the glyph rects after layout-affecting
-events (`pm/page-gap.ts`, `measurePageGaps` in editor.tsx). The measure is
-**suffix-incremental**: an edit's layout change starts at its own model line
-(earlier paragraphs are separate blocks; widgets before the edit can't move),
-so the visual-line END OFFSETS — offsets, never rects, so a cached prefix
-survives scrolls and widget shifts — are cached and only the lines from the
-first changed one are re-walked; typing at the end of a large document
-measures one paragraph, not the text. Suffix reuse is gated to the
-caret-independent appear policies (Rich/Plain) — under ByParagraph/ByCharacter
-a caret move re-wraps the (un)expanded paragraph with no doc change — and any
-non-edit layout change (mode/policy/resize/fonts) schedules a full pass.
-Pinned by `test/e2e/page-gap-suffix.ts` via the `__vedGapLines` /
-`__vedGapLineEnds` seams, including suffix ≡ full equivalence.
+- **VerticalColumns** has real fragmentation: multicol overflow columns stack
+  downward with a physical `column-gap` gutter (`--band-gap` = folio strip +
+  `--page-gap`, floored at the line-number gutter). The first band's start
+  padding is `gap A` only — no border above page 1; the `repeat-y` lattice's
+  phantom tile above the origin is masked by an opaque first background layer.
+- **VerticalRows**: multicol can't stack columns along the block axis and
+  Chromium doesn't fragment an orthogonal-flow child, so it is one continuous
+  vertical-rl flow where a "page" is arithmetic. The inter-page space is a
+  `.ved-page-gap` **widget decoration** (zero inline size, width = line pitch +
+  `--page-gap`) fattening each page's LAST line one-sidedly — a real gap
+  without touching the text model. Widget positions are re-measured from glyph
+  rects after layout-affecting events (`pm/page-gap.ts`, `measurePageGaps`).
+  The measure is **suffix-incremental** per edit: visual-line END OFFSETS
+  (offsets, never rects — a cached prefix survives scrolls) are cached and only
+  lines from the first changed one re-walk, so typing at the end of a large
+  document measures one paragraph. Suffix reuse is gated to Rich/Plain (under
+  ByParagraph/ByCharacter a caret move re-wraps text with no doc change); any
+  non-edit layout change schedules a full pass. Pinned by `page-gap-suffix.ts`
+  via `__vedGapLines`/`__vedGapLineEnds`, incl. suffix ≡ full.
 
-The page-gap knobs are the PAGE'S MARGINS around the border (view config
-`gap A`/`gap B` → `--page-gap-top`/`--page-gap-bottom`, default 1 cell each):
-`gap A` is the head margin (the border above/right → the page's TEXT — page 1
-included) and `gap B` the tail margin (the page's FOLIO → the next border).
-The VerticalColumns gap anatomy, top→bottom, is
-`text | folio strip (1 cell) | gap B | BORDER | gap A | next text`
-(`--band-gap = max(gutter, cell + A + B)`; the folio centers in its strip;
-the lattice border sits at `--band-gap × --page-gap-ratio`, a registered
-`<number>` so a floored gap scales the anatomy proportionally). VerticalRows
-has no folio in the leftward gap (its folio sits under the page), so there the
-anatomy is `last line | gap B | BORDER | gap A | first line` — `--page-gap`
-(A+B) drives the widgets/scroll pitch and the overlay's measured separators
-shift `(A − B)/2` from the mid-blank. A SIZE-NEUTRAL config change (moving
-the border under the same total) resizes nothing an observer can see, so the
-shell passes `viewConfigEpoch` (an optional editor prop) to trigger the
-re-measure. Pinned by `test/e2e/gap-config-reflow.ts` (pitch follows the
-total; the split moves the border without moving text; the lattice border is
-pixel-scanned). See [ADR 0010](adr/0010-verticalrows-arithmetic-pages.md).
+The page-gap knobs are the page's MARGINS around the border (view config `gap
+A`/`gap B` → `--page-gap-top`/`--page-gap-bottom`, default 1 cell each): A =
+head margin (border → text), B = tail margin (folio → next border).
+VerticalColumns anatomy top→bottom: `text | folio strip (1 cell) | gap B |
+BORDER | gap A | next text` (the border sits at `--band-gap ×
+--page-gap-ratio`, a registered `<number>` so a floored gap scales
+proportionally). VerticalRows has no folio in the leftward gap, so: `last line
+| gap B | BORDER | gap A | first line`; the overlay's separators shift `(A −
+B)/2` from the mid-blank. A size-neutral change (moving the border under the
+same total) resizes nothing observable, so the shell passes `viewConfigEpoch`
+(an optional editor prop) to trigger the re-measure (`gap-config-reflow.ts`).
+The same widget trick generalizes VerticalColumns into a page GRID
+(`--pages-per-row` arithmetic pages per band, gap widgets at intra-band
+boundaries, a content-painted lattice); the transpose — page columns
+in VerticalRows — stays impossible: one fragmentation direction per flow.
 
-The same widget trick generalizes VerticalColumns into a page GRID: a band
-holds `--pages-per-row` arithmetic pages side by side (band width =
-`--page-row-width`), gap widgets at intra-band boundaries only (a band break
-fragments physically), and a content-painted vertical lattice marks the
-intra-band boundaries — see [ADR 0011](adr/0011-page-grid-pages-per-row.md).
-The transpose (page COLUMNS in VerticalRows) stays impossible: one
-fragmentation direction exists per flow. Page numbers are chips drawn by the
-line-number overlay at each page's first visual line (every `--page-lines`).
+### The measured overlay (`line-numbers.ts`)
 
-Notes that took debugging to learn:
+Fills the gutter with one centered number per **visual** line plus the
+**current-line highlight** (bounded to the caret's column/row on its page, not
+the paragraph), grouping each paragraph's `Range.getClientRects()` into visual
+lines — a new line on a reading-direction block jump OR a large reverse jump (a
+multicol page wrap). Every mark (number, separator, folio, page chip) is placed
+from ITS OWN line's measured, rt-excluded rects — never index arithmetic
+extrapolated across the document: `line-height` is a MINIMUM, so a ruby line
+whose reading outgrows the leading is really taller than the pitch, and a pure
+slot grid drifted whole bands by line ~1700. Only the band top is quantized
+(multicol fragmentation is physically periodic).
 
-- The percentage height chain must be anchored at `#root` (the React mount
-  point), or flex items size to content.
-- The editor box is `box-sizing: content-box`: its 2px borders must not eat
-  into the page.
-- In `Vertical`, the *scroll container* itself is `vertical-rl`, so the first
-  line starts at the right edge and leftward overflow is scrollable.
-- In `Columns`, the separators are a background gradient on the scroll
-  container (`background-attachment: local`): Chromium does not paint
-  `column-rule` between overflow columns. Use a finite tile with
-  `background-size` + `repeat-y`, NOT `repeating-linear-gradient`.
-- Switching modes keeps the reading position (`editor/scroll-keep.ts`): all
-  modes wrap at the same character count, so the first visible line index maps
-  1:1; captured on scroll, restored in a layout effect. `overflow-anchor:
-  none` keeps Chromium from fighting the restore.
-- Switching the ruby display reflows rubied text; Typora-style, if the reflow
-  pushed the caret out of view it is scrolled to the nearest edge and never
-  moved otherwise (`useRevealCaretOnPolicyChange`, via the native selection
-  rect).
+Re-measuring is O(document), so it runs only on layout changes
+(edit/mode/policy/resize/font), debounced to one frame; a selection-only change
+takes a *highlight-only* path (`refreshCaret`) that reuses cached geometry,
+runs SYNCHRONOUSLY in the dispatch (same frame as the caret — no rAF lag), and
+skips DOM writes when the caret stays on the same visual line (else a large doc
+stalls ~100 ms per arrow key and queued keys burst).
+
+At the END of a paragraph whose last line is full, `coordsAtPos` reports the
+start of the empty next column — so the highlight snapped one column back. The
+caret accessor (`editor.tsx caretRect`) detects paragraph end and anchors to
+`head - 1` — EXCEPT when the paragraph ends in a ruby: `head - 1` is the
+reading's end (a different column), so it anchors into the trailing ruby's BASE
+(`line-highlight-para-end.ts`).
+
+### Notes that took debugging to learn
+
+- The percentage height chain must anchor at `#root`, or flex items size to
+  content. The editor box is `content-box`: its 2px borders must not eat the
+  page.
+- In `Vertical`, the scroll container itself is `vertical-rl`, so the first
+  line starts at the right edge and leftward overflow scrolls.
+- In `Columns`, separators are a background gradient on the scroll container
+  (`background-attachment: local`): Chromium doesn't paint `column-rule`
+  between overflow columns. Use a finite tile + `repeat-y`, NOT
+  `repeating-linear-gradient`.
+- Mode switches keep the reading position (`scroll-keep.ts`): all modes wrap at
+  the same character count, so the first visible line index maps 1:1;
+  `overflow-anchor: none` keeps Chromium from fighting the restore.
 - The placeholder is a CSS `::before` on the empty paragraph
-  (`#editor-content > p:only-child:has(> br:only-child)`), so it sits in
-  normal flow at the first character's position in every writing mode (an
-  absolutely-positioned placeholder lands a page away under vertical-rl).
+  (`#editor-content > p:only-child:has(> br:only-child)`) so it sits in normal
+  flow in every writing mode (an absolutely-positioned one lands a page away
+  under vertical-rl).
 
-Writing mode and view mode are owned by `app.tsx` state and rendered by
-`components/toolbar.tsx`; keyboard shortcuts call the same state setters.
+Writing mode and view mode are owned by `app.tsx` state, rendered by
+`components/toolbar.tsx`; shortcuts call the same setters.
 
-## Module map
+## Constraints & verified dead ends
 
-```
-src/shared/ipc.ts          IPC contract (channels + VedApi) shared by all three processes
-src/main/index.ts          Electron main; Wayland/IME Chromium switches
-src/main/file-service.ts   open/save dialogs + file IO handlers (VED_SMOKE_* env stubs)
-src/main/fs-io.ts          plain-node read / atomic write (unit-tested)
-src/main/close-guard.ts    confirm-on-close for a dirty buffer
-src/preload/               contextBridge: electron-toolkit defaults + window.ved
-src/renderer/src/
-  app.tsx                  state owner: buffers (useReducer), WritingMode, AppearPolicy; file + tab shortcuts
-  buffers.ts               multi-buffer model: pure reducer over plaintext + scalars; per-buffer PlainTextHistory
-  file-commands.ts         save/save-as logic, chord matching, window title (pure, unit-tested)
-  parse.ts                 plaintext → format spans (the only syntax knowledge)
-  components/
-    tab-bar.tsx            hand-rolled tab row
-    toolbar.tsx            writing-mode / ruby-display button groups
-    editor.tsx             VedEditor (ProseMirror): EditorView + baseKeymap, dispatchTransaction
-                           → ruby repair + history + onTextChange, keys, scroll, snapshot/restore
-    editor.module.scss     page geometry, layout modes, toolbar
-    editor/
-      history.ts                     PlainTextHistory (backend-neutral, unit-tested)
-      scroll-keep.ts                 scroll offset ↔ line index per mode (unit-tested)
-      line-numbers.ts                per-VISUAL-line overlay: numbers + current-line highlight + base-only selection (measured)
-      pm/
-        drag-select.ts               geometric mouse drag-selection across read-only ruby bases (unit-tested)
-        model.ts                     schema (ruby = rubyBase+rubyText), docFromText, serialize, offset ↔ PM position
-        decorations.ts               rubyExpanded vs contenteditable=false atom per policy + bold/italic/縦中横 + rubyActive
-        structure.ts                 repair: the IME-safe ruby reconcile (the only structure repair)
-        leaves.ts / caret-model.ts / cursor.ts   plain-offset leaf model, char movement (ruby = atom), {para,offset}
-        ruby.css                     global ruby + inline-syntax styles (rt annotation, expanded pseudo-element delimiters)
-test/e2e/                  Playwright tests against the built app, hidden windows
-docs/editor-ui-plan.md     editor UI shell plan + phase checklist
-```
+Hard limits and approaches that were tried (or measured) and failed — don't
+re-derive or re-try these:
 
-NixOS specifics live in `flake.nix`: Electron's runtime libraries via
-`LD_LIBRARY_PATH`, plus a generated GTK immodules cache (`GTK_IM_MODULE_FILE`)
-so the prebuilt Electron's gtk3 can load the fcitx5 IM module on X11. The main
-process also sets `ozone-platform-hint=auto`, `enable-wayland-ime` and
-`wayland-text-input-version=3` for Wayland sessions.
-
-Tooling: the package manager is **pnpm** (`packageManager` pin; dependency
-build scripts acknowledged in `pnpm-workspace.yaml`). electron@42 no longer
-ships its own postinstall, so this project's `postinstall` runs
-`node node_modules/electron/install.js` to download the binary.
+- **Scope is Chromium.** Rendering is capped at what Chromium's CSS can do;
+  exotic non-rectangular layouts (boustrophedon 牛耕式 &c.) and mobile are
+  explicit non-goals. Electron is kept for ONE engine on every desktop: all of
+  ved's IME, caret, and ruby tuning is calibrated against that single engine. A
+  system-WebView port (Tauri) would re-validate everything per engine —
+  WebKitGTK is the weakest at `vertical-rl` + contenteditable — so if tried,
+  spike by running the caret-walk + ruby-geometry e2e suites there first.
+- **Markup as hidden editable DOM text is a dead end.** Both hiding strategies
+  were shipped and failed the same way — a box the browser still lays out but
+  can't honestly measure: `font-size:0` (overrun at column caps, phantom rects,
+  wrong-column caret affinity breaking line movement, degenerate IME rects) and
+  `display:none` + full editing takeover (IME box still misfired at
+  boundaries). The fix was structural: markup out of the editable text
+  entirely (the current ruby node + widget delimiters).
+- **"Which side of the ruby is the caret on" cannot be app state.** The DOM
+  holds one position at a ruby's edge; a mouse click carries no side, an IME
+  reads the live DOM rect (not our flag), and any DOM-originated selection
+  read-back orphans the bit. This is why "never add state where displayed and
+  model text can diverge" is an invariant, and why the answer lives in
+  structure (boundary offsets map OUTSIDE the node).
+- **CSS cannot page vertical text 2D.** Multicol stacks columns along the
+  INLINE axis only (for vertical-rl: downward — that IS VerticalColumns), and
+  an orthogonal-flow child does not fragment (measured in this Chromium). One
+  fragmentation direction exists per flow — hence no page COLUMNS in
+  VerticalRows; re-test if Chromium ever ships block-axis column progression.
+- **Rejected page-layout alternatives:** DOM-level pagination (page container
+  elements) — structure repair at page boundaries on every edit, against
+  identity + IME safety; CSS transforms over multicol bands — breaks every
+  client-rect measurement the editor lives on (caret, hit-test, line move);
+  periodic CSS lattices for page separators — tried twice, real documents
+  shift layout non-arithmetically (paragraph paddings, empty lines) and the
+  lattice drifts onto text. Separators are drawn by the measured overlay
+  instead.
 
 ## Known papercuts / future work
 
-- **Real mozc IME composition IS automated** (`test/e2e/mozc/ruby-composition.ts`,
-  `pnpm smoke:mozc`): X11 keys from `xdotool type` are intercepted by fcitx5+mozc
-  where Playwright/CDP keys are not. It STEALS X focus while running (don't type),
-  and is guarded on `mozcAvailable()`. Still owed: isolate it on an Xvfb display
-  so it stops stealing focus (TODO.org; blocked on a NixOS dbus session.conf path).
-- Automated input needs care: synthetic key events are subject to keyboard
-  layout and the IME, and sub-60 ms bursts after a programmatic selection
-  change can race the DOM→model selection sync. `test/e2e/smoke.ts` inserts
-  via `beforeinput` with human-ish timing and detaches the IME.
-- **Hidden Electron windows throttle `requestAnimationFrame`.** The e2e
-  harness sets `VED_SMOKE_HIDDEN=1` by default, which makes Chromium
-  treat the window as backgrounded and stall RAF callbacks. Code paths
-  that defer work via RAF (`editor.tsx moveCaretByLine` uses one to wait
-  for the keydown event to settle before calling `Selection.modify`)
-  silently no-op under that flag, and tests that only assert "the caret
-  didn't jump" can falsely pass. When adding/changing RAF-deferred logic,
-  drop `VED_SMOKE_HIDDEN` for the relevant probe and assert the EXPECTED
-  destination rather than just "stayed put". A VISIBLE smoke window shows
-  INACTIVE (`main/index.ts` — `VED_SMOKE_HIDDEN` present but empty →
-  `showInactive()`), so it never steals the user's OS focus while the suite
-  runs; CDP input needs no OS focus, and the mozc suite — the one that does —
-  activates the window itself.
-- `pm/structure.ts repair` compares every paragraph on every change; fine at
-  current sizes, trivially limitable to dirty paragraphs if profiling flags it.
-  (The decoration pass is already O(n) via `buildPosMap`.)
-- **Ruby line spacing is `$line-space`-tuned; heavy webfonts may need more.** A
-  collapsed ruby's `<rt>` reading renders OUTSIDE the base's em box (above it in
-  horizontal, beside it in vertical-rl) and the line box is a FIXED pitch (no
-  auto-grow), so too little leading makes ruby-dense rows intersect. Fixed by a
-  tight reading `line-height: 1` (drops the phantom leading the reading otherwise
-  inherits) plus `$line-space` sized so the reading clears the previous row
-  (`editor.module.scss`; the pitch feeds `--lines-extent` → page geometry, kept as
-  one source of truth, measured by scroll-keep + the line-number overlay).
-  Verified in the harness font (`test/e2e/ruby-row-overlap.ts`); the exact value
-  is font-dependent (the reading box scales with the CJK font's metrics), so if a
-  heavier bundled webfont still intersects, raise `$line-space` a few px — it is
-  the single tuning lever.
-- **Text SELECTION over ruby is a custom overlay, not native `::selection`.**
-  Native `::selection` fills the LINE BOX, and a ruby line's box is tall (it must fit
-  the reading above the base), so it paints a thick band that also covers the
-  readings in the upper leading — and there is no CSS to make `::selection` shorter
-  than the line box. So the native highlight is hidden (`pm/ruby.css`) and
-  `line-numbers.ts` paints the selection itself from the MODEL selection: base-only
-  rects clipped to the base band, MERGED per visual line so adjacent rubies show no
-  gap (the same measured overlay as the line numbers / current-line highlight; the
-  `rubyActive` highlight is suppressed while a selection is active so the two don't
-  stack). Because the highlight is model-driven, mouse DRAG-selection can't lean on
-  the native selection either — it can't extend across a collapsed atom ruby's
-  read-only base (`contenteditable=false`) — so `editor.tsx` drives the drag from a
-  GEOMETRIC hit-test over the base glyphs (`pm/drag-select.ts`, unit-tested).
-  While that drag is underway, `createSelectionBetween` RETURNS THE MODEL
-  SELECTION (not null): Chromium's parallel native drag sits collapsed at the
-  pointer (it can't cross the read-only base), and PM's DOM read-back would
-  otherwise clobber the geometric range on selectionchange/mouseup.
-  Both walks are SCOPED so they never measure the whole document: the hit-test
-  measures only the paragraphs intersecting the viewport (falling back to a full
-  walk only when no text is visible near the point), and the selection overlay
-  measures only the paragraphs the selection spans. A plain in-content click
-  measures NOTHING (the browser/PM place the caret) — `test/e2e/click-perf.ts`
-  pins all of this via the `__vedGlyphWalks` seam; latency benchmarks live in
-  `desktop/bench/`. (Behavior tested in `test/e2e/ruby-selection-thin.ts`,
-  `drag-select-ruby.ts`.)
-- **Click on NON-TEXT may not place the caret.** Clicking empty space (the gap
-  between rows, or past a line's text) can land on no text node, leaving the
-  cursor put — easy to mis-click. In the harness the browser already snaps clicks
-  on the contenteditable's own background that fall INSIDE its box (only clicks
-  truly outside the editor no-op, which is correct), so the failing case is
-  scenario-specific and not yet reproduced. When it is: a background-`click`
-  fallback (target is `view.dom`/scroller) that runs `view.posAtCoords` and snaps
-  to the nearest position works and is low-risk (drag/extend untouched) — it was
-  prototyped but reverted for lack of a failing repro to guard it.
+- **Real mozc IME composition IS automated** (`test/e2e/mozc/`, run with `pnpm
+  smoke:mozc` in `desktop/`): X11 keys from `xdotool` are intercepted by
+  fcitx5+mozc where CDP keys are not. It STEALS X focus while running; guarded
+  on `mozcAvailable()`. Owed: isolate on Xvfb (TODO.org; blocked on a NixOS
+  dbus session.conf path).
+- Synthetic input needs care: key events are subject to layout + IME, and
+  sub-60 ms bursts after a programmatic selection change race the DOM→model
+  sync. `smoke.ts` inserts via `beforeinput` with human-ish timing, IME
+  detached.
+- **Hidden Electron windows throttle rAF.** `VED_SMOKE_HIDDEN=1` (the harness
+  default) stalls RAF-deferred paths (`moveCaretByLine`), so tests asserting
+  only "the caret didn't jump" falsely pass — use a visible window and assert
+  the EXPECTED destination. A visible smoke window shows INACTIVE
+  (`showInactive()`, `VED_SMOKE_HIDDEN` present-but-empty), never stealing OS
+  focus; only the mozc suite needs focus and activates the window itself.
+- `repair` compares every paragraph per change; fine at current sizes,
+  limitable to dirty paragraphs if profiling flags it.
+- **Ruby line spacing is `$line-space`-tuned; heavy webfonts may need more.**
+  The `<rt>` renders outside the base's em box and the line box is a FIXED
+  pitch, so too little leading intersects ruby-dense rows. Fixed by reading
+  `line-height: 1` + `$line-space` sized so the reading clears the previous row
+  — the single tuning lever, font-dependent (`ruby-row-overlap.ts`).
+- **Selection over ruby is a custom overlay, not native `::selection`** (which
+  fills the tall ruby line box and paints over the readings; no CSS shortens
+  it). The native highlight is hidden; `line-numbers.ts` paints base-only rects
+  from the MODEL selection, merged per visual line (`rubyActive` suppressed
+  while a selection is active). Mouse drag therefore can't lean on the native
+  selection either (it can't cross a read-only base): `editor.tsx` drives the
+  drag from a geometric hit-test over the base glyphs (`pm/drag-select.ts`),
+  and `createSelectionBetween` returns the MODEL selection during the drag so
+  PM's DOM read-back doesn't clobber it. Both walks are scoped (viewport /
+  selection span); a plain in-content click measures NOTHING — pinned by
+  `click-perf.ts` via `__vedGlyphWalks`; benches in `desktop/bench/`.
+  (`ruby-selection-thin.ts`, `drag-select-ruby.ts`.)
+- **Click on NON-TEXT may not place the caret** (gap between rows, past a
+  line's text). In the harness, clicks inside the contenteditable's box already
+  snap, so the failing case is scenario-specific and not yet reproduced. When
+  it is: a background-click fallback via `view.posAtCoords` was prototyped and
+  reverted for lack of a failing repro to guard it.

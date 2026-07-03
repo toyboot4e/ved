@@ -5,7 +5,7 @@
 // per visual line, which only measurement can give. Decoupled from the
 // paragraphs so the overrun fix and the numbering stay independent (the ruby
 // overrun is fixed separately by an inline-block base; no clip is applied — it
-// only paints-clips, hiding content. See docs/adr/0006).
+// only paints-clips, hiding content).
 //
 // For each paragraph, Range.getClientRects() yields one rect per visual line
 // (Chromium emits several around a ruby; we group them). We group by the

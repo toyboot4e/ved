@@ -59,7 +59,7 @@ _Avoid_: line-height (the CSS property), leading, gap.
 A row of **pages** laid side by side — the unit that tiles downward in
 VerticalColumns. Holds a configurable number of pages (pages-per-row);
 one page per row is the default. VerticalRows has no counterpart (a column
-of pages cannot exist — see ADR 0011).
+of pages cannot exist — one fragmentation direction per flow; see docs/architecture.md).
 _Avoid_: band (implementation word), grid row.
 
 ### Document and annotation

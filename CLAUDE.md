@@ -8,7 +8,7 @@ Electron + React + ProseMirror editor for Japanese vertical writing (tategaki)
 with ruby annotations. **Read `docs/architecture.md` before touching the
 editor core** (`editor/src/`, mainly `editor/src/pm/`).
 
-**Monorepo (pnpm workspace, ADR-0009).** Three packages, flat at the root:
+**Monorepo (pnpm workspace).** Three packages, flat at the root:
 `@ved/editor` (`editor/` — the editor core, the ONLY prosemirror consumer),
 `@ved/desktop` (`desktop/` — the Electron product: main/preload/shared/renderer,
 tabs, files, the e2e + mozc suites), and `@ved/web` (`web/` — a throwaway Vite
@@ -18,9 +18,6 @@ Consumed as SOURCE via the `@ved/editor` exports entry — never deep-import its
 internals. Paths below are relative to these package roots.
 
 - `CONTEXT.md` — project glossary (the words to use, and the ones to avoid).
-- `docs/adr/` — architecture decisions and *why* (e.g. browser engine over a
-  custom one; the editor framework — Slate → Lexical → **ProseMirror** for the
-  rich-syntax roadmap, see ADR-0005).
 
 ## Commands
 
@@ -42,9 +39,17 @@ Task runner is `just`:
   NODE; its content is two EDITABLE child nodes — `rubyBase` + `rubyText` — and
   `serialize` RECONSTRUCTS the literal markup `|base(reading)` (custom, not
   `textBetween`), so the plain string is identity-exact, character for character.
-  The markup `|`,`(`,`)` is NEVER DOM text — it lives only in `serialize`, and in
-  the expanded appear policies it is DISPLAYED as CSS pseudo-elements (ADR-0008
-  supersedes the `display:none` of 0007 and `font-size:0` of 0006). Every other
+  The markup `|`,`(`,`)` is NEVER MODEL TEXT — no PM text node holds it, so no
+  edit, IME composition, or DOM-sync can ever touch it; it exists only in
+  `serialize`'s output (it still occupies plain-string offsets). While collapsed
+  (Rich &c.) it renders NOTHING; in the expanded appear policies each delimiter
+  is a READ-ONLY WIDGET decoration — an inert `contenteditable=false` `<span>`
+  (`pm/decorations.ts` `openDelim`/`parenDelim`/`closeDelim`). Real elements,
+  NOT CSS pseudo-elements: generated content has no DOM positions around it, so
+  the caret painted at the same spot on both sides of a delimiter. (Markup as
+  *hidden editable text* — `font-size:0` or `display:none` boxes — is a verified
+  dead end: a zero-sized or out-of-flow box has no honest caret/IME geometry.
+  Don't reintroduce it.) Every other
   inline format (bold/italic/縦中横, …) is a view-only **decoration**, not a node —
   a parse rule + a CSS class, no structure repair. Never add state where
   displayed text and model text can diverge. Outside the editor core a document
@@ -65,7 +70,8 @@ Task runner is `just`:
   base char-by-char this way — leading, adjacent, or mid-paragraph. `pm/caret-model.ts`
   makes a collapsed ruby's base contribute only its INTERIOR offsets
   (`from+1..to-1`) as caret stops; the START/END edges
-  coincide with the ruby's outer boundary (the hidden zero-width `|`,`(`,`)`).
+  coincide with the ruby's outer boundary (the markup offsets `|`,`(`,`)`,
+  which render nothing while collapsed).
   An ATOM ruby (one with NO plain text immediately before it for an IME to anchor to:
   it LEADS its paragraph, OR immediately FOLLOWS another ruby — `pm/decorations.ts`
   `$pos.parentOffset===0 || $pos.nodeBefore` is a ruby) keeps its base read-only
@@ -93,8 +99,8 @@ Task runner is `just`:
   ATOM with a read-only base, so mozc can't compose into it and lands outside. All
   boundary cases are verified with real mozc (`mozc/ruby-composition`), including
   `|語(ご)ね|句(く)` between two adjacent rubies. (History: the ZWSP IME anchor and
-  the `compositionend` re-home are both GONE — they were a hack; the markup is
-  still out of the DOM per ADR-0008.)
+  the `compositionend` re-home are both GONE — they were a hack; collapsed markup
+  still renders nothing.)
 - **Keep the caret in view after edits.** PM's `scrollIntoView` doesn't survive
   the post-commit ruby repair (a second transaction) or the vertical-rl
   multi-column page layouts, so `editor.tsx revealCaretInScroller` scrolls the
@@ -111,8 +117,8 @@ Task runner is `just`:
   page fully visible at the far edge.
   VerticalColumns bands are exact arithmetic (multicol fragments);
   VerticalRows page bounds are the MEASURED `.ved-page-gap` widget centers
-  (arithmetic drifts, ADR-0010). (`test/e2e/page-reveal.ts`, visible window —
-  the reveal is rAF-deferred.)
+  (arithmetic drifts — page positions move with paragraph paddings).
+  (`test/e2e/page-reveal.ts`, visible window — the reveal is rAF-deferred.)
 - **IME safety.** Never repair structure, steal focus, or remount the editor
   during an IME composition (`view.composing`, `event.isComposing`). Ruby
   structure repair (`pm/structure.ts repair`, run from `dispatchTransaction`)
@@ -133,10 +139,10 @@ Task runner is `just`:
   hidden in Rich (only the base + read-only reading show); editing the reading, and
   prepending/appending at the base EDGES, with the markup VISIBLE is the EXPANDED
   policies' job. Do not "fix" an IME issue by expanding the ruby in Rich or by
-  making the READING editable there. (Historical:
-  the old `display:none` markup scrambled mozc and was patched with in-flow
-  `font-size:0`; ADR-0008 removes that whole class by taking the markup out of the
-  DOM.) Verified with real mozc (`mozc/ruby-composition`), the ONLY faithful check.
+  making the READING editable there. (Hidden-text markup scrambled mozc; that
+  whole class is gone — collapsed markup is not rendered at all, and shown markup
+  is never editable text.) Verified with real mozc (`mozc/ruby-composition`), the
+  ONLY faithful check.
 - **Test IME composition with REAL mozc — DON'T assume it's un-automatable.**
   When touching anything IME-related, FIRST reproduce with real mozc; don't reach
   for CDP `Input.imeSetComposition` (it does NOT faithfully model mozc — it
