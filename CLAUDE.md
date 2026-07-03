@@ -103,6 +103,16 @@ Task runner is `just`:
   is already visible. When the DOM range rect is degenerate (a collapsed range at
   a node boundary), it falls back to `coordsAtPos` — NOT the focus node's element
   rect, which at a boundary is the whole (huge) paragraph and over-scrolls.
+  In the PAGED modes the paged axis instead SNAPS the caret's page START to
+  the viewport start (`caretPageSpan` + `pageSnapDelta` — a page turn); it is
+  a no-op when the WHOLE page is already visible (typing inside a framed page
+  never scrolls), a page LARGER than the viewport degrades to the minimal
+  caret reveal, and at the doc end the browser's scroll-range clamp leaves the
+  page fully visible at the far edge.
+  VerticalColumns bands are exact arithmetic (multicol fragments);
+  VerticalRows page bounds are the MEASURED `.ved-page-gap` widget centers
+  (arithmetic drifts, ADR-0010). (`test/e2e/page-reveal.ts`, visible window —
+  the reveal is rAF-deferred.)
 - **IME safety.** Never repair structure, steal focus, or remount the editor
   during an IME composition (`view.composing`, `event.isComposing`). Ruby
   structure repair (`pm/structure.ts repair`, run from `dispatchTransaction`)

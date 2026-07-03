@@ -64,7 +64,7 @@ carry the detail.
 | 3 | **Line arrow movement is taken over (`moveCaretByLine`)** | `Selection.modify('move','line')` | `modify` mis-steps across multicol PAGE rows and at short columns / paragraph edges / the doc end; we measure columns (excluding `<rt>` annotation rects) and step in reading order (RAF-deferred) | `editor.tsx`, `paragraphCols` |
 | 1,2 | **A collapsed ruby keeps the IME out at the boundary** | native caret enters the ruby's editable base/reading | an IME composes into the DOM at the caret; an editable ruby boundary let it compose INTO the reading or sit on the wrong side. The caret steps the base interior char-by-char, but the READING is `contenteditable=false`, and an ATOM ruby (no plain text before it) keeps its base read-only UNTIL the caret is inside it — so the IME composes outside at the boundary. Verified with real mozc (`mozc/ruby-composition`, `ruby-ime-rect`) | `pm/decorations.ts`, `pm/leaves.ts`, `ruby.css` |
 | 1,2 | **Structure repair after each transaction (`repair`)** | none — PM keeps the doc as edited | re-parses typed text into the ruby node (e.g. `X|漢(かん)` → text + ruby); **skipped while composing** | `pm/structure.ts` |
-| 3 | **Caret re-revealed after every doc change (`revealCaretInScroller`)** | `EditorView.scrollIntoView` | PM's scroll doesn't survive the post-commit ruby repair (a 2nd transaction) or the vertical-rl multi-page columns | `editor.tsx` |
+| 3 | **Caret re-revealed after every doc change (`revealCaretInScroller`)** | `EditorView.scrollIntoView` | PM's scroll doesn't survive the post-commit ruby repair (a 2nd transaction) or the vertical-rl multi-page columns; in the paged modes the paged axis SNAPS the caret's page START to the viewport start (`caretPageSpan` + `pageSnapDelta` — a page turn; no-op when the whole page is visible) | `editor.tsx` |
 | 1,2 | **Composing over a selection deletes the MODEL selection at IME entry** | the browser replaces the selected range when a composition starts | the native replace chokes on a collapsed ruby's `contenteditable=false` islands (reading; atom base), and PM resets a mismatched model selection at compositionstart — the selected text survived beside the composition. The range is RECORDED on keydown-229 and DELETED at compositionstart (`imePendingSel` + `deleteRangeForIme`; deleting during the keydown races the IME handshake and leaks the first char raw). Verified with real mozc (`mozc/selection-composition`) | `editor.tsx` |
 | 1 | **Selection deletion is IDENTITY-EXACT (`plainDeleteTr`)** | `Transaction.deleteSelection` (structural) | a structural delete across ruby children leaves debris the plain string never contained — deleting from a base interior to the paragraph end kept a ruby with an EMPTY reading (a phantom `()` the parser then accepts, so repair keeps it; and repair is skipped while composing). `plainDeleteTr` removes exactly the plain offset range and rebuilds the touched paragraphs canonically (`inlineNodesFor`); used by Backspace/Delete over a selection, Enter-replace, and the IME-entry deletion | `editor.tsx` |
 | 3 | **Line numbers + current-line highlight are a measured overlay** | a CSS counter on `<p>` | a counter can only address the logical `<p>`; a wrapped paragraph needs one number + a highlight per VISUAL line (column/row), which only measurement gives | `editor/line-numbers.ts` |
@@ -345,6 +345,25 @@ visible), run after every doc change, and — synchronously, after the
 re-decoration reflow (Plain can grow the text ~4×) — on an appear-policy
 change. The single-burst-insert and reflow cases are covered by
 `test/e2e/ruby-reveal.ts`.
+
+In the PAGED modes the paged axis does not minimally reveal — it SNAPS the
+caret's page START (the band top in VerticalColumns, the page's right edge in
+VerticalRows — the reading start) to the viewport start: a page turn
+(`caretPageSpan` + `pageSnapDelta`). A minimal caret-only reveal after a paste
+parked the caret at the viewport edge with its page half-shown, which read as
+"nothing happened". The snap is a NO-OP when the whole page is already
+visible (typing inside a framed page never scrolls); a page LARGER than the
+viewport degrades to the minimal caret reveal — including its
+no-op-when-visible rule, which the policy-switch invariant ("a visible caret
+never scrolls") depends on; and at the doc end the browser's scroll-range
+clamp leaves the page fully visible at the viewport's far edge — the physical
+maximum. A VerticalColumns band is a real multicol
+fragment, so its span is exact arithmetic (`colsPagePitch` over the content
+box); VerticalRows page bounds drift non-arithmetically (paragraph paddings,
+ADR-0010), so they are read from the MEASURED `.ved-page-gap` widgets already
+in the DOM (each widget's center lies in its gap blank). Covered by
+`test/e2e/page-reveal.ts` (visible window — the post-edit reveal is
+rAF-deferred, which hidden windows throttle).
 
 ## History (`editor/history.ts PlainTextHistory`)
 

@@ -694,12 +694,89 @@ const revealDelta = (lo: number, hi: number, viewLo: number, viewHi: number, cus
   return 0;
 };
 
-/** Scroll the scroller minimally so the caret is within view on BOTH axes, in
- *  every writing mode (multicol included). A no-op when the caret is already
- *  visible. Used after edits and on a policy-change reflow — PM's own
- *  scrollIntoView doesn't survive the post-commit ruby repair, and doesn't
- *  reliably handle the vertical-rl multi-column page layouts. */
-const revealCaretInScroller = (scroller: HTMLElement, view: EditorView): void => {
+/** The span of the PAGE containing the caret on the PAGED axis, or null
+ *  outside the paged modes. Reveal target for revealCaretInScroller.
+ *  - `columns`: the band (page row) is a real multicol fragment — physically
+ *    periodic (colsPagePitch) — so its vertical span is exact arithmetic over
+ *    the content box.
+ *  - `rows`: pages are arithmetic LINES whose physical positions drift with
+ *    paragraph paddings (ADR 0010), so the boundaries are read from the
+ *    MEASURED `.ved-page-gap` widgets already in the DOM — each widget's rect
+ *    spans its fattened last line + gap, so its center lies in the gap blank. */
+const caretPageSpan = (
+  scroller: HTMLElement,
+  view: EditorView,
+  mode: ScrollMode,
+  caret: { top: number; bottom: number; left: number; right: number },
+): { lo: number; hi: number } | null => {
+  if (mode !== 'columns' && mode !== 'rows') return null;
+  const content = view.dom.getBoundingClientRect();
+  if (mode === 'columns') {
+    const pitch = measureGeom(scroller).colsPagePitch;
+    const cs = getComputedStyle(view.dom);
+    // padding-inline-start = the first band's line-number gutter (top in
+    // vertical-rl); the band period then repeats via column-gap.
+    const gutter = Number.parseFloat(cs.paddingTop) || 0;
+    const pageH = pitch - (Number.parseFloat(cs.columnGap) || 0);
+    const mid = (caret.top + caret.bottom) / 2;
+    const band = Math.max(0, Math.floor((mid - content.top - gutter) / pitch));
+    const bandTop = content.top + gutter + band * pitch;
+    return { lo: bandTop, hi: bandTop + pageH };
+  }
+  // rows: the page span between the two measured gap centers around the caret
+  // (the content edges at the ends). Pages tile leftward; order-independent.
+  const mid = (caret.left + caret.right) / 2;
+  let lo = content.left;
+  let hi = content.right;
+  for (const el of view.dom.querySelectorAll('.ved-page-gap')) {
+    const r = el.getBoundingClientRect();
+    const c = (r.left + r.right) / 2;
+    if (c >= mid) hi = Math.min(hi, c);
+    else lo = Math.max(lo, c);
+  }
+  return { lo, hi };
+};
+
+/** The scroll delta that SNAPS the page's START edge (reading order: the TOP
+ *  band edge in `columns`, the RIGHT page edge in `rows`) to the viewport's
+ *  matching edge — a page turn. Zero when the whole page is already visible,
+ *  so typing inside a framed page never scrolls; a page LARGER than the
+ *  viewport degrades to the minimal caret reveal (see inside). At the scroll
+ *  range's end the browser clamps the snap, leaving the page fully visible at
+ *  the viewport's far edge — the physical maximum. */
+const pageSnapDelta = (
+  page: { lo: number; hi: number },
+  caretLo: number,
+  caretHi: number,
+  viewLo: number,
+  viewHi: number,
+  cushion: number,
+  startAtHi: boolean,
+): number => {
+  // A page that doesn't FIT the viewport can never be framed — keep the
+  // MINIMAL caret reveal, including its no-op-when-visible rule (the
+  // policy-switch invariant "a visible caret never scrolls" depends on it;
+  // best-effort alignment nudged the view even with the caret in sight).
+  if (page.hi - page.lo > viewHi - viewLo - 2 * cushion) return revealDelta(caretLo, caretHi, viewLo, viewHi, cushion);
+  if (page.lo >= viewLo - 1 && page.hi <= viewHi + 1) return 0; // fully visible → stay put
+  let d = startAtHi ? page.hi - (viewHi - cushion) : page.lo - (viewLo + cushion);
+  // Scrolling by d shifts content by -d; keep the caret inside the viewport
+  // (a degenerate/drifted caret rect could stick out past the page bounds).
+  d = Math.max(d, caretHi - (viewHi - cushion));
+  d = Math.min(d, caretLo - (viewLo + cushion));
+  return d;
+};
+
+/** Scroll the scroller so the caret is within view on BOTH axes, in every
+ *  writing mode (multicol included). Used after edits and on a policy-change
+ *  reflow — PM's own scrollIntoView doesn't survive the post-commit ruby
+ *  repair, and doesn't reliably handle the vertical-rl multi-column page
+ *  layouts. Non-paged modes get the minimal caret reveal (a no-op when the
+ *  caret is visible). In the PAGED modes the paged axis instead SNAPS the
+ *  caret's page START to the viewport start (pageSnapDelta — the "page turn"
+ *  the user reads by), and is a no-op only when the WHOLE page is visible;
+ *  the cross axis stays caret-minimal. */
+const revealCaretInScroller = (scroller: HTMLElement, view: EditorView, mode: ScrollMode): void => {
   const sel = window.getSelection();
   if (!sel || sel.rangeCount === 0) return;
   const range = sel.getRangeAt(0);
@@ -721,8 +798,17 @@ const revealCaretInScroller = (scroller: HTMLElement, view: EditorView): void =>
   const top = viewBox.top + scroller.clientTop;
   const left = viewBox.left + scroller.clientLeft;
   const cushion = 8;
-  scroller.scrollTop += revealDelta(rect.top, rect.bottom, top, top + scroller.clientHeight, cushion);
-  scroller.scrollLeft += revealDelta(rect.left, rect.right, left, left + scroller.clientWidth, cushion);
+  const page = caretPageSpan(scroller, view, mode, rect);
+  if (page && mode === 'columns') {
+    scroller.scrollTop += pageSnapDelta(page, rect.top, rect.bottom, top, top + scroller.clientHeight, cushion, false);
+    scroller.scrollLeft += revealDelta(rect.left, rect.right, left, left + scroller.clientWidth, cushion);
+  } else if (page) {
+    scroller.scrollTop += revealDelta(rect.top, rect.bottom, top, top + scroller.clientHeight, cushion);
+    scroller.scrollLeft += pageSnapDelta(page, rect.left, rect.right, left, left + scroller.clientWidth, cushion, true);
+  } else {
+    scroller.scrollTop += revealDelta(rect.top, rect.bottom, top, top + scroller.clientHeight, cushion);
+    scroller.scrollLeft += revealDelta(rect.left, rect.right, left, left + scroller.clientWidth, cushion);
+  }
 };
 
 // ---------------------------------------------------------------------------
@@ -867,7 +953,7 @@ export const VedEditor = (props: VedEditorProps): React.JSX.Element => {
         if (tr.docChanged && !view.composing) {
           requestAnimationFrame(() => {
             const s = scrollerRef.current;
-            if (s) revealCaretInScroller(s, view);
+            if (s) revealCaretInScroller(s, view, toScrollMode(live.current.writingMode));
           });
         }
         // History/onTextChange are skipped DURING composition (view.composing);
@@ -1730,7 +1816,7 @@ export const VedEditor = (props: VedEditorProps): React.JSX.Element => {
     if (prevRevealRef.current.policy !== appearPolicy || prevRevealRef.current.mode !== writingMode) {
       prevRevealRef.current = { policy: appearPolicy, mode: writingMode };
       const s = scrollerRef.current;
-      if (s) revealCaretInScroller(s, view);
+      if (s) revealCaretInScroller(s, view, toScrollMode(writingMode));
     }
   }, [appearPolicy, vert, multiCol, rows, writingMode]);
 
