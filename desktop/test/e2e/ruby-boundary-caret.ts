@@ -4,7 +4,7 @@
 // rendered `.vedBoundaryCaret` widget at the head. The model offset is unchanged
 // (the click is NOT snapped to a different position).
 import assert from 'node:assert/strict';
-import { fail, finish, launchVed, step } from './harness.ts';
+import { clickWritingMode, fail, finish, launchVed, step } from './harness.ts';
 
 const ved = await launchVed({ env: () => ({ VED_SMOKE_CLOSE_RESPONSE: 'discard', VED_SMOKE_HIDDEN: '' }) });
 const { page, app } = ved;
@@ -118,6 +118,32 @@ try {
   );
   assert.ok(Math.abs(barSize - s.pitch) < 1, `bar spans the pitch (${barSize} vs ${s.pitch})`);
   step('widget caret has zero layout footprint; bar spans the pitch');
+
+  // REGRESSION (invisible caret at lone-ruby doc edges): the appear-policy /
+  // writing-mode effect rebuilt view.dom.className from scratch, WIPING PM's
+  // ProseMirror-focused class. Real focus never left the editor, so PM never
+  // re-added it (it only does on a real focus event) — and the widget caret,
+  // whose blink is gated on that class, went invisible at every no-text-home
+  // spot while typing kept working. The native caret (real-DOM-focus-driven)
+  // was unaffected, which is why only these spots appeared caret-less.
+  const focusedClass = () => page.evaluate(() => !!document.querySelector('.ProseMirror.ProseMirror-focused'));
+  const blinkName = () =>
+    page.evaluate(() => {
+      const c = document.querySelector('.vedBoundaryCaret');
+      return c ? getComputedStyle(c, '::after').animationName : '';
+    });
+  await setDoc('|ルビ(ruby)'); // a document of ONE ruby — both edges are widget spots
+  await setCaret(0);
+  await until(hasBoundaryCaret, true, 'widget at the lone-ruby doc start');
+  assert.ok(await focusedClass(), 'editor is PM-focused before the mode switch');
+  await clickWritingMode(page, 'Vertical');
+  await until(focusedClass, true, 'ProseMirror-focused survives a writing-mode switch');
+  await until(hasBoundaryCaret, true, 'widget still at the doc start after the switch');
+  assert.equal(await blinkName(), 'vedCaretBlink', 'widget caret blinks after the mode switch');
+  await setCaret(9); // doc end (after the ruby)
+  await until(hasBoundaryCaret, true, 'widget at the lone-ruby doc end');
+  assert.equal(await blinkName(), 'vedCaretBlink', 'widget caret blinks at the doc end');
+  step('mode switch keeps ProseMirror-focused: the widget caret stays visible at lone-ruby edges');
 } catch (e) {
   fail(e instanceof Error ? e.message : String(e));
 } finally {

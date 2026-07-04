@@ -2042,11 +2042,20 @@ export const VedEditor = (props: VedEditorProps): React.JSX.Element => {
     policyClassRef.current = APPEAR_CLASS[appearPolicy];
     const view = viewRef.current;
     if (!view) return;
-    // Keep PM's own `ProseMirror` class (its base styles + ved's `.ProseMirror`
-    // rules — line numbers, current-line highlight — depend on it); only swap
-    // the layout/writing-mode classes.
+    // Keep PM's own `ProseMirror-*` classes (base styles + ved's `.ProseMirror`
+    // rules, and STATE classes like `ProseMirror-focused`); only swap the
+    // layout/writing-mode classes. PM re-adds `ProseMirror-focused` only on a
+    // real focus event — focus never left the editor across a mode switch, so
+    // wiping it here left the boundary-caret widget (blink gated on that
+    // class) invisible at every no-text-home caret spot until the next real
+    // blur→focus cycle, while the native caret and typing kept working.
+    const pmState = [...view.dom.classList].filter((c) => c.startsWith('ProseMirror'));
     view.dom.className = '';
-    view.dom.classList.add('ProseMirror', ...CONTENT_CLASS(vert, multiCol, rows).split(' ').filter(Boolean));
+    view.dom.classList.add(
+      'ProseMirror',
+      ...pmState,
+      ...CONTENT_CLASS(vert, multiCol, rows).split(' ').filter(Boolean),
+    );
     view.dispatch(view.state.tr.setMeta('redecorate', true));
     lineNumbersRef.current?.schedule(); // wrapping changed → re-measure line numbers
     pageGapsRef.current?.schedule(); // rows mode may have toggled → widgets in/out
