@@ -9,8 +9,10 @@
 //
 // NOTE: Playwright's synthetic mouse stops delivering drag moves once a selection
 // is dispatched (and emits no pointer events), so a real multi-step drag can't be
-// reproduced here; the single effective move still crosses the rubies, which is
-// what guards the fix. The hit-test math is covered by editor/src/pm/drag-select.test.ts.
+// reproduced here — the FIRST move is the only effective one (later moves are
+// dead, whatever their spacing). The drag is therefore driven as ONE decisive
+// move to the far point; crossing the rubies in that move is what guards the
+// fix. The hit-test math is covered by editor/src/pm/drag-select.test.ts.
 import { clickWritingMode, fail, finish, launchVed, step } from './harness.ts';
 
 const ved = await launchVed({ env: () => ({ VED_SMOKE_CLOSE_RESPONSE: 'discard', VED_SMOKE_HIDDEN: '' }) });
@@ -35,10 +37,8 @@ try {
   });
   await page.mouse.move(pts.x, pts.y);
   await page.mouse.down();
-  for (let i = 1; i <= 5; i++) {
-    await page.mouse.move(pts.x + ((pts.x2 - pts.x) * i) / 5, pts.y);
-    await page.waitForTimeout(40);
-  }
+  await page.mouse.move(pts.x2, pts.y);
+  await page.waitForTimeout(80);
   await page.mouse.up();
   await page.waitForTimeout(120);
 
