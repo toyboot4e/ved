@@ -251,9 +251,9 @@ ruby.rubyWrap > .rubyBase {
 }
 
 /* EXPANDED (Plain / the active paragraph or ruby): show the markup as gray
- * pseudo-elements and lay the reading out inline as ordinary editable text.
- * `display:inline` on the <ruby>/<rt> drops the native ruby annotation layout so
- * the parts read as one run: |base(reading). */
+ * read-only widget spans (pm/decorations.ts) and lay the reading out inline as
+ * ordinary editable text. `display:inline` on the <ruby>/<rt> drops the native
+ * ruby annotation layout so the parts read as one run: |base(reading). */
 ruby.rubyExpanded {
   display: inline;
 }

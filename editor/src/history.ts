@@ -1,6 +1,6 @@
-// Backend-neutral plain-text undo history. Shared by the Slate and Lexical
-// editor cores: a document is always a plain string and a caret is a
-// {para, offset} plain position, so undo lives entirely outside either tree.
+// Backend-neutral plain-text undo history: a document is always a plain
+// string and a caret is a {para, offset} plain position, so undo lives
+// entirely outside the editor tree — it would survive an editor-backend swap.
 
 /** A caret position in plain-offset terms: paragraph index + offset within it. */
 export type CursorState = { para: number; offset: number };

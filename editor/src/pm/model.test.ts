@@ -68,8 +68,8 @@ describe('ProseMirror identity rich text model', () => {
     // Text typed/composed there lands outside the ruby; crucially an IME composes
     // into the DOM at the caret, and an inside boundary corrupted the ruby (or,
     // at the leading edge, mozc could not compose at the hidden-markup spot).
-    // Only an INTERIOR caret (editing the base) maps inside. (The rect at the
-    // boundary is handled separately — see the rubyLeadActive overlay caret.)
+    // Only an INTERIOR caret (editing the base) maps inside. (A textless seam's
+    // caret RECT is handled separately — the .vedBoundaryCaret widget.)
     const doc = docFromText('|漢(かん)');
     const lead = doc.resolve(offsetToPos(doc, 0));
     expect(lead.parent.type.name).toBe('paragraph'); // before the ruby node

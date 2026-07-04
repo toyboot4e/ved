@@ -4,10 +4,10 @@
 // offset. This turns a document into the ordered list of "leaves" the caret
 // model, cursor map, and ruby decorations share.
 //
-// Because markup characters (`|`, `(`, `)`) are real characters in the text,
-// a hidden delimiter still occupies a real offset: the "boundary pair" the
-// Lexical core synthesised from two same-pixel points is here just two
-// adjacent offsets separated by the (zero-width) delimiter.
+// Because the markup characters (the front marker and reading brackets) are
+// real characters in the text, a hidden delimiter still occupies a real
+// offset: a ruby boundary needs no synthetic pair of same-pixel caret points —
+// it is just two adjacent offsets separated by the (zero-width) delimiter.
 import { parse } from '../parse';
 
 export type Appear = 'rich' | 'plain' | 'paragraph' | 'char';

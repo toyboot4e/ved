@@ -5,7 +5,7 @@
 // broken one unwraps back to text. The caret is preserved by plain offset.
 //
 // Run from `dispatchTransaction` and SKIP while composing (restructuring would
-// cancel the IME session), mirroring the Lexical core's `isComposing` guard.
+// cancel the IME session — the IME-safety invariant, CLAUDE.md).
 import { Fragment } from 'prosemirror-model';
 import { type EditorState, TextSelection, type Transaction } from 'prosemirror-state';
 import { inlineNodesFor, offsetToPos, paragraphText, posToOffset } from './model';

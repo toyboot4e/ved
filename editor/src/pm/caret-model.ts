@@ -1,5 +1,5 @@
 // Model-driven character caret movement (backend neutral, plain offsets).
-// Ports the Slate/Lexical `moveCaretByCharacter` semantics:
+// The semantics:
 //
 //  - Hidden markup (collapsed delim/rt) contributes no caret stops, so arrow
 //    movement skips it.

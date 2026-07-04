@@ -4,9 +4,9 @@
 // + a CSS class, no schema, no structure repair.
 //
 // Ruby is the exception: it is a NODE (rubyBase + rubyReading children), so its
-// markup `|`,`(`,`)` is NOT editable DOM text — it is reconstructed by
-// `serialize` and DISPLAYED (in the expanded appear policies) as CSS
-// pseudo-elements driven by the `rubyExpanded` node class. The native caret and
+// markup is NOT editable DOM text — it is reconstructed by
+// `serialize` and DISPLAYED (in the expanded appear policies) as read-only
+// widget decorations alongside the `rubyExpanded` node class. The native caret and
 // IME therefore live in real, full-size text at every position, including a
 // ruby boundary; the old overlay caret / font-size:0 / delimAnchor machinery is
 // gone (see the model.ts header).
@@ -227,7 +227,7 @@ const buildBase = (parse: Parse, invis: Invisibles): DecorationSet => {
  *  expanded-set) alone, so it is CACHED and reused across caret moves (per-move
  *  cost was O(rubies) Decoration allocations + a full DecorationSet
  *  redistribution — ~100ms/click at 9k rubies):
- *   - `rubyExpanded` shows the markup `|`,`(`,`)` (CSS pseudo-elements) and lays
+ *   - `rubyExpanded` shows the markup (the widget delimiters below) and lays
  *     the reading out inline as editable text — set when the appear policy
  *     reveals this ruby (Plain: always; ByParagraph: the caret paragraph;
  *     ByCharacter: the caret ruby; Rich: never).

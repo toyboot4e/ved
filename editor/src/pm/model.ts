@@ -46,8 +46,8 @@ export const schema = new Schema({
     // Ruby: an inline node whose content is [rubyBase, rubyReading]. The default
     // rendering is <ruby class=rubyWrap><span.rubyBase>base</span><rt>reading
     // </rt></ruby> — both children editable; no custom node view needed. The
-    // markup `|`,`(`,`)` is shown (in the expanded policies) as CSS
-    // pseudo-elements, never DOM text (pm/decorations + pm/ruby.css).
+    // markup is shown (in the expanded policies) as read-only widget
+    // decorations, never editable DOM text (pm/decorations + pm/ruby.css).
     ruby: {
       group: 'inline',
       inline: true,

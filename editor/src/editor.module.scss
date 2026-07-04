@@ -317,10 +317,6 @@ $footer-height: $font-size + $pad-y * 2;
   // the caret disappears at ruby boundaries. Pin caret-color to a visible
   // value so the caret renders everywhere — including at hidden markup.
   caret-color: var(--ved-caret, black);
-  // Used by the leading-delim overlay caret (ruby.module.scss
-  // .rubyLeadActive::before): the body font-size, as an absolute pixel
-  // value so the overlay's `1em` doesn't shrink to the delim's $markup-size.
-  --ved-caret-extent: var(--cell-size);
   // The document font (view config); empty/unset inherits the shell's stack.
   font-family: var(--font-family, inherit);
 
