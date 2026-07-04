@@ -58,6 +58,22 @@ try {
   assert.equal(await editorText(), 'XBBB');
   step('switching back restores the edited text');
 
+  // A RANGE selection survives a tab round-trip: select [1,3) in b, switch
+  // away and back, and both ends (anchor AND head) must be restored.
+  type W = { __vedSetSelection(a: number, h: number): void; __vedAnchor(): number; __vedCaret(): number };
+  await page.evaluate(() => (window as unknown as W).__vedSetSelection(1, 3));
+  await page.waitForTimeout(150);
+  await page.click('[role=tab]:has-text("a.txt")');
+  await page.waitForTimeout(200);
+  await page.click('[role=tab]:has-text("b.txt")');
+  await page.waitForTimeout(200);
+  const sel = await page.evaluate(() => {
+    const w = window as unknown as W;
+    return { anchor: w.__vedAnchor(), head: w.__vedCaret() };
+  });
+  assert.deepEqual(sel, { anchor: 1, head: 3 });
+  step('a range selection survives a tab round-trip');
+
   // Close the clean a tab (no prompt) → two tabs
   await page.click('[role=tab]:has-text("a.txt") button');
   await page.waitForFunction(() => document.querySelectorAll('[role=tab]').length === 2);

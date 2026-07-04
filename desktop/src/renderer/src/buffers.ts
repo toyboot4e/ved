@@ -18,6 +18,9 @@ export type Buffer = {
   readonly text: string;
   readonly savedText: string;
   readonly cursor: CursorState | null;
+  /** The selection's other end (equals `cursor` when collapsed) — a tab
+   *  switch preserves a range selection, not just the caret. */
+  readonly anchor: CursorState | null;
   readonly scroll: ScrollState;
   readonly history: PlainTextHistory;
 };
@@ -36,6 +39,7 @@ const makeBuffer = (id: BufferId, path: string | null, text: string): Buffer => 
   text,
   savedText: text,
   cursor: null,
+  anchor: null,
   scroll: ZERO_SCROLL,
   history: new PlainTextHistory(text),
 });
@@ -64,7 +68,14 @@ export type BuffersAction =
   | { type: 'setActive'; id: BufferId }
   | { type: 'close'; id: BufferId }
   | { type: 'markSaved'; id: BufferId; path: string; text: string }
-  | { type: 'snapshot'; id: BufferId; text: string; cursor: CursorState | null; scroll: ScrollState };
+  | {
+      type: 'snapshot';
+      id: BufferId;
+      text: string;
+      cursor: CursorState | null;
+      anchor: CursorState | null;
+      scroll: ScrollState;
+    };
 
 const mapBuffer = (s: BuffersState, id: BufferId, f: (b: Buffer) => Buffer): BuffersState => ({
   ...s,
@@ -112,6 +123,7 @@ export const buffersReducer = (state: BuffersState, action: BuffersAction): Buff
         ...b,
         text: action.text,
         cursor: action.cursor,
+        anchor: action.anchor,
         scroll: action.scroll,
       }));
   }

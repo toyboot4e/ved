@@ -75,6 +75,9 @@ const APPEAR_CLASS: Record<AppearPolicy, Appear> = {
 export type EditorSnapshot = {
   readonly text: string;
   readonly cursor: CursorState | null;
+  /** The selection's OTHER end — equals `cursor` when collapsed. A snapshot
+   *  drops neither end, so a tab switch preserves a range selection. */
+  readonly anchor: CursorState | null;
   readonly scroll: { top: number; left: number };
 };
 
@@ -86,6 +89,7 @@ export type VedEditorProps = {
   readonly setAppearPolicy: (_: AppearPolicy) => void;
   readonly onTextChange?: (text: string) => void;
   readonly initialCursor?: CursorState | null;
+  readonly initialAnchor?: CursorState | null;
   readonly initialScroll?: { top: number; left: number };
   readonly onSnapshot?: (snapshot: EditorSnapshot) => void;
   /** Any value that CHANGES when the shell's view config changes (the config
@@ -954,7 +958,7 @@ export const VedEditor = (props: VedEditorProps): React.JSX.Element => {
     // measurement assumptions.
     const mount = scrollerRef.current;
     if (!mount) return;
-    const { initialText, initialCursor, initialScroll } = live.current;
+    const { initialText, initialCursor, initialAnchor, initialScroll } = live.current;
 
     const decoPlugin = new Plugin({
       props: {
@@ -984,7 +988,14 @@ export const VedEditor = (props: VedEditorProps): React.JSX.Element => {
     // start, where the native caret has a real rect (markup is out of the DOM).
     {
       const off = initialCursor ? cursorToOffset(initialText, initialCursor) : 0;
-      state = state.apply(state.tr.setSelection(TextSelection.create(state.doc, offsetToPos(state.doc, off))));
+      // Restore the selection's other end too (a tab switch keeps a range
+      // selection); it defaults to the head — a collapsed caret.
+      const aOff = initialAnchor ? cursorToOffset(initialText, initialAnchor) : off;
+      state = state.apply(
+        state.tr.setSelection(
+          TextSelection.create(state.doc, offsetToPos(state.doc, aOff), offsetToPos(state.doc, off)),
+        ),
+      );
     }
 
     // Record a document change in undo history (and notify the buffer). Shared
@@ -1980,6 +1991,7 @@ export const VedEditor = (props: VedEditorProps): React.JSX.Element => {
       live.current.onSnapshot?.({
         text: lastTextRef.current,
         cursor: offsetToCursor(lastTextRef.current, posToOffset(view.state.doc, view.state.selection.head)),
+        anchor: offsetToCursor(lastTextRef.current, posToOffset(view.state.doc, view.state.selection.anchor)),
         scroll: { top: s?.scrollTop ?? 0, left: s?.scrollLeft ?? 0 },
       });
       mount.removeEventListener('wheel', onWheel);

@@ -199,6 +199,7 @@ export const App = (): React.JSX.Element => {
         initialText={active.text}
         history={active.history}
         initialCursor={active.cursor}
+        initialAnchor={active.anchor}
         initialScroll={active.scroll}
         writingMode={writingMode}
         appearPolicy={appearPolicy}

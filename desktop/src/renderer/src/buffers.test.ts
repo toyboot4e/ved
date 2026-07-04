@@ -51,7 +51,14 @@ describe('markSaved', () => {
     let s = buffersReducer(initBuffers('seed'), { type: 'newUntitled' });
     const id = s.activeId;
     // Simulate an edit committed to the store
-    s = buffersReducer(s, { type: 'snapshot', id, text: 'edited', cursor: null, scroll: { top: 0, left: 0 } });
+    s = buffersReducer(s, {
+      type: 'snapshot',
+      id,
+      text: 'edited',
+      cursor: null,
+      anchor: null,
+      scroll: { top: 0, left: 0 },
+    });
     expect(isDirty(activeBuffer(s))).toBe(true);
     s = buffersReducer(s, { type: 'markSaved', id, path: '/new.txt', text: 'edited' });
     expect(isDirty(activeBuffer(s))).toBe(false);
@@ -60,7 +67,7 @@ describe('markSaved', () => {
 });
 
 describe('snapshot', () => {
-  it('commits live text, cursor, and scroll without touching savedText', () => {
+  it('commits live text, selection, and scroll without touching savedText', () => {
     const s0 = open(initBuffers(''), '/a.txt', 'A');
     const id = s0.activeId;
     const s = buffersReducer(s0, {
@@ -68,6 +75,7 @@ describe('snapshot', () => {
       id,
       text: 'A edited',
       cursor: { para: 0, offset: 3 },
+      anchor: { para: 0, offset: 1 },
       scroll: { top: 40, left: 0 },
     });
     const b = activeBuffer(s);
@@ -75,6 +83,7 @@ describe('snapshot', () => {
     expect(b.savedText).toBe('A'); // unchanged → now dirty
     expect(isDirty(b)).toBe(true);
     expect(b.cursor).toEqual({ para: 0, offset: 3 });
+    expect(b.anchor).toEqual({ para: 0, offset: 1 });
     expect(b.scroll).toEqual({ top: 40, left: 0 });
   });
 
@@ -85,6 +94,7 @@ describe('snapshot', () => {
       id: 999,
       text: 'x',
       cursor: null,
+      anchor: null,
       scroll: { top: 0, left: 0 },
     });
     expect(stale).toEqual(s);
@@ -127,7 +137,14 @@ describe('someInactiveDirty', () => {
     // A is clean
     expect(someInactiveDirty(s, s.activeId)).toBe(false);
     // make A dirty via a committed snapshot
-    s = buffersReducer(s, { type: 'snapshot', id: aId, text: 'A!', cursor: null, scroll: { top: 0, left: 0 } });
+    s = buffersReducer(s, {
+      type: 'snapshot',
+      id: aId,
+      text: 'A!',
+      cursor: null,
+      anchor: null,
+      scroll: { top: 0, left: 0 },
+    });
     expect(someInactiveDirty(s, s.activeId)).toBe(true); // A is inactive + dirty
     expect(someInactiveDirty(s, aId)).toBe(false); // excluding A, B is clean
   });
