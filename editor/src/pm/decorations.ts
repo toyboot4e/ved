@@ -444,6 +444,22 @@ export const buildDecorations = (
       if (ab) set = set.remove([ab]);
     }
   }
+  // The unlock honors the selection's OTHER endpoint too: a drag/extend can
+  // anchor strictly inside a DIFFERENT atom ruby's base, and a still-locked
+  // base leaves the DOM selection anchored in contenteditable=false — the IM
+  // context can't establish over a read-only anchor, and the first composing
+  // key falls through RAW (mozc/selection-composition, the adjacent-rubies
+  // case). Same strict-inside rule as the head, so the two can't drift.
+  if (selFrom !== selTo) {
+    const anchor = head === selFrom ? selTo : selFrom;
+    const aOff = posToOffset(doc, anchor);
+    const aRuby = activeRuby(leavesByLine[lineOf(text, aOff)] ?? [], aOff);
+    const asp = aRuby >= 0 && aRuby !== active ? parseCache.span.get(aRuby) : undefined;
+    if (asp && aOff > asp[0] && aOff < asp[1]) {
+      const ab = rubyCache.atomBase.get(aRuby);
+      if (ab) set = set.remove([ab]);
+    }
+  }
   // (Selected shown markup needs NO decoration: the selection overlay
   // (editor.tsx walkGlyphsLines) measures the delimiter widgets and the inline
   // reading like any other visible glyph, so they get the SAME overlay tint —

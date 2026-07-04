@@ -130,6 +130,31 @@ const cases: Array<{
     romaji: 'ne',
     want: 'あ|漢ね',
   },
+  // ADJACENT rubies, base interior to base interior: BOTH rubies are ATOMS
+  // (no editable text before either), so both endpoints sit inside read-only
+  // bases. The ANCHOR-side base must unlock too (decorations.ts): a
+  // still-locked base leaves the DOM selection anchored in
+  // contenteditable=false, the IM context can't establish over it, and the
+  // FIRST composing key falls through RAW ("|漢nえこだ…").
+  // offsets: |0 漢1 字2 (3 か4 ん5 じ6 )7 |8 言9 葉10 (11 こ12 と13 ば14 )15
+  {
+    label: 'adjacent ATOM rubies, base interior to base interior',
+    mode: '4',
+    base: '|漢字(かんじ)|言葉(ことば)',
+    anchor: 2,
+    head: 10,
+    romaji: 'nekoda',
+    want: '|漢ねこだ葉(ことば)',
+  },
+  {
+    label: 'BACKWARD adjacent ATOM rubies, base interior to base interior',
+    mode: '4',
+    base: '|漢字(かんじ)|言葉(ことば)',
+    anchor: 10,
+    head: 2,
+    romaji: 'nekoda',
+    want: '|漢ねこだ葉(ことば)',
+  },
   // Ctrl+A is an AllSelection (not a TextSelection) — the "select all, retype"
   // flow; the caret must land in the emptied paragraph, no selection ghost.
   {

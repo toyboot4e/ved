@@ -277,8 +277,12 @@ Five mechanisms:
   start inside the ruby; the takeover inserts before/after instead.
 - **An *atom* ruby's base is read-only while the caret is outside it**: with
   no editable text before the ruby (paragraph start, after another ruby),
-  mozc would anchor *into* the base. The base unlocks when the caret is
-  strictly inside — the same `rubyActive` condition, so they can't drift.
+  mozc would anchor *into* the base. The base unlocks when the caret — or
+  either end of a non-empty selection — is strictly inside, the same
+  strict-inside rule as `rubyActive`, so they can't drift. The anchor side
+  matters at IME entry: a selection anchored in a still-locked base gives
+  the IM context a `contenteditable=false` anchor, and the first composing
+  key falls through raw (`mozc/selection-composition`, adjacent-rubies).
 - **A click resolving inside a collapsed ruby snaps outside**
   (`createSelectionBetween` → `rubyClickOutsidePos`): the base *interior*
   stays; a base edge, the reading, or an atom ruby's node level snap
