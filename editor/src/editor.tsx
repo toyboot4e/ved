@@ -1115,9 +1115,15 @@ export const VedEditor = (props: VedEditorProps): React.JSX.Element => {
       // dies silently. PM still hit-tests the point (posAtCoords resolves into
       // the rubyReading), so snap it outside the ruby here, exactly like a
       // DOM-selection click would have been.
-      handleClick: (v, pos, _event) => {
+      handleClick: (v, pos, event) => {
         if (pointerDraggingRef.current || policyClassRef.current !== 'rich') return false;
-        const out = rubyClickOutsidePos(v.state.doc.resolve(pos));
+        // Chromium's coordinate hit-test near the read-only <rt> can report an
+        // adjacent or even out-of-range pos (seen at devicePixelRatio 1). The
+        // event target is authoritative: a click ON a reading resolves through
+        // the element; anything else clamps into the doc.
+        const rt = (event.target as Element | null)?.closest?.('rt');
+        const at = rt ? v.posAtDOM(rt, 0) : Math.min(pos, v.state.doc.content.size);
+        const out = rubyClickOutsidePos(v.state.doc.resolve(at));
         if (out == null) return false;
         const sel = TextSelection.create(v.state.doc, out);
         if (!sel.eq(v.state.selection)) v.dispatch(v.state.tr.setSelection(sel));
