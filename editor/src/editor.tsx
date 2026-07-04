@@ -1503,22 +1503,37 @@ export const VedEditor = (props: VedEditorProps): React.JSX.Element => {
         const t = h > cell ? (c.t + c.b) / 2 - cell / 2 : c.t;
         return new DOMRect(c.l, t, c.r - c.l, Math.min(h, cell));
       };
+      // Within-line grouping: the DIRECTIONAL half-pitch rule every other
+      // rect-grouping site uses (line-numbers groupTol, paragraphCols,
+      // page-gap visualLineEnds) — a reading-direction jump past half a pitch
+      // starts a new line; a backward excursion within one pitch merges (a
+      // 縦中横 box's per-digit sub-rects reach up to a cell backward of the
+      // slot); past one pitch backward is a page wrap. The anchor tracks the
+      // line's most-forward coordinate. A fixed few-px symmetric value here
+      // split lines (extra hairline rects) at larger font sizes.
+      const pitch = Number.parseFloat(cs.lineHeight) || 28;
       const out: DOMRect[] = [];
       let cur: { l: number; t: number; r: number; b: number } | null = null;
+      let coord = 0; // the current line's most-forward block coordinate
       for (const g of walkGlyphsLines(lineOf(text, from), lineOf(text, to))) {
         if (g.off < from || g.off >= to) continue;
         const r = g.rect;
-        // Same line ⇔ same block-axis position (left in vertical-rl, top in
-        // horizontal), within a sub-cell tolerance.
-        const sameLine = cur != null && Math.abs((vertical ? r.left : r.top) - (vertical ? cur.l : cur.t)) < 6;
-        if (cur && sameLine) {
+        const block = vertical ? r.left : r.top;
+        const newLine =
+          cur == null ||
+          (vertical
+            ? coord - block > pitch / 2 || block - coord > pitch
+            : block - coord > pitch / 2 || coord - block > pitch);
+        if (cur && !newLine) {
           cur.l = Math.min(cur.l, r.left);
           cur.t = Math.min(cur.t, r.top);
           cur.r = Math.max(cur.r, r.right);
           cur.b = Math.max(cur.b, r.bottom);
+          coord = vertical ? Math.min(coord, block) : Math.max(coord, block);
         } else {
           if (cur) out.push(clamp(cur));
           cur = { l: r.left, t: r.top, r: r.right, b: r.bottom };
+          coord = block;
         }
       }
       if (cur) out.push(clamp(cur));
