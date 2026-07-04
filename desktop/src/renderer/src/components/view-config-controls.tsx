@@ -167,7 +167,7 @@ export const ViewConfigControls = ({ writingMode }: { readonly writingMode: Writ
         }
         onClick={() => setJpOnly((on) => !on)}
       >
-        あ
+        日本語
       </button>
       <button
         id={fieldId('reset')}

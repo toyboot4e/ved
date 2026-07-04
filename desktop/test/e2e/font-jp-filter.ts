@@ -1,4 +1,4 @@
-// The font picker's JP-only filter (the あ toggle) and the resolved CJK
+// The font picker's JP-only filter (the 日本語 toggle) and the resolved CJK
 // default font. Coverage probing asks Chromium's real text engine (canvas
 // measureText against the Adobe Blank terminator, font-coverage.ts), so it
 // can only be verified e2e — jsdom has no glyphs.
@@ -50,7 +50,7 @@ try {
   assert.notEqual(selected, '', 'default is not inherit on a host with a preferred font');
   step(`default font resolves to an installed CJK face (${selected})`);
 
-  // Toggling あ on filters the enumerated list down to JP-capable families.
+  // Toggling 日本語 on filters the enumerated list down to JP-capable families.
   const all = await familyOptions();
   await page.click('#view-config-font-jp-only');
   const filtered = await settledOptions();
@@ -61,7 +61,7 @@ try {
     'filtered list is a subset of the full list',
   );
   assert.ok(filtered.includes(expectedDefault), 'the resolved default survives the JP filter');
-  step(`あ toggle filters to JP-capable fonts (${filtered.length} of ${all.length})`);
+  step(`日本語 toggle filters to JP-capable fonts (${filtered.length} of ${all.length})`);
 
   // A selected family hidden by the filter still displays as itself.
   const latinOnly = all.find((family) => !filtered.includes(family));
