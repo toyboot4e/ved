@@ -71,8 +71,14 @@ try {
     Math.abs(m.contentCenterDelta) < 1,
     `text block centered in the frame (${m.contentCenterDelta.toFixed(2)}px)`,
   );
+  // The folio is placed from MEASURED line-rect centers (the overlay doctrine:
+  // marks derive from real rects, since slot arithmetic drifts) — and a font
+  // whose vertical em box is asymmetric shifts every glyph rect's center off
+  // the slot center by (ascent − descent)/2 − 0.5em: a constant, bounded bias
+  // (Noto Sans CJK: −0.064em ≈ −1.15px at 18px). Allow 0.15 cell for it; a
+  // real mis-centering (a lost padding, a wrong band) is whole cells.
   for (const d of m.chipDeltas) {
-    assert.ok(Math.abs(d) < 1, `folio centered in the frame (${d.toFixed(2)}px)`);
+    assert.ok(Math.abs(d) < 18 * 0.15, `folio centered in the frame (${d.toFixed(2)}px)`);
   }
   step('text block and folios center in the visible frame with rubies');
 } catch (e) {
