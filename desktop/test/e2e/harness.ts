@@ -219,3 +219,36 @@ export const clickWritingMode = async (
   await page.click(`button[aria-label="${label}"]`);
   await page.waitForTimeout(150);
 };
+
+// --- model seams (window.__ved*, exposed by editor.tsx) ---
+
+type ModelSeams = {
+  __vedText(): string;
+  __vedCaret(): number;
+  __vedSetCaret(o: number): void;
+};
+
+/** The document's serialized plain text (the identity model). */
+export const docText = (page: Page): Promise<string> =>
+  page.evaluate(() => (window as unknown as ModelSeams).__vedText());
+
+/** The caret's model offset. Read this, never the raw DOM focusOffset — the
+ *  newline widget breaks focusOffset at a paragraph end. */
+export const caretOffset = (page: Page): Promise<number> =>
+  page.evaluate(() => (window as unknown as ModelSeams).__vedCaret());
+
+/** Places the caret at a model offset (collapsed selection). */
+export const setCaret = async (page: Page, offset: number, settleMs = 50): Promise<void> => {
+  await page.evaluate((o) => (window as unknown as ModelSeams).__vedSetCaret(o), offset);
+  await page.waitForTimeout(settleMs);
+};
+
+/** Replaces the whole document with `text`: select all → delete → type. The
+ *  editor must already be focused (click '#editor-content' once per driver). */
+export const setDoc = async (page: Page, text: string, settleMs = 150): Promise<void> => {
+  await page.evaluate(() => getSelection()!.selectAllChildren(document.getElementById('editor-content')!));
+  await page.keyboard.press('Backspace');
+  await page.waitForTimeout(80);
+  if (text) await page.keyboard.insertText(text);
+  await page.waitForTimeout(settleMs);
+};
