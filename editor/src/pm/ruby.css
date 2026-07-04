@@ -214,23 +214,28 @@ ruby.rubyWrap > rt {
   line-height: 1;
   /* KEEP THE FIXED LINE PITCH (the page grid's core invariant): Chromium grows
    * any line box whose annotation doesn't fit the leading — the annotation box
-   * is the rt FONT's ascent+descent (~1.13em here; line-height is IGNORED for
-   * it), but a paragraph-FIRST line only has its own half-leading (~0.28 cell),
-   * so every ruby-starting paragraph ran ~0.3 cell over pitch and the slot
-   * arithmetic (line numbers, folios, band capacity) drifted off the text.
-   * Chromium DOES subtract the annotation's block-axis margins from that
-   * overflow, so negative margins take the annotation out of line metrics; the
-   * reading still PAINTS in the leading (the ±--rt-allowance keeps it inside
-   * the box at band edges). The start (over-side) margin is clamped by the
-   * browser — any value past the annotation extent is identical and does NOT
-   * move the painted reading; the small end margin kills a residual +0.03-cell
-   * growth at plain→ruby paragraph boundaries and shifts the reading toward
-   * its base by under 1px. Verified: ruby paragraphs measure exactly
-   * n × --line-pitch and every line number lands on its column (±0.01px).
-   * Inert in the expanded policies (rt is display:inline there — block-axis
-   * margins don't apply to inline boxes). */
+   * is the rt FONT's ascent+descent (its vertical-metric ratio × 0.5em;
+   * line-height is IGNORED for it), but a paragraph-FIRST line only has its
+   * own half-leading, so every ruby-starting paragraph ran over pitch and the
+   * slot arithmetic (line numbers, folios, band capacity) drifted off the
+   * text. Chromium DOES subtract the annotation's block-axis margins from
+   * that overflow, so negative margins take the annotation out of line
+   * metrics; the reading still PAINTS in the leading (the ±--rt-allowance
+   * keeps it inside the box at band edges). The start (over-side) margin is
+   * clamped by the browser — any value past the annotation extent is
+   * identical and does NOT move the painted reading. The END margin is not
+   * clamped for paint (each −0.1em nudges the reading ~0.3px toward its base
+   * — sub-visual at rt sizes); it must cover the glyph box's under-side
+   * overflow, (ratio − 1)/2 em: a light UI font (~1.13) needs ~0.07em, but
+   * Noto Sans CJK (ratio 1.45 — the default resolver's pick) needs 0.225em,
+   * and −0.1em left every ruby line 1.16px OVER pitch — a 20-line band packed
+   * only 19 ruby lines. −0.35em covers ratios to 1.7; heavier faces fall back
+   * to the line-space lever (the documented papercut). Verified: ruby
+   * paragraphs measure exactly n × --line-pitch (ruby-pages.ts pins
+   * width ≡ pitch). Inert in the expanded policies (rt is display:inline
+   * there — block-axis margins don't apply to inline boxes). */
   margin-block-start: -1.5em;
-  margin-block-end: -0.1em;
+  margin-block-end: -0.35em;
   /* Read-only in Rich: arrow movement skips the reading (pm/caret-model) and a
    * pointer can't select it. (Editable in the expanded policies below.) */
   user-select: none;

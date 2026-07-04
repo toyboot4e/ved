@@ -67,6 +67,76 @@ try {
   assert.equal(m.band1Lines, 5, `a ruby band holds the full page (${m.band1Lines} of 5 lines)`);
   step('ruby-dense band holds all --page-lines lines (rt allowance)');
 
+  // FIXED LINE PITCH at full page size: a 20-line band must hold 20 SEPARATE
+  // ruby paragraphs. Chromium grows any line box whose annotation doesn't fit
+  // the leading — only a paragraph-FIRST line, so the wrapped single-paragraph
+  // fixture above can't see it — and the rt's negative block margins
+  // (ruby.css) are what cancel that growth. The margin is sized to the rt
+  // FONT's vertical-metric ratio; under Noto Sans CJK (1.45, the default
+  // resolver's pick) the old −0.1em left every ruby paragraph 1.16px over
+  // pitch: ~23px accumulated across a 20-line band, past the rt allowance,
+  // and the band packed only 19 lines (18px cell, 0.55 lead — the defaults).
+  await page.fill('#view-config-pageLineChars', '40');
+  await page.fill('#view-config-pageLines', '20');
+  // PIN the font: the growth needs a big-metric rt font, and the async
+  // default-font resolution (main.tsx) races the fixture — the session may
+  // still be on the shell stack when we type. Skip the phase gracefully on a
+  // machine without Noto.
+  const havNoto = await page.evaluate(() => {
+    const sel = document.querySelector('select[id*="fontFamily"]') as HTMLSelectElement | null;
+    return !!sel && [...sel.options].some((o) => o.label === 'Noto Sans CJK JP');
+  });
+  await page.waitForTimeout(150);
+  await page.evaluate(() => getSelection()!.selectAllChildren(document.getElementById('editor-content')!));
+  await page.keyboard.press('Backspace');
+  await page.waitForTimeout(80);
+  if (havNoto) {
+    await page.selectOption('select[id*="fontFamily"]', { label: 'Noto Sans CJK JP' });
+    await page.waitForTimeout(200);
+    const RUBY_LINE = '|漢字(かんじ)の|振仮名(ふりがな)が|多(おお)い行。';
+    for (let i = 0; i < 25; i++) {
+      await page.keyboard.insertText(RUBY_LINE);
+      if (i < 24) await page.keyboard.press('Enter');
+    }
+    await page.waitForTimeout(600);
+    // Count GLYPH columns, not paragraph boxes: a paragraph pushed across the
+    // band break still OPENS its box in band 1 (an empty prefix — its
+    // bounding rect straddles both bands), so rect-top counting reports N
+    // even when only N−1 text columns render in the band.
+    const band1 = await page.evaluate(() => {
+      const content = document.getElementById('editor-content')!;
+      const pitch = Number.parseFloat(getComputedStyle(content).lineHeight);
+      const range = document.createRange();
+      const walker = document.createTreeWalker(content, NodeFilter.SHOW_TEXT, {
+        acceptNode: (n) => (n.parentElement?.closest('rt') ? NodeFilter.FILTER_REJECT : NodeFilter.FILTER_ACCEPT),
+      });
+      const glyphs: { top: number; left: number }[] = [];
+      for (let n = walker.nextNode(); n; n = walker.nextNode()) {
+        const t = n as Text;
+        for (let i = 0; i < t.length; i++) {
+          range.setStart(t, i);
+          range.setEnd(t, i + 1);
+          const r = range.getBoundingClientRect();
+          if (r.width === 0 || r.height === 0) continue;
+          glyphs.push({ top: r.top, left: r.left });
+        }
+      }
+      const bandTop = Math.min(...glyphs.map((g) => g.top));
+      // Band 1's glyphs span the full 720px line length; band 2 starts a
+      // band-gap later (~780). 750 separates them safely.
+      const lefts = glyphs.filter((g) => g.top < bandTop + 750).map((g) => g.left);
+      const slots: number[] = [];
+      for (const l of lefts.sort((a, z) => z - a)) {
+        if (!slots.length || slots[slots.length - 1]! - l > pitch / 2) slots.push(l);
+      }
+      return slots.length;
+    });
+    assert.equal(band1, 20, `a 20-line band holds 20 separate ruby paragraphs (got ${band1})`);
+    step('full-size ruby band packs exactly --page-lines lines');
+  } else {
+    step('SKIP full-size band capacity: Noto Sans CJK JP not installed');
+  }
+
   assert.ok(
     Math.abs(m.contentCenterDelta) < 1,
     `text block centered in the frame (${m.contentCenterDelta.toFixed(2)}px)`,

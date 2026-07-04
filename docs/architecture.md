@@ -517,7 +517,13 @@ Hard limits and approaches that failed — don't re-derive or re-try:
 - **Ruby line spacing is `$line-space`-tuned; heavy webfonts may need more.**
   The `<rt>` renders outside the base's em box in a fixed line pitch; the
   reading must clear the previous row via `line-height: 1` + `$line-space` —
-  the single tuning lever, font-dependent (`ruby-row-overlap.ts`).
+  the single tuning lever, font-dependent (`ruby-row-overlap.ts`). The FIXED
+  pitch itself is held by the rt's negative block margins (`ruby.css`), sized
+  to the rt font's vertical-metric ratio (covers ≤ 1.7; Noto Sans CJK is
+  1.45): an under-sized end margin let every ruby line grow past pitch and a
+  20-line band packed only 19 ruby lines (`ruby-pages.ts` pins the band
+  capacity at full page size, font pinned to Noto). Past-1.7 faces fall back
+  to the `line-space` lever.
 - **Selection over ruby is a custom overlay, not native `::selection`** —
   the native highlight fills the tall ruby line box and paints over the
   readings, so it is hidden; `line-numbers.ts` paints base-only rects from
