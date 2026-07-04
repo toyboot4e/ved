@@ -269,6 +269,21 @@ Decisions from the design review (see CONTEXT.md **view config**):
     Not persisted yet (Phase 4). Smoke: `test/e2e/theme.ts`. See
     architecture.md "Theming".
 
+- [x] **Step V.4 — search & replace bar.** *(done 2026-07-05)*
+  - User-requested. Ctrl+F opens the bar (Ctrl+R opens it on the replace
+    field; main drops the default Electron menu off macOS so its reload/
+    close-window accelerators stop shadowing renderer chords). Matching is
+    literal scanning over the buffer's plain string (`search.ts findMatches` +
+    `useSearchStore`); highlights flow to the editor as one optional
+    `searchHighlights` prop → inline decorations folded into the doc-keyed
+    cache, with a **highlight-all toggle** (off = active match only).
+    Select/replace/replace-all go through a second optional seam
+    (`onSearchOps` — plain offsets), so structure repair + undo apply;
+    replace-all is ONE transaction (one undo step). IME-safe: chords and the
+    bar's Enter/Esc are ignored mid-composition, and the ops refuse while
+    `view.composing`. Smoke: `test/e2e/search-replace.ts`. See
+    architecture.md "Search and replace".
+
 ### Phase 2 — file browser sidebar
 
 A **workspace root** concept ("open folder…", persisted). Hand-rolled lazy

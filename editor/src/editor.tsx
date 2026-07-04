@@ -18,7 +18,7 @@ import type { PlainTextHistory } from './history';
 import { type CaretRect, type LineNumbers, mountLineNumbers } from './line-numbers';
 import { nextCaretOffset } from './pm/caret-model';
 import { type CursorState, cursorToOffset, offsetToCursor } from './pm/cursor';
-import { buildDecorations, type Invisibles } from './pm/decorations';
+import { buildDecorations, type Invisibles, type SearchHighlights, type SearchRange } from './pm/decorations';
 import { type DragGlyph, glyphOffsets, nearestGlyphOffset } from './pm/drag-select';
 import type { Appear, Leaf } from './pm/leaves';
 import { activeRuby, docLeaves, isHidden, lineOf, snapToGlyph } from './pm/leaves';
@@ -82,6 +82,26 @@ export type EditorSnapshot = {
   readonly scroll: { top: number; left: number };
 };
 
+// Re-exported so the shell can type its search state without reaching into
+// `pm/` (which stays private — see index.ts).
+export type { SearchHighlights, SearchRange } from './pm/decorations';
+
+/** Plain-offset operations the search bar drives (see
+ *  VedEditorProps.onSearchOps). Every edit goes through the normal dispatch,
+ *  so structure repair and undo history apply; all three refuse during an IME
+ *  composition (IME-safety invariant). */
+export type EditorSearchOps = {
+  /** Select `[from, to)` (plain offsets) and bring the selection into view
+   *  (paged modes snap its page start, like any caret reveal). */
+  readonly select: (from: number, to: number) => void;
+  /** Replace one plain-offset range with `replacement` — the plain string
+   *  changes exactly there (the plainInsertTr rule). One history entry. */
+  readonly replace: (range: SearchRange, replacement: string) => boolean;
+  /** Replace every range (non-overlapping, any order) with `replacement` in ONE
+   *  transaction — a single history entry, a single repair pass. */
+  readonly replaceAll: (ranges: readonly SearchRange[], replacement: string) => boolean;
+};
+
 export type VedEditorProps = {
   readonly initialText: string;
   readonly history: PlainTextHistory;
@@ -107,6 +127,14 @@ export type VedEditorProps = {
    *  flag; both default off. View-only decorations — never model text, so copy
    *  stays plain (pm/decorations.ts). */
   readonly invisibles?: Invisibles;
+  /** Search matches to highlight, as plain-offset ranges (null/absent = none).
+   *  View-only decorations like the invisibles — never model state
+   *  (pm/decorations.ts). */
+  readonly searchHighlights?: SearchHighlights | null;
+  /** Receives the plain-offset search operations once the view mounts (and
+   *  null when it unmounts) — the seam the shell's search bar drives
+   *  select/replace through. */
+  readonly onSearchOps?: (ops: EditorSearchOps | null) => void;
 };
 
 type ArrowAct = { axis: 'line' | 'char'; reverse: boolean };
@@ -940,6 +968,10 @@ export const VedEditor = (props: VedEditorProps): React.JSX.Element => {
   // on a toggle. Frozen defaults are one shared object (a stable identity when
   // the prop is absent, so the effect doesn't churn).
   const invisiblesRef = useRef<Invisibles>(props.invisibles ?? NO_INVISIBLES);
+  // Search-match highlights (plain-offset ranges from the shell's search bar).
+  // Same shape as invisiblesRef: the decoration plugin reads the live value;
+  // the effect below re-decorates when the prop changes.
+  const searchRef = useRef<SearchHighlights | null>(props.searchHighlights ?? null);
   const lastTextRef = useRef(props.initialText);
   // Caret offset in `lastTextRef`'s text, just before the in-progress edit. Held
   // across caret-only moves and frozen during IME composition, so when an edit
@@ -990,6 +1022,7 @@ export const VedEditor = (props: VedEditorProps): React.JSX.Element => {
             state.selection.from,
             state.selection.to,
             invisiblesRef.current,
+            searchRef.current,
           ),
       },
     });
@@ -1237,6 +1270,71 @@ export const VedEditor = (props: VedEditorProps): React.JSX.Element => {
         ),
       );
     };
+    // Search operations for the shell (see VedEditorProps.onSearchOps): plain
+    // offsets in, exact plain-string edits out. Edits go through the normal
+    // dispatch, so structure repair, history, and onTextChange all apply. All
+    // three refuse during an IME composition (IME-safety invariant).
+    const searchOps: EditorSearchOps = {
+      select: (from, to) => {
+        if (view.composing) return;
+        const len = serialize(view.state.doc).length;
+        const clamp = (o: number) => Math.max(0, Math.min(o, len));
+        goalInlineRef.current = null;
+        view.dispatch(
+          view.state.tr.setSelection(
+            TextSelection.create(
+              view.state.doc,
+              offsetToPos(view.state.doc, clamp(from)),
+              offsetToPos(view.state.doc, clamp(to)),
+            ),
+          ),
+        );
+        // A selection-only transaction never reveals (only doc changes do) —
+        // bring the match into view explicitly; paged modes snap its page start.
+        requestAnimationFrame(() => {
+          const s = scrollerRef.current;
+          if (s) revealCaretInScroller(s, view, toScrollMode(live.current.writingMode));
+        });
+      },
+      replace: (range, replacement) => {
+        if (view.composing) return false;
+        const doc = view.state.doc;
+        if (range.from < 0 || range.from > range.to || range.to > serialize(doc).length) return false;
+        // Select the match, then the exact selection-replacing insert — the
+        // same path a paste over a selection takes.
+        view.dispatch(
+          view.state.tr.setSelection(
+            TextSelection.create(doc, offsetToPos(doc, range.from), offsetToPos(doc, range.to)),
+          ),
+        );
+        view.dispatch(plainInsertTr(view.state, replacement, policyClassRef.current).scrollIntoView());
+        return true;
+      },
+      replaceAll: (ranges, replacement) => {
+        if (view.composing || ranges.length === 0) return false;
+        const doc = view.state.doc;
+        const plain = serialize(doc);
+        const sorted = [...ranges].sort((a, b) => a.from - b.from);
+        let out = '';
+        let prev = 0;
+        let caretOff = 0;
+        for (const r of sorted) {
+          if (r.from < prev || r.from > r.to || r.to > plain.length) return false; // overlap / out of range
+          out += plain.slice(prev, r.from) + replacement;
+          caretOff = out.length; // the end of this replacement in the NEW text
+          prev = r.to;
+        }
+        out += plain.slice(prev);
+        // ONE transaction over the whole document (a canonical rebuild, like
+        // undo's restore) — a single history entry, a single repair pass.
+        const tr = view.state.tr.replaceWith(0, doc.content.size, docFromText(out).content);
+        tr.setSelection(TextSelection.create(tr.doc, offsetToPos(tr.doc, caretOff)));
+        view.dispatch(tr.scrollIntoView());
+        return true;
+      },
+    };
+    live.current.onSearchOps?.(searchOps);
+
     view.dom.id = 'editor-content';
     view.dom.classList.add(...CONTENT_CLASS(vert, multiCol, rows).split(' ').filter(Boolean));
 
@@ -2028,6 +2126,7 @@ export const VedEditor = (props: VedEditorProps): React.JSX.Element => {
       cancelAnimationFrame(pageGapRaf);
       clearTimeout(pageGapTimer);
       pageGapsRef.current = null;
+      live.current.onSearchOps?.(null);
       view.destroy();
       viewRef.current = null;
     };
@@ -2092,6 +2191,17 @@ export const VedEditor = (props: VedEditorProps): React.JSX.Element => {
     view.dispatch(view.state.tr.setMeta('redecorate', true));
     lineNumbersRef.current?.schedule();
   }, [showNewline, showWhitespace]);
+
+  // Search-highlight change (see VedEditorProps.searchHighlights): update the
+  // live ref and re-decorate. Background-only classes — no metric can change,
+  // so no overlay re-measure (unlike the invisibles toggle).
+  const searchHighlights = props.searchHighlights ?? null;
+  useEffect(() => {
+    searchRef.current = searchHighlights;
+    const view = viewRef.current;
+    if (!view) return;
+    view.dispatch(view.state.tr.setMeta('redecorate', true));
+  }, [searchHighlights]);
 
   return (
     <div

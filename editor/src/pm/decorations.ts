@@ -87,6 +87,19 @@ const newlineMark = (): HTMLElement => {
 export type Invisibles = { readonly newline: boolean; readonly whitespace: boolean };
 const NO_INVISIBLES: Invisibles = { newline: false, whitespace: false };
 
+/** A search match as a PLAIN-OFFSET range — the shell searches the plain
+ *  string (a document is always a string outside the editor core) and the
+ *  offsets are mapped to PM positions here, through the same pos map every
+ *  other offset-addressed decoration uses. */
+export type SearchRange = { readonly from: number; readonly to: number };
+
+/** Which search matches to highlight — a pure view flag threaded from the
+ *  shell like the invisibles. `active` indexes `ranges` (-1 = none); the
+ *  active match stacks a stronger class. View-only decorations — never model
+ *  state, so closing the search bar just passes null and the text is
+ *  untouched. */
+export type SearchHighlights = { readonly ranges: readonly SearchRange[]; readonly active: number };
+
 /** Whitespace char → its marker class (ruby.css paints the glyph as a
  *  background so the real character — and thus copy — is untouched). */
 const wsClass = (ch: string): string | null =>
@@ -172,9 +185,10 @@ const parseDoc = (doc: PMNode): Parse => {
 
 /** The BULK, caret- and policy-independent decorations: the inline formats
  *  (bold/italic/縦中横) plus the invisibles markers (whitespace classes + newline
- *  widgets). Fully determined by (doc, invisibles), so it is reused across every
- *  caret move and policy change (the cache keys on both — see baseCache). */
-const buildBase = (parse: Parse, invis: Invisibles): DecorationSet => {
+ *  widgets) plus the search-match highlights. Fully determined by
+ *  (doc, invisibles, search), so it is reused across every caret move and
+ *  policy change (the cache keys on all three — see baseCache). */
+const buildBase = (parse: Parse, invis: Invisibles, search: SearchHighlights | null): DecorationSet => {
   const { doc, text, posMap } = parse;
   const at = (o: number) => posMap[o]!;
   const decos: Decoration[] = [];
@@ -220,6 +234,23 @@ const buildBase = (parse: Parse, invis: Invisibles): DecorationSet => {
       if (index === last) return;
       const contentEnd = offset + 1 + para.content.size;
       decos.push(Decoration.widget(contentEnd, newlineMark, { side: 1, key: `nl-${index}`, ignoreSelection: true }));
+    });
+  }
+
+  // Search-match highlights: an inline class over the matched text (the shell's
+  // plain-offset ranges, mapped through the pos map like every format above).
+  // Background-only styling (ruby.css), so no metric — and thus no cached
+  // measurement — can change. A range may cross a ruby (the plain string
+  // contains the markup): the interior offsets map into the base/reading text
+  // and the boundary offsets outside the node, so the paint lands on whatever
+  // matched text is visible.
+  if (search) {
+    search.ranges.forEach((r, i) => {
+      const from = Math.max(0, Math.min(r.from, text.length));
+      const to = Math.max(from, Math.min(r.to, text.length));
+      if (from === to) return;
+      const cls = i === search.active ? 'vedSearchMatch vedSearchActive' : 'vedSearchMatch';
+      decos.push(Decoration.inline(at(from), at(to), { class: cls }));
     });
   }
 
@@ -311,9 +342,17 @@ const setsEq = (a: Set<number>, b: Set<number>): boolean => {
 };
 
 let parseCache: Parse | null = null;
-// The bold/italic/縦中横 + invisibles base set, keyed by (doc, invisibles): a
-// caret move under fixed invisibles reuses it; a toggle rebuilds it once.
-let baseCache: { doc: PMNode; newline: boolean; whitespace: boolean; set: DecorationSet } | null = null;
+// The bold/italic/縦中横 + invisibles + search base set, keyed by
+// (doc, invisibles, search IDENTITY): a caret move under fixed invisibles and a
+// fixed search reuses it; a toggle — or a search query/active-match change,
+// which hands down a NEW highlights object — rebuilds it once.
+let baseCache: {
+  doc: PMNode;
+  newline: boolean;
+  whitespace: boolean;
+  search: SearchHighlights | null;
+  set: DecorationSet;
+} | null = null;
 // The cached static layer: the base (bold/italic/縦中横) set PLUS the ruby static
 // decorations, keyed by (doc, policy, expanded-set VALUE). Under Rich/Plain the
 // expanded set never changes (none/all), so every caret move reuses it; under
@@ -323,10 +362,12 @@ let rubyCache: {
   doc: PMNode;
   policy: Appear;
   expanded: Set<number>;
-  // Mirrors the invisibles the cached `set` was built ON TOP of (it starts from
-  // baseCache.set, which carries the invisibles markers) — so a toggle rebuilds it.
+  // Mirrors the invisibles/search the cached `set` was built ON TOP of (it
+  // starts from baseCache.set, which carries those markers) — so a toggle or a
+  // search change rebuilds it.
   newline: boolean;
   whitespace: boolean;
+  search: SearchHighlights | null;
   set: DecorationSet;
   atomBase: Map<number, Decoration>;
 } | null = null;
@@ -342,6 +383,7 @@ export const buildDecorations = (
   selFrom: number = head,
   selTo: number = head,
   invisibles: Invisibles = NO_INVISIBLES,
+  search: SearchHighlights | null = null,
 ): DecorationSet => {
   if (!parseCache || parseCache.doc !== doc) parseCache = parseDoc(doc);
   const { text, leavesByLine, allRubies } = parseCache;
@@ -373,19 +415,22 @@ export const buildDecorations = (
     }
   })();
 
-  // The bold/italic/縦中横 + invisibles base set depends only on (doc, invisibles)
-  // — reuse it across every caret move and policy change.
+  // The bold/italic/縦中横 + invisibles + search base set depends only on
+  // (doc, invisibles, search) — reuse it across every caret move and policy
+  // change.
   if (
     !baseCache ||
     baseCache.doc !== doc ||
     baseCache.newline !== invisibles.newline ||
-    baseCache.whitespace !== invisibles.whitespace
+    baseCache.whitespace !== invisibles.whitespace ||
+    baseCache.search !== search
   ) {
     baseCache = {
       doc,
       newline: invisibles.newline,
       whitespace: invisibles.whitespace,
-      set: buildBase(parseCache, invisibles),
+      search,
+      set: buildBase(parseCache, invisibles, search),
     };
     // Test seam: count O(document) base rebuilds. A caret move must reuse the
     // cache (no increment). caret-move-perf asserts this.
@@ -405,6 +450,7 @@ export const buildDecorations = (
     rubyCache.policy !== policy ||
     rubyCache.newline !== invisibles.newline ||
     rubyCache.whitespace !== invisibles.whitespace ||
+    rubyCache.search !== search ||
     !setsEq(rubyCache.expanded, expanded)
   ) {
     const { nodes, atomBase } = buildRubyStatic(parseCache, expanded);
@@ -414,6 +460,7 @@ export const buildDecorations = (
       expanded,
       newline: invisibles.newline,
       whitespace: invisibles.whitespace,
+      search,
       set: baseCache.set.add(doc, nodes),
       atomBase,
     };

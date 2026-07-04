@@ -203,6 +203,38 @@ nothing — the `__vedBaseRebuilds` invariant holds. A toggle updates
 `invisiblesRef` and dispatches the same `redecorate` meta the appear-policy
 switch uses.
 
+## Search and replace
+
+The shell's search bar (desktop `search.ts` + `components/search-bar.tsx`;
+Ctrl+F, or Ctrl+R for the replace field — main drops the default Electron menu
+off macOS so its reload/close accelerators can't shadow renderer chords)
+searches the ACTIVE buffer's plain string: literal `indexOf` scanning
+(`findMatches`, case-insensitive where lowercasing preserves length), so a
+match can span ruby markup and readings like any other characters. The store
+recomputes matches on every text change and tab switch. Two seams cross into
+the editor core, both speaking plain offsets:
+
+- **Highlights down** — the `searchHighlights` prop (`{ ranges, active }`):
+  inline `vedSearchMatch` / `vedSearchActive` decorations folded into the
+  doc-keyed base layer. The cache keys on the OBJECT IDENTITY, so caret moves
+  rebuild nothing (`__vedBaseRebuilds` holds); a query/active-match change
+  hands down a new object and rebuilds once. Styling is background-only — no
+  metric changes, so every cached measurement stands. **Highlight all** is the
+  bar's toggle: off, the shell passes only the active match down.
+- **Ops up** — `onSearchOps` hands the shell `{ select, replace, replaceAll }`.
+  `select` sets the model selection and reveals it (paged modes snap the page
+  start, like any caret reveal). `replace` selects the range and takes the
+  `plainInsertTr` path — an exact plain-string edit, repaired, one history
+  entry. `replaceAll` splices every range into the plain string and rebuilds
+  the whole document in ONE transaction — one history entry, one repair pass.
+  All three refuse while `view.composing` (IME safety).
+
+The bar owns the focus while open — its inputs are IME targets themselves, so
+its Enter/Esc handling (and the shell's chord matching) is ignored
+mid-composition; Esc closes and refocuses the editor, dropping the highlights
+with the bar (they are never model state). Verified in
+`test/e2e/search-replace.ts`.
+
 ## Structure repair
 
 `pm/structure.ts repair`: when typing completes or breaks ruby syntax, the

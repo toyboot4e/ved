@@ -117,6 +117,19 @@
   font-size: 0;
 }
 
+/* ── Search highlights (pm/decorations.ts) ──────────────────────────────────
+ * Inline decorations over matched text, threaded from the shell's search bar.
+ * BACKGROUND-only: no metric changes, so every cached measurement (glyph
+ * walks, page gaps, overlay lines) holds. The active match stacks a stronger
+ * tint over the shared match class. Tokens fall back to the light palette so
+ * the editor renders standalone (see architecture.md "Theming"). */
+.vedSearchMatch {
+  background-color: var(--ved-search-match, rgba(255, 214, 90, 0.4));
+}
+.vedSearchActive {
+  background-color: var(--ved-search-active, rgba(255, 152, 40, 0.6));
+}
+
 /* ── Invisibles (pm/decorations.ts) ─────────────────────────────────────────
  * Markers for newline + whitespace, shown when the shell toggles them on. All
  * are VIEW-ONLY: the whitespace classes wrap the REAL space text, the newline is

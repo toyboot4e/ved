@@ -1,6 +1,6 @@
 import { join } from 'node:path';
-import { electronApp, is, optimizer } from '@electron-toolkit/utils';
-import { app, BrowserWindow, shell } from 'electron';
+import { electronApp, is } from '@electron-toolkit/utils';
+import { app, BrowserWindow, Menu, shell } from 'electron';
 import icon from '../../resources/icon.png?asset';
 import { installCloseGuard, registerCloseGuard } from './close-guard';
 import { registerFileService } from './file-service';
@@ -98,11 +98,24 @@ app.whenReady().then(() => {
   // Set app user model id for windows
   electronApp.setAppUserModelId('com.electron');
 
-  // Default open or close DevTools by F12 in development
-  // and ignore CommandOrControl + R in production.
-  // see https://github.com/alex8088/electron-toolkit/tree/master/packages/utils
+  // In-app chords belong to the RENDERER (docs/editor-ui-plan.md "One keymap
+  // registry"): the default menu's hidden accelerators fired first — reload on
+  // Ctrl+R (ved's replace chord), close-window on Ctrl+W (ved's close-tab) —
+  // so drop the menu entirely off macOS. macOS keeps it: the app menu owns
+  // Cmd+Q/C/V there (its Cmd+R reload is a known cost, noted for a later
+  // menu of our own).
+  if (process.platform !== 'darwin') Menu.setApplicationMenu(null);
+
+  // Hand-rolled fragment of electron-toolkit's `optimizer.watchWindowShortcuts`:
+  // F12 toggles DevTools in dev. The toolkit version ALSO swallows
+  // CommandOrControl+R at before-input-event in production — ved's replace
+  // chord must reach the renderer, so it can't be used.
   app.on('browser-window-created', (_, window) => {
-    optimizer.watchWindowShortcuts(window);
+    window.webContents.on('before-input-event', (_event, input) => {
+      if (!is.dev || input.type !== 'keyDown' || input.code !== 'F12') return;
+      if (window.webContents.isDevToolsOpened()) window.webContents.closeDevTools();
+      else window.webContents.openDevTools({ mode: 'undocked' });
+    });
   });
 
   registerFileService();

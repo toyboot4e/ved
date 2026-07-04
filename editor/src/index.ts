@@ -7,7 +7,13 @@
 // configuration and plugins (see commands.ts).
 export type { Chord, ChordEvent, EditorCommandId } from './commands';
 export { AppearPolicy, chordOf, DEFAULT_KEYBINDINGS, resolveAppearPolicy } from './commands';
-export type { EditorSnapshot, VedEditorProps } from './editor';
+export type {
+  EditorSearchOps,
+  EditorSnapshot,
+  SearchHighlights,
+  SearchRange,
+  VedEditorProps,
+} from './editor';
 export { VedEditor, WritingMode } from './editor';
 // The editor's stylesheet, re-exported as a CSS-module class map so a shell can
 // apply the page-geometry container (`.root`, `.vertMode`) and chrome classes.

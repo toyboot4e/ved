@@ -1,0 +1,32 @@
+// The search & replace bar (search-bar.tsx): one chrome row between the tab
+// bar and the editor. Colors come from the `--ved-*` theme tokens; the native
+// inputs need explicit colors (form controls don't inherit `color` — see
+// architecture.md "Theming").
+.searchBar {
+  flex: none;
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 4px 8px;
+  background: var(--ved-chrome-bg);
+  border-block-end: 1px solid var(--ved-border-faint);
+}
+
+.input {
+  color: var(--ved-fg);
+  background: var(--ved-input-bg);
+  border: 1px solid var(--ved-input-border);
+  border-radius: 3px;
+  padding: 2px 6px;
+  font-size: 13px;
+  inline-size: 11em;
+  min-inline-size: 4em;
+}
+
+.count {
+  color: var(--ved-fg-muted);
+  font-size: 12px;
+  min-inline-size: 3.5em;
+  text-align: center;
+  white-space: nowrap;
+}

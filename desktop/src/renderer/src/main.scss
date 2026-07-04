@@ -36,6 +36,8 @@
   --ved-ruby-delim: #808080;
   --ved-ruby-active: rgba(255, 200, 50, 0.25);
   --ved-invisible: #b0b0b0;
+  --ved-search-match: rgba(255, 214, 90, 0.4);
+  --ved-search-active: rgba(255, 152, 40, 0.6);
 }
 
 @mixin ved-dark {
@@ -61,6 +63,8 @@
   --ved-ruby-delim: #8f8f8f;
   --ved-ruby-active: rgba(255, 205, 70, 0.3);
   --ved-invisible: #6a6a6a;
+  --ved-search-match: rgba(255, 214, 90, 0.26);
+  --ved-search-active: rgba(255, 152, 40, 0.45);
 }
 
 :root {

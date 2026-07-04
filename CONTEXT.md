@@ -131,6 +131,15 @@ that will persist both).
 _Avoid_: dark mode (one theme, not the axis), skin, color scheme (the CSS
 media feature, not our store).
 
+**Search**:
+The find/replace facility over the active buffer's plain string (Ctrl+F /
+Ctrl+R). A **match** is a plain-offset range; highlights are view-only
+decorations (never model state), with **highlight all** toggling between
+every match and the active one. Replaces are exact plain-string edits through
+the editor's search ops — undoable, structure-repaired.
+_Avoid_: find (prose only — "search" in identifiers), occurrence (use
+"match").
+
 ### Project structure
 
 **Package**:
