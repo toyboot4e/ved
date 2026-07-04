@@ -37,6 +37,45 @@ describe('openPath', () => {
   });
 });
 
+describe('openCliFiles', () => {
+  const files = [
+    { path: '/a.txt', text: 'A' },
+    { path: '/b.txt', text: 'B' },
+  ];
+
+  it('opens a tab per file, first file active, and drops the pristine untitled buffer', () => {
+    const s = buffersReducer(initBuffers('seed'), { type: 'openCliFiles', files });
+    expect(s.buffers.map((b) => b.path)).toEqual(['/a.txt', '/b.txt']);
+    expect(activeBuffer(s).path).toBe('/a.txt');
+  });
+
+  it('keeps a dirty untitled buffer', () => {
+    let s = initBuffers('seed');
+    s = buffersReducer(s, {
+      type: 'snapshot',
+      id: s.activeId,
+      text: 'edited',
+      cursor: null,
+      anchor: null,
+      scroll: { top: 0, left: 0 },
+    });
+    s = buffersReducer(s, { type: 'openCliFiles', files });
+    expect(s.buffers.map((b) => b.path)).toEqual([null, '/a.txt', '/b.txt']);
+  });
+
+  it('is a no-op with no files', () => {
+    const s = initBuffers('seed');
+    expect(buffersReducer(s, { type: 'openCliFiles', files: [] })).toBe(s);
+  });
+
+  it('dedupes an already-open path', () => {
+    let s = open(initBuffers(''), '/a.txt', 'A');
+    s = buffersReducer(s, { type: 'openCliFiles', files });
+    expect(s.buffers.map((b) => b.path)).toEqual(['/a.txt', '/b.txt']);
+    expect(activeBuffer(s).path).toBe('/a.txt');
+  });
+});
+
 describe('newUntitled', () => {
   it('adds an empty active buffer', () => {
     const s = buffersReducer(initBuffers('seed'), { type: 'newUntitled' });

@@ -1,5 +1,6 @@
-import { BrowserWindow, dialog, ipcMain, type WebContents } from 'electron';
-import { IpcChannel, type OpenFileResult, type SaveFileAsResult } from '../shared/ipc';
+import { app, BrowserWindow, dialog, ipcMain, type WebContents } from 'electron';
+import { type CliFile, IpcChannel, type OpenFileResult, type SaveFileAsResult } from '../shared/ipc';
+import { cliFilePaths, readCliFiles } from './cli-args';
 import { readTextFile, writeTextFileAtomic } from './fs-io';
 
 // Native dialogs cannot be driven by Playwright, so the smoke test injects
@@ -37,6 +38,10 @@ const pickSavePath = async (sender: WebContents, defaultPath?: string): Promise<
 
 /** Registers the handlers behind `window.ved` (contract: `src/shared/ipc.ts`). */
 export const registerFileService = (): void => {
+  ipcMain.handle(IpcChannel.CliFiles, (): Promise<CliFile[]> => {
+    return readCliFiles(cliFilePaths(process.argv, app.isPackaged, process.cwd()));
+  });
+
   ipcMain.handle(IpcChannel.OpenFile, async (event): Promise<OpenFileResult> => {
     const path = await pickOpenPath(event.sender);
     if (!path) return null;

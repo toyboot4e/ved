@@ -4,12 +4,20 @@
 
 /** IPC channel names (handlers: `src/main/file-service.ts`, `close-guard.ts`). */
 export const IpcChannel = {
+  CliFiles: 'ved:file:cli-files',
   OpenFile: 'ved:file:open',
   SaveFile: 'ved:file:save',
   SaveFileAs: 'ved:file:save-as',
   SetDirty: 'ved:window:set-dirty',
   ConfirmDiscard: 'ved:window:confirm-discard',
 } as const;
+
+/** A file named on the command line, read at startup. A path that does not
+ * exist yet arrives with empty text (a "new file" buffer; save creates it). */
+export type CliFile = {
+  readonly path: string;
+  readonly text: string;
+};
 
 /** A file picked and read via the open dialog; `null` means canceled. */
 export type OpenFileResult = {
@@ -24,6 +32,8 @@ export type SaveFileAsResult = {
 
 /** The file portion of the renderer-facing API. */
 export type VedFileApi = {
+  /** The files named as command-line arguments, read once at startup. */
+  readonly cliFiles: () => Promise<readonly CliFile[]>;
   /** Shows an open dialog and reads the chosen file as UTF-8. */
   readonly openFile: () => Promise<OpenFileResult>;
   /** Writes text to a known path (atomic: tmp + rename). */

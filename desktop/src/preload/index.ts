@@ -8,6 +8,7 @@ const api = {};
 // The ved API: contract in src/shared/ipc.ts, handlers in
 // src/main/file-service.ts and close-guard.ts.
 const ved: VedApi = {
+  cliFiles: () => ipcRenderer.invoke(IpcChannel.CliFiles),
   openFile: () => ipcRenderer.invoke(IpcChannel.OpenFile),
   saveFile: (path, text) => ipcRenderer.invoke(IpcChannel.SaveFile, path, text),
   saveFileAs: (text, defaultPath) => ipcRenderer.invoke(IpcChannel.SaveFileAs, text, defaultPath),

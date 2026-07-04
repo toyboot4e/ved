@@ -64,6 +64,7 @@ export const initBuffers = (initialText: string): BuffersState => {
 
 export type BuffersAction =
   | { type: 'openPath'; path: string; text: string }
+  | { type: 'openCliFiles'; files: readonly { path: string; text: string }[] }
   | { type: 'newUntitled' }
   | { type: 'setActive'; id: BufferId }
   | { type: 'close'; id: BufferId }
@@ -90,6 +91,17 @@ export const buffersReducer = (state: BuffersState, action: BuffersAction): Buff
       if (existing) return { ...state, activeId: existing.id };
       const b = makeBuffer(state.nextId, action.path, action.text);
       return { buffers: [...state.buffers, b], activeId: b.id, nextId: state.nextId + 1 };
+    }
+    case 'openCliFiles': {
+      // Files named on the command line, opened once at startup: a tab per
+      // file with the FIRST one active, and the pristine untitled startup
+      // buffer dropped so the launch shows exactly the requested files.
+      if (action.files.length === 0) return state;
+      const pristine = state.buffers.filter((b) => b.path === null && !isDirty(b)).map((b) => b.id);
+      let s = action.files.reduce((acc, f) => buffersReducer(acc, { type: 'openPath', ...f }), state);
+      s = pristine.reduce((acc, id) => buffersReducer(acc, { type: 'close', id }), s);
+      const first = s.buffers.find((b) => b.path === action.files[0]!.path);
+      return first ? { ...s, activeId: first.id } : s;
     }
     case 'newUntitled': {
       const b = makeBuffer(state.nextId, null, '');

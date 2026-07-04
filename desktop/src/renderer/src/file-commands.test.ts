@@ -10,6 +10,7 @@ import {
 } from './file-commands';
 
 const fakeApi = (overrides: Partial<VedFileApi>): VedFileApi => ({
+  cliFiles: () => Promise.resolve([]),
   openFile: () => Promise.resolve(null),
   saveFile: () => Promise.resolve(),
   saveFileAs: () => Promise.resolve(null),

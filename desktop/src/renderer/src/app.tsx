@@ -59,6 +59,18 @@ export const App = (): React.JSX.Element => {
     setDirty(active.text !== active.savedText);
   }
 
+  // Files named on the command line: fetched once at startup, a tab per file
+  // (the reducer drops the pristine untitled startup buffer).
+  useEffect(() => {
+    let stale = false;
+    void window.ved.cliFiles().then((files) => {
+      if (!stale && files.length > 0) dispatch({ type: 'openCliFiles', files });
+    });
+    return () => {
+      stale = true;
+    };
+  }, []);
+
   // The window title and the close guard reflect the active buffer plus any
   // other dirty buffer.
   useEffect(() => {
