@@ -23,10 +23,7 @@ const tests = readdirSync(dir)
   .filter((f) => f.endsWith('.ts') && !f.endsWith('-probe.ts') && !SKIP.has(f))
   .sort();
 
-const JOBS = Math.max(
-  1,
-  Number(process.env.VED_SMOKE_JOBS) || Math.min(Math.floor(availableParallelism() / 2), 8),
-);
+const JOBS = Math.max(1, Number(process.env.VED_SMOKE_JOBS) || Math.min(Math.floor(availableParallelism() / 2), 8));
 console.log(`running ${tests.length} e2e drivers (${JOBS} in parallel)`);
 
 const failed: string[] = [];
