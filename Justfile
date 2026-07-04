@@ -72,7 +72,10 @@ run:
 [private]
 alias r := run
 
-# runs the end-to-end smoke test against the built app
+# runs the end-to-end smoke test against the built app. Drivers run in
+# parallel with isolated profiles (VED_SMOKE_JOBS=1 for the old serial run);
+# visible windows map on a private Xvfb display when the host has one
+# (VED_SMOKE_NO_XVFB=1 forces the real display).
 smoke: build
     pnpm run smoke
 
