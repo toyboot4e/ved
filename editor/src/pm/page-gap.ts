@@ -24,6 +24,12 @@ export const pageGapKey = new PluginKey<DecorationSet>('vedPageGap');
 const gapWidget = (): HTMLElement => {
   const el = document.createElement('span');
   el.className = 'ved-page-gap';
+  // Read-only like every ved widget: the widget sits exactly at the page
+  // boundary, and an editable span there lets Chromium anchor an IME
+  // composition against it — PM's reconciliation then kills the composition
+  // on every update (composing at a page's LAST line confirmed each
+  // keystroke raw).
+  el.setAttribute('contenteditable', 'false');
   return el;
 };
 

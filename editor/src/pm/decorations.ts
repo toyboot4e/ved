@@ -209,14 +209,17 @@ const buildBase = (parse: Parse, invis: Invisibles): DecorationSet => {
 
   // Newline markers: a zero-inline-size widget at each paragraph's content end,
   // except the final paragraph (no trailing `\n`). `doc.forEach` yields each
-  // top-level paragraph's position; the widget sits as its last inline child
-  // (side -1) so it renders at the visual line end.
+  // top-level paragraph's position. side 1 (AFTER the position): a caret at
+  // the paragraph end must keep REAL content as its previous DOM sibling —
+  // with the marker before the caret (side -1), fcitx5's IM context anchored
+  // on the contenteditable=false span and confirmed every composed character
+  // raw (mozc-verified at the page-boundary line end).
   if (invis.newline) {
     const last = doc.childCount - 1;
     doc.forEach((para, offset, index) => {
       if (index === last) return;
       const contentEnd = offset + 1 + para.content.size;
-      decos.push(Decoration.widget(contentEnd, newlineMark, { side: -1, key: `nl-${index}`, ignoreSelection: true }));
+      decos.push(Decoration.widget(contentEnd, newlineMark, { side: 1, key: `nl-${index}`, ignoreSelection: true }));
     });
   }
 
@@ -486,11 +489,13 @@ export const buildDecorations = (
     const atEnd = headOffset === text.length || text[headOffset] === '\n';
     const edge = (atStart && hidden(la)) || (atEnd && hidden(lb));
     if (seam || edge) {
-      // side -1: the widget associates BEFORE the position, so coordsAtPos
-      // (default side 1) reads past it to the REAL node after — a widget on
-      // the query side flattens the caret rect to a point, and reveal, line
-      // movement, and the IME box all consume that rect.
-      delta.push(Decoration.widget(head, boundaryCaret, { key: `bcaret-${head}`, side: -1, ignoreSelection: true }));
+      // side 0 (AFTER the position): the caret's previous DOM sibling must
+      // stay REAL content — with the widget before the caret, fcitx5's IM
+      // context anchors on a contenteditable=false span and dies after the
+      // first composed character (mozc-verified at the page-boundary line).
+      // coordsAtPos flattening at the widget is handled by the caller-side
+      // fallback (editor.tsx caretCoords), not by flipping this side.
+      delta.push(Decoration.widget(head, boundaryCaret, { key: `bcaret-${head}`, side: 0, ignoreSelection: true }));
       const $h = doc.resolve(head);
       if ($h.depth >= 1) delta.push(Decoration.node($h.before(1), $h.after(1), { class: 'vedNativeCaretOff' }));
     }

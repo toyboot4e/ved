@@ -296,9 +296,18 @@ draws a blinking CSS caret and the native caret is suppressed on the caret's
 paragraph (`.vedNativeCaretOff`): the DOM caret there is element-level, and
 at a multicol page break Chromium derives an element-level caret rect from
 cross-fragment union geometry — a bar spanning the page gap. The native
-caret only ever paints from a real text-node home. (`ruby-ime-rect.ts`,
-`caret-boundary.ts`, `ruby-boundary-caret.ts`, `mozc/ruby-composition.ts`
-incl. `|語(ご)ね|句(く)`.)
+caret only ever paints from a real text-node home.
+
+**Every widget decoration sits AFTER its position (`side >= 0`) and is
+`contenteditable=false`.** A read-only span as the caret's PREVIOUS DOM
+sibling kills fcitx5's IM context — each composed character confirms raw and
+the context goes dead (the ↵ newline mark at `side: -1` did this at every
+paragraph end; the boundary caret at `side: -1` did it at seams). The
+flattened `coordsAtPos` that `side: -1` once worked around is handled by
+`editor.tsx caretCoords` instead: query side, opposite side, then the
+boundary-caret widget's own box. (`ruby-ime-rect.ts`, `caret-boundary.ts`,
+`ruby-boundary-caret.ts`, `mozc/ruby-composition.ts` incl.
+`|語(ご)ね|句(く)`, `mozc/page-boundary-composition.ts`.)
 
 ## Keeping the caret in view
 

@@ -554,8 +554,8 @@ const moveCaretByLine = (
       // doc-end caret's rect is degenerate.
       let accept = false;
       try {
-        const bc = view.coordsAtPos(view.state.selection.head);
-        const ac = view.coordsAtPos(afterPos);
+        const bc = caretCoords(view, view.state.selection.head);
+        const ac = caretCoords(view, afterPos);
         const blockBefore = vertical ? (bc.left + bc.right) / 2 : (bc.top + bc.bottom) / 2;
         const blockAfter = vertical ? (ac.left + ac.right) / 2 : (ac.top + ac.bottom) / 2;
         // forward advances the reading column: vertical-rl steps left (block-x
@@ -597,7 +597,7 @@ const moveCaretByLine = (
     const blockOf = (r: { left: number; right: number; top: number; bottom: number }): number =>
       vertical ? (r.left + r.right) / 2 : (r.top + r.bottom) / 2;
     let cr: { left: number; right: number; top: number; bottom: number } =
-      beforeRect.width > 0 || beforeRect.height > 0 ? beforeRect : view.coordsAtPos(view.state.selection.head);
+      beforeRect.width > 0 || beforeRect.height > 0 ? beforeRect : caretCoords(view, view.state.selection.head);
     // Column-boundary RUBY SEAM affinity. When a forward/backward line move lands
     // on a column START whose offset is a text-less ruby seam, the DOM caret
     // renders with END-of-PREVIOUS-column affinity, so `beforeRect` reports that
@@ -858,6 +858,30 @@ const pageSnapDelta = (
  *  caret's page START to the viewport start (pageSnapDelta — the "page turn"
  *  the user reads by), and is a no-op only when the WHOLE page is visible;
  *  the cross axis stays caret-minimal. */
+
+/** `view.coordsAtPos` with a degeneracy fallback: a boundary-caret widget at
+ *  the position (side 0 — it must sit AFTER the caret so the IM context keeps
+ *  real content as the caret's previous sibling) flattens the default
+ *  after-side rect to a ~point. Retry the opposite side and keep whichever
+ *  has real extent — reveal, line movement, and the IME box consume this. */
+const caretCoords = (
+  view: EditorView,
+  pos: number,
+  side: 1 | -1 = 1,
+): { left: number; right: number; top: number; bottom: number } => {
+  const extent = (r: { left: number; right: number; top: number; bottom: number }): number =>
+    Math.max(r.right - r.left, r.bottom - r.top);
+  const a = view.coordsAtPos(pos, side);
+  if (extent(a) >= 2) return a;
+  const b = view.coordsAtPos(pos, side === 1 ? -1 : 1);
+  if (extent(b) >= 2) return b;
+  // Both sides flat — a paragraph EDGE with the widget as the only neighbor
+  // (e.g. the doc start before a leading ruby). The widget is the caret's
+  // visual home; its box is the caret rect.
+  const w = view.dom.querySelector('.vedBoundaryCaret')?.getBoundingClientRect();
+  return w && extent(w) >= 2 ? { left: w.left, right: w.right, top: w.top, bottom: w.bottom } : a;
+};
+
 const revealCaretInScroller = (scroller: HTMLElement, view: EditorView, mode: ScrollMode): void => {
   const sel = window.getSelection();
   if (!sel || sel.rangeCount === 0) return;
@@ -871,7 +895,7 @@ const revealCaretInScroller = (scroller: HTMLElement, view: EditorView, mode: Sc
     // focus node's element rect, which at a boundary is the whole (huge)
     // paragraph and makes the reveal over-scroll the caret off-screen.
     try {
-      rect = view.coordsAtPos(view.state.selection.head);
+      rect = caretCoords(view, view.state.selection.head);
     } catch {
       return;
     }
@@ -1182,7 +1206,7 @@ export const VedEditor = (props: VedEditorProps): React.JSX.Element => {
     w.__vedAnchor = () => posToOffset(view.state.doc, view.state.selection.anchor);
     w.__vedCaretRect = () => {
       try {
-        return view.coordsAtPos(view.state.selection.head);
+        return caretCoords(view, view.state.selection.head);
       } catch {
         return null;
       }
