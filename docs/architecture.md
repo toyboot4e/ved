@@ -186,6 +186,12 @@ in `test/e2e/invisibles.ts`).
   **can never force a wrap** and stays visible past the last glyph even when a
   paragraph exactly fills its visual line. No DOM text node, so the `SHOW_TEXT`
   glyph walks (`editor.tsx paraGlyphs`) skip it with no measurement changes.
+  One observable consequence: a caret at a paragraph's END has its DOM
+  selection at the ELEMENT level (after the widget), not inside the text node —
+  `focusOffset` is a child index and the collapsed range rect is degenerate,
+  while the model offset and `coordsAtPos` stay exact. Tests read the caret
+  through the model seams (`__vedCaret`/`__vedCaretRect`), never the raw DOM
+  selection (`line-movement.ts`).
 
 Both fold into the doc-keyed static base layer (the cache and `rubyCache` key on
 `(newline, whitespace)`), so a caret move under fixed invisibles rebuilds
