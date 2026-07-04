@@ -72,6 +72,9 @@ export const launchVed = async ({ env }: LaunchOptions = {}): Promise<VedApp> =>
     XMODIFIERS: '',
     GTK_IM_MODULE_FILE: '',
     VED_SMOKE_HIDDEN: '1',
+    // Isolated profile: parallel drivers must not race the shared userData,
+    // and a leftover session tab must not leak into the launched doc.
+    VED_SMOKE_USER_DATA: join(tmp, 'userdata'),
     ...env?.(tmp),
   };
   // Visible + IME-detached → prefer a virtual display over the user's desktop.

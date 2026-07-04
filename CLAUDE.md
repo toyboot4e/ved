@@ -28,9 +28,11 @@ Task runner is `just`:
   `just test <name>` filters to matching unit tests only (fast, no e2e)
 - `just check` — biome check --fix (lint + format)
 - `just typecheck` — tsc over both node and web tsconfigs
-- `just smoke` — builds, then runs the Playwright e2e tests (`test/e2e/`:
-  `smoke.ts`, `placeholder.ts` on the shared `harness.ts`; windows stay
-  hidden via `VED_SMOKE_HIDDEN`)
+- `just smoke` — builds, then runs the Playwright e2e tests (`test/e2e/` on
+  the shared `harness.ts`). Drivers run in parallel with isolated profiles
+  (`VED_SMOKE_JOBS=1` for serial); windows stay hidden via
+  `VED_SMOKE_HIDDEN`, and visible ones map on a private Xvfb display when
+  the host has one (`VED_SMOKE_NO_XVFB=1` for the real display)
 - `just test-all` — unit + lint + build + smoke; the definition of done
 
 ## Invariants

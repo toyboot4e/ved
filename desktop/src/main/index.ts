@@ -5,6 +5,12 @@ import icon from '../../resources/icon.png?asset';
 import { installCloseGuard, registerCloseGuard } from './close-guard';
 import { registerFileService } from './file-service';
 
+// e2e seam: an isolated per-run profile. Parallel smoke drivers would race
+// (and pollute) the shared userData — session restore, Chromium caches.
+if (process.env.VED_SMOKE_USER_DATA) {
+  app.setPath('userData', process.env.VED_SMOKE_USER_DATA);
+}
+
 // IME (fcitx5/ibus + mozc) support on Linux. Without these switches Chromium
 // runs through XWayland on a Wayland session and never connects to the
 // compositor's text-input protocol, so the IME cannot be activated.
