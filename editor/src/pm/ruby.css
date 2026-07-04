@@ -302,7 +302,17 @@ ruby.rubyActive + .rubyDelimClose {
  * horizontal bar in vertical-rl. Blinks only while the editor is focused. */
 .vedBoundaryCaret {
   display: inline-block;
-  inline-size: 0;
+  /* The box is REAL in both axes but has ZERO net layout footprint: the
+   * caret/IME rect at the widget spot reads THIS box (coordsAtPos and
+   * Chromium's caret rect — a degenerate box is the misplaced-IME-window
+   * bug, caret-boundary.ts/ruby-ime-rect.ts), so it can't be zero; anything
+   * that ADVANCES the flow or exceeds the line's content area shifts glyphs
+   * whenever the caret arrives (the paragraph "shakes" per caret move). So:
+   * 1px of inline-size cancelled by the negative end margin, and 1em of
+   * block-size (within the content area). The PAINTED bar spans the full
+   * pitch via the out-of-flow ::after below. */
+  inline-size: 1px;
+  margin-inline-end: -1px;
   block-size: 1em;
   position: relative;
   vertical-align: text-bottom;
@@ -310,7 +320,11 @@ ruby.rubyActive + .rubyDelimClose {
 .vedBoundaryCaret::after {
   content: "";
   position: absolute;
-  inset-block: 0;
+  /* From the line-under anchor, span the NATIVE caret's extent (the line
+   * pitch) toward line-over — a 1em bar stops short of the annotation side
+   * and reads as shifted toward line-under next to native carets. */
+  inset-block-end: 0;
+  block-size: 1lh;
   inset-inline-start: 0;
   inline-size: 1px;
   background: currentColor;
@@ -318,6 +332,13 @@ ruby.rubyActive + .rubyDelimClose {
 }
 .ProseMirror-focused .vedBoundaryCaret::after {
   animation: vedCaretBlink 1.06s step-end infinite;
+}
+/* While the boundary caret renders, the NATIVE caret is suppressed on the
+ * caret's paragraph (decorations.ts adds the class): the DOM caret is
+ * element-level there, and at a multicol PAGE break Chromium derives its rect
+ * from cross-fragment union geometry — a bar spanning the page gap. */
+.vedNativeCaretOff {
+  caret-color: transparent;
 }
 @keyframes vedCaretBlink {
   0%,

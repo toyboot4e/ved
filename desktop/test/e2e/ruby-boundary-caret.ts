@@ -58,6 +58,66 @@ try {
   await setCaret(7);
   await until(hasBoundaryCaret, true, 'boundary caret shows when navigated to the seam');
   step('boundary caret follows the caret to/from the seam');
+
+  // REGRESSION (the too-large cursor at page-boundary lines): a caret at a
+  // PARAGRAPH EDGE against hidden markup also has no text-node home. The
+  // native caret there is ELEMENT-level, and at a multicol page break
+  // Chromium painted it from cross-fragment union geometry — a bar spanning
+  // the page gap. The fix: the widget renders at both paragraph edges too,
+  // the caret's paragraph carries .vedNativeCaretOff (native caret
+  // suppressed → it can never paint the bar), and the widget stays
+  // glyph-sized. Native positions with a text home keep no widget/class.
+  const stateAt = () =>
+    page.evaluate(() => {
+      const c = document.querySelector('.vedBoundaryCaret');
+      const b = c?.getBoundingClientRect();
+      const para = document.querySelector('#editor-content p') as Element;
+      return {
+        widget: !!c,
+        suppressed: !!document.querySelector('#editor-content p.vedNativeCaretOff'),
+        w: b ? b.width : -1,
+        h: b ? b.height : -1,
+        // The widget caret matches the native caret's extent: one line pitch.
+        pitch: Number.parseFloat(getComputedStyle(para).lineHeight),
+      };
+    });
+  // offsets: |0 漢1 (2 か3 ん4 )5 あ6 |7 字8 (9 じ10 )11 — length 12
+  await setDoc('|漢(かん)あ|字(じ)');
+  await setCaret(0); // paragraph start, before a leading (atom) ruby
+  await until(hasBoundaryCaret, true, 'boundary caret at the paragraph start before a ruby');
+  let s = await stateAt();
+  assert.ok(s.suppressed, 'native caret suppressed while the widget renders (paragraph start)');
+  assert.ok(s.w <= s.pitch * 1.2 && s.h <= s.pitch * 1.2, `widget glyph-sized at the start (${s.w}x${s.h})`);
+  await setCaret(12); // paragraph end, after a trailing ruby
+  await until(hasBoundaryCaret, true, 'boundary caret at the paragraph end after a ruby');
+  s = await stateAt();
+  assert.ok(s.suppressed, 'native caret suppressed while the widget renders (paragraph end)');
+  assert.ok(s.w <= s.pitch * 1.2 && s.h <= s.pitch * 1.2, `widget glyph-sized at the end (${s.w}x${s.h})`);
+  await setCaret(6); // before plain あ — a real text home: native caret, no widget
+  await until(hasBoundaryCaret, false, 'no widget where the caret has a text home');
+  s = await stateAt();
+  assert.ok(!s.suppressed, 'native caret NOT suppressed at a text home');
+  step('paragraph edges against hidden markup: widget caret + native caret suppressed');
+
+  // The widget must have ZERO layout footprint: its bar is painted out of
+  // flow, so the paragraph's geometry is IDENTICAL with the caret on and off
+  // the widget spot (an in-flow extent grew the line per caret move — the
+  // paragraph visibly shook as the caret travelled).
+  const paraRect = () =>
+    page.evaluate(() => {
+      const r = document.querySelector('#editor-content p')!.getBoundingClientRect();
+      return { x: r.x, y: r.y, w: r.width, h: r.height };
+    });
+  const away = await paraRect();
+  await setCaret(0); // widget spot (paragraph start)
+  await until(hasBoundaryCaret, true, 'widget on for the layout check');
+  assert.deepEqual(await paraRect(), away, 'paragraph geometry unchanged when the widget caret appears');
+  // And the painted bar spans the line pitch (the native caret extent).
+  const barSize = await page.evaluate(() =>
+    Number.parseFloat(getComputedStyle(document.querySelector('.vedBoundaryCaret')!, '::after').blockSize),
+  );
+  assert.ok(Math.abs(barSize - s.pitch) < 1, `bar spans the pitch (${barSize} vs ${s.pitch})`);
+  step('widget caret has zero layout footprint; bar spans the pitch');
 } catch (e) {
   fail(e instanceof Error ? e.message : String(e));
 } finally {

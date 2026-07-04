@@ -985,7 +985,8 @@ export const VedEditor = (props: VedEditorProps): React.JSX.Element => {
     // PM's default selection lands on the first text leaf, which for a document
     // that STARTS with a ruby is INSIDE the rubyBase content (offset 1), not the
     // logical start. Offset 0 maps to BEFORE the ruby node, the true document
-    // start, where the native caret has a real rect (markup is out of the DOM).
+    // start, where the boundary-caret widget draws the caret (the native caret
+    // is suppressed at element-level homes — pm/decorations.ts).
     {
       const off = initialCursor ? cursorToOffset(initialText, initialCursor) : 0;
       // Restore the selection's other end too (a tab switch keeps a range

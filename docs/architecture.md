@@ -289,10 +289,15 @@ Five mechanisms:
   before/after (`click-end-ruby.ts`).
 
 So an IME at a boundary always has an editable plain-text anchor outside —
-or the base is read-only and mozc composes outside it. The seam between two
-adjacent collapsed rubies has no text node on either side and the native
-caret is invisible there; a `.vedBoundaryCaret` widget draws a blinking CSS
-caret. (`ruby-ime-rect.ts`, `caret-boundary.ts`, `mozc/ruby-composition.ts`
+or the base is read-only and mozc composes outside it. Wherever the caret has
+NO text-node home — the seam between two adjacent collapsed rubies, or a
+paragraph edge against hidden ruby markup — a `.vedBoundaryCaret` widget
+draws a blinking CSS caret and the native caret is suppressed on the caret's
+paragraph (`.vedNativeCaretOff`): the DOM caret there is element-level, and
+at a multicol page break Chromium derives an element-level caret rect from
+cross-fragment union geometry — a bar spanning the page gap. The native
+caret only ever paints from a real text-node home. (`ruby-ime-rect.ts`,
+`caret-boundary.ts`, `ruby-boundary-caret.ts`, `mozc/ruby-composition.ts`
 incl. `|語(ご)ね|句(く)`.)
 
 ## Keeping the caret in view

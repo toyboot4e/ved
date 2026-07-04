@@ -465,21 +465,34 @@ export const buildDecorations = (
   // reading like any other visible glyph, so they get the SAME overlay tint —
   // a separate CSS tint stacked on the overlay rect and painted them darker.)
 
-  // Boundary caret: a COLLAPSED caret BETWEEN two adjacent collapsed rubies sits at
-  // a seam with hidden ruby delimiters on BOTH sides and no DOM text node, so the
-  // native caret is invisible. Render our own caret at the head so the cursor shows
-  // at the correct seam offset (the model offset is unchanged). Plain text or an
-  // expanded ruby on either side is renderable, so no widget then. (A ruby against a
-  // PARAGRAPH edge keeps the native caret, so it is intentionally NOT handled here —
-  // a widget there would double the caret.)
+  // Boundary caret: a COLLAPSED caret with NO text-node home — the seam BETWEEN
+  // two adjacent collapsed rubies, or a PARAGRAPH EDGE against hidden ruby
+  // markup. The DOM caret at such a spot is ELEMENT-level; the native caret is
+  // then invisible (the seam) or drawn from element geometry (the edge) — and
+  // when the position sits at a multicol PAGE break, Chromium derives that
+  // element-level caret rect from cross-fragment union geometry and paints a
+  // bar spanning the page gap. Render our own caret at the head and suppress
+  // the native one on the caret's paragraph (.vedNativeCaretOff), so exactly
+  // one caret shows and it is always glyph-sized. Plain text or an expanded
+  // ruby beside the head is renderable → the native caret stays, no widget.
   if (selFrom === selTo) {
     const hidden = (l?: Leaf): boolean => !!l && l.kind === 'delim' && isHidden(l, policy, activeLine, active);
     // Delimiter leaves never cross a `\n`, so both neighbours of the head sit on
     // the head's own line — scan just that line.
     const lb = lineLeaves.find((l) => l.to === headOffset);
     const la = lineLeaves.find((l) => l.from === headOffset);
-    if (hidden(lb) && hidden(la) && lb?.ruby !== la?.ruby) {
-      delta.push(Decoration.widget(head, boundaryCaret, { key: `bcaret-${head}`, side: 0, ignoreSelection: true }));
+    const seam = hidden(lb) && hidden(la) && lb?.ruby !== la?.ruby;
+    const atStart = headOffset === 0 || text[headOffset - 1] === '\n';
+    const atEnd = headOffset === text.length || text[headOffset] === '\n';
+    const edge = (atStart && hidden(la)) || (atEnd && hidden(lb));
+    if (seam || edge) {
+      // side -1: the widget associates BEFORE the position, so coordsAtPos
+      // (default side 1) reads past it to the REAL node after — a widget on
+      // the query side flattens the caret rect to a point, and reveal, line
+      // movement, and the IME box all consume that rect.
+      delta.push(Decoration.widget(head, boundaryCaret, { key: `bcaret-${head}`, side: -1, ignoreSelection: true }));
+      const $h = doc.resolve(head);
+      if ($h.depth >= 1) delta.push(Decoration.node($h.before(1), $h.after(1), { class: 'vedNativeCaretOff' }));
     }
   }
 
