@@ -1,5 +1,6 @@
 import { editorStyles as styles, WritingMode } from '@ved/editor';
 import React from 'react';
+import { type JapaneseScanUpdate, scanJapaneseSupport } from '../font-coverage';
 import { GENERIC_FONT_FAMILIES, localFontFamilies } from '../local-fonts';
 import { useViewConfigStore, VIEW_CONFIG_BOUNDS, type ViewConfig } from '../view-config';
 
@@ -64,11 +65,32 @@ const useFontFamilies = (): readonly string[] => {
   return families;
 };
 
+/**
+ * The picker's "JP only" filter: while enabled, probes the families for
+ * Japanese coverage (font-coverage.ts) and reports the scan as it fills in.
+ * Null while disabled or before the first chunk lands — callers show the
+ * unfiltered list then, and whenever the probe reports itself unavailable.
+ */
+const useJapaneseScan = (enabled: boolean, families: readonly string[]): JapaneseScanUpdate | null => {
+  const [scan, setScan] = React.useState<JapaneseScanUpdate | null>(null);
+  React.useEffect(() => {
+    setScan(null);
+    if (!enabled || families.length === 0) return;
+    return scanJapaneseSupport(families, setScan);
+  }, [enabled, families]);
+  return scan;
+};
+
 export const ViewConfigControls = ({ writingMode }: { readonly writingMode: WritingMode }): React.JSX.Element => {
   const config = useViewConfigStore((s) => s.config);
   const set = useViewConfigStore((s) => s.set);
   const reset = useViewConfigStore((s) => s.reset);
   const fontFamilies = useFontFamilies();
+  const [jpOnly, setJpOnly] = React.useState(false);
+  const jpScan = useJapaneseScan(jpOnly, fontFamilies);
+  // Unfiltered until the first chunk lands, and always when probing is
+  // impossible (jpScan.available false) — never filter on bogus verdicts.
+  const shownFamilies = jpOnly && jpScan?.available ? jpScan.jpFamilies : fontFamilies;
 
   const commitNumber = (field: keyof ViewConfig) => (event: React.ChangeEvent<HTMLInputElement>) => {
     const value = event.target.valueAsNumber;
@@ -119,19 +141,34 @@ export const ViewConfigControls = ({ writingMode }: { readonly writingMode: Writ
             </option>
           ))}
           {/* A stored value not (yet) in the list — e.g. hydrated config on a
-              machine without that font — still has to display as itself. */}
+              machine without that font, or one hidden by the JP filter —
+              still has to display as itself. */}
           {config.fontFamily !== '' &&
-            !fontFamilies.includes(config.fontFamily) &&
+            !shownFamilies.includes(config.fontFamily) &&
             !(GENERIC_FONT_FAMILIES as readonly string[]).includes(config.fontFamily) && (
               <option value={config.fontFamily}>{config.fontFamily}</option>
             )}
-          {fontFamilies.map((family) => (
+          {shownFamilies.map((family) => (
             <option key={family} value={family}>
               {family}
             </option>
           ))}
         </select>
       </label>
+      <button
+        id={fieldId('font-jp-only')}
+        type='button'
+        className={styles.toolbarButton}
+        aria-pressed={jpOnly}
+        title={
+          jpOnly && jpScan !== null && !jpScan.available
+            ? 'JP-only filter: coverage probing unavailable — showing every font'
+            : 'Only list fonts with Japanese glyphs (かな+漢字 probed via canvas)'
+        }
+        onClick={() => setJpOnly((on) => !on)}
+      >
+        あ
+      </button>
       <button
         id={fieldId('reset')}
         type='button'
