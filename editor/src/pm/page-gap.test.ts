@@ -73,6 +73,50 @@ describe('visualLineEnds', () => {
     expect(visualLineEnds(items, 28)).toEqual([2, 3]);
   });
 
+  it('never splits on a BACKWARD excursion, however large (縦中横 sub-rects)', () => {
+    // A 3+ digit 縦中横 box reports PER-DIGIT sub-rects inside the combined
+    // cell — up to a whole cell BACKWARD (rightward, +b) of the line's slot,
+    // past half a pitch under a big-metric font (Noto Sans CJK at 18px: the
+    // digits of 第101行 measured +3.3/+9.9/+16.5). A real NEXT line only ever
+    // advances FORWARD (decreasing b), so backward excursions are always
+    // within-line artifacts and must never start a line.
+    const items: LineItem[] = [
+      { endOff: 1, b: 100 }, // 第 — the line's slot
+      { endOff: 2, b: 103.3 }, // 1 (tcy sub-rect)
+      { endOff: 3, b: 110 }, // 0
+      { endOff: 4, b: 116.5 }, // 1 — +16.5 > pitch/2, still the same line
+      { endOff: 5, b: 100 }, // 行 — back on the slot
+      { endOff: 6, b: 72 }, // the real next line: one pitch forward
+    ];
+    expect(visualLineEnds(items, 28)).toEqual([5, 6]);
+  });
+
+  it('splits on a large BACKWARD jump (a multicol band wrap)', () => {
+    // In VerticalColumns with several pages per band, the measure crosses band
+    // breaks: the next band's first line jumps BACKWARD by ~a page-row width.
+    // That must still start a line — only backward jumps within one pitch (the
+    // 縦中横 sub-rect bound: at most a cell) are within-line excursions.
+    const items: LineItem[] = [
+      { endOff: 1, b: 100 },
+      { endOff: 2, b: 72 }, // next line, same band
+      { endOff: 3, b: 240 }, // band wrap: far backward
+      { endOff: 4, b: 212 }, // next line in the new band
+    ];
+    expect(visualLineEnds(items, 28)).toEqual([1, 2, 3, 4]);
+  });
+
+  it('splits on a FORWARD jump past half a pitch measured from the line slot', () => {
+    // Forward-only, but anchored at the line's most-forward coordinate so a
+    // line-STARTING tcy excursion cannot mis-anchor the line.
+    const items: LineItem[] = [
+      { endOff: 1, b: 103.3 }, // line starts on a tcy sub-rect
+      { endOff: 2, b: 100 }, // its own slot, 3.3 forward — same line
+      { endOff: 3, b: 72 }, // next line
+      { endOff: 4, b: 44 }, // next line
+    ];
+    expect(visualLineEnds(items, 28)).toEqual([2, 3, 4]);
+  });
+
   it('is empty for no items', () => {
     expect(visualLineEnds([], 28)).toEqual([]);
   });

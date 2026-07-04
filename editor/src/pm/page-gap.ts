@@ -65,21 +65,31 @@ export const pageGapPlugin = (): Plugin<DecorationSet> =>
 export type LineItem = { readonly endOff: number; readonly b: number };
 
 /** The END OFFSET of each visual line, in reading order — items cluster into a
- *  line until the block coordinate jumps by more than half a pitch (per-glyph
- *  jitter stays under that; a real line break is a whole pitch). The offsets
- *  (not the rects) are what the editor CACHES between measures for the suffix
- *  re-measure: an offset is frame-independent, so a prefix of this list
- *  survives scrolls and widget-induced geometry shifts that would invalidate
- *  any cached coordinate. */
+ *  line until the block coordinate jumps FORWARD (the reading direction:
+ *  decreasing `b` in vertical-rl) by more than half a pitch. Per-glyph jitter
+ *  stays under that; a real line break is a whole pitch. The check is
+ *  DIRECTIONAL, anchored on the line's most-forward coordinate: a BACKWARD
+ *  excursion within one pitch never starts a line — a 3+ digit 縦中横 box
+ *  reports per-digit sub-rects up to a whole cell (< a pitch) backward of the
+ *  line's slot, past half a pitch under a big-metric font like Noto Sans CJK,
+ *  and a symmetric |Δ| split turned each such line into phantom extra lines,
+ *  drifting every page gap after it. A backward jump PAST one pitch is a
+ *  multicol band wrap (the next band's first line lands back across the whole
+ *  page row) and still starts a line. The offsets (not the rects) are what the editor CACHES
+ *  between measures for the suffix re-measure: an offset is frame-independent,
+ *  so a prefix of this list survives scrolls and widget-induced geometry
+ *  shifts that would invalidate any cached coordinate. */
 export const visualLineEnds = (items: readonly LineItem[], linePitch: number): number[] => {
   if (items.length === 0) return [];
   const ends: number[] = [];
   let lineB = items[0]!.b;
   let lastEnd = items[0]!.endOff;
   for (const it of items) {
-    if (Math.abs(it.b - lineB) > linePitch / 2) {
+    if (lineB - it.b > linePitch / 2 || it.b - lineB > linePitch) {
       ends.push(lastEnd);
       lineB = it.b;
+    } else {
+      lineB = Math.min(lineB, it.b); // track the line's most-forward coordinate
     }
     lastEnd = it.endOff;
   }

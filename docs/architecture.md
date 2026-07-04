@@ -349,7 +349,11 @@ and they are structurally different:
   space is a `.ved-page-gap` *widget decoration* (zero inline size, width =
   line pitch + `--page-gap`) fattening each page's last line — a real gap
   without touching the text model. Widgets are re-positioned from glyph rects
-  after layout-affecting events (`pm/page-gap.ts`). The measure is
+  after layout-affecting events (`pm/page-gap.ts`); the line clustering is
+  *directional* — only a reading-direction jump past half a pitch starts a
+  line, since a 3+ digit 縦中横 box reports per-digit sub-rects up to a cell
+  *backward* of the slot (past half a pitch under a big-metric CJK font). The
+  measure is
   **suffix-incremental** per edit: visual-line end *offsets* are cached and
   only lines from the first changed one re-walk. Suffix reuse is gated to
   Rich/Plain (other policies re-wrap on caret moves); a non-edit layout
