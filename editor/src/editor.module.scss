@@ -178,7 +178,7 @@ $footer-height: $font-size + $pad-y * 2;
   display: flex;
   margin: 0;
   padding: 0;
-  border: 1px solid #808080;
+  border: 1px solid var(--ved-border, #808080);
   border-radius: 4px;
   overflow: hidden;
 }
@@ -188,9 +188,9 @@ $footer-height: $font-size + $pad-y * 2;
   align-items: center;
   font-size: 11px;
   padding: 2px 6px;
-  color: #555;
-  background: #ececec;
-  border-right: 1px solid #808080;
+  color: var(--ved-fg-muted, #555);
+  background: var(--ved-chrome-bg, #ececec);
+  border-right: 1px solid var(--ved-border, #808080);
   user-select: none;
   cursor: default;
 }
@@ -200,15 +200,18 @@ $footer-height: $font-size + $pad-y * 2;
   padding: 2px 8px;
   border: none;
   background: transparent;
+  // Buttons don't inherit `color` (system `buttontext`), so an unpressed button
+  // is invisible under a dark palette — pin it to the themed foreground.
+  color: var(--ved-fg, #222);
   cursor: pointer;
 
   &:not(:last-child) {
-    border-right: 1px solid #808080;
+    border-right: 1px solid var(--ved-border, #808080);
   }
 
   &[aria-pressed='true'] {
-    background: #c0b18b;
-    color: #fff;
+    background: var(--ved-accent, #c0b18b);
+    color: var(--ved-accent-fg, #fff);
   }
 }
 
@@ -219,12 +222,12 @@ $footer-height: $font-size + $pad-y * 2;
   align-items: center;
   gap: 3px;
   font-size: 11px;
-  color: #555;
+  color: var(--ved-fg-muted, #555);
   padding: 2px 4px 2px 6px;
   user-select: none;
 
   &:not(:last-child) {
-    border-right: 1px solid #808080;
+    border-right: 1px solid var(--ved-border, #808080);
   }
 }
 
@@ -232,9 +235,12 @@ $footer-height: $font-size + $pad-y * 2;
 .toolbarTextInput {
   font-size: 12px;
   padding: 1px 2px;
-  border: 1px solid #c0c0c0;
+  border: 1px solid var(--ved-input-border, #c0c0c0);
   border-radius: 2px;
-  background: #fff;
+  background: var(--ved-input-bg, #fff);
+  // Inputs don't inherit `color` either — set it so the typed value stays legible
+  // on the dark field.
+  color: var(--ved-fg, #222);
 }
 
 .toolbarNumberInput {
@@ -249,9 +255,10 @@ $footer-height: $font-size + $pad-y * 2;
 .toolbarSelect {
   font-size: 12px;
   padding: 1px 2px;
-  border: 1px solid #c0c0c0;
+  border: 1px solid var(--ved-input-border, #c0c0c0);
   border-radius: 2px;
-  background: #fff;
+  background: var(--ved-input-bg, #fff);
+  color: var(--ved-fg, #222);
   max-width: 11em;
 }
 
@@ -266,15 +273,15 @@ $footer-height: $font-size + $pad-y * 2;
   border: none;
   background: transparent;
   cursor: pointer;
-  color: #333;
+  color: var(--ved-fg, #333);
 
   &:not(:last-child) {
-    border-right: 1px solid #808080;
+    border-right: 1px solid var(--ved-border, #808080);
   }
 
   &[aria-pressed='true'] {
-    background: #c0b18b;
-    color: #fff;
+    background: var(--ved-accent, #c0b18b);
+    color: var(--ved-accent-fg, #fff);
   }
 }
 
@@ -288,7 +295,7 @@ $footer-height: $font-size + $pad-y * 2;
   flex: 0 1 auto;
   min-height: 0;
   align-self: center;
-  border: solid 2px black;
+  border: solid 2px var(--ved-page-border, black);
   // Containing block for the line-number overlay (editor/line-numbers.ts): an
   // absolutely-positioned child of the scroller, so it scrolls WITH the content.
   position: relative;
@@ -309,7 +316,7 @@ $footer-height: $font-size + $pad-y * 2;
   // with the default `caret-color: auto` Chromium inherits transparent and
   // the caret disappears at ruby boundaries. Pin caret-color to a visible
   // value so the caret renders everywhere — including at hidden markup.
-  caret-color: black;
+  caret-color: var(--ved-caret, black);
   // Used by the leading-delim overlay caret (ruby.module.scss
   // .rubyLeadActive::before): the body font-size, as an absolute pixel
   // value so the overlay's `1em` doesn't shrink to the delim's $markup-size.
@@ -360,14 +367,14 @@ $footer-height: $font-size + $pad-y * 2;
   padding: 0;
   // Stay at the window bottom even when the editor hugs a small content
   margin-top: auto;
-  border-top: 1px solid #808080;
+  border-top: 1px solid var(--ved-border, #808080);
   display: flex;
   justify-content: center;
   align-items: center;
 }
 
 .footerCounter {
-  color: #c0b18b;
+  color: var(--ved-accent, #c0b18b);
 }
 
 // Vertical writing mode
@@ -417,12 +424,12 @@ $footer-height: $font-size + $pad-y * 2;
       // starts borderless, user spec); it ends exactly at page 1's text top,
       // well above the first real border.
       background-image:
-        linear-gradient(#fff, #fff),
+        linear-gradient(var(--ved-bg, #fff), var(--ved-bg, #fff)),
         linear-gradient(
           to bottom,
           transparent calc(var(--page-height) + var(--band-gap) * var(--page-gap-ratio) - 0.5px),
-          #808080 calc(var(--page-height) + var(--band-gap) * var(--page-gap-ratio) - 0.5px),
-          #808080 calc(var(--page-height) + var(--band-gap) * var(--page-gap-ratio) + 0.5px),
+          var(--ved-separator, #808080) calc(var(--page-height) + var(--band-gap) * var(--page-gap-ratio) - 0.5px),
+          var(--ved-separator, #808080) calc(var(--page-height) + var(--band-gap) * var(--page-gap-ratio) + 0.5px),
           transparent calc(var(--page-height) + var(--band-gap) * var(--page-gap-ratio) + 0.5px)
         );
       background-size:

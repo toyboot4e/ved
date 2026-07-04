@@ -10,7 +10,7 @@ import type { PlainTextHistory } from './history';
 import { type CaretRect, type LineNumbers, mountLineNumbers } from './line-numbers';
 import { nextCaretOffset } from './pm/caret-model';
 import { type CursorState, cursorToOffset, offsetToCursor } from './pm/cursor';
-import { buildDecorations } from './pm/decorations';
+import { buildDecorations, type Invisibles } from './pm/decorations';
 import { type DragGlyph, glyphOffsets, nearestGlyphOffset } from './pm/drag-select';
 import type { Appear, Leaf } from './pm/leaves';
 import { activeRuby, docLeaves, isHidden, lineOf, snapToGlyph } from './pm/leaves';
@@ -95,6 +95,10 @@ export type VedEditorProps = {
    *  under the same total — resizes nothing, so this prop is the re-measure
    *  signal. Optional: without it those knobs just need a later layout event. */
   readonly viewConfigEpoch?: unknown;
+  /** Which invisibles (newline / whitespace markers) to render. A pure view
+   *  flag; both default off. View-only decorations — never model text, so copy
+   *  stays plain (pm/decorations.ts). */
+  readonly invisibles?: Invisibles;
 };
 
 // Digits, not letters: Ctrl+S/O are file shortcuts (handled app-level).
@@ -888,6 +892,8 @@ const revealCaretInScroller = (scroller: HTMLElement, view: EditorView, mode: Sc
 const CONTENT_CLASS = (vert: boolean, multiCol: boolean, rows: boolean): string =>
   clsx(styles.editorContent, vert && styles.vertMode, multiCol && styles.multiColMode, rows && styles.rowsMode);
 
+const NO_INVISIBLES: Invisibles = { newline: false, whitespace: false };
+
 export const VedEditor = (props: VedEditorProps): React.JSX.Element => {
   const { writingMode, appearPolicy } = props;
   const vert = writingMode !== WritingMode.Horizontal;
@@ -899,6 +905,11 @@ export const VedEditor = (props: VedEditorProps): React.JSX.Element => {
   const live = useRef(props);
   live.current = props;
   const policyClassRef = useRef<Appear>(APPEAR_CLASS[appearPolicy]);
+  // Which invisibles to render (newline / whitespace). A ref like policyClassRef
+  // so the decoration plugin reads the live value; the effect below re-decorates
+  // on a toggle. Frozen defaults are one shared object (a stable identity when
+  // the prop is absent, so the effect doesn't churn).
+  const invisiblesRef = useRef<Invisibles>(props.invisibles ?? NO_INVISIBLES);
   const lastTextRef = useRef(props.initialText);
   // Caret offset in `lastTextRef`'s text, just before the in-progress edit. Held
   // across caret-only moves and frozen during IME composition, so when an edit
@@ -948,6 +959,7 @@ export const VedEditor = (props: VedEditorProps): React.JSX.Element => {
             state.selection.head,
             state.selection.from,
             state.selection.to,
+            invisiblesRef.current,
           ),
       },
     });
@@ -1983,6 +1995,21 @@ export const VedEditor = (props: VedEditorProps): React.JSX.Element => {
     lineNumbersRef.current?.schedule();
     pageGapsRef.current?.schedule();
   }, [epoch]);
+
+  // Invisibles toggle (see VedEditorProps.invisibles): update the live ref and
+  // force the decoration plugin to recompute (same `redecorate` meta the
+  // appear-policy effect uses). A newline widget is zero-size so it can't change
+  // wrapping, but the whitespace markers and a trailing widget can nudge measured
+  // rects — re-measure the overlay to keep line numbers/highlight aligned.
+  const showNewline = props.invisibles?.newline ?? false;
+  const showWhitespace = props.invisibles?.whitespace ?? false;
+  useEffect(() => {
+    invisiblesRef.current = { newline: showNewline, whitespace: showWhitespace };
+    const view = viewRef.current;
+    if (!view) return;
+    view.dispatch(view.state.tr.setMeta('redecorate', true));
+    lineNumbersRef.current?.schedule();
+  }, [showNewline, showWhitespace]);
 
   return (
     <div

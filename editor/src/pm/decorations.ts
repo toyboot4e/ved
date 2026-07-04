@@ -69,6 +69,32 @@ const boundaryCaret = (): HTMLElement => {
   return s;
 };
 
+/** The newline marker (invisibles): a widget at each paragraph's content end
+ *  (except the last paragraph — the plain text has no trailing `\n`). Zero
+ *  INLINE size, its glyph painted by a CSS `::after` pseudo-element in the
+ *  overflow (ruby.css), so it consumes no line-box space — the marker can never
+ *  push the line to wrap, and it stays visible after the last glyph even when a
+ *  paragraph exactly fills its visual line. Not DOM text (no text node — the
+ *  glyph-walk `SHOW_TEXT` filters skip it automatically) and not model text, so
+ *  serialize/copy is unaffected. */
+const newlineMark = (): HTMLElement => {
+  const s = document.createElement('span');
+  s.className = 'vedNewline';
+  s.setAttribute('contenteditable', 'false');
+  return s;
+};
+
+/** Which invisibles are shown. A pure view flag threaded from the shell; both
+ *  default off. Whitespace markers are inline decoration CLASSES over the real
+ *  whitespace text (copy-safe); the newline marker is a widget (above). */
+export type Invisibles = { readonly newline: boolean; readonly whitespace: boolean };
+const NO_INVISIBLES: Invisibles = { newline: false, whitespace: false };
+
+/** Whitespace char → its marker class (ruby.css paints the glyph as a
+ *  background so the real character — and thus copy — is untouched). */
+const wsClass = (ch: string): string | null =>
+  ch === ' ' ? 'vedWsSpace' : ch === '　' ? 'vedWsFull' : ch === '\t' ? 'vedWsTab' : null;
+
 /** One ruby node's tree geometry, indexed by ruby id (docLeaves numbers rubies
  *  in text order — the same order `descendants` visits them). */
 type RubyInfo = {
@@ -140,9 +166,10 @@ const parseDoc = (doc: PMNode): Parse => {
 };
 
 /** The BULK, caret- and policy-independent decorations: the inline formats
- *  (bold/italic/縦中横). Fully determined by the doc, so it is reused across every
- *  caret move and policy change. */
-const buildBase = (parse: Parse): DecorationSet => {
+ *  (bold/italic/縦中横) plus the invisibles markers (whitespace classes + newline
+ *  widgets). Fully determined by (doc, invisibles), so it is reused across every
+ *  caret move and policy change (the cache keys on both — see baseCache). */
+const buildBase = (parse: Parse, invis: Invisibles): DecorationSet => {
   const { doc, text, posMap } = parse;
   const at = (o: number) => posMap[o]!;
   const decos: Decoration[] = [];
@@ -163,7 +190,29 @@ const buildBase = (parse: Parse): DecorationSet => {
     for (let m = TCY.exec(line); m; m = TCY.exec(line)) {
       decos.push(Decoration.inline(at(base + m.index), at(base + m.index + m[0].length), { class: 'tcy' }));
     }
+    // Whitespace markers: one inline decoration per whitespace char, adding a
+    // class to the EXISTING text — the character stays in the model, so copy is
+    // plain. Per-char (not per-run) keeps the offset math trivial.
+    if (invis.whitespace) {
+      for (let i = 0; i < line.length; i++) {
+        const cls = wsClass(line[i]!);
+        if (cls) decos.push(Decoration.inline(at(base + i), at(base + i + 1), { class: cls }));
+      }
+    }
     base += line.length + 1;
+  }
+
+  // Newline markers: a zero-inline-size widget at each paragraph's content end,
+  // except the final paragraph (no trailing `\n`). `doc.forEach` yields each
+  // top-level paragraph's position; the widget sits as its last inline child
+  // (side -1) so it renders at the visual line end.
+  if (invis.newline) {
+    const last = doc.childCount - 1;
+    doc.forEach((para, offset, index) => {
+      if (index === last) return;
+      const contentEnd = offset + 1 + para.content.size;
+      decos.push(Decoration.widget(contentEnd, newlineMark, { side: -1, key: `nl-${index}`, ignoreSelection: true }));
+    });
   }
 
   return DecorationSet.create(doc, decos);
@@ -244,7 +293,9 @@ const setsEq = (a: Set<number>, b: Set<number>): boolean => {
 };
 
 let parseCache: Parse | null = null;
-let baseCache: { doc: PMNode; set: DecorationSet } | null = null;
+// The bold/italic/縦中横 + invisibles base set, keyed by (doc, invisibles): a
+// caret move under fixed invisibles reuses it; a toggle rebuilds it once.
+let baseCache: { doc: PMNode; newline: boolean; whitespace: boolean; set: DecorationSet } | null = null;
 // The cached static layer: the base (bold/italic/縦中横) set PLUS the ruby static
 // decorations, keyed by (doc, policy, expanded-set VALUE). Under Rich/Plain the
 // expanded set never changes (none/all), so every caret move reuses it; under
@@ -254,6 +305,10 @@ let rubyCache: {
   doc: PMNode;
   policy: Appear;
   expanded: Set<number>;
+  // Mirrors the invisibles the cached `set` was built ON TOP of (it starts from
+  // baseCache.set, which carries the invisibles markers) — so a toggle rebuilds it.
+  newline: boolean;
+  whitespace: boolean;
   set: DecorationSet;
   atomBase: Map<number, Decoration>;
 } | null = null;
@@ -268,6 +323,7 @@ export const buildDecorations = (
   head: number,
   selFrom: number = head,
   selTo: number = head,
+  invisibles: Invisibles = NO_INVISIBLES,
 ): DecorationSet => {
   if (!parseCache || parseCache.doc !== doc) parseCache = parseDoc(doc);
   const { text, leavesByLine, allRubies } = parseCache;
@@ -299,10 +355,20 @@ export const buildDecorations = (
     }
   })();
 
-  // The bold/italic/縦中横 base set depends only on the doc — reuse it across every
-  // caret move and policy change.
-  if (!baseCache || baseCache.doc !== doc) {
-    baseCache = { doc, set: buildBase(parseCache) };
+  // The bold/italic/縦中横 + invisibles base set depends only on (doc, invisibles)
+  // — reuse it across every caret move and policy change.
+  if (
+    !baseCache ||
+    baseCache.doc !== doc ||
+    baseCache.newline !== invisibles.newline ||
+    baseCache.whitespace !== invisibles.whitespace
+  ) {
+    baseCache = {
+      doc,
+      newline: invisibles.newline,
+      whitespace: invisibles.whitespace,
+      set: buildBase(parseCache, invisibles),
+    };
     // Test seam: count O(document) base rebuilds. A caret move must reuse the
     // cache (no increment). caret-move-perf asserts this.
     const w = globalThis as unknown as { __vedBaseRebuilds?: number };
@@ -315,9 +381,24 @@ export const buildDecorations = (
 
   // The static layer (base formats + caret-independent ruby decorations) —
   // rebuilt only when the doc/policy/expanded-set actually changed.
-  if (!rubyCache || rubyCache.doc !== doc || rubyCache.policy !== policy || !setsEq(rubyCache.expanded, expanded)) {
+  if (
+    !rubyCache ||
+    rubyCache.doc !== doc ||
+    rubyCache.policy !== policy ||
+    rubyCache.newline !== invisibles.newline ||
+    rubyCache.whitespace !== invisibles.whitespace ||
+    !setsEq(rubyCache.expanded, expanded)
+  ) {
     const { nodes, atomBase } = buildRubyStatic(parseCache, expanded);
-    rubyCache = { doc, policy, expanded, set: baseCache.set.add(doc, nodes), atomBase };
+    rubyCache = {
+      doc,
+      policy,
+      expanded,
+      newline: invisibles.newline,
+      whitespace: invisibles.whitespace,
+      set: baseCache.set.add(doc, nodes),
+      atomBase,
+    };
     // Test seam: count O(rubies) static rebuilds. A caret move under a fixed
     // policy must reuse the cache (no increment). click-perf asserts this.
     const w = globalThis as unknown as { __vedRubyRebuilds?: number };

@@ -7,7 +7,7 @@
   // Never wrap; overflow scrolls horizontally (the row, not the page)
   overflow-x: auto;
   overflow-y: hidden;
-  border-bottom: 1px solid #808080;
+  border-bottom: 1px solid var(--ved-border, #808080);
   // Thin, unobtrusive scrollbar
   scrollbar-width: thin;
 }
@@ -20,16 +20,16 @@
   max-width: 200px;
   padding: 3px 6px 3px 10px;
   font-size: 12px;
-  border-right: 1px solid #d0d0d0;
-  background: #ededed;
-  color: #555;
+  border-right: 1px solid var(--ved-border-faint, #d0d0d0);
+  background: var(--ved-chrome-bg, #ededed);
+  color: var(--ved-fg-muted, #555);
   cursor: pointer;
   user-select: none;
   -webkit-user-select: none;
 
   &.active {
-    background: #fff;
-    color: #222;
+    background: var(--ved-bg, #fff);
+    color: var(--ved-fg, #222);
   }
 }
 
@@ -43,7 +43,7 @@
 .dirtyDot {
   flex: 0 0 auto;
   font-size: 9px;
-  color: #c0b18b;
+  color: var(--ved-accent, #c0b18b);
   visibility: hidden;
 
   &[data-visible='true'] {
@@ -61,11 +61,11 @@
   border: none;
   border-radius: 3px;
   background: transparent;
-  color: #888;
+  color: var(--ved-fg-muted, #888);
   cursor: pointer;
 
   &:hover {
-    background: #d8d8d8;
-    color: #222;
+    background: var(--ved-hover-bg, #d8d8d8);
+    color: var(--ved-fg, #222);
   }
 }

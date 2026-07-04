@@ -31,7 +31,7 @@
   user-select: none;
   -webkit-user-select: none;
   writing-mode: horizontal-tb; /* digits stay horizontal even in a vertical-rl scroller */
-  color: #aaa;
+  color: var(--ved-line-number, #aaa);
 }
 /* A number, centered on its line's block extent (over the column width in
  * vertical-rl, over the row height in horizontal) by a translate set inline. */
@@ -51,7 +51,7 @@
   position: absolute;
   top: 0;
   left: 0;
-  background-color: rgba(120, 170, 255, 0.12);
+  background-color: var(--ved-current-line, rgba(120, 170, 255, 0.12));
 }
 
 /* Custom text-selection highlight (editor/line-numbers.ts): native `::selection`
@@ -63,7 +63,7 @@
   position: absolute;
   top: 0;
   left: 0;
-  background-color: rgba(120, 170, 255, 0.4);
+  background-color: var(--ved-selection, rgba(120, 170, 255, 0.4));
 }
 /* Suppress the native selection paint INSIDE the editor only (the toolbar, tabs,
  * and any input keep theirs). Keep the text colour so the glyphs stay legible
@@ -93,7 +93,7 @@
   position: absolute;
   inset-block-start: 0;
   inset-inline-start: 0;
-  color: #555;
+  color: var(--ved-fg-muted, #555);
   pointer-events: none;
   /* Not selectable: after Ctrl+A then delete the selection is a Range over the
    * empty <p>, which would paint the selection highlight (a blue "ghost" bar)
@@ -115,6 +115,72 @@
 #editor-content.composing .syn {
   display: inline;
   font-size: 0;
+}
+
+/* ── Invisibles (pm/decorations.ts) ─────────────────────────────────────────
+ * Markers for newline + whitespace, shown when the shell toggles them on. All
+ * are VIEW-ONLY: the whitespace classes wrap the REAL space text, the newline is
+ * a zero-size widget — neither is model text, so serialize/copy stays plain.
+ * `--ved-invisible` is the theme token (falls back to a mid gray). */
+
+/* Newline: a zero-INLINE-size widget at the paragraph's content end. The glyph
+ * is drawn by an absolutely-positioned `::after` in the overflow, so it takes NO
+ * line-box space — the marker can never force the line to wrap, and it stays
+ * visible past the last glyph even when the paragraph exactly fills its visual
+ * line. `inline-size: 0` = width in horizontal, height in vertical-rl. */
+.vedNewline {
+  display: inline-block;
+  inline-size: 0;
+  block-size: 0;
+  position: relative;
+}
+.vedNewline::after {
+  content: "↵";
+  position: absolute;
+  inset-block-start: 0;
+  inset-inline-start: 0;
+  font-size: 0.7em;
+  line-height: 1;
+  color: var(--ved-invisible, #b0b0b0);
+  pointer-events: none;
+  -webkit-user-select: none;
+  user-select: none;
+}
+
+/* Whitespace: a marker painted as a centered BACKGROUND over the real character
+ * (an inline decoration adds only a class), so glyph metrics — and copy — are
+ * untouched. Half-width space = a small mid dot; full-width space (U+3000) = a
+ * hollow box; tab = an arrow. The color comes from `--ved-invisible`; the marks
+ * use `currentColor`-independent gradients so they never tint the surrounding
+ * text. */
+.vedWsSpace,
+.vedWsFull,
+.vedWsTab {
+  color: var(--ved-invisible, #b0b0b0);
+}
+.vedWsSpace {
+  background-image: radial-gradient(circle at 50% 50%, var(--ved-invisible, #b0b0b0) 0 1px, transparent 1.2px);
+  background-repeat: no-repeat;
+  background-position: center;
+}
+/* Hollow box for the full-width space: a small centered square via a layered
+ * gradient (fill the square, then knock out the interior). Sized in em so it
+ * scales with the cell. */
+.vedWsFull {
+  background-image:
+    linear-gradient(var(--ved-invisible, #b0b0b0), var(--ved-invisible, #b0b0b0)),
+    linear-gradient(var(--ved-bg, #fff), var(--ved-bg, #fff));
+  background-repeat: no-repeat, no-repeat;
+  background-position: center, center;
+  background-size:
+    0.5em 0.5em,
+    calc(0.5em - 2px) calc(0.5em - 2px);
+}
+.vedWsTab {
+  background-image: linear-gradient(var(--ved-invisible, #b0b0b0), var(--ved-invisible, #b0b0b0));
+  background-repeat: no-repeat;
+  background-position: center;
+  background-size: 0.6em 1px;
 }
 
 /* Inline formats — each is one decoration class. */
@@ -203,7 +269,7 @@ ruby.rubyExpanded > rt {
 .rubyDelimOpen,
 .rubyDelimParen,
 .rubyDelimClose {
-  color: #808080;
+  color: var(--ved-ruby-delim, #808080);
 }
 
 /* Selection paint for the delimiters needs NO rule of its own: the selection
@@ -219,7 +285,7 @@ ruby.rubyExpanded > rt {
  * over it so the whole shown markup `|base(reading)` highlights as one span. */
 ruby.rubyActive,
 ruby.rubyActive + .rubyDelimClose {
-  background-color: rgba(255, 200, 50, 0.25);
+  background-color: var(--ved-ruby-active, rgba(255, 200, 50, 0.25));
 }
 
 /* Boundary caret (pm/decorations.ts): a rendered caret at a text-less ruby seam,
@@ -284,7 +350,7 @@ ruby.rubyActive + .rubyDelimClose {
   font-size: 0.75em;
   line-height: 1;
   white-space: nowrap;
-  color: #777;
+  color: var(--ved-folio, #777);
 }
 
 /* Page-boundary separator (paged modes): a hairline drawn by the line-number
@@ -297,5 +363,5 @@ ruby.rubyActive + .rubyDelimClose {
   top: 0;
   left: 0;
   width: 1px;
-  background: #808080;
+  background: var(--ved-separator, #808080);
 }

@@ -1,6 +1,8 @@
 import { AppearPolicy, editorStyles as styles, WritingMode } from '@ved/editor';
 import type React from 'react';
 import { HorizontalIcon, VerticalColumnsIcon, VerticalIcon, VerticalRowsIcon } from './icons/WritingModeIcons';
+import { InvisiblesControls } from './invisibles-controls';
+import { ThemeToggle } from './theme-toggle';
 import { ViewConfigControls } from './view-config-controls';
 
 /** Properties of {@link Toolbar}. */
@@ -101,7 +103,9 @@ export const Toolbar = ({
           </button>
         ))}
       </fieldset>
+      <InvisiblesControls />
       <ViewConfigControls writingMode={writingMode} />
+      <ThemeToggle />
     </div>
   );
 };

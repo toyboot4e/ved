@@ -110,8 +110,26 @@ _Avoid_: open, revealed.
 **View config**:
 The user-adjustable rendering values: font size (the **cell** size), **line
 space**, **page** geometry, font family. A pure view concern — orthogonal to
-the document string and to **appear policy**.
-_Avoid_: settings (broader — includes keymaps, workspace), theme, preferences.
+the document string and to **appear policy**. Does NOT include **invisibles**
+or **theme** — those are separate view concerns with their own stores.
+_Avoid_: settings (broader — includes keymaps, workspace), preferences.
+
+**Invisibles**:
+The optional newline (↵) and whitespace (space ·, full-width space □, tab →)
+markers. View-only decorations over the same model text — never model text, so
+copy stays plain. Newline on by default, whitespace opt-in; toggled per kind.
+Orthogonal to **appear
+policy** and **view config**.
+_Avoid_: whitespace mode, control characters, formatting marks.
+
+**Theme**:
+Which color palette the product renders in — a set of `--ved-*` token values.
+`light` / `dark` (a plain toggle, its launch default seeded from the OS),
+extensible to arbitrary named palettes. A pure view concern, distinct from
+**view config** (geometry/font) and from **settings** (the eventual config file
+that will persist both).
+_Avoid_: dark mode (one theme, not the axis), skin, color scheme (the CSS
+media feature, not our store).
 
 ### Project structure
 

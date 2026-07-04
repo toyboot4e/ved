@@ -13,6 +13,8 @@ import {
   type TabCommand,
   windowTitle,
 } from './file-commands';
+import { useInvisiblesStore } from './invisibles';
+import { useThemeStore } from './theme';
 import { useViewConfigStore, viewConfigToCss } from './view-config';
 
 const INITIAL_TEXT = '|ルビ(ruby)';
@@ -21,6 +23,14 @@ export const App = (): React.JSX.Element => {
   const [writingMode, setWritingMode] = useState(WritingMode.VerticalColumns);
   const [appearPolicy, setAppearPolicy] = useState(AppearPolicy.Rich);
   const viewConfig = useViewConfigStore((s) => s.config);
+  const invisibles = useInvisiblesStore((s) => s.invisibles);
+  const theme = useThemeStore((s) => s.theme);
+
+  // Apply the theme by setting `data-theme` on <html>; main.scss resolves the
+  // `--ved-*` token palette from it ('system' follows the OS via a media query).
+  useEffect(() => {
+    document.documentElement.dataset.theme = theme;
+  }, [theme]);
 
   const [state, dispatch] = useReducer(buffersReducer, INITIAL_TEXT, initBuffers);
   const active = activeBuffer(state);
@@ -196,6 +206,7 @@ export const App = (): React.JSX.Element => {
         onTextChange={onTextChange}
         onSnapshot={(snapshot) => handleSnapshot(active.id, snapshot)}
         viewConfigEpoch={viewConfig}
+        invisibles={invisibles}
       />
       <div className={styles.footer}>
         <p id='counter' className={styles.footerCounter}></p>

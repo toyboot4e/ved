@@ -156,6 +156,32 @@ by doc, ruby decorations keyed by expanded set); a caret move builds an O(1)
 delta (`rubyActive`, `rubySelected`). Seams:
 `__vedBaseRebuilds`/`__vedRubyRebuilds`.
 
+## Invisibles (newline / whitespace markers)
+
+Markers threaded from the shell as the `invisibles` editor prop
+(`{ newline, whitespace }`) and toggled in the toolbar
+(`invisibles-controls.tsx` over the `useInvisiblesStore` store); newline on by
+default, whitespace opt-in. Like every other format they are **view-only
+decorations** — never model text, so copy stays plain by construction (verified
+in `test/e2e/invisibles.ts`).
+
+- **Whitespace**: one `Decoration.inline` per whitespace char adds a marker
+  class (`vedWsSpace` U+0020 · / `vedWsFull` U+3000 □ / `vedWsTab` →); the
+  glyph is a centered CSS `background` over the *real* character, so metrics
+  and copy are untouched.
+- **Newline**: a zero-inline-size `Decoration.widget` (`vedNewline`) at each
+  paragraph's content end except the last. Its ↵ glyph is a `::after`
+  pseudo-element in the overflow, so it consumes no line-box space — the marker
+  **can never force a wrap** and stays visible past the last glyph even when a
+  paragraph exactly fills its visual line. No DOM text node, so the `SHOW_TEXT`
+  glyph walks (`editor.tsx paraGlyphs`) skip it with no measurement changes.
+
+Both fold into the doc-keyed static base layer (the cache and `rubyCache` key on
+`(newline, whitespace)`), so a caret move under fixed invisibles rebuilds
+nothing — the `__vedBaseRebuilds` invariant holds. A toggle updates
+`invisiblesRef` and dispatches the same `redecorate` meta the appear-policy
+switch uses.
+
 ## Structure repair
 
 `pm/structure.ts repair`: when typing completes or breaks ruby syntax, the
@@ -370,6 +396,35 @@ paragraph ends in a ruby, since `head - 1` is the reading
 
 Writing mode and appear policy are owned by `app.tsx` state, rendered by
 `components/toolbar.tsx`; shortcuts call the same setters.
+
+## Theming
+
+Every color in the product is a `--ved-*` custom-property token, so a theme is
+just a set of token *values*. The palettes (`ved-light` / `ved-dark` mixins)
+live in the desktop shell's `main.scss`; the store (`theme.ts`, `light | dark`)
+writes `data-theme` to `<html>` (applied in `app.tsx`), and CSS resolves the
+palette from it. The launch default is the **OS preference** (`theme.ts` seeds
+from `prefers-color-scheme`); before JS runs, `:root:not([data-theme])` follows
+the OS too, so a dark-OS launch never flashes light. The toolbar's icon button
+(`theme-toggle.tsx`) flips Light ⇄ Dark. The store is a plain string id, so
+**adding a named theme is one more `:root[data-theme='id']` block** driven by
+`set()` — the two-state toggle is just today's UI over it.
+
+The tokens are defined on `:root` (the shell) and cascade into the editor
+core's CSS exactly like `--cell-size` / `--font-family` do. The editor's
+stylesheets (`editor.module.scss`, `pm/ruby.css`) reference each token **with
+its light value as the `var()` fallback**, so the editor still renders correctly
+standalone — the web preview and any no-theme-root host get the light look with
+no shell dependency. SVG chrome icons use `currentColor`, so they recolor for
+free.
+
+Two gotchas the toolbar controls hit: native form controls (`button`, `input`,
+`select`) **don't inherit `color`** — they default to a system color that is
+dark-on-dark, so each gets an explicit `color: var(--ved-fg)`; and native widget
+chrome CSS can't reach (the select popup, number spinners, scrollbars, the text
+caret) follows **`color-scheme`**, set per palette in the mixins. Not persisted
+yet (Phase-4 `config.json` will hydrate the store, matching view-config).
+Verified in `test/e2e/theme.ts`.
 
 ## Constraints & verified dead ends
 

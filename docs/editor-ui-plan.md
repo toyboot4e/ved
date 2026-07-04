@@ -245,6 +245,30 @@ Decisions from the design review (see CONTEXT.md **view config**):
     the same store; localStorage is rejected as renderer-owned persistence
     that Phase 4 would have to migrate away from.
 
+- [x] **Step V.2 — invisibles (newline / whitespace markers).** *(done 2026-07)*
+  - User-requested. View-only decorations (pm/decorations.ts): whitespace =
+    an inline marker class over the real char (space ·, full-width space □,
+    tab →); newline = a zero-inline-size `vedNewline` widget at each line end
+    whose ↵ glyph is a `::after` in the overflow, so it never forces a wrap
+    and copy stays plain. Threaded as one optional editor prop `invisibles`
+    ({ newline, whitespace }); own `useInvisiblesStore` (newline on by default,
+    whitespace opt-in); two toolbar toggles. Folded into the doc-keyed
+    decoration cache (caret-move perf invariant holds). Smoke:
+    `test/e2e/invisibles.ts`. See architecture.md "Invisibles".
+
+- [x] **Step V.3 — theme (dark mode + token layer).** *(done 2026-07)*
+  - User-requested. Every product color became a `--ved-*` token with light +
+    dark palettes (main.scss `ved-light`/`ved-dark`); the editor core CSS
+    references them with light fallbacks so it still renders standalone.
+    `useThemeStore` (`light`/`dark`) writes `data-theme` on `<html>`; the launch
+    default is seeded from `prefers-color-scheme` (and pre-JS CSS follows the OS
+    so there's no flash). Toolbar icon button flips Light ⇄ Dark; structured so
+    more named themes just add a `[data-theme]` block. Toolbar controls get an
+    explicit `--ved-fg` (form controls don't inherit `color`) and each palette
+    sets `color-scheme` so native widgets follow.
+    Not persisted yet (Phase 4). Smoke: `test/e2e/theme.ts`. See
+    architecture.md "Theming".
+
 ### Phase 2 — file browser sidebar
 
 A **workspace root** concept ("open folder…", persisted). Hand-rolled lazy

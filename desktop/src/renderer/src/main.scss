@@ -1,3 +1,82 @@
+// ── Theme tokens ────────────────────────────────────────────────────────────
+// Every color in the product (chrome + editor core) is a `--ved-*` custom
+// property, so a theme is just a set of token VALUES. Two palettes ship; adding
+// another named theme is one more `:root[data-theme='X']` block. The store
+// (theme.ts) sets `data-theme` on <html> to 'light' | 'dark' — a plain toggle
+// whose launch default is the OS preference. Before JS runs (no attribute yet)
+// the palette follows `prefers-color-scheme`, so a dark-OS launch never flashes.
+//
+// The tokens cascade from :root into the editor package's CSS (ruby.css,
+// editor.module.scss), which references them with its current light value as the
+// fallback — so the editor still renders correctly standalone (web preview / no
+// theme root), exactly like --cell-size / --font-family already do.
+@mixin ved-light {
+  // Native widgets (the font-picker popup, number spinners, scrollbars, the
+  // native caret) follow `color-scheme`, so pin it to the palette — else they
+  // render light-on-light or dark controls under the wrong theme.
+  color-scheme: light;
+  --ved-bg: #ffffff;
+  --ved-fg: #222222;
+  --ved-fg-muted: #555555;
+  --ved-chrome-bg: #ececec;
+  --ved-hover-bg: #d8d8d8;
+  --ved-border: #808080;
+  --ved-border-faint: #d0d0d0;
+  --ved-input-bg: #ffffff;
+  --ved-input-border: #c0c0c0;
+  --ved-accent: #c0b18b;
+  --ved-accent-fg: #ffffff;
+  --ved-page-border: #000000;
+  --ved-caret: #000000;
+  --ved-separator: #808080;
+  --ved-line-number: #aaaaaa;
+  --ved-folio: #777777;
+  --ved-current-line: rgba(120, 170, 255, 0.12);
+  --ved-selection: rgba(120, 170, 255, 0.4);
+  --ved-ruby-delim: #808080;
+  --ved-ruby-active: rgba(255, 200, 50, 0.25);
+  --ved-invisible: #b0b0b0;
+}
+
+@mixin ved-dark {
+  color-scheme: dark;
+  --ved-bg: #1e1e1e;
+  --ved-fg: #e6e6e6;
+  --ved-fg-muted: #a0a0a0;
+  --ved-chrome-bg: #2a2a2a;
+  --ved-hover-bg: #3a3a3a;
+  --ved-border: #3a3a3a;
+  --ved-border-faint: #333333;
+  --ved-input-bg: #262626;
+  --ved-input-border: #4a4a4a;
+  --ved-accent: #b6a575;
+  --ved-accent-fg: #1e1e1e;
+  --ved-page-border: #555555;
+  --ved-caret: #e6e6e6;
+  --ved-separator: #454545;
+  --ved-line-number: #6a6a6a;
+  --ved-folio: #808080;
+  --ved-current-line: rgba(130, 175, 255, 0.16);
+  --ved-selection: rgba(120, 170, 255, 0.42);
+  --ved-ruby-delim: #8f8f8f;
+  --ved-ruby-active: rgba(255, 205, 70, 0.3);
+  --ved-invisible: #6a6a6a;
+}
+
+:root {
+  @include ved-light;
+}
+:root[data-theme='dark'] {
+  @include ved-dark;
+}
+// Before the store applies `data-theme` (first paint), follow the OS so a
+// dark-OS launch doesn't flash light. Once the attribute is set, it wins.
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme]) {
+    @include ved-dark;
+  }
+}
+
 *,
 *::before,
 *::after {
@@ -16,8 +95,8 @@ body,
 }
 
 body {
-  background-color: #ffffff;
-  color: #222222;
+  background-color: var(--ved-bg);
+  color: var(--ved-fg);
   line-height: 1.6;
   font-family:
     Inter, -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Oxygen, Ubuntu, Cantarell, "Fira Sans", "Droid Sans",
