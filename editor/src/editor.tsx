@@ -1484,7 +1484,25 @@ export const VedEditor = (props: VedEditorProps): React.JSX.Element => {
       const from = posToOffset(view.state.doc, sel.from);
       const to = posToOffset(view.state.doc, sel.to);
       const text = serialize(view.state.doc);
-      const vertical = getComputedStyle(view.dom).writingMode.startsWith('vertical');
+      const cs = getComputedStyle(view.dom);
+      const vertical = cs.writingMode.startsWith('vertical');
+      // Cap a span's BLOCK extent at one cell (the glyph advance), centered:
+      // the measured rects are glyph EM boxes, and a big-metric font's em box
+      // (Noto Sans CJK: 1.45em) overflows the advance into the leading WHERE
+      // THE NEIGHBOR READING PAINTS — the "base-only" highlight visibly tinted
+      // the readings (ruby-selection-thin.ts). The ink of an upright glyph
+      // lives inside its advance, so the clamp only trims empty em-box bleed.
+      const cell = Number.parseFloat(cs.fontSize) || 18;
+      const clamp = (c: { l: number; t: number; r: number; b: number }): DOMRect => {
+        if (vertical) {
+          const w = c.r - c.l;
+          const l = w > cell ? (c.l + c.r) / 2 - cell / 2 : c.l;
+          return new DOMRect(l, c.t, Math.min(w, cell), c.b - c.t);
+        }
+        const h = c.b - c.t;
+        const t = h > cell ? (c.t + c.b) / 2 - cell / 2 : c.t;
+        return new DOMRect(c.l, t, c.r - c.l, Math.min(h, cell));
+      };
       const out: DOMRect[] = [];
       let cur: { l: number; t: number; r: number; b: number } | null = null;
       for (const g of walkGlyphsLines(lineOf(text, from), lineOf(text, to))) {
@@ -1499,11 +1517,11 @@ export const VedEditor = (props: VedEditorProps): React.JSX.Element => {
           cur.r = Math.max(cur.r, r.right);
           cur.b = Math.max(cur.b, r.bottom);
         } else {
-          if (cur) out.push(new DOMRect(cur.l, cur.t, cur.r - cur.l, cur.b - cur.t));
+          if (cur) out.push(clamp(cur));
           cur = { l: r.left, t: r.top, r: r.right, b: r.bottom };
         }
       }
-      if (cur) out.push(new DOMRect(cur.l, cur.t, cur.r - cur.l, cur.b - cur.t));
+      if (cur) out.push(clamp(cur));
       return out;
     };
     selectedGlyphRectsRef.current = selectedGlyphRects;
