@@ -414,16 +414,20 @@ Hard limits and approaches that failed — don't re-derive or re-try:
 
 - **The real-mozc suite** (`test/e2e/mozc/`, `pnpm smoke:mozc` in `desktop/`;
   recipe in the `CLAUDE.md` invariant) steals X focus while running; guarded
-  on `mozcAvailable()`. Owed: isolate on Xvfb (blocked on a NixOS dbus
-  session.conf path).
+  on `mozcAvailable()`. Owed: isolate it on Xvfb too — needs fcitx5 on the
+  virtual display (blocked on a NixOS dbus session.conf path); the non-IME
+  visible suites already isolate.
 - Synthetic input: sub-60 ms key bursts after a programmatic selection change
   race the DOM→model sync. `smoke.ts` inserts via `beforeinput` with
   human-ish timing, IME detached.
 - **Hidden Electron windows throttle rAF.** `VED_SMOKE_HIDDEN=1` (the harness
   default) stalls RAF-deferred paths, so "the caret didn't jump" assertions
-  falsely pass — use a visible window and assert the expected destination. A
-  visible smoke window shows *inactive* (`showInactive()`), never stealing OS
-  focus; only the mozc suite activates the window.
+  falsely pass — use a visible window and assert the expected destination.
+  A visible window maps on a private per-driver Xvfb display when the host
+  has one (nothing appears on the desktop; the harness sizes the window —
+  no WM there; `VED_SMOKE_NO_XVFB=1` forces the real display). On the real
+  display it shows *inactive* (`showInactive()`), never stealing OS focus;
+  only the mozc suite activates the window.
 - `repair` compares every paragraph per change; fine at current sizes,
   limitable to dirty paragraphs if profiling flags it.
 - **Ruby line spacing is `$line-space`-tuned; heavy webfonts may need more.**

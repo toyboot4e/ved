@@ -2,6 +2,7 @@
 // Launches the built app against a per-run temp dir, with native dialogs
 // stubbed via the VED_SMOKE_* env seams and the window hidden — layout,
 // input, and IPC all work without a window ever appearing.
+import { spawn } from 'node:child_process';
 import { mkdtemp, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
@@ -23,25 +24,80 @@ export type LaunchOptions = {
   readonly env?: (tmp: string) => Record<string, string>;
 };
 
+/** A VISIBLE window normally appears on the user's desktop. When Xvfb is
+ *  available, map it on a private virtual display instead: rAF throttles only
+ *  in HIDDEN windows, so the RAF-deferred suites need a mapped window — not
+ *  the user's screen. One server per driver process, picked a free display
+ *  via `-displayfd`, killed on process exit. Skipped when the IME is attached
+ *  (the mozc suite composes on the real display) or under VED_SMOKE_NO_XVFB=1;
+ *  returns null to fall back to the real display (no Xvfb binary &c.). */
+let xvfb: Promise<string | null> | undefined;
+const xvfbDisplay = (): Promise<string | null> => {
+  xvfb ??= new Promise((resolve) => {
+    if (process.platform !== 'linux' || process.env.VED_SMOKE_NO_XVFB) {
+      resolve(null);
+      return;
+    }
+    // -displayfd 3: Xvfb picks a free display number and writes it to fd 3.
+    const server = spawn(
+      'Xvfb',
+      ['-displayfd', '3', '-screen', '0', '1920x1600x24', '-dpi', '96', '-nolisten', 'tcp'],
+      { stdio: ['ignore', 'ignore', 'ignore', 'pipe'] },
+    );
+    server.on('error', () => resolve(null)); // no Xvfb binary
+    server.on('exit', () => resolve(null)); // failed to start (a settled promise ignores this)
+    let out = '';
+    server.stdio[3]?.on('data', (chunk) => {
+      out += String(chunk);
+      const m = out.match(/^(\d+)\s/);
+      if (!m) return;
+      server.stdio[3]?.destroy(); // an open pipe would keep the driver alive
+      server.unref();
+      process.on('exit', () => server.kill());
+      resolve(`:${m[1]}`);
+    });
+  });
+  return xvfb;
+};
+
 export const launchVed = async ({ env }: LaunchOptions = {}): Promise<VedApp> => {
   const root = new URL('../../', import.meta.url).pathname;
   const tmp = await mkdtemp(join(tmpdir(), 'ved-e2e-'));
+  const merged: Record<string, string> = {
+    ...(process.env as Record<string, string>),
+    // Detach the system IME (fcitx5/mozc): it intercepts synthetic key
+    // events and garbles typed text non-deterministically.
+    GTK_IM_MODULE: '',
+    QT_IM_MODULE: '',
+    XMODIFIERS: '',
+    GTK_IM_MODULE_FILE: '',
+    VED_SMOKE_HIDDEN: '1',
+    ...env?.(tmp),
+  };
+  // Visible + IME-detached → prefer a virtual display over the user's desktop.
+  let onXvfb = false;
+  if (merged.VED_SMOKE_HIDDEN === '' && !merged.GTK_IM_MODULE) {
+    const display = await xvfbDisplay();
+    if (display) {
+      merged.DISPLAY = display;
+      onXvfb = true;
+      console.log(`(visible window on Xvfb ${display})`);
+    }
+  }
   const app = await _electron.launch({
     executablePath: electronPath as unknown as string,
     args: [`${root}out/main/index.js`],
-    env: {
-      ...process.env,
-      // Detach the system IME (fcitx5/mozc): it intercepts synthetic key
-      // events and garbles typed text non-deterministically.
-      GTK_IM_MODULE: '',
-      QT_IM_MODULE: '',
-      XMODIFIERS: '',
-      GTK_IM_MODULE_FILE: '',
-      VED_SMOKE_HIDDEN: '1',
-      ...env?.(tmp),
-    },
+    env: merged,
   });
   const page = await app.firstWindow();
+  if (onXvfb) {
+    // No WM on the virtual display, so nothing sizes the window and the
+    // default is too small for the paged-layout suites — set a desktop-sized
+    // window explicitly (on the real display the user's WM does this).
+    await app.evaluate(({ BrowserWindow }) => {
+      BrowserWindow.getAllWindows()[0]?.setBounds({ x: 0, y: 0, width: 1200, height: 1240 });
+    });
+  }
   await page.waitForSelector('#editor-content');
   return {
     app,
