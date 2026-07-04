@@ -103,36 +103,60 @@ try {
     // band break still OPENS its box in band 1 (an empty prefix — its
     // bounding rect straddles both bands), so rect-top counting reports N
     // even when only N−1 text columns render in the band.
-    const band1 = await page.evaluate(() => {
-      const content = document.getElementById('editor-content')!;
-      const pitch = Number.parseFloat(getComputedStyle(content).lineHeight);
-      const range = document.createRange();
-      const walker = document.createTreeWalker(content, NodeFilter.SHOW_TEXT, {
-        acceptNode: (n) => (n.parentElement?.closest('rt') ? NodeFilter.FILTER_REJECT : NodeFilter.FILTER_ACCEPT),
-      });
-      const glyphs: { top: number; left: number }[] = [];
-      for (let n = walker.nextNode(); n; n = walker.nextNode()) {
-        const t = n as Text;
-        for (let i = 0; i < t.length; i++) {
-          range.setStart(t, i);
-          range.setEnd(t, i + 1);
-          const r = range.getBoundingClientRect();
-          if (r.width === 0 || r.height === 0) continue;
-          glyphs.push({ top: r.top, left: r.left });
+    const band1Slots = () =>
+      page.evaluate(() => {
+        const content = document.getElementById('editor-content')!;
+        const pitch = Number.parseFloat(getComputedStyle(content).lineHeight);
+        const range = document.createRange();
+        const walker = document.createTreeWalker(content, NodeFilter.SHOW_TEXT, {
+          acceptNode: (n) => (n.parentElement?.closest('rt') ? NodeFilter.FILTER_REJECT : NodeFilter.FILTER_ACCEPT),
+        });
+        const glyphs: { top: number; left: number }[] = [];
+        for (let n = walker.nextNode(); n; n = walker.nextNode()) {
+          const t = n as Text;
+          for (let i = 0; i < t.length; i++) {
+            range.setStart(t, i);
+            range.setEnd(t, i + 1);
+            const r = range.getBoundingClientRect();
+            if (r.width === 0 || r.height === 0) continue;
+            glyphs.push({ top: r.top, left: r.left });
+          }
         }
-      }
-      const bandTop = Math.min(...glyphs.map((g) => g.top));
-      // Band 1's glyphs span the full 720px line length; band 2 starts a
-      // band-gap later (~780). 750 separates them safely.
-      const lefts = glyphs.filter((g) => g.top < bandTop + 750).map((g) => g.left);
-      const slots: number[] = [];
-      for (const l of lefts.sort((a, z) => z - a)) {
-        if (!slots.length || slots[slots.length - 1]! - l > pitch / 2) slots.push(l);
-      }
-      return slots.length;
-    });
+        const bandTop = Math.min(...glyphs.map((g) => g.top));
+        // Band 1's glyphs span the full 720px line length; band 2 starts a
+        // band-gap later (~780). 750 separates them safely.
+        const lefts = glyphs.filter((g) => g.top < bandTop + 750).map((g) => g.left);
+        const slots: number[] = [];
+        for (const l of lefts.sort((a, z) => z - a)) {
+          if (!slots.length || slots[slots.length - 1]! - l > pitch / 2) slots.push(l);
+        }
+        return slots.length;
+      });
+    const band1 = await band1Slots();
     assert.equal(band1, 20, `a 20-line band holds 20 separate ruby paragraphs (got ${band1})`);
     step('full-size ruby band packs exactly --page-lines lines');
+
+    // ORPHAN control: a MULTI-COLUMN paragraph whose first line lands on a
+    // band's LAST slot must fragment there (one column in this band, the rest
+    // in the next) — the UA default `orphans: 2` instead pushed the whole
+    // paragraph to the next band, leaving the page one line short and
+    // drifting every folio after it (found with a document of 50-ruby
+    // paragraphs). The fixture places 19 columns (6 three-column paragraphs
+    // + 1 one-column), then a three-column paragraph at slot 20.
+    await page.evaluate(() => getSelection()!.selectAllChildren(document.getElementById('editor-content')!));
+    await page.keyboard.press('Backspace');
+    await page.waitForTimeout(80);
+    const LONG = '|ルビ(ruby)'.repeat(50); // 100 base chars → 40+40+20 columns
+    const ONE = '|ルビ(ruby)'.repeat(10); // 20 base chars → 1 column
+    const DOC2 = [LONG, LONG, LONG, LONG, LONG, LONG, ONE, LONG, LONG];
+    for (let i = 0; i < DOC2.length; i++) {
+      await page.keyboard.insertText(DOC2[i]!);
+      if (i < DOC2.length - 1) await page.keyboard.press('Enter');
+    }
+    await page.waitForTimeout(800);
+    const orphanBand = await band1Slots();
+    assert.equal(orphanBand, 20, `a band-ending paragraph fragments at the last slot (got ${orphanBand})`);
+    step('multi-column ruby paragraph fragments at the band edge (no orphan push)');
   } else {
     step('SKIP full-size band capacity: Noto Sans CJK JP not installed');
   }

@@ -358,6 +358,15 @@ $footer-height: $font-size + $pad-y * 2;
     // Chromium ruby line-break bug.
     inline-size: var(--line-length);
     overflow-wrap: anywhere;
+    // EXACT page packing: the UA default `orphans: 2` forbids a paragraph
+    // from leaving a single line before a fragmentation break, so a
+    // multi-line paragraph whose first line would land on a band's LAST slot
+    // is pushed WHOLE to the next band — that page then holds N−1 lines and
+    // every folio/number after it drifts (seen with 3-column ruby paragraphs
+    // in VerticalColumns). A fixed page grid has no orphan/widow notion:
+    // lines fill every slot.
+    orphans: 1;
+    widows: 1;
   }
 
 }

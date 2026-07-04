@@ -343,7 +343,11 @@ and they are structurally different:
   `--page-gap`, floored at the line-number gutter). The first page row's
   start padding is `gap A` only — no border above page 1; the `repeat-y`
   lattice's phantom tile above the origin is masked by an opaque first
-  background layer.
+  background layer. Paragraphs carry `orphans: 1; widows: 1` — the UA default
+  (`orphans: 2`) pushes a multi-line paragraph WHOLE to the next band when its
+  first line would land on a band's last slot, leaving that page one line
+  short and drifting every folio after it (`ruby-pages.ts` pins the
+  band-edge fragmentation).
 - **VerticalRows** has none (no block-axis fragmentation exists — dead ends):
   one continuous vertical-rl flow where a page is arithmetic. The inter-page
   space is a `.ved-page-gap` *widget decoration* (zero inline size, width =
