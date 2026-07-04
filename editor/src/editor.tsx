@@ -384,8 +384,14 @@ const readingFlowRects = (p: HTMLElement): DOMRect[] => {
  *  across page rows, where `Selection.modify('line')` mis-steps and where a
  *  paragraph's bounding rect alone can't locate a column. */
 const paragraphCols = (p: HTMLElement, vertical: boolean): VisualCol[] => {
-  const colJump = (Number.parseFloat(getComputedStyle(p).fontSize) || 18) * 2.5;
-  const TOL = 3;
+  const pcs = getComputedStyle(p);
+  const colJump = (Number.parseFloat(pcs.fontSize) || 18) * 2.5;
+  // Within-line jitter tolerance: half the line pitch, matching the
+  // line-number overlay and pm/page-gap.ts. A fixed few-px value split a line
+  // mixing upright CJK and sideways runs under big-metric fonts (Noto Sans
+  // CJK) at fractional device scale into phantom columns — see
+  // line-numbers.ts `groupTol` for the derivation.
+  const TOL = (Number.parseFloat(pcs.lineHeight) || 28) / 2;
   const cols: VisualCol[] = [];
   let cur: VisualCol | null = null;
   let coord = 0;

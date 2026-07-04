@@ -21,6 +21,14 @@ if (process.platform === 'linux') {
   app.commandLine.appendSwitch('wayland-text-input-version', '3');
 }
 
+// e2e seam: pin the device scale factor. HiDPI desktops run Chromium at a
+// FRACTIONAL scale (e.g. 163dpi X11 → ~1.7), where device-pixel snapping
+// changes layout in ways a scale-1 Xvfb never shows — the dankumi
+// line-packing suites reproduce the user's scale with this.
+if (process.env.VED_SMOKE_SCALE) {
+  app.commandLine.appendSwitch('force-device-scale-factor', process.env.VED_SMOKE_SCALE);
+}
+
 // Unpackaged runs (dev server, e2e against out/) use an ad-hoc-signed
 // Electron binary, so macOS re-prompts for the "ved Safe Storage" Keychain
 // entry that Chromium creates for its cookie encryption — which ved never

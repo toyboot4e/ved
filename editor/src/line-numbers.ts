@@ -101,12 +101,24 @@ export const mountLineNumbers = (
     // jumps back across the whole page), not a ruby annotation's small shift.
     // One cell can't hold a jump this large; a page is always ≥ a few cells.
     const colJump = (Number.parseFloat(cs.fontSize) || 18) * 2.5;
+    // Within-line jitter tolerance: HALF the line pitch (the same bound
+    // pm/page-gap.ts visualLineEnds uses). Rects of ONE line can disagree on
+    // their block coordinate by up to ~half the em-box difference between an
+    // upright CJK run and a sideways (rotated Latin) run — Noto Sans CJK's
+    // 1.45em vertical em box puts that at ~3-4px at 18px, PAST a fixed few-px
+    // tolerance at fractional device scale (a 163dpi desktop runs at ~1.7),
+    // which split "100％" into two phantom lines and shifted every number,
+    // separator, and folio after it. Adjacent REAL lines are ≥ one pitch
+    // apart and the jitter is bounded by ~0.5em < pitch/2 (the line-space
+    // ratio floor is 0.5), so half a pitch separates the two cleanly for
+    // every font.
+    const groupTol = (Number.parseFloat(cs.lineHeight) || 28) / 2;
     // The line band length (= `--line-length`) is identical for every paragraph
     // (`inline-size` is pinned to it), so read it ONCE, not per paragraph.
     const firstP = content.querySelector('p');
     const bandLen = firstP ? Number.parseFloat(getComputedStyle(firstP).inlineSize) || 0 : 0;
 
-    lines = collectVisualLines(content, range, vertical, colJump, bandLen, o);
+    lines = collectVisualLines(content, range, vertical, colJump, groupTol, bandLen, o);
 
     // MEASURED, PER-LINE placement. Every mark derives from ITS OWN line's
     // measured (rt-excluded) rects — never from index arithmetic extrapolated
@@ -322,13 +334,14 @@ const collectVisualLines = (
   range: Range,
   vertical: boolean,
   colJump: number,
+  groupTol: number,
   bandLen: number,
   o: DOMRect,
 ): VisualLine[] => {
   const lines: VisualLine[] = [];
   for (const p of Array.from(content.children)) {
     if (p instanceof HTMLElement && p.tagName === 'P')
-      lines.push(...linesOfParagraph(p, range, vertical, colJump, bandLen, o));
+      lines.push(...linesOfParagraph(p, range, vertical, colJump, groupTol, bandLen, o));
   }
   return lines;
 };
@@ -342,6 +355,7 @@ const linesOfParagraph = (
   range: Range,
   vertical: boolean,
   colJump: number,
+  groupTol: number,
   bandLen: number,
   o: DOMRect,
 ): VisualLine[] => {
@@ -373,7 +387,7 @@ const linesOfParagraph = (
     const right = r.right - o.left;
     const bottom = r.bottom - o.top;
     const block = vertical ? left : top;
-    if (!cur || startsNewLine(block, colCoord, vertical, colJump)) {
+    if (!cur || startsNewLine(block, colCoord, vertical, colJump, groupTol)) {
       cur = { left, top, right, bottom, bandLen };
       lines.push(cur);
       colCoord = block;
@@ -404,15 +418,20 @@ const linesOfParagraph = (
 };
 
 /** Whether `block` (a rect's block-axis coord) leaves the current line at
- *  `colCoord`: a jump in the reading direction (the next column/row, past a
- *  sub-pixel jitter tolerance) or the other way by more than `colJump` (a
+ *  `colCoord`: a jump in the reading direction (the next column/row, past the
+ *  within-line jitter tolerance `groupTol` = half the line pitch — see its
+ *  derivation at the measure site) or the other way by more than `colJump` (a
  *  multicol page wrap). */
-const startsNewLine = (block: number, colCoord: number, vertical: boolean, colJump: number): boolean => {
-  const TOL = 3; // px; columns are >=1 line-pitch apart, within-line jitter <1px
-  return vertical
-    ? block < colCoord - TOL || block > colCoord + colJump
-    : block > colCoord + TOL || block < colCoord - colJump;
-};
+const startsNewLine = (
+  block: number,
+  colCoord: number,
+  vertical: boolean,
+  colJump: number,
+  groupTol: number,
+): boolean =>
+  vertical
+    ? block < colCoord - groupTol || block > colCoord + colJump
+    : block > colCoord + groupTol || block < colCoord - colJump;
 
 /** The visual line the caret sits in: of the lines whose block-axis band holds
  *  the caret, the one whose inline span is nearest (picks the right page when a

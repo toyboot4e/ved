@@ -374,7 +374,15 @@ VerticalRows — stays impossible (dead ends).
 One centered number per *visual* line, plus the current-line highlight
 bounded to the caret's column/row on its page. Visual lines come from
 grouping each paragraph's `Range.getClientRects()`: a new line on a
-reading-direction block jump or a large reverse jump (a page wrap). Every
+reading-direction block jump *past half a line pitch* or a large reverse jump
+(a page wrap). The half-pitch tolerance (shared with `pm/page-gap.ts` and the
+line-move `paragraphCols`) is what separates within-line rect jitter from a
+real line step for every font: one line's rects can disagree by up to ~0.5em
+where an upright CJK run meets a sideways (rotated Latin) run — more than a
+few px under a big-metric font (Noto Sans CJK, 1.45em vertical em box) at a
+fractional device scale (HiDPI; `VED_SMOKE_SCALE` pins it in e2e) — while
+adjacent lines are at least one pitch (≥ 1.5em, the line-space ratio floor)
+apart (`overlay-hidpi-lines.ts`). Every
 mark (number, separator, folio, page chip) is placed from its own line's
 measured, rt-excluded rects — never index arithmetic across the document:
 `line-height` is a *minimum*, a ruby line outgrows the pitch, and a slot grid
