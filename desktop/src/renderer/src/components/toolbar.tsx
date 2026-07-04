@@ -47,8 +47,12 @@ const appearPolicyItems: { policy: AppearPolicy; label: string; title: string }[
     label: 'Paragraph',
     title: 'Expand ruby syntax in the cursor paragraph (Ctrl+2)',
   },
-  { policy: AppearPolicy.ByCharacter, label: 'Character', title: 'Expand ruby syntax under the cursor (Ctrl+3)' },
-  { policy: AppearPolicy.Rich, label: 'Rich', title: 'Always render ruby (Ctrl+4)' },
+  {
+    policy: AppearPolicy.ByCharacter,
+    label: 'Character',
+    title: 'Expand ruby syntax under the cursor (Ctrl+3, Ctrl+/)',
+  },
+  { policy: AppearPolicy.Rich, label: 'Rich', title: 'Always render ruby (Ctrl+4, Ctrl+/)' },
 ];
 
 /** Prevent toolbar clicks from stealing focus (and the selection) from the editor. */

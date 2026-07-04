@@ -5,6 +5,14 @@ import { AllSelection, type Command, EditorState, Plugin, TextSelection, type Tr
 import { EditorView } from 'prosemirror-view';
 import type React from 'react';
 import { useCallback, useEffect, useLayoutEffect, useRef } from 'react';
+import {
+  AppearPolicy,
+  type Chord,
+  chordOf,
+  DEFAULT_KEYBINDINGS,
+  type EditorCommandId,
+  resolveAppearPolicy,
+} from './commands';
 import styles from './editor.module.scss';
 import type { PlainTextHistory } from './history';
 import { type CaretRect, type LineNumbers, mountLineNumbers } from './line-numbers';
@@ -57,13 +65,6 @@ export enum WritingMode {
   VerticalRows,
 }
 
-export enum AppearPolicy {
-  Plain,
-  ByParagraph,
-  ByCharacter,
-  Rich,
-}
-
 const APPEAR_CLASS: Record<AppearPolicy, Appear> = {
   [AppearPolicy.Plain]: 'plain',
   [AppearPolicy.ByParagraph]: 'paragraph',
@@ -87,6 +88,9 @@ export type VedEditorProps = {
   readonly writingMode: WritingMode;
   readonly appearPolicy: AppearPolicy;
   readonly setAppearPolicy: (_: AppearPolicy) => void;
+  /** Chord → command table for editor shortcuts; defaults to
+   *  DEFAULT_KEYBINDINGS (commands.ts). The user-configuration seam. */
+  readonly keybindings?: Readonly<Record<Chord, EditorCommandId>>;
   readonly onTextChange?: (text: string) => void;
   readonly initialCursor?: CursorState | null;
   readonly initialAnchor?: CursorState | null;
@@ -103,14 +107,6 @@ export type VedEditorProps = {
    *  flag; both default off. View-only decorations — never model text, so copy
    *  stays plain (pm/decorations.ts). */
   readonly invisibles?: Invisibles;
-};
-
-// Digits, not letters: Ctrl+S/O are file shortcuts (handled app-level).
-const MODE_KEYS: Record<string, AppearPolicy> = {
-  '1': AppearPolicy.Plain,
-  '2': AppearPolicy.ByParagraph,
-  '3': AppearPolicy.ByCharacter,
-  '4': AppearPolicy.Rich,
 };
 
 type ArrowAct = { axis: 'line' | 'char'; reverse: boolean };
@@ -1347,10 +1343,11 @@ export const VedEditor = (props: VedEditorProps): React.JSX.Element => {
         restore(event.shiftKey ? live.current.history.redo() : live.current.history.undo());
         return true;
       }
-      const mode = mod ? MODE_KEYS[event.key] : undefined;
-      if (mode !== undefined) {
+      const chord = chordOf(event, IS_MAC);
+      const commandId = chord ? (live.current.keybindings ?? DEFAULT_KEYBINDINGS)[chord] : undefined;
+      if (commandId !== undefined) {
         event.preventDefault();
-        live.current.setAppearPolicy(mode);
+        live.current.setAppearPolicy(resolveAppearPolicy(commandId, live.current.appearPolicy));
         return true;
       }
       // IME ENTRY over a non-empty selection: the first composing keypress

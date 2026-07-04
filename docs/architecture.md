@@ -146,8 +146,12 @@ switching policies never touches the document.
 | `ByCharacter` | Ctrl+3 | the one containing the cursor |
 | `Rich` | Ctrl+4 | none |
 
-(Cmd on macOS. Letter chords are file shortcuts — Ctrl+O/S/Shift+S — handled
-at the app level, `app.tsx`.)
+Ctrl+/ toggles ByCharacter ⇄ Rich: from ByCharacter to Rich, from anywhere
+else to ByCharacter. (Cmd on macOS. Letter chords are file shortcuts —
+Ctrl+O/S/Shift+S — handled at the app level, `app.tsx`.) Editor shortcuts live
+in a command layer, `commands.ts`: stable command ids, pure resolvers, and a
+swappable Chord → command table (`DEFAULT_KEYBINDINGS`, overridable via the
+editor's `keybindings` prop) — the seam for user configuration and plugins.
 
 - **Collapsed** (Rich, or any inactive ruby): the base shows with the
   read-only `<rt>` annotation; the delimiters are not rendered; the reading is
