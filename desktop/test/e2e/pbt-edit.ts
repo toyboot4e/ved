@@ -34,7 +34,7 @@ const rng = () => {
 };
 const ri = (n: number) => Math.floor(rng() * n);
 const pick = <T>(a: T[]): T => a[ri(a.length)]!;
-const ALPHA = ['a', 'あ', '漢', '字', '1', '|', '(', ')', '*', '/', 'か', 'ん'];
+const ALPHA = ['a', 'あ', '漢', '字', '1', '|', '(', ')', '*', '/', 'か', 'ん', '｜', '《', '》'];
 
 type Op = { kind: 'type' | 'multitype' | 'backspace' | 'delete' | 'enter'; at: number; s?: string };
 const apply = (m: string, op: Op): string => {

@@ -12,7 +12,13 @@
 // Rich mode renders just the base + a read-only <rt>; the caret and IME live in
 // normal full-size text.
 import { type Node as PMNode, type ResolvedPos, Schema, type Slice } from 'prosemirror-model';
-import { parse, RUBY_DELIM_END, RUBY_DELIM_FRONT, RUBY_SEP_MID } from '../parse';
+import { parse, RUBY_PAIRS } from '../parse';
+
+// The canonical delimiters — the default the ruby node's attrs fall back to when
+// one is created without them (e.g. a DOM-parsed ruby). The data-driven variants
+// live on each node's attrs; the tables are in parse.ts.
+const [DEFAULT_OPEN, DEFAULT_CLOSE] = RUBY_PAIRS[0]!;
+const DEFAULT_FRONT = '|';
 
 export const schema = new Schema({
   nodes: {
@@ -46,6 +52,14 @@ export const schema = new Schema({
       group: 'inline',
       inline: true,
       content: 'rubyBase rubyReading',
+      // The literal delimiters this ruby was written with, so `serialize` is
+      // lossless across the data-driven variants (`|漢(かん)` vs `｜漢《かん》`).
+      // They are the reconstructed markup, never divergent display state.
+      attrs: {
+        front: { default: DEFAULT_FRONT },
+        open: { default: DEFAULT_OPEN },
+        close: { default: DEFAULT_CLOSE },
+      },
       toDOM: () => ['ruby', { class: 'rubyWrap' }, 0],
       parseDOM: [{ tag: 'ruby.rubyWrap' }],
     },
@@ -56,13 +70,17 @@ export const schema = new Schema({
 export const rubyBaseText = (ruby: PMNode): string => ruby.child(0).textContent;
 export const rubyReadingText = (ruby: PMNode): string => ruby.child(1).textContent;
 
-/** Reconstruct a ruby node's literal markup `|base(reading)`. */
+/** Reconstruct a ruby node's literal markup, using its OWN delimiters
+ *  (`|base(reading)` or `｜base《reading》`) so serialization is lossless. */
 const rubyMarkup = (ruby: PMNode): string =>
-  RUBY_DELIM_FRONT + rubyBaseText(ruby) + RUBY_SEP_MID + rubyReadingText(ruby) + RUBY_DELIM_END;
+  ruby.attrs.front + rubyBaseText(ruby) + ruby.attrs.open + rubyReadingText(ruby) + ruby.attrs.close;
 
-/** Build a ruby node from base + reading strings. */
-const rubyNode = (base: string, reading: string): PMNode =>
-  schema.node('ruby', null, [
+/** The literal delimiters a ruby was written with. */
+export type RubyDelims = { front: string; open: string; close: string };
+
+/** Build a ruby node from base + reading strings and its delimiters. */
+const rubyNode = (base: string, reading: string, delims: RubyDelims): PMNode =>
+  schema.node('ruby', delims, [
     schema.node('rubyBase', null, base ? [schema.text(base)] : []),
     schema.node('rubyReading', null, reading ? [schema.text(reading)] : []),
   ]);
@@ -76,7 +94,13 @@ export const inlineNodesFor = (line: string): PMNode[] => {
   for (const fmt of parse(line)) {
     if (fmt.type !== 'ruby') continue;
     if (fmt.delimFront[0] > cursor) inline.push(schema.text(line.slice(cursor, fmt.delimFront[0])));
-    inline.push(rubyNode(line.slice(fmt.text[0], fmt.text[1]), line.slice(fmt.ruby[0], fmt.ruby[1])));
+    inline.push(
+      rubyNode(line.slice(fmt.text[0], fmt.text[1]), line.slice(fmt.ruby[0], fmt.ruby[1]), {
+        front: line.slice(fmt.delimFront[0], fmt.delimFront[1]),
+        open: line.slice(fmt.sepMid[0], fmt.sepMid[1]),
+        close: line.slice(fmt.delimEnd[0], fmt.delimEnd[1]),
+      }),
+    );
     cursor = fmt.delimEnd[1];
   }
   if (cursor < line.length) inline.push(schema.text(line.slice(cursor)));
@@ -278,22 +302,22 @@ const buildMaps = (doc: PMNode): Maps => {
     pos += 1; // into the paragraph content (offset 0 maps HERE, not the doc edge)
     para.forEach((child) => {
       if (child.type.name === 'ruby') {
-        markBoth(); // the `|` boundary (before the ruby node — logically outside)
-        off += 1; // spend `|`
+        markBoth(); // the front boundary (before the ruby node — logically outside)
+        off += child.attrs.front.length; // spend the front marker (`|` / `｜`)
         pos += 1; // into the ruby content
         markPos(); // ruby content start (wrapper edge)
         pos += 1; // into rubyBase content
         walkChars(rubyBaseText(child));
-        markBoth(); // after the base = the `(` boundary (end of the base region)
-        off += 1; // spend `(`
+        markBoth(); // after the base = the open-delimiter boundary
+        off += child.attrs.open.length; // spend the opening delimiter (`(` / `《`)
         pos += 1; // out of rubyBase
         markPos(); // between rubyBase and rubyReading (wrapper edge)
         pos += 1; // into rubyReading content
         walkChars(rubyReadingText(child));
-        markBoth(); // after the reading = the `)` boundary (end of the reading)
+        markBoth(); // after the reading = the close-delimiter boundary
         pos += 1; // out of rubyReading
-        markPos(); // ruby content end (wrapper edge, still before the `)`)
-        off += 1; // spend `)` — leaving the RUBY (so offset+1 lands AFTER the node)
+        markPos(); // ruby content end (wrapper edge, still before the close delimiter)
+        off += child.attrs.close.length; // spend the closing delimiter (`)` / `》`)
         pos += 1; // out of the ruby node
       } else {
         walkChars(child.textContent);
@@ -351,22 +375,22 @@ const paraMaps = (para: PMNode): ParaMaps => {
   };
   para.forEach((child) => {
     if (child.type.name === 'ruby') {
-      markBoth(); // the `|` boundary (before the ruby node — logically outside)
-      off += 1; // spend `|`
+      markBoth(); // the front boundary (before the ruby node — logically outside)
+      off += child.attrs.front.length; // spend the front marker (`|` / `｜`)
       pos += 1; // into the ruby content
       markPos(); // ruby content start (wrapper edge)
       pos += 1; // into rubyBase content
       walkChars(rubyBaseText(child));
-      markBoth(); // after the base = the `(` boundary (end of the base region)
-      off += 1; // spend `(`
+      markBoth(); // after the base = the open-delimiter boundary
+      off += child.attrs.open.length; // spend the opening delimiter (`(` / `《`)
       pos += 1; // out of rubyBase
       markPos(); // between rubyBase and rubyReading (wrapper edge)
       pos += 1; // into rubyReading content
       walkChars(rubyReadingText(child));
-      markBoth(); // after the reading = the `)` boundary (end of the reading)
+      markBoth(); // after the reading = the close-delimiter boundary
       pos += 1; // out of rubyReading
-      markPos(); // ruby content end (wrapper edge, still before the `)`)
-      off += 1; // spend `)` — leaving the RUBY (so offset+1 lands AFTER the node)
+      markPos(); // ruby content end (wrapper edge, still before the close delimiter)
+      off += child.attrs.close.length; // spend the closing delimiter (`)` / `》`)
       pos += 1; // out of the ruby node
     } else {
       walkChars(child.textContent);

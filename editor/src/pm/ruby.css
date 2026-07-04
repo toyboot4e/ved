@@ -262,10 +262,12 @@ ruby.rubyExpanded > rt {
   user-select: auto;
   -webkit-user-select: auto;
 }
-/* The delimiters `|`,`(`,`)` are real widget elements (pm/decorations.ts), not
- * generated content — so the caret has distinct positions on BOTH sides of each
- * (pseudo-element delimiters painted the caret at the same spot on both sides).
- * `|` and `(` live inside the <ruby>; `)` directly after it. */
+/* The delimiters (the front `|`/`｜`, the open `(`/`《`, the close `)`/`》` — each
+ * ruby renders its OWN, data-driven per node) are real widget elements
+ * (pm/decorations.ts), not generated content — so the caret has distinct
+ * positions on BOTH sides of each (pseudo-element delimiters painted the caret at
+ * the same spot on both sides). The front and open live inside the <ruby>; the
+ * close directly after it. */
 .rubyDelimOpen,
 .rubyDelimParen,
 .rubyDelimClose {

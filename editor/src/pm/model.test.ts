@@ -194,3 +194,106 @@ describe('ProseMirror identity rich text model', () => {
     expect(posToOffset(doc, offsetToPos(doc, 9))).toBe(9); // end
   });
 });
+
+// Flexible, DATA-DRIVEN ruby delimiters. The front marker is EITHER `|` or the
+// fullwidth `｜`; the reading pair is EITHER `(`…`)` or the fullwidth `《`…`》`.
+// The two axes are independent (any of the four combos is valid), the pair must
+// MATCH (`《` closes with `》`, never `)`), and the front marker stays REQUIRED —
+// a bare `漢《かん》` is plain text, not a ruby. Every variant must still satisfy
+// the identity rich text model: serialize reconstructs the EXACT source string,
+// so the ruby node has to REMEMBER which delimiters it was written with.
+describe('flexible ruby delimiters (data-driven)', () => {
+  // One case per front×pair combo, plus adjacency / degenerate / mixed-line.
+  const VARIANTS = [
+    '字は｜漢《かん》字', // fullwidth front + fullwidth pair (the aozora form)
+    '｜漢《かん》', // leading, all fullwidth
+    '|漢《かん》', // halfwidth front + fullwidth pair
+    '｜漢(かん)', // fullwidth front + halfwidth pair
+    '字は|漢(かん)字', // the original halfwidth form still works
+    '｜語《ご》｜句《く》', // adjacent rubies, fullwidth
+    '｜漢《》', // empty reading (degenerate)
+    '｜《かん》', // empty base (degenerate)
+    'あ｜漢《かん》\n|語(ご)い', // mixed delimiters across a paragraph break
+    '普通の文｜漢字《かんじ》と(丸)括弧', // a bare `(丸)` is NOT ruby (no front)
+  ];
+
+  it('round-trips every delimiter variant losslessly (text → doc → text)', () => {
+    for (const t of VARIANTS) expect(serialize(docFromText(t))).toBe(t);
+  });
+
+  it('round-trips every plain offset through PM positions for each variant', () => {
+    for (const t of VARIANTS) {
+      const doc = docFromText(t);
+      for (let o = 0; o <= t.length; o++) expect(posToOffset(doc, offsetToPos(doc, o))).toBe(o);
+      const map = buildPosMap(doc);
+      for (let o = 0; o <= t.length; o++) expect(map[o]).toBe(offsetToPos(doc, o));
+    }
+  });
+
+  it('wraps a fullwidth-delimiter ruby as a ruby node that remembers its delimiters', () => {
+    // 字は｜漢《かん》字 — 字0 は1 ｜2 漢3 《4 か5 ん6 》7 字8
+    const para = docFromText('字は｜漢《かん》字').child(0);
+    expect(para.childCount).toBe(3);
+    expect(para.child(0).isText).toBe(true);
+    const ruby = para.child(1);
+    expect(ruby.type.name).toBe('ruby');
+    expect(ruby.child(0).textContent).toBe('漢'); // base
+    expect(ruby.child(1).textContent).toBe('かん'); // reading
+    // The node REMEMBERS the exact delimiters so serialize is lossless.
+    expect(ruby.attrs.front).toBe('｜');
+    expect(ruby.attrs.open).toBe('《');
+    expect(ruby.attrs.close).toBe('》');
+    expect(para.child(2).isText).toBe(true);
+  });
+
+  it('requires a front marker — a bare `base《reading》` is plain text, not a ruby', () => {
+    const para = docFromText('漢字《かんじ》').child(0);
+    expect(para.childCount).toBe(1);
+    expect(para.child(0).isText).toBe(true); // no ruby node
+    expect(serialize(docFromText('漢字《かんじ》'))).toBe('漢字《かんじ》');
+  });
+
+  it('requires a MATCHED pair — a mismatched open/close is not a ruby', () => {
+    for (const t of ['｜漢(かん》', '｜漢《かん)', '|漢《かん)']) {
+      const para = docFromText(t).child(0);
+      expect(para.childCount).toBe(1); // stays a single plain text run
+      expect(para.child(0).isText).toBe(true);
+      expect(serialize(docFromText(t))).toBe(t);
+    }
+  });
+
+  it('lets the first opening delimiter after the front choose the pair', () => {
+    // ｜漢《か(ん》 — the earliest open after 漢 is 《, so the pair is 《…》 and the
+    // reading is か(ん (the stray `(` is ordinary reading text).
+    const ruby = docFromText('｜漢《か(ん》').child(0).child(0);
+    expect(ruby.type.name).toBe('ruby');
+    expect(ruby.child(0).textContent).toBe('漢');
+    expect(ruby.child(1).textContent).toBe('か(ん');
+    expect(ruby.attrs.open).toBe('《');
+    expect(ruby.attrs.close).toBe('》');
+  });
+
+  it('restarts at a later front marker of EITHER kind (no greedy re-pairing)', () => {
+    // ｜あ|漢《かん》 — the leading ｜ has an inner front (|) before the close, so
+    // the real ruby starts at |漢《かん》; ｜あ stays plain text.
+    const para = docFromText('｜あ|漢《かん》').child(0);
+    expect(para.childCount).toBe(2);
+    expect(para.child(0).isText).toBe(true);
+    expect(para.child(0).textContent).toBe('｜あ');
+    const ruby = para.child(1);
+    expect(ruby.type.name).toBe('ruby');
+    expect(ruby.attrs.front).toBe('|');
+    expect(ruby.child(0).textContent).toBe('漢');
+  });
+
+  it('serializes a COPIED slice with the ACTUAL delimiters reconstructed', () => {
+    const sliceText = (t: string, a: number, b: number): string => {
+      const doc = docFromText(t);
+      return serializeSlice(doc.slice(offsetToPos(doc, a), offsetToPos(doc, b)));
+    };
+    // 字は｜漢《かん》字 — 字0 は1 ｜2 漢3 《4 か5 ん6 》7 字8
+    expect(sliceText('字は｜漢《かん》字', 2, 8)).toBe('｜漢《かん》'); // the ruby alone
+    expect(sliceText('字は｜漢《かん》字', 0, 9)).toBe('字は｜漢《かん》字'); // the whole line
+    expect(sliceText('字は｜漢《かん》字', 3, 4)).toBe('漢'); // base char only — no half-markup
+  });
+});

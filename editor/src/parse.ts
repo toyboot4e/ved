@@ -13,62 +13,109 @@ export type PlainText = {
  */
 export type Ruby = {
   type: 'ruby';
-  /** Typically `|` */
+  /** The front marker, `|` or `｜` */
   delimFront: [number, number];
   /** Ruby body */
   text: [number, number];
-  /** Typically `(` */
+  /** The opening delimiter, `(` or `《` */
   sepMid: [number, number];
   /** Ruby text */
   ruby: [number, number];
-  /** Typically `)` */
+  /** The closing delimiter, `)` or `》` */
   delimEnd: [number, number];
 };
 
-/** Ruby markup characters: `|body(ruby)`. The single source of the syntax. */
-export const RUBY_DELIM_FRONT = '|';
-export const RUBY_SEP_MID = '(';
-export const RUBY_DELIM_END = ')';
+// Ruby markup is data-driven so more delimiters can be added by extending these
+// tables — the parser, the model reconstruction, and the decorations all read
+// them, so a new front marker or pair is a one-line addition here. The front
+// axis (which bar) and the pair axis (which brackets) are INDEPENDENT: any front
+// may precede any pair. A pair must MATCH — `《` closes only with `》`. The front
+// marker is REQUIRED: a bare `base(reading)` is plain text, not a ruby.
+
+/** Front markers: either starts a ruby base. `|body(ruby)` / `｜body《ruby》`. */
+export const RUBY_FRONTS = ['|', '｜'] as const;
+
+/** Reading delimiter pairs, `[open, close]`. The opening delimiter that appears
+ *  first after the base selects the pair; its matching close ends the reading. */
+export const RUBY_PAIRS: readonly (readonly [string, string])[] = [
+  ['(', ')'],
+  ['《', '》'],
+];
+
+/** The earliest index at or after `from` where any of `needles` occurs, plus the
+ *  matched needle — or null if none occurs. */
+const indexOfAny = (
+  text: string,
+  needles: readonly string[],
+  from: number,
+): { index: number; needle: string } | null => {
+  let best: { index: number; needle: string } | null = null;
+  for (const needle of needles) {
+    const index = text.indexOf(needle, from);
+    if (index === -1) continue;
+    if (!best || index < best.index) best = { index, needle };
+  }
+  return best;
+};
+
+const RUBY_OPENS = RUBY_PAIRS.map(([open]) => open);
+const closeFor = (open: string): string => RUBY_PAIRS.find(([o]) => o === open)![1];
 
 /**
  * Parses a plain text.
  *
- * A ruby match must not contain another `|`: the later `|` starts the real
- * ruby. This keeps partially-typed syntax (e.g. a lone `|` before an
- * existing ruby on the same line) as plain text instead of greedily
- * re-pairing it with a later `(` — which would restructure the line on
- * every keystroke while the user is still typing.
+ * A ruby is `<front><base><open><reading><close>` where `<front>` is one of
+ * `RUBY_FRONTS`, and `<open>`/`<close>` are a MATCHED pair from `RUBY_PAIRS`.
+ * The first opening delimiter after the base fixes the pair; its matching close
+ * ends the reading.
+ *
+ * A ruby match must not contain another front marker: the later front starts the
+ * real ruby. This keeps partially-typed syntax (e.g. a lone `｜` before an
+ * existing ruby on the same line) as plain text instead of greedily re-pairing
+ * it with a later opening delimiter — which would restructure the line on every
+ * keystroke while the user is still typing. If the chosen pair has no matching
+ * close, the scan advances past this front and keeps looking, so a later valid
+ * ruby on the same line still parses.
  */
 export const parse = (text: string): Format[] => {
   const formats: Format[] = [];
 
   let offset = 0;
-  while (true) {
-    const front = text.indexOf(RUBY_DELIM_FRONT, offset);
-    if (front === -1) break;
+  while (offset < text.length) {
+    const front = indexOfAny(text, RUBY_FRONTS, offset);
+    if (!front) break;
+    const baseStart = front.index + front.needle.length;
 
-    const mid = text.indexOf(RUBY_SEP_MID, front + RUBY_DELIM_FRONT.length);
-    if (mid === -1) break;
+    const open = indexOfAny(text, RUBY_OPENS, baseStart);
+    if (!open) break;
 
-    const end = text.indexOf(RUBY_DELIM_END, mid + RUBY_SEP_MID.length);
-    if (end === -1) break;
+    const close = closeFor(open.needle);
+    const end = text.indexOf(close, open.index + open.needle.length);
+    if (end === -1) {
+      // No matching close for the chosen pair — not a ruby. Skip past this front
+      // and keep scanning (a later front on the line may still form a ruby).
+      offset = baseStart;
+      continue;
+    }
 
-    const nested = text.indexOf(RUBY_DELIM_FRONT, front + RUBY_DELIM_FRONT.length);
-    if (nested !== -1 && nested < end) {
-      offset = nested;
+    // A later front marker (of either kind) before the close restarts the scan
+    // there, so the inner front owns the real ruby.
+    const nested = indexOfAny(text, RUBY_FRONTS, baseStart);
+    if (nested && nested.index < end) {
+      offset = nested.index;
       continue;
     }
 
     formats.push({
       type: 'ruby',
-      delimFront: [front, front + RUBY_DELIM_FRONT.length],
-      text: [front + RUBY_DELIM_FRONT.length, mid],
-      sepMid: [mid, mid + RUBY_SEP_MID.length],
-      ruby: [mid + RUBY_SEP_MID.length, end],
-      delimEnd: [end, end + RUBY_DELIM_END.length],
+      delimFront: [front.index, baseStart],
+      text: [baseStart, open.index],
+      sepMid: [open.index, open.index + open.needle.length],
+      ruby: [open.index + open.needle.length, end],
+      delimEnd: [end, end + close.length],
     });
 
-    offset = end + RUBY_DELIM_END.length;
+    offset = end + close.length;
   }
 
   return formats;

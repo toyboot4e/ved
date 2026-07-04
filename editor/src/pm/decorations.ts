@@ -54,9 +54,6 @@ const delim = (cls: string, ch: string) => (): HTMLElement => {
   s.setAttribute('contenteditable', 'false');
   return s;
 };
-const openDelim = delim('rubyDelimOpen', '|');
-const parenDelim = delim('rubyDelimParen', '(');
-const closeDelim = delim('rubyDelimClose', ')');
 
 /** A rendered caret for a TEXT-LESS seam — between two collapsed rubies (or a
  *  collapsed ruby against a paragraph edge) the markup is not DOM text, so the
@@ -102,6 +99,11 @@ type RubyInfo = {
   size: number;
   baseSize: number;
   rtSize: number;
+  /** The node's own delimiters — rendered as the expanded widgets so the shown
+   *  markup matches the source (`|`/`(`/`)` or `｜`/`《`/`》`). */
+  front: string;
+  open: string;
+  close: string;
   /** No editable plain text immediately before it (leads its paragraph, or
    *  follows another ruby) — the IME-safety atom (see buildRubyStatic). */
   atom: boolean;
@@ -148,6 +150,9 @@ const parseDoc = (doc: PMNode): Parse => {
       size: node.nodeSize,
       baseSize: node.child(0).nodeSize,
       rtSize: node.child(1).nodeSize,
+      front: node.attrs.front,
+      open: node.attrs.open,
+      close: node.attrs.close,
       atom: $p.parentOffset === 0 || $p.nodeBefore?.type.name === 'ruby',
     });
   });
@@ -255,16 +260,26 @@ const buildRubyStatic = (
       // text positions renders the two carets apart. `|` sits at the ruby's
       // content start (before the base), `(` between the base and the reading,
       // `)` right after the ruby.
-      nodes.push(Decoration.widget(r.pos + 1, openDelim, { side: -1, key: `ropen-${idx}`, ignoreSelection: true }));
       nodes.push(
-        Decoration.widget(r.pos + 1 + r.baseSize, parenDelim, {
+        Decoration.widget(r.pos + 1, delim('rubyDelimOpen', r.front), {
           side: -1,
-          key: `rparen-${idx}`,
+          key: `ropen-${idx}-${r.front}`,
           ignoreSelection: true,
         }),
       );
       nodes.push(
-        Decoration.widget(r.pos + r.size, closeDelim, { side: -1, key: `rclose-${idx}`, ignoreSelection: true }),
+        Decoration.widget(r.pos + 1 + r.baseSize, delim('rubyDelimParen', r.open), {
+          side: -1,
+          key: `rparen-${idx}-${r.open}`,
+          ignoreSelection: true,
+        }),
+      );
+      nodes.push(
+        Decoration.widget(r.pos + r.size, delim('rubyDelimClose', r.close), {
+          side: -1,
+          key: `rclose-${idx}-${r.close}`,
+          ignoreSelection: true,
+        }),
       );
     } else {
       // Read-only reading on a collapsed ruby: the rubyReading child is at

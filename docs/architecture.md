@@ -63,15 +63,16 @@ editor/                @ved/editor — the editor core (the only prosemirror con
   src/editor.tsx         VedEditor: EditorView wiring — beforeinput/keys, dispatchTransaction
                          (apply → ruby repair → history push + onTextChange), caret reveal,
                          drag selection, React shell (writing modes, scroll-keep, tab snapshot/restore)
-  src/parse.ts           plaintext → format spans; the only syntax knowledge (delimiter
-                         constants RUBY_DELIM_FRONT/RUBY_SEP_MID/RUBY_DELIM_END)
+  src/parse.ts           plaintext → format spans; the only syntax knowledge (data-driven
+                         delimiter tables RUBY_FRONTS + RUBY_PAIRS)
   src/history.ts         PlainTextHistory (backend-neutral; unit-tested)
   src/scroll-keep.ts     scroll offset ↔ line index per writing mode (unit-tested)
   src/line-numbers.ts    measured per-visual-line overlay: numbers, current-line highlight,
                          base-only selection, page separators/folios
   src/editor.module.scss page geometry, writing modes
   src/pm/
-    model.ts             schema (ruby = rubyBase+rubyReading), docFromText, serialize,
+    model.ts             schema (ruby = rubyBase+rubyReading + front/open/close delimiter
+                         attrs), docFromText, serialize,
                          offset ↔ PM position maps, ruby snap helpers
     ruby-view.ts         ruby node view (default rendering; exists only for caret affinity)
     decorations.ts       per-policy ruby decorations + delimiter widgets, bold/italic/縦中横
@@ -106,13 +107,23 @@ project's `postinstall` runs `node node_modules/electron/install.js`.
 
 ## Document model
 
-`editor/src/parse.ts` scans a line into `Format` spans; the syntax characters
-are defined once there.
+`editor/src/parse.ts` scans a line into `Format` spans; the syntax is defined
+once there as two **data-driven tables** — `RUBY_FRONTS` (the front marker: `|`
+or the fullwidth `｜`) and `RUBY_PAIRS` (the reading brackets: `(`…`)` or the
+fullwidth `《`…`》`). The two axes are independent (any front with any pair), a
+pair must MATCH (`《` closes only with `》`), and the front marker is REQUIRED
+(a bare `base《reading》` is plain text). Adding a delimiter is one entry in a
+table.
 
 A ruby is one inline node with two *editable* children — `rubyBase` +
-`rubyReading`; the markup is not stored. `inlineNodesFor(line)` builds a line's
-canonical inline content (text runs + ruby nodes); `docFromText` and repair
-share it.
+`rubyReading`; the markup is not stored as text. So serialization stays lossless
+across the variants, the node **records which delimiters it was written with** as
+attrs (`front`/`open`/`close`, defaulting to `|`/`(`/`)`); `serialize`
+reconstructs the exact source (`|漢(かん)` or `｜漢《かん》`) from them, and the
+expanded-policy widgets render those same delimiters. `inlineNodesFor(line)`
+builds a line's canonical inline content (text runs + ruby nodes, delimiters
+threaded onto each ruby from the parsed slices); `docFromText` and repair share
+it.
 
 Rendering is the schema default — `<ruby class=rubyWrap><span
 class=rubyBase>漢</span><rt>かん</rt></ruby>`. `pm/ruby-view.ts` exists only to
