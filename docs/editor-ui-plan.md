@@ -302,12 +302,16 @@ Decisions from the design review (see CONTEXT.md **view config**):
     toolbar toggle, and a mode chip. Later rounds filled the modal surface —
     linewise visual `V`, `s`/`S`, `r`, `f F t T ; ,`, `J`, `X`, count
     `gg`/`G`, visual paste — and the block caret's widget form (a block at
-    EVERY position, incl. ruby seams). Movement is axis-agnostic: hjkl emit
-    logical `moveCaret` (h/l char, j/k line) and the editor rotates them, so
-    vertical j/k move by column; `Ctrl+F/B/D/U` map to a new `scrollPage`
-    seam and are consumed AHEAD of the app's Ctrl+F search / Ctrl+B sidebar
-    in normal mode. Smoke: `test/e2e/vim-mode.ts`. Owed: real-mozc
-    verification of the normal-mode composition revert
+    EVERY position, incl. ruby seams). Movement is SPATIAL (`moveCaretVisual`):
+    hjkl are the arrow keys, so in vertical writing h/l move between columns
+    and j/k walk the characters, and in horizontal j/k are a LOGICAL model-line
+    move (`moveByLogicalLine`, Vim's j/k). `Ctrl+F/B/D/U` map to a `scrollPage`
+    seam, consumed AHEAD of the app's Ctrl+F search / Ctrl+B sidebar in normal
+    mode. A pre-existing overlay bug surfaced en route — `pickLine` matched on
+    the caret block EDGE, so the current-line highlight lagged a row in wrapped
+    paragraphs (overlapping line boxes); now it matches on the caret block
+    CENTER (`line-highlight-ruby-wrap.ts`). Smoke: `test/e2e/vim-mode.ts`.
+    Owed: real-mozc verification of the normal-mode composition revert
     (`mozc/vim-normal-composition`). See architecture.md "Extensions" and
     `docs/extensions.md`.
 

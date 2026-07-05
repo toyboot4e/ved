@@ -29,8 +29,9 @@ const key = (k: string, over: Partial<VimKey> = {}): VimKey => ({
 });
 
 /** Feed a key sequence, TRACKING the doc through replace/select effects (the
- *  adapter's job, simulated for linear text). moveCaret char steps ±1; line
- *  steps are recorded but move nothing — the editor measures those. */
+ *  adapter's job, simulated for linear text). moveVisual left/right = a ±1
+ *  character step (horizontal reading); up/down (line steps) are recorded but
+ *  move nothing — the editor measures those. */
 const play = (
   text: string,
   head: number,
@@ -52,9 +53,10 @@ const play = (
         cur = { text: cur.text.slice(0, e.from) + e.text + cur.text.slice(e.to), head: after, anchor: after };
       } else if (e.kind === 'select') {
         cur = { ...cur, anchor: e.anchor, head: e.head };
-      } else if (e.kind === 'moveCaret' && e.axis === 'char') {
+      } else if (e.kind === 'moveVisual' && (e.direction === 'left' || e.direction === 'right')) {
+        const d = e.direction === 'right' ? 1 : -1;
         let h = cur.head;
-        for (let i = 0; i < e.count; i++) h = Math.max(0, Math.min(cur.text.length, h + e.dir));
+        for (let i = 0; i < e.count; i++) h = Math.max(0, Math.min(cur.text.length, h + d));
         cur = { ...cur, head: h, anchor: e.extend ? cur.anchor : h };
       }
     }
@@ -90,26 +92,22 @@ describe('modes', () => {
   });
 });
 
-describe('logical walk (hjkl)', () => {
-  it('h/l are char steps, j/k line steps — axis-agnostic; the editor rotates them', () => {
+describe('spatial walk (hjkl)', () => {
+  it('each key is its arrow key — h=left, j=down, k=up, l=right; the editor rotates the axes', () => {
     expect(play('abc', 1, ['l']).effects).toEqual([
-      { kind: 'moveCaret', axis: 'char', dir: 1, count: 1, extend: false },
+      { kind: 'moveVisual', direction: 'right', count: 1, extend: false },
     ]);
-    expect(play('abc', 1, ['h']).effects).toEqual([
-      { kind: 'moveCaret', axis: 'char', dir: -1, count: 1, extend: false },
-    ]);
+    expect(play('abc', 1, ['h']).effects).toEqual([{ kind: 'moveVisual', direction: 'left', count: 1, extend: false }]);
     expect(play('abc', 0, ['2', 'j']).effects).toEqual([
-      { kind: 'moveCaret', axis: 'line', dir: 1, count: 2, extend: false },
+      { kind: 'moveVisual', direction: 'down', count: 2, extend: false },
     ]);
-    expect(play('abc', 0, ['k']).effects).toEqual([
-      { kind: 'moveCaret', axis: 'line', dir: -1, count: 1, extend: false },
-    ]);
+    expect(play('abc', 0, ['k']).effects).toEqual([{ kind: 'moveVisual', direction: 'up', count: 1, extend: false }]);
   });
 
   it('Enter/Backspace/Space alias j/h/l; visual mode extends', () => {
-    expect(play('abc', 0, [key('Enter')]).effects[0]).toMatchObject({ axis: 'line', dir: 1 });
-    expect(play('abc', 1, [key('Backspace')]).effects[0]).toMatchObject({ axis: 'char', dir: -1 });
-    expect(play('abc', 1, [key(' ')]).effects[0]).toMatchObject({ axis: 'char', dir: 1 });
+    expect(play('abc', 0, [key('Enter')]).effects[0]).toMatchObject({ direction: 'down' });
+    expect(play('abc', 1, [key('Backspace')]).effects[0]).toMatchObject({ direction: 'left' });
+    expect(play('abc', 1, [key(' ')]).effects[0]).toMatchObject({ direction: 'right' });
     expect(play('abc', 0, ['v', 'l']).effects.at(-1)).toMatchObject({ extend: true });
   });
 

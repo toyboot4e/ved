@@ -401,13 +401,17 @@ never ProseMirror values — so extensions cannot violate the identity model:
 - **Selection** (`setSelection`) clamps, keeps any legal caret stop
   (`caretStops` — a ruby's outer boundary is one), and snaps a homeless offset
   (hidden markup, read-only reading) onto the base (`snapToGlyph`).
-- **Movement** reuses the arrow-key movers, so an extension stays
-  AXIS-AGNOSTIC: `moveCaret('char'|'line', dir)` is LOGICAL — the editor
-  rotates it to the physical axis per writing mode (a `'line'` step is the
-  next/previous COLUMN in vertical-rl, the next row in horizontal), with ruby
-  stops and the goal column for free; `caretStop(offset, dir)` is the pure
-  stop query. `scrollPage(dir, half?)` turns one viewport along the reading
-  direction and carries the caret to a legal stop in it (a modal Ctrl+F/B).
+- **Movement** reuses the arrow-key movers: `moveCaret('char'|'line', dir)` is
+  the LOGICAL mover — the editor rotates it to the physical axis per writing
+  mode (a `'line'` step is the next/previous COLUMN in vertical-rl), with ruby
+  stops and the goal column for free. `moveCaretVisual('up'|'down'|'left'|
+  'right')` is the SPATIAL mover — the matching arrow key — with a twist: the
+  cross-axis (line) step is a VISUAL column move in vertical writing but a
+  LOGICAL model-line move in horizontal (Vim's j/k step actual lines, not
+  wrapped display rows — `moveByLogicalLine`). `caretStop(offset, dir)` is the
+  pure stop query. `scrollPage(dir, half?)` turns one viewport along the
+  reading direction and carries the caret to a legal stop in it (a modal
+  Ctrl+F/B).
 - **Commands**: `runCommand`/`registerCommand` against the open registry.
 - **Appearance**: `setCaretShape('bar'|'block')` — the block caret covers
   EVERY position, in the per-move DELTA layer: an inline decoration tints the
@@ -432,19 +436,20 @@ at a legal time.
 
 `@ved/vim` splits model from view: `model.ts` is a pure reducer
 (state × key × {text, selection, caretStop} → state + effects — select /
-replace / moveCaret / scrollPage / command / breakUndo), so the modal
+replace / moveVisual / scrollPage / command / breakUndo), so the modal
 semantics unit-test as plain functions; `extension.ts` merely executes effects
 against the context and reports mode changes (the shell's `useVimStore`
-renders the toggle + mode chip, `desktop vim.ts`). Bare h/j/k/l emit LOGICAL
-`moveCaret` — h/l a character step, j/k a line step — and the editor rotates
-them, so in vertical writing j/k move to the next/previous COLUMN while h/l
-walk the characters within it; as operator targets h/l stay pure character
-motions. Vim's `Ctrl+F/B/D/U` map to `scrollPage`, consumed AHEAD of the app's
-Ctrl+F search / Ctrl+B sidebar in normal mode (the editor `stopPropagation`s a
-consumed key; the app also guards on `defaultPrevented`) — insert mode leaves
-those chords to the app. The key set and its deviations are the `model.ts`
-header (linewise `V`, `s`/`S`, `r`, `f F t T ; ,`, `J` joins without a space —
-Japanese prose). The whole loop is pinned by `test/e2e/vim-mode.ts`.
+renders the toggle + mode chip, `desktop vim.ts`). Bare h/j/k/l are the ARROW
+KEYS (spatial — `moveCaretVisual`): the editor resolves each screen direction
+to the right axis, so in vertical writing h/l move between COLUMNS and j/k walk
+the characters up/down the column (in horizontal, the classic directions). As
+operator targets h/l stay pure character motions. Vim's `Ctrl+F/B/D/U` map to
+`scrollPage`, consumed AHEAD of the app's Ctrl+F search / Ctrl+B sidebar in
+normal mode (the editor `stopPropagation`s a consumed key so it never reaches
+the app's window listener) — insert mode leaves those chords to the app. The
+key set and its deviations are the `model.ts` header (linewise `V`, `s`/`S`,
+`r`, `f F t T ; ,`, `J` joins without a space — Japanese prose). The whole loop
+is pinned by `test/e2e/vim-mode.ts`.
 
 ## Layout: writing modes and the page
 
@@ -535,7 +540,15 @@ At the end of a paragraph whose last line is full, `coordsAtPos` reports the
 empty next column, which would snap the highlight one column back; `caretRect`
 anchors to `head - 1` instead — or into the trailing ruby's *base* when the
 paragraph ends in a ruby, since `head - 1` is the reading
-(`line-highlight-para-end.ts`).
+(`line-highlight-para-end.ts`). A caret at a ruby's *leading* boundary anchors
+into that ruby's base too (`head + 2`): at a soft wrap the boundary is
+ambiguous and `coordsAtPos` reports the previous row's end, so a ruby starting
+a wrapped row would highlight the line above (`line-highlight-ruby-wrap.ts`).
+`pickLine` matches on the caret's block *center*, not its edge — consecutive
+line boxes OVERLAP (line-height exceeds the row pitch by the leading), so a
+caret at a row's top also lies in the previous row's band; the edge picked the
+first (previous) band and the highlight lagged a line in every wrapped
+paragraph (most visible in horizontal writing).
 
 ### Notes that took debugging to learn
 

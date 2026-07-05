@@ -23,6 +23,10 @@ export type CaretShape = 'bar' | 'block';
 /** A selection in plain offsets. `head` is the moving end. */
 export type EditorSelectionOffsets = { readonly anchor: number; readonly head: number };
 
+/** A spatial (screen) direction — what an arrow key means before the writing
+ *  mode decides which axis it moves along. */
+export type VisualDirection = 'up' | 'down' | 'left' | 'right';
+
 /** The capabilities handed to an extension at attach time. */
 export type EditorExtensionContext = {
   /** The exact plain text (the document IS this string). */
@@ -45,6 +49,13 @@ export type EditorExtensionContext = {
    *  backward (previous character / previous line). A modal extension maps
    *  its movement keys here and stays axis-agnostic. */
   readonly moveCaret: (axis: 'char' | 'line', dir: 1 | -1, extend?: boolean) => void;
+  /** Move the caret one step in a SPATIAL direction — what the matching arrow
+   *  key does. The writing mode decides the axis: in vertical-rl, 'left'/'right'
+   *  step between COLUMNS and 'up'/'down' walk the characters. The cross-axis
+   *  (line) step is a VISUAL column move in vertical writing and a LOGICAL
+   *  (model-line) move in horizontal — a modal editor walks the screen by
+   *  mapping its keys here and stays axis-agnostic. */
+  readonly moveCaretVisual: (direction: VisualDirection, extend?: boolean) => void;
   /** Scroll one viewport (`half` = half of one) along the reading direction
    *  — forward is DOWN in the vertically-scrolling modes and LEFT in the
    *  horizontally-scrolling vertical modes — and bring the caret along to

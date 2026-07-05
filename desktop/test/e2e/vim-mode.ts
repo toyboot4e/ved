@@ -7,7 +7,7 @@
 // editing with no vim residue.
 // Usage: node test/e2e/vim-mode.ts  (after a build; window stays hidden)
 import assert from 'node:assert/strict';
-import { caretOffset, docText, fail, finish, launchVed, setCaret, setDoc, step } from './harness.ts';
+import { caretOffset, clickWritingMode, docText, fail, finish, launchVed, setCaret, setDoc, step } from './harness.ts';
 
 const ved = await launchVed({ env: () => ({ VED_SMOKE_CLOSE_RESPONSE: 'discard' }) });
 const { page } = ved;
@@ -57,25 +57,26 @@ try {
   assert.equal(await docText(page), TEXT, 'neither an unbound key nor raw insertText types in normal mode');
   step('normal mode blocks typing (keydown swallow + text-input belt)');
 
-  // --- Motions: h/l are CHARACTER steps (the doc is VerticalColumns, where a
-  // "line" is a column, so j/k change columns and h/l walk the chars); l
-  // jumps the collapsed ruby as one caret stop. h/l use the editor's
-  // synchronous char mover; j/k line moves are RAF-deferred (unreliable in
-  // the hidden harness), so column geometry is left to the arrow-key suites. ---
+  // --- Motions: hjkl are SPATIAL (each = its arrow key). The doc is
+  // VerticalColumns, where the character axis is UP/DOWN — so j (down) walks
+  // the characters forward and k (up) back; h/l move between columns. j/k use
+  // the editor's synchronous char mover; h/l column moves are RAF-deferred
+  // (unreliable in the hidden harness), so column geometry is left to the
+  // arrow-key suites. j jumps the collapsed ruby as one caret stop. ---
   await setCaret(page, 0);
-  await press('l');
-  assert.equal(await caretOffset(page), 1, 'l steps one character');
-  await press('l');
-  assert.equal(await caretOffset(page), 2, 'l reaches the ruby boundary');
-  await press('l');
-  assert.equal(await caretOffset(page), 8, 'l jumps the collapsed ruby as one caret stop');
-  await press('h');
-  assert.equal(await caretOffset(page), 2, 'h jumps back over the ruby');
+  await press('j');
+  assert.equal(await caretOffset(page), 1, 'j (down) steps one character forward');
+  await press('j');
+  assert.equal(await caretOffset(page), 2, 'j reaches the ruby boundary');
+  await press('j');
+  assert.equal(await caretOffset(page), 8, 'j jumps the collapsed ruby as one caret stop');
+  await press('k');
+  assert.equal(await caretOffset(page), 2, 'k (up) jumps back over the ruby');
   await press('$');
   assert.equal(await caretOffset(page), 9, '$ goes to the line end');
   await press('0');
   assert.equal(await caretOffset(page), 0, '0 returns to the line start');
-  step('hl$0 motions respect ruby caret stops');
+  step('jk walk characters (spatial: down/up in vertical), respecting ruby stops');
 
   // --- x deletes one caret step (the ruby as a unit from its boundary) ---
   await setCaret(page, 1);
@@ -180,7 +181,29 @@ try {
   assert.equal(await modeChip(), 'NORMAL', 'Escape returns to NORMAL');
   step('i / Escape flip modes; insert mode types');
 
-  // --- Toggle off: everything back to ordinary editing ---
+  // --- Horizontal mode: j/k are a LOGICAL model-line move (Vim's j/k step
+  // actual lines at the same column), deterministic and geometry-free, so the
+  // offsets are exact. h/l are the character axis there. (Vim off for the
+  // setDoc — normal mode blocks typing — then back on.) ---
+  await toggleVim();
+  await clickWritingMode(page, 'Horizontal');
+  await page.click('#editor-content');
+  const H = 'あいう\nかき\nさしすせ'; // lines at 0.., 4.., 7..
+  await setDoc(page, H);
+  await toggleVim();
+  await setCaret(page, 1); // column 1 of line 0
+  await press('j');
+  assert.equal(await caretOffset(page), 5, 'j moves to the next model line at the same column');
+  await press('j');
+  assert.equal(await caretOffset(page), 8, 'j again → third line, same column');
+  await press('k');
+  assert.equal(await caretOffset(page), 5, 'k moves to the previous model line');
+  await press('l');
+  assert.equal(await caretOffset(page), 6, 'l (right) is the character axis in horizontal');
+  step('horizontal j/k = logical model-line move; h/l = characters');
+
+  // --- Toggle off: everything back to ordinary editing (still in the current
+  // doc/mode from the horizontal test — mode-independent). ---
   await toggleVim();
   assert.equal(await modeChip(), null, 'chip gone after disabling');
   const off = await vimClasses();

@@ -8,15 +8,16 @@
 // (injected, so ruby caret stops apply without this module knowing rubies
 // exist). Offsets index the plain string, markup characters included.
 //
-// MOVEMENT IS AXIS-AGNOSTIC. Bare h/j/k/l emit LOGICAL `moveCaret` effects —
-// h/l a CHARACTER step (± reading order), j/k a LINE step — and the EDITOR
-// rotates logical→physical per writing mode (the arrow-key movers, so ruby
-// stops and the goal column apply). This module never knows whether a "line"
-// is a row or a column: in vertical writing (tategaki) a line IS a column, so
-// j/k move to the next/previous column while h/l walk the characters within
-// it; in horizontal writing the classic Vim directions. As OPERATOR TARGETS
-// h/l stay pure character motions (`dh`/`dl` = one caret step); a line step
-// cannot be expressed as an offset, so `dj`/`dk` are not bound.
+// MOVEMENT IS SPATIAL. Bare h/j/k/l are the ARROW KEYS — h=left, j=down,
+// k=up, l=right — emitted as `moveVisual` effects; the EDITOR resolves each
+// screen direction to the right axis per writing mode. So in VERTICAL writing
+// (tategaki) h/l step to the next/previous COLUMN (the line axis is
+// horizontal there) and j/k walk the characters up/down the column, while in
+// HORIZONTAL writing h/l walk the characters and j/k move by line. The line
+// axis is a VISUAL column move in vertical and a LOGICAL (model-line) move in
+// horizontal — the editor decides (moveCaretVisual). As OPERATOR TARGETS h/l
+// stay pure character motions (`dh`/`dl` = one caret step); a spatial line
+// step cannot be expressed as an offset, so `dj`/`dk` are not bound.
 //
 // Scope and deliberate deviations from Vim:
 //   - modes: normal / insert / visual (character-wise 'v' AND line-wise 'V');
@@ -51,6 +52,9 @@ export type VimDocView = {
   readonly caretStop: (offset: number, dir: 1 | -1) => number;
 };
 
+/** A spatial (screen) direction — an arrow key. */
+export type VimVisualDirection = 'up' | 'down' | 'left' | 'right';
+
 /** What the reducer asks the editor to do, in order. Offsets are positions in
  *  the text AS EACH EFFECT SEES IT (a `select` after a `replace` speaks
  *  post-replace offsets). */
@@ -58,9 +62,8 @@ export type VimEffect =
   | { readonly kind: 'select'; readonly anchor: number; readonly head: number }
   | { readonly kind: 'replace'; readonly from: number; readonly to: number; readonly text: string }
   | {
-      readonly kind: 'moveCaret';
-      readonly axis: 'char' | 'line';
-      readonly dir: 1 | -1;
+      readonly kind: 'moveVisual';
+      readonly direction: VimVisualDirection;
       readonly count: number;
       readonly extend: boolean;
     }
@@ -511,23 +514,23 @@ const visualKey = (state: VimState, k: string, _count: number, doc: VimDocView):
   }
 };
 
-/** Bare h/j/k/l as LOGICAL moves: h/l a character step, j/k a line step. The
- *  editor rotates logical→physical per writing mode, so in vertical writing
- *  j/k move to the next/previous column and h/l walk the characters. */
-const WALK: Readonly<Record<'h' | 'j' | 'k' | 'l', { axis: 'char' | 'line'; dir: 1 | -1 }>> = {
-  h: { axis: 'char', dir: -1 },
-  l: { axis: 'char', dir: 1 },
-  j: { axis: 'line', dir: 1 },
-  k: { axis: 'line', dir: -1 },
+/** Bare h/j/k/l are the arrow keys, spatially. The editor resolves each screen
+ *  direction to the right axis per writing mode (moveCaretVisual), so in
+ *  vertical writing h/l move between columns and j/k walk the characters. */
+const WALK: Readonly<Record<'h' | 'j' | 'k' | 'l', VimVisualDirection>> = {
+  h: 'left',
+  j: 'down',
+  k: 'up',
+  l: 'right',
 };
 
 const normalKey = (state: VimState, k: string, count: number, hasCount: boolean, doc: VimDocView): VimStep => {
   const { text, caretStop, head } = doc;
   const visual = state.mode === 'visual';
 
-  // The logical walk (arrows' behavior; extends the selection in visual mode).
+  // The spatial walk (arrow keys; extends the selection in visual mode).
   if (k === 'h' || k === 'j' || k === 'k' || k === 'l') {
-    return { state, effects: [{ kind: 'moveCaret', ...WALK[k], count, extend: visual }], handled: true };
+    return { state, effects: [{ kind: 'moveVisual', direction: WALK[k], count, extend: visual }], handled: true };
   }
   const motion = motionTarget(k, count, hasCount, doc, head);
   if (motion && MOTION_KEYS.has(k)) return motionStep(state, motion, doc);

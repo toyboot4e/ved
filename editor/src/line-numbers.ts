@@ -437,7 +437,13 @@ const startsNewLine = (
  *  the caret, the one whose inline span is nearest (picks the right page when a
  *  block coord repeats across page columns). */
 const pickLine = (lines: VisualLine[], caret: CaretRect, vertical: boolean): VisualLine | null => {
-  const cb = vertical ? caret.left : caret.top; // caret block coord
+  // The caret's block-axis CENTER, not its edge: consecutive line boxes
+  // OVERLAP (the line-height exceeds the row pitch by the leading), so a caret
+  // sitting at the top of row N+1 also falls inside row N's band. Its center
+  // is unambiguously in its own row — using the edge picked the FIRST band
+  // (the previous row), leaving the highlight one line behind in wrapped
+  // paragraphs (most visible in horizontal writing).
+  const cb = vertical ? (caret.left + caret.right) / 2 : (caret.top + caret.bottom) / 2; // caret block center
   const ci = vertical ? caret.top : caret.left; // caret inline coord
   let best: VisualLine | null = null;
   let bestDist = Number.POSITIVE_INFINITY;

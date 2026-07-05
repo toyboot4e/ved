@@ -48,8 +48,8 @@ export const createVimExtension = (options: VimExtensionOptions = {}): EditorExt
         case 'replace':
           ctx.replaceRange(effect.from, effect.to, effect.text);
           break;
-        case 'moveCaret':
-          for (let i = 0; i < effect.count; i++) ctx.moveCaret(effect.axis, effect.dir, effect.extend);
+        case 'moveVisual':
+          for (let i = 0; i < effect.count; i++) ctx.moveCaretVisual(effect.direction, effect.extend);
           break;
         case 'scrollPage':
           ctx.scrollPage(effect.dir, effect.half);
