@@ -49,14 +49,15 @@ const EXTS = [myExtension];
   see the rich (ProseMirror) document, so you cannot desync it: edits take the
   editor's exact plain-string path (canonical rebuild + ruby repair + undo
   history), selections snap to legal caret stops.
-- **Movement is the editor's, not yours.** `moveCaret('char'|'line', dir)`
-  reuses the arrow-key movers (ruby stops, vertical-mode axis rotation, goal
-  column); `moveCaretVisual('up'|'down'|'left'|'right')` is the spatial form —
-  exactly the matching arrow key, with `writingAxis()` telling your keymap
-  which spatial direction carries the line axis ('left' in vertical-rl is the
-  next column). `caretStop(offset, dir)` answers "where would one step land"
-  without moving. Compute word/line targets over `getText()` and land them
-  with `setSelection` — it clamps and snaps for you.
+- **Movement is the editor's, not yours — and axis-agnostic.**
+  `moveCaret('char'|'line', dir)` is LOGICAL: the editor rotates it to the
+  physical axis per writing mode (a `'line'` step is the next/previous column
+  in vertical-rl), applying ruby stops and the goal column. Map your movement
+  keys straight onto it and never think about writing direction (Vim's j/k =
+  `'line'`, h/l = `'char'`). `caretStop(offset, dir)` answers "where would one
+  step land" without moving; compute word/line targets over `getText()` and
+  land them with `setSelection` — it clamps and snaps for you.
+  `scrollPage(dir, half?)` is a viewport turn that carries the caret along.
 - **IME is sacrosanct, and the seam enforces it.** Your hooks never see
   composing input; every mutator refuses while `isComposing()`; attach/detach
   waits out a live composition. If your semantics reject composed text (a

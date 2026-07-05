@@ -57,7 +57,11 @@ try {
   assert.equal(await docText(page), TEXT, 'neither an unbound key nor raw insertText types in normal mode');
   step('normal mode blocks typing (keydown swallow + text-input belt)');
 
-  // --- Motions: l steps, and jumps the collapsed ruby as a unit ---
+  // --- Motions: h/l are CHARACTER steps (the doc is VerticalColumns, where a
+  // "line" is a column, so j/k change columns and h/l walk the chars); l
+  // jumps the collapsed ruby as one caret stop. h/l use the editor's
+  // synchronous char mover; j/k line moves are RAF-deferred (unreliable in
+  // the hidden harness), so column geometry is left to the arrow-key suites. ---
   await setCaret(page, 0);
   await press('l');
   assert.equal(await caretOffset(page), 1, 'l steps one character');
@@ -140,6 +144,28 @@ try {
   assert.equal(await caretOffset(page), 1, 'the caret stays on the replaced character');
   await press('u');
   step('s substitutes into insert; r replaces in place');
+
+  // --- Ctrl+F/B page-scroll OUTRANK the app's search/sidebar bindings in
+  // normal mode: the editor consumes them (preventDefault + stopPropagation),
+  // so the search bar never opens. ---
+  const searchOpen = () => page.evaluate(() => document.getElementById('search-input') !== null);
+  await setCaret(page, 0);
+  await page.keyboard.press('Control+f');
+  await page.waitForTimeout(120);
+  assert.ok(!(await searchOpen()), 'Ctrl+F does NOT open the search bar while Vim normal mode is on');
+  assert.equal(await modeChip(), 'NORMAL', 'still in normal mode (no mode change from the scroll)');
+  // In INSERT mode the app keeps the chord — Ctrl+F opens search there.
+  await press('i');
+  await page.keyboard.press('Control+f');
+  await page.waitForTimeout(120);
+  assert.ok(await searchOpen(), 'Ctrl+F opens search in insert mode (the app binding still applies)');
+  await page.keyboard.press('Escape'); // close the search bar
+  await page.waitForTimeout(80);
+  await page.click('#editor-content');
+  await page.keyboard.press('Escape'); // back to normal
+  await page.waitForTimeout(60);
+  assert.equal(await modeChip(), 'NORMAL', 'restored to normal mode');
+  step('Ctrl+F page-scroll outranks search in normal mode; insert mode keeps it');
 
   // --- i enters insert (chip, bar caret), typing works, Escape returns ---
   await setCaret(page, 0);

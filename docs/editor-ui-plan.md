@@ -2,7 +2,8 @@
 
 Status: **in progress** (2026-07) — phases 0–1 are complete; the view-config
 interlude and phase 6 (VerticalRows) shipped out of order. Phase 2
-(file-browser sidebar) is next. The app is a multi-buffer tabbed editor with
+(file-browser sidebar) is in progress: the multi-root tree shipped (step 2a);
+watching and resize remain. The app is a multi-buffer tabbed editor with
 open/save (Ctrl+O/S/Shift+S over the `window.ved` IPC layer), dirty markers,
 and a dirty-close confirm guard.
 
@@ -283,6 +284,10 @@ Decisions from the design review (see CONTEXT.md **view config**):
     bar's Enter/Esc are ignored mid-composition, and the ops refuse while
     `view.composing`. Smoke: `test/e2e/search-replace.ts`. See
     architecture.md "Search and replace".
+  - *(2026-07-05)* The bar docks at the BOTTOM of the editor area (a
+    full-width row above the shell panel, in `app.module.scss .main`), not as
+    a row inside the fixed-width page column — so it spans the window and
+    never shifts the page geometry.
 
 - [x] **Step V.5 — extension seam + @ved/vim.** *(done 2026-07-05)*
   - User-requested. The `commands.ts` layer opened into a real registry
@@ -294,29 +299,61 @@ Decisions from the design review (see CONTEXT.md **view config**):
     in the decoration delta layer. `@ved/vim` is a fourth workspace package —
     pure reducer (model.ts, unit-tested) + adapter (extension.ts) — proving
     the seam suffices for third parties; the shell adds `useVimStore`, a
-    toolbar toggle, and a mode chip. Round 2 filled the modal surface —
+    toolbar toggle, and a mode chip. Later rounds filled the modal surface —
     linewise visual `V`, `s`/`S`, `r`, `f F t T ; ,`, `J`, `X`, count
-    `gg`/`G`, visual paste — plus `moveCaretVisual`/`writingAxis` in the
-    public seam (hjkl = the arrows' visual walk; vertical j/k = next/prev
-    column) and the block caret's widget form (a block at EVERY position).
-    Smoke: `test/e2e/vim-mode.ts`. Owed: real-mozc verification of the
-    normal-mode composition revert (`mozc/vim-normal-composition`). See
-    architecture.md "Extensions" and `docs/extensions.md`.
+    `gg`/`G`, visual paste — and the block caret's widget form (a block at
+    EVERY position, incl. ruby seams). Movement is axis-agnostic: hjkl emit
+    logical `moveCaret` (h/l char, j/k line) and the editor rotates them, so
+    vertical j/k move by column; `Ctrl+F/B/D/U` map to a new `scrollPage`
+    seam and are consumed AHEAD of the app's Ctrl+F search / Ctrl+B sidebar
+    in normal mode. Smoke: `test/e2e/vim-mode.ts`. Owed: real-mozc
+    verification of the normal-mode composition revert
+    (`mozc/vim-normal-composition`). See architecture.md "Extensions" and
+    `docs/extensions.md`.
 
 ### Phase 2 — file browser sidebar
 
-A **workspace root** concept ("open folder…", persisted). Hand-rolled lazy
-tree: load one directory level per expand via `readDir`, click opens a
-buffer. This is ~150 lines and matches the actual need.
+A **workspace** is a SET of root directories ("open folder…" appends; each
+root shows as its own tree section, removable). Hand-rolled lazy tree: load
+one directory level per expand via `readDir`, click opens a buffer. This is
+~150 lines and matches the actual need.
 
 Take `react-arborist` instead only when we want inline rename / drag-move /
 virtualization — i.e. when the browser becomes a file *manager*. Until then
 the dependency (and its focus handling, which must coexist with Slate's)
 costs more than the lines it saves.
 
-Watching: `chokidar` in main on the workspace root (ignoring `.gitignore`d
-dirs), debounced `FsChangeEvent`s over IPC; the tree refreshes the affected
-directory, and the Ctrl+P index (phase 3) invalidates.
+- [x] **2a. Multi-root tree + toggle** *(done 2026-07-05)*. Zustand
+  `workspace.ts` store (`roots: string[]`, `sidebarOpen`, `sidebarSide`);
+  Ctrl+B and the toolbar ☰ button toggle (hidden by default), the ⇄ header
+  button docks the pane to either window edge. `Sidebar` renders one lazy
+  tree per root — each root is itself a collapsible node, and collapsing
+  unmounts a listing, so re-expanding re-reads (fresh without a watcher).
+  Rows carry inline-SVG type icons (`icons/FileIcons.tsx` — extension-based,
+  COSMETIC only). Whether a file may be OPENED is decided by content in
+  main (`fs-io.ts readTextFileChecked`: NUL sniff + strict UTF-8 decode,
+  never the extension — Shift_JIS is refused rather than opened as mojibake
+  until conversion lands); a refused click shows a transient notice. IPC
+  grew `readFile` (→ `ReadFileResult`) / `readDir` / `openDirDialog`
+  (dir-picker seam: `VED_SMOKE_OPEN_DIR_PATH`, a comma-list consumed per
+  call). Dot-entries stay out of the tree (`listDir`). Smoke:
+  `test/e2e/sidebar.ts`.
+- [ ] **2b. Watching.** `chokidar` in main on each root (ignoring
+  `.gitignore`d dirs), debounced `FsChangeEvent`s over IPC; the tree
+  refreshes the affected directory, and the Ctrl+P index (phase 3)
+  invalidates.
+- [x] **2c. Sidebar resize** *(done 2026-07-05)*. ARIA window-splitter on
+  the pane's inner edge: pointer-drag (pointer capture) and arrow keys
+  write `sidebarWidth` (store-clamped 160–480px) into the
+  `--sidebar-width` custom property.
+- [x] **2d. Uniform binary refusal** *(done 2026-07-05)*. EVERY open path
+  goes through `readTextFileChecked` — sidebar click, Ctrl+O dialog
+  (`OpenFileResult.read`), and CLI arguments (skipped with a warning).
+  Refusals surface in one app-level toast (`app.tsx` notice, bottom-left).
+  Panels use the `--ved-panel-bg` token (near-white in light — quieter
+  than the chrome gray, keeping the page as the visual anchor).
+
+Roots/visibility persistence rides Phase 4's `config.json`.
 
 ### Phase 3 — Ctrl+P quick open
 
@@ -396,6 +433,39 @@ The deferred 2D case is noted in `editor.tsx` next to the new CSS, so a future
 contributor who wants N≥2 pages per row finds the documented constraint (docs/architecture.md) rather than re-deriving
 it.
 
+- [x] **6e. Continuous modes fill the pane** *(done 2026-07-05)*. The two
+  non-paged modes — Horizontal and Vertical — widen to the pane (a
+  `fillMode` class: `.root` and the `.editor` scroller go `width:100%` /
+  `align-self:stretch`) instead of sitting as a fixed centered column, so a
+  wide window shows more of the text — Vertical's horizontal scroll reveals
+  more columns; Horizontal frames the fixed line column (still capped at
+  `--line-length`) full-width. The paged modes keep fixed page widths
+  (VerticalColumns centered; VerticalRows already filled via `rowsMode`).
+
+### Phase 7 — integrated shell *(step 7a done 2026-07-05)*
+
+A terminal panel under the editor: Ctrl+` toggles it; each tab is a PTY in
+the main process (`node-pty` — native, main-only, per the process-boundary
+invariant) rendered by `@xterm/xterm` + fit addon in the renderer. New
+shells spawn in the ACTIVE FILE's directory, else the first workspace root,
+else `$HOME`. PTYs start paused and the renderer resumes after wiring its
+listeners, so no prompt output is lost; toggling the panel closed hides it
+with CSS (shells and scrollback survive), and a PTY exit closes its tab —
+the last one closes the panel. e2e reads the active terminal's buffer via
+the `__vedShellText` seam (xterm renders to canvas — the DOM has no text).
+
+- [x] **7a. Panel + tabs + PTY plumbing.** `shells.ts` store,
+  `shell-panel.tsx`, `shell-service.ts`, the `VedShellApi` IPC surface.
+  Smoke: `test/e2e/shell-panel.ts`.
+- [ ] **7b. Theming** — map xterm's theme to the `--ved-*` tokens (the
+  panel currently keeps xterm's stock dark palette in both themes).
+- [ ] **7c. Panel resize** (shared drag-handle mechanism with the sidebar).
+- [ ] **7d. Focus discipline.** The editor's rAF-deferred mount focus
+  (`editor.tsx`) can reclaim focus from a just-opened terminal (sub-second
+  race after a tab open/switch; the e2e driver re-clicks the terminal
+  before typing). Fold into the keymap-registry/focus-scope work rather
+  than patching the editor core ad hoc.
+
 ### Phase 5 — polish (each independent, grab as needed)
 
 - status bar: character count (the `#counter` placeholder exists), cursor
@@ -420,6 +490,9 @@ it.
 | config schema     | `zod`                   | `electron-store`, hand-rolled checks  |
 | tab bar / tree /  | hand-rolled             | `react-arborist`, `react-resizable-`  |
 | overlay / resize  |                         | `panels`, `dnd-kit` — adopt on demand |
+| terminal          | `@xterm/xterm` + fit    | hand-rolled emulator (nonsense)       |
+| PTY               | `node-pty` (main)       | `child_process` pipes (no TTY: prompts |
+|                   |                         | and TUIs break)                       |
 
 Everything else is React + SCSS modules, as today.
 

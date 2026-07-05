@@ -964,6 +964,11 @@ export const VedEditor = (props: VedEditorProps): React.JSX.Element => {
   const vert = writingMode !== WritingMode.Horizontal;
   const multiCol = writingMode === WritingMode.VerticalColumns;
   const rows = writingMode === WritingMode.VerticalRows;
+  // Continuous (non-paged) modes — Horizontal and Vertical — fill the pane
+  // rather than sitting as a fixed centered column, so a wide window shows
+  // more of the text (Vertical's horizontal scroll axis; Horizontal's line
+  // column in a full-width frame). VerticalRows already fills via rowsMode.
+  const fill = !multiCol && !rows;
 
   const scrollerRef = useRef<HTMLDivElement>(null);
   const viewRef = useRef<EditorView | null>(null);
@@ -1434,22 +1439,35 @@ export const VedEditor = (props: VedEditorProps): React.JSX.Element => {
           moveCaretByLine(view, extend, dir < 0, goalInlineRef);
         }
       },
-      moveCaretVisual: (direction, extend = false) => {
+      scrollPage: (dir, half = false) => {
         if (view.composing) return;
-        // The arrow keys' exact rotation: the writing mode decides which
-        // spatial axis is characters and which is lines (handleKeyDown).
-        const isVert = live.current.writingMode !== WritingMode.Horizontal;
-        const key = { up: 'ArrowUp', down: 'ArrowDown', left: 'ArrowLeft', right: 'ArrowRight' }[direction];
-        const act = (isVert ? VERT_ARROWS : HORIZ_ARROWS)[key];
-        if (!act) return;
-        if (act.axis === 'char') {
-          goalInlineRef.current = null;
-          moveChar(view, policyClassRef.current, act.reverse, extend);
-        } else {
-          moveCaretByLine(view, extend, act.reverse, goalInlineRef);
-        }
+        const s = scrollerRef.current;
+        if (!s) return;
+        const wm = live.current.writingMode;
+        // Reading direction per scroll axis: Horizontal/VerticalColumns
+        // advance downward; Vertical/VerticalRows advance LEFTWARD
+        // (vertical-rl overflows to the left, so forward DECREASES scrollLeft).
+        const vertScroll = wm === WritingMode.Horizontal || wm === WritingMode.VerticalColumns;
+        const step = (vertScroll ? s.clientHeight : s.clientWidth) / (half ? 2 : 1);
+        if (vertScroll) s.scrollTop += dir * step;
+        else s.scrollLeft -= dir * step;
+        // Bring the caret along (Chromium hit-test at the viewport center,
+        // snapped to a legal stop) WITHOUT a reveal — a reveal would undo the
+        // scroll. A miss (gap between pages &c.) keeps the caret where it was;
+        // the next caret move reveals as usual.
+        const r = s.getBoundingClientRect();
+        const hit = view.posAtCoords({ left: r.left + r.width / 2, top: r.top + r.height / 2 });
+        if (!hit) return;
+        const text = serialize(view.state.doc);
+        const off = Math.max(0, Math.min(posToOffset(view.state.doc, hit.pos), text.length));
+        const legal = caretStops(text, off, policyClassRef.current).includes(off)
+          ? off
+          : snapToGlyph(docLeaves(text), off);
+        goalInlineRef.current = null;
+        view.dispatch(
+          view.state.tr.setSelection(TextSelection.create(view.state.doc, offsetToPos(view.state.doc, legal))),
+        );
       },
-      writingAxis: () => (live.current.writingMode === WritingMode.Horizontal ? 'horizontal' : 'vertical'),
       caretStop: (offset, dir) => nextCaretOffset(serialize(view.state.doc), offset, policyClassRef.current, dir < 0),
       deleteStep: (forward) => {
         if (!view.composing) deleteChar(view, forward, policyClassRef.current);
@@ -1610,9 +1628,13 @@ export const VedEditor = (props: VedEditorProps): React.JSX.Element => {
       }
       // Extensions see the key first (a modal extension owns its keymap); an
       // unconsumed key falls through to the chord table and the built-ins.
+      // stopPropagation so a consumed key never reaches the APP's window
+      // listener — Vim's Ctrl+F/B outrank the search/sidebar bindings (the
+      // app also guards on defaultPrevented, belt and braces).
       for (const a of attachedExts) {
         if (a.hooks.handleKey?.(event)) {
           event.preventDefault();
+          event.stopPropagation();
           return true;
         }
       }
@@ -2396,7 +2418,13 @@ export const VedEditor = (props: VedEditorProps): React.JSX.Element => {
     <div
       ref={scrollerRef}
       onScroll={onScroll}
-      className={clsx(styles.editor, vert && styles.vertMode, multiCol && styles.multiColMode, rows && styles.rowsMode)}
+      className={clsx(
+        styles.editor,
+        vert && styles.vertMode,
+        multiCol && styles.multiColMode,
+        rows && styles.rowsMode,
+        fill && styles.fillMode,
+      )}
     />
   );
 };

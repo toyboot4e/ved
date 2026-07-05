@@ -401,13 +401,13 @@ never ProseMirror values — so extensions cannot violate the identity model:
 - **Selection** (`setSelection`) clamps, keeps any legal caret stop
   (`caretStops` — a ruby's outer boundary is one), and snaps a homeless offset
   (hidden markup, read-only reading) onto the base (`snapToGlyph`).
-- **Movement** reuses the arrow-key movers: `moveCaret('char'|'line', dir)`
-  gets ruby stops, axis rotation, and the line-move goal column for free;
-  `moveCaretVisual('up'|'down'|'left'|'right')` is the SPATIAL form — exactly
-  the matching arrow key, so a modal extension walks the screen without
-  re-deriving the writing-mode rotation ('left' in vertical-rl is the next
-  column); `writingAxis()` tells a keymap which spatial roles to assign;
-  `caretStop(offset, dir)` is the pure stop query.
+- **Movement** reuses the arrow-key movers, so an extension stays
+  AXIS-AGNOSTIC: `moveCaret('char'|'line', dir)` is LOGICAL — the editor
+  rotates it to the physical axis per writing mode (a `'line'` step is the
+  next/previous COLUMN in vertical-rl, the next row in horizontal), with ruby
+  stops and the goal column for free; `caretStop(offset, dir)` is the pure
+  stop query. `scrollPage(dir, half?)` turns one viewport along the reading
+  direction and carries the caret to a legal stop in it (a modal Ctrl+F/B).
 - **Commands**: `runCommand`/`registerCommand` against the open registry.
 - **Appearance**: `setCaretShape('bar'|'block')` — the block caret covers
   EVERY position, in the per-move DELTA layer: an inline decoration tints the
@@ -431,16 +431,20 @@ pre-composition document at `onCompositionEnd` — an ordinary plain-string edit
 at a legal time.
 
 `@ved/vim` splits model from view: `model.ts` is a pure reducer
-(state × key × {text, selection, caretStop, axis} → state + effects — select /
-replace / moveVisual / command / breakUndo), so the modal semantics unit-test
-as plain functions; `extension.ts` merely executes effects against the context
-and reports mode changes (the shell's `useVimStore` renders the toggle + mode
-chip, `desktop vim.ts`). Bare h/j/k/l are the VISUAL WALK (`moveCaretVisual`):
-j/k mean next/previous line — the next/previous COLUMN in vertical writing —
-h/l the characters; as operator targets h/l stay pure character motions. The
-key set and its deviations are the `model.ts` header (linewise `V`, `s`/`S`,
-`r`, `f F t T ; ,`, `J` joins without a space — Japanese prose). The whole
-loop is pinned by `test/e2e/vim-mode.ts`.
+(state × key × {text, selection, caretStop} → state + effects — select /
+replace / moveCaret / scrollPage / command / breakUndo), so the modal
+semantics unit-test as plain functions; `extension.ts` merely executes effects
+against the context and reports mode changes (the shell's `useVimStore`
+renders the toggle + mode chip, `desktop vim.ts`). Bare h/j/k/l emit LOGICAL
+`moveCaret` — h/l a character step, j/k a line step — and the editor rotates
+them, so in vertical writing j/k move to the next/previous COLUMN while h/l
+walk the characters within it; as operator targets h/l stay pure character
+motions. Vim's `Ctrl+F/B/D/U` map to `scrollPage`, consumed AHEAD of the app's
+Ctrl+F search / Ctrl+B sidebar in normal mode (the editor `stopPropagation`s a
+consumed key; the app also guards on `defaultPrevented`) — insert mode leaves
+those chords to the app. The key set and its deviations are the `model.ts`
+header (linewise `V`, `s`/`S`, `r`, `f F t T ; ,`, `J` joins without a space —
+Japanese prose). The whole loop is pinned by `test/e2e/vim-mode.ts`.
 
 ## Layout: writing modes and the page
 

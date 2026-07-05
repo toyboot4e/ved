@@ -4,19 +4,19 @@
 // plain functions and the modal semantics stay legible in one place.
 //
 // The document view is ved's identity model: the plain text, the selection as
-// plain offsets, `caretStop` — the editor's own character-step rule
+// plain offsets, and `caretStop` — the editor's own character-step rule
 // (injected, so ruby caret stops apply without this module knowing rubies
-// exist) — and the writing AXIS. Offsets index the plain string, markup
-// characters included.
+// exist). Offsets index the plain string, markup characters included.
 //
-// MOVEMENT AXES. Bare h/j/k/l are a VISUAL walk (`moveVisual` effects — the
-// editor's arrow movers, so ruby stops, axis rotation, and the goal column
-// apply): j/k always mean next/previous LINE — in vertical writing that is
-// the next/previous COLUMN (spatially left/right), while h/l walk the
-// characters (spatially up/down there). As OPERATOR TARGETS h/l stay pure
-// character motions (`dh`/`dl` = one caret step), Vim's semantic; j/k are
-// visual-line steps the model cannot express as offsets, so `dj`/`dk` are
-// not bound.
+// MOVEMENT IS AXIS-AGNOSTIC. Bare h/j/k/l emit LOGICAL `moveCaret` effects —
+// h/l a CHARACTER step (± reading order), j/k a LINE step — and the EDITOR
+// rotates logical→physical per writing mode (the arrow-key movers, so ruby
+// stops and the goal column apply). This module never knows whether a "line"
+// is a row or a column: in vertical writing (tategaki) a line IS a column, so
+// j/k move to the next/previous column while h/l walk the characters within
+// it; in horizontal writing the classic Vim directions. As OPERATOR TARGETS
+// h/l stay pure character motions (`dh`/`dl` = one caret step); a line step
+// cannot be expressed as an offset, so `dj`/`dk` are not bound.
 //
 // Scope and deliberate deviations from Vim:
 //   - modes: normal / insert / visual (character-wise 'v' AND line-wise 'V');
@@ -42,18 +42,14 @@ export type VimKey = {
 };
 
 /** The document as the reducer sees it: ved's plain text + plain-offset
- *  selection, the editor's caret-step rule, and the writing axis (which
- *  spatial direction j/k's "next line" is). */
+ *  selection, and the editor's caret-step rule. */
 export type VimDocView = {
   readonly text: string;
   readonly anchor: number;
   readonly head: number;
   /** Next legal caret stop (ruby-aware). Returns `offset` at a document edge. */
   readonly caretStop: (offset: number, dir: 1 | -1) => number;
-  readonly axis: 'horizontal' | 'vertical';
 };
-
-export type VimVisualDirection = 'up' | 'down' | 'left' | 'right';
 
 /** What the reducer asks the editor to do, in order. Offsets are positions in
  *  the text AS EACH EFFECT SEES IT (a `select` after a `replace` speaks
@@ -62,11 +58,13 @@ export type VimEffect =
   | { readonly kind: 'select'; readonly anchor: number; readonly head: number }
   | { readonly kind: 'replace'; readonly from: number; readonly to: number; readonly text: string }
   | {
-      readonly kind: 'moveVisual';
-      readonly direction: VimVisualDirection;
+      readonly kind: 'moveCaret';
+      readonly axis: 'char' | 'line';
+      readonly dir: 1 | -1;
       readonly count: number;
       readonly extend: boolean;
     }
+  | { readonly kind: 'scrollPage'; readonly dir: 1 | -1; readonly half: boolean }
   | { readonly kind: 'command'; readonly id: string }
   | { readonly kind: 'breakUndo' };
 
@@ -319,8 +317,22 @@ export const vimKeydown = (state: VimState, key: VimKey, doc: VimDocView): VimSt
   if (key.meta || key.alt) return unhandled(state);
   if (state.mode === 'insert') return insertKey(state, key, doc);
   if (key.ctrl) {
-    if (key.key === 'r' && !state.charPending) {
+    if (state.charPending) return unhandled(clearPending(state));
+    if (key.key === 'r') {
       return { state: clearPending(state), effects: [{ kind: 'command', id: 'history.redo' }], handled: true };
+    }
+    // Page scrolling — CONSUMED here so Vim outranks the app bindings on the
+    // same chords (Ctrl+F search, Ctrl+B sidebar) while normal mode is on;
+    // insert mode returned above, so the app keeps them there.
+    const page: Record<string, { dir: 1 | -1; half: boolean }> = {
+      f: { dir: 1, half: false },
+      b: { dir: -1, half: false },
+      d: { dir: 1, half: true },
+      u: { dir: -1, half: true },
+    };
+    const scroll = page[key.key];
+    if (scroll) {
+      return { state: clearPending(state), effects: [{ kind: 'scrollPage', ...scroll }], handled: true };
     }
     return unhandled(clearPending(state));
   }
@@ -499,29 +511,23 @@ const visualKey = (state: VimState, k: string, _count: number, doc: VimDocView):
   }
 };
 
-/** Bare h/j/k/l walk the SCREEN (the editor's arrow movers): j/k = next/
- *  previous line — the next/previous COLUMN in vertical writing — h/l the
- *  characters. The writing axis assigns the spatial direction. */
-const VISUAL_WALK: Readonly<
-  Record<'h' | 'j' | 'k' | 'l', Readonly<Record<'horizontal' | 'vertical', VimVisualDirection>>>
-> = {
-  h: { horizontal: 'left', vertical: 'up' },
-  l: { horizontal: 'right', vertical: 'down' },
-  j: { horizontal: 'down', vertical: 'left' },
-  k: { horizontal: 'up', vertical: 'right' },
+/** Bare h/j/k/l as LOGICAL moves: h/l a character step, j/k a line step. The
+ *  editor rotates logical→physical per writing mode, so in vertical writing
+ *  j/k move to the next/previous column and h/l walk the characters. */
+const WALK: Readonly<Record<'h' | 'j' | 'k' | 'l', { axis: 'char' | 'line'; dir: 1 | -1 }>> = {
+  h: { axis: 'char', dir: -1 },
+  l: { axis: 'char', dir: 1 },
+  j: { axis: 'line', dir: 1 },
+  k: { axis: 'line', dir: -1 },
 };
 
 const normalKey = (state: VimState, k: string, count: number, hasCount: boolean, doc: VimDocView): VimStep => {
   const { text, caretStop, head } = doc;
   const visual = state.mode === 'visual';
 
-  // The visual walk (arrows' behavior; extends the selection in visual mode).
+  // The logical walk (arrows' behavior; extends the selection in visual mode).
   if (k === 'h' || k === 'j' || k === 'k' || k === 'l') {
-    return {
-      state,
-      effects: [{ kind: 'moveVisual', direction: VISUAL_WALK[k][doc.axis], count, extend: visual }],
-      handled: true,
-    };
+    return { state, effects: [{ kind: 'moveCaret', ...WALK[k], count, extend: visual }], handled: true };
   }
   const motion = motionTarget(k, count, hasCount, doc, head);
   if (motion && MOTION_KEYS.has(k)) return motionStep(state, motion, doc);

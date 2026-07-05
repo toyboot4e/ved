@@ -197,6 +197,12 @@ export const App = (): React.JSX.Element => {
   useEffect(() => {
     const isDarwin = window.electron.process.platform === 'darwin';
     const onKeyDown = (event: KeyboardEvent): void => {
+      // A key an editor EXTENSION consumed (Vim owns Ctrl+F/B as page
+      // scrolling in normal mode) never reaches this window listener: the
+      // editor stopPropagation()s it (editor.tsx handleKeyDown). We deliberately
+      // do NOT also guard on `event.defaultPrevented` — ProseMirror
+      // preventDefaults keys it handles WITHOUT stopping propagation (Escape
+      // among them), and this listener's Escape-closes-search must still run.
       const fileCommand = matchFileCommand(event, isDarwin);
       if (fileCommand) {
         event.preventDefault();

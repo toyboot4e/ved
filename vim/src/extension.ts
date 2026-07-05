@@ -37,13 +37,7 @@ export const createVimExtension = (options: VimExtensionOptions = {}): EditorExt
 
     const docView = (): VimDocView => {
       const sel = ctx.getSelection();
-      return {
-        text: ctx.getText(),
-        anchor: sel.anchor,
-        head: sel.head,
-        caretStop: ctx.caretStop,
-        axis: ctx.writingAxis(),
-      };
+      return { text: ctx.getText(), anchor: sel.anchor, head: sel.head, caretStop: ctx.caretStop };
     };
 
     const applyEffect = (effect: VimEffect): void => {
@@ -54,8 +48,11 @@ export const createVimExtension = (options: VimExtensionOptions = {}): EditorExt
         case 'replace':
           ctx.replaceRange(effect.from, effect.to, effect.text);
           break;
-        case 'moveVisual':
-          for (let i = 0; i < effect.count; i++) ctx.moveCaretVisual(effect.direction, effect.extend);
+        case 'moveCaret':
+          for (let i = 0; i < effect.count; i++) ctx.moveCaret(effect.axis, effect.dir, effect.extend);
+          break;
+        case 'scrollPage':
+          ctx.scrollPage(effect.dir, effect.half);
           break;
         case 'command':
           ctx.runCommand(effect.id);

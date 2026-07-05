@@ -11,19 +11,12 @@ import {
 
 /** A doc view over plain text: caretStop = ±1 clamped (no rubies here — the
  *  ruby-aware stop is the editor's, injected at runtime; ruby interplay is
- *  covered by the e2e suite). Axis defaults to horizontal so the visual walk
- *  is simulatable (left/right = chars). */
-const docOf = (
-  text: string,
-  head: number,
-  anchor: number = head,
-  axis: 'horizontal' | 'vertical' = 'horizontal',
-): VimDocView => ({
+ *  covered by the e2e suite). */
+const docOf = (text: string, head: number, anchor: number = head): VimDocView => ({
   text,
   anchor,
   head,
   caretStop: (off, dir) => Math.max(0, Math.min(text.length, off + dir)),
-  axis,
 });
 
 const key = (k: string, over: Partial<VimKey> = {}): VimKey => ({
@@ -36,26 +29,20 @@ const key = (k: string, over: Partial<VimKey> = {}): VimKey => ({
 });
 
 /** Feed a key sequence, TRACKING the doc through replace/select effects (the
- *  adapter's job, simulated for linear text). moveVisual left/right simulate
- *  as ±1 characters (the horizontal axis); up/down (line steps) are recorded
- *  but move nothing — the editor measures those. */
+ *  adapter's job, simulated for linear text). moveCaret char steps ±1; line
+ *  steps are recorded but move nothing — the editor measures those. */
 const play = (
   text: string,
   head: number,
   keys: (string | VimKey)[],
   state: VimState = VIM_INITIAL,
-  axis: 'horizontal' | 'vertical' = 'horizontal',
 ): { state: VimState; text: string; head: number; anchor: number; effects: VimEffect[]; handled: boolean[] } => {
   let cur = { text, head, anchor: head };
   let st = state;
   const effects: VimEffect[] = [];
   const handled: boolean[] = [];
   for (const k of keys) {
-    const step: VimStep = vimKeydown(
-      st,
-      typeof k === 'string' ? key(k) : k,
-      docOf(cur.text, cur.head, cur.anchor, axis),
-    );
+    const step: VimStep = vimKeydown(st, typeof k === 'string' ? key(k) : k, docOf(cur.text, cur.head, cur.anchor));
     st = step.state;
     handled.push(step.handled);
     for (const e of step.effects) {
@@ -65,10 +52,9 @@ const play = (
         cur = { text: cur.text.slice(0, e.from) + e.text + cur.text.slice(e.to), head: after, anchor: after };
       } else if (e.kind === 'select') {
         cur = { ...cur, anchor: e.anchor, head: e.head };
-      } else if (e.kind === 'moveVisual' && (e.direction === 'left' || e.direction === 'right')) {
-        const d = e.direction === 'right' ? 1 : -1;
+      } else if (e.kind === 'moveCaret' && e.axis === 'char') {
         let h = cur.head;
-        for (let i = 0; i < e.count; i++) h = Math.max(0, Math.min(cur.text.length, h + d));
+        for (let i = 0; i < e.count; i++) h = Math.max(0, Math.min(cur.text.length, h + e.dir));
         cur = { ...cur, head: h, anchor: e.extend ? cur.anchor : h };
       }
     }
@@ -104,31 +90,38 @@ describe('modes', () => {
   });
 });
 
-describe('visual walk (hjkl)', () => {
-  it('horizontal: h/l walk characters, j/k emit line steps', () => {
+describe('logical walk (hjkl)', () => {
+  it('h/l are char steps, j/k line steps — axis-agnostic; the editor rotates them', () => {
     expect(play('abc', 1, ['l']).effects).toEqual([
-      { kind: 'moveVisual', direction: 'right', count: 1, extend: false },
+      { kind: 'moveCaret', axis: 'char', dir: 1, count: 1, extend: false },
     ]);
-    expect(play('abc', 1, ['h']).effects).toEqual([{ kind: 'moveVisual', direction: 'left', count: 1, extend: false }]);
+    expect(play('abc', 1, ['h']).effects).toEqual([
+      { kind: 'moveCaret', axis: 'char', dir: -1, count: 1, extend: false },
+    ]);
     expect(play('abc', 0, ['2', 'j']).effects).toEqual([
-      { kind: 'moveVisual', direction: 'down', count: 2, extend: false },
+      { kind: 'moveCaret', axis: 'line', dir: 1, count: 2, extend: false },
     ]);
-    expect(play('abc', 0, ['k']).effects).toEqual([{ kind: 'moveVisual', direction: 'up', count: 1, extend: false }]);
-  });
-
-  it('vertical: j/k are the next/previous COLUMN (spatially left/right), h/l the characters', () => {
-    const eff = (k: string) => play('abc', 0, [k], VIM_INITIAL, 'vertical').effects[0];
-    expect(eff('j')).toEqual({ kind: 'moveVisual', direction: 'left', count: 1, extend: false });
-    expect(eff('k')).toEqual({ kind: 'moveVisual', direction: 'right', count: 1, extend: false });
-    expect(eff('h')).toEqual({ kind: 'moveVisual', direction: 'up', count: 1, extend: false });
-    expect(eff('l')).toEqual({ kind: 'moveVisual', direction: 'down', count: 1, extend: false });
+    expect(play('abc', 0, ['k']).effects).toEqual([
+      { kind: 'moveCaret', axis: 'line', dir: -1, count: 1, extend: false },
+    ]);
   });
 
   it('Enter/Backspace/Space alias j/h/l; visual mode extends', () => {
-    expect(play('abc', 0, [key('Enter')]).effects[0]).toMatchObject({ direction: 'down' });
-    expect(play('abc', 1, [key('Backspace')]).effects[0]).toMatchObject({ direction: 'left' });
-    expect(play('abc', 1, [key(' ')]).effects[0]).toMatchObject({ direction: 'right' });
+    expect(play('abc', 0, [key('Enter')]).effects[0]).toMatchObject({ axis: 'line', dir: 1 });
+    expect(play('abc', 1, [key('Backspace')]).effects[0]).toMatchObject({ axis: 'char', dir: -1 });
+    expect(play('abc', 1, [key(' ')]).effects[0]).toMatchObject({ axis: 'char', dir: 1 });
     expect(play('abc', 0, ['v', 'l']).effects.at(-1)).toMatchObject({ extend: true });
+  });
+
+  it('Ctrl+f/b page-scroll (d/u half) — consumed, outranking the app bindings', () => {
+    const r = play('abc', 0, [key('f', { ctrl: true })]);
+    expect(r.handled).toEqual([true]);
+    expect(r.effects).toEqual([{ kind: 'scrollPage', dir: 1, half: false }]);
+    expect(play('abc', 0, [key('b', { ctrl: true })]).effects).toEqual([{ kind: 'scrollPage', dir: -1, half: false }]);
+    expect(play('abc', 0, [key('d', { ctrl: true })]).effects).toEqual([{ kind: 'scrollPage', dir: 1, half: true }]);
+    expect(play('abc', 0, [key('u', { ctrl: true })]).effects).toEqual([{ kind: 'scrollPage', dir: -1, half: true }]);
+    // Insert mode leaves the chords to the app (search bar &c.).
+    expect(play('abc', 0, ['i', key('f', { ctrl: true })]).handled).toEqual([true, false]);
   });
 });
 
