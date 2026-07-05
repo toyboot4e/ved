@@ -1434,6 +1434,22 @@ export const VedEditor = (props: VedEditorProps): React.JSX.Element => {
           moveCaretByLine(view, extend, dir < 0, goalInlineRef);
         }
       },
+      moveCaretVisual: (direction, extend = false) => {
+        if (view.composing) return;
+        // The arrow keys' exact rotation: the writing mode decides which
+        // spatial axis is characters and which is lines (handleKeyDown).
+        const isVert = live.current.writingMode !== WritingMode.Horizontal;
+        const key = { up: 'ArrowUp', down: 'ArrowDown', left: 'ArrowLeft', right: 'ArrowRight' }[direction];
+        const act = (isVert ? VERT_ARROWS : HORIZ_ARROWS)[key];
+        if (!act) return;
+        if (act.axis === 'char') {
+          goalInlineRef.current = null;
+          moveChar(view, policyClassRef.current, act.reverse, extend);
+        } else {
+          moveCaretByLine(view, extend, act.reverse, goalInlineRef);
+        }
+      },
+      writingAxis: () => (live.current.writingMode === WritingMode.Horizontal ? 'horizontal' : 'vertical'),
       caretStop: (offset, dir) => nextCaretOffset(serialize(view.state.doc), offset, policyClassRef.current, dir < 0),
       deleteStep: (forward) => {
         if (!view.composing) deleteChar(view, forward, policyClassRef.current);

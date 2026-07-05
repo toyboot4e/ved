@@ -67,6 +67,20 @@ const boundaryCaret = (): HTMLElement => {
   return s;
 };
 
+/** The BLOCK caret's widget form — for caret positions with NO visible
+ *  character under them (paragraph end, a collapsed ruby's boundary, an empty
+ *  line), where the inline-decoration block has nothing to tint. Same box
+ *  recipe as the boundary caret (non-degenerate for the caret/IME rect, zero
+ *  net footprint, side 0 so the caret's previous DOM sibling stays real
+ *  content — the fcitx5 IM-context rule); the painted cell is an out-of-flow
+ *  ::after (ruby.css). */
+const blockCaretBox = (): HTMLElement => {
+  const s = document.createElement('span');
+  s.className = 'vedBlockCaretBox';
+  s.setAttribute('contenteditable', 'false');
+  return s;
+};
+
 /** The newline marker (invisibles): a widget at each paragraph's content end
  *  (except the last paragraph — the plain text has no trailing `\n`). Zero
  *  INLINE size, its glyph painted by a CSS `::after` pseudo-element in the
@@ -528,35 +542,19 @@ export const buildDecorations = (
   // one caret shows and it is always glyph-sized. Plain text or an expanded
   // ruby beside the head is renderable → the native caret stays, no widget.
   if (selFrom === selTo) {
-    const hidden = (l?: Leaf): boolean => !!l && l.kind === 'delim' && isHidden(l, policy, activeLine, active);
-    // Delimiter leaves never cross a `\n`, so both neighbours of the head sit on
-    // the head's own line — scan just that line.
-    const lb = lineLeaves.find((l) => l.to === headOffset);
-    const la = lineLeaves.find((l) => l.from === headOffset);
-    const seam = hidden(lb) && hidden(la) && lb?.ruby !== la?.ruby;
-    const atStart = headOffset === 0 || text[headOffset - 1] === '\n';
-    const atEnd = headOffset === text.length || text[headOffset] === '\n';
-    const edge = (atStart && hidden(la)) || (atEnd && hidden(lb));
-    if (seam || edge) {
-      // side 0 (AFTER the position): the caret's previous DOM sibling must
-      // stay REAL content — with the widget before the caret, fcitx5's IM
-      // context anchors on a contenteditable=false span and dies after the
-      // first composed character (mozc-verified at the page-boundary line).
-      // coordsAtPos flattening at the widget is handled by the caller-side
-      // fallback (editor.tsx caretCoords), not by flipping this side.
-      delta.push(Decoration.widget(head, boundaryCaret, { key: `bcaret-${head}`, side: 0, ignoreSelection: true }));
+    const suppressNativeCaret = (): void => {
       const $h = doc.resolve(head);
       if ($h.depth >= 1) delta.push(Decoration.node($h.before(1), $h.after(1), { class: 'vedNativeCaretOff' }));
-    }
-
-    // Block caret (extension-set, extension.ts setCaretShape): tint the
-    // CHARACTER UNDER the caret and suppress the native bar on its paragraph.
-    // Only where a visible character sits under the caret in ONE leaf — plain
-    // text, or a base INTERIOR (a base-START offset maps OUTSIDE the ruby, so
-    // head+1 would span the node's open token, not the character). Everywhere
-    // else (paragraph end, a hidden-markup seam) the bar fall-back — the
-    // native caret or the boundary widget above — stays. Part of the per-move
-    // DELTA: O(line), no cached layer is touched.
+    };
+    // Block caret (extension-set, extension.ts setCaretShape) — the caret is
+    // a block at EVERY position: where a visible character sits under the
+    // caret in ONE leaf — plain text, or a base INTERIOR (a base-START offset
+    // maps OUTSIDE the ruby, so head+1 would span the node's open token, not
+    // the character) — an inline decoration tints it; everywhere else
+    // (paragraph end, a ruby boundary/seam, an empty line) a WIDGET paints an
+    // empty cell (`blockCaretBox`, which also REPLACES the boundary bar — one
+    // caret, always a block). Native bar suppressed either way. Part of the
+    // per-move DELTA: O(line), no cached layer is touched.
     if (caretShape === 'block') {
       const under = lineLeaves.find(
         (l) =>
@@ -569,8 +567,29 @@ export const buildDecorations = (
         // Within one text leaf, PM positions are contiguous with offsets, so
         // the character under `headOffset` spans exactly [head, head+1).
         delta.push(Decoration.inline(head, head + 1, { class: 'vedBlockCaret' }));
-        const $h = doc.resolve(head);
-        if ($h.depth >= 1) delta.push(Decoration.node($h.before(1), $h.after(1), { class: 'vedNativeCaretOff' }));
+      } else {
+        delta.push(Decoration.widget(head, blockCaretBox, { key: `blkcaret-${head}`, side: 0, ignoreSelection: true }));
+      }
+      suppressNativeCaret();
+    } else {
+      const hidden = (l?: Leaf): boolean => !!l && l.kind === 'delim' && isHidden(l, policy, activeLine, active);
+      // Delimiter leaves never cross a `\n`, so both neighbours of the head sit on
+      // the head's own line — scan just that line.
+      const lb = lineLeaves.find((l) => l.to === headOffset);
+      const la = lineLeaves.find((l) => l.from === headOffset);
+      const seam = hidden(lb) && hidden(la) && lb?.ruby !== la?.ruby;
+      const atStart = headOffset === 0 || text[headOffset - 1] === '\n';
+      const atEnd = headOffset === text.length || text[headOffset] === '\n';
+      const edge = (atStart && hidden(la)) || (atEnd && hidden(lb));
+      if (seam || edge) {
+        // side 0 (AFTER the position): the caret's previous DOM sibling must
+        // stay REAL content — with the widget before the caret, fcitx5's IM
+        // context anchors on a contenteditable=false span and dies after the
+        // first composed character (mozc-verified at the page-boundary line).
+        // coordsAtPos flattening at the widget is handled by the caller-side
+        // fallback (editor.tsx caretCoords), not by flipping this side.
+        delta.push(Decoration.widget(head, boundaryCaret, { key: `bcaret-${head}`, side: 0, ignoreSelection: true }));
+        suppressNativeCaret();
       }
     }
   }

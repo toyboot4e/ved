@@ -51,7 +51,10 @@ const EXTS = [myExtension];
   history), selections snap to legal caret stops.
 - **Movement is the editor's, not yours.** `moveCaret('char'|'line', dir)`
   reuses the arrow-key movers (ruby stops, vertical-mode axis rotation, goal
-  column); `caretStop(offset, dir)` answers "where would one step land"
+  column); `moveCaretVisual('up'|'down'|'left'|'right')` is the spatial form —
+  exactly the matching arrow key, with `writingAxis()` telling your keymap
+  which spatial direction carries the line axis ('left' in vertical-rl is the
+  next column). `caretStop(offset, dir)` answers "where would one step land"
   without moving. Compute word/line targets over `getText()` and land them
   with `setSelection` — it clamps and snaps for you.
 - **IME is sacrosanct, and the seam enforces it.** Your hooks never see

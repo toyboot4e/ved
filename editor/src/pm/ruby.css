@@ -363,6 +363,30 @@ ruby.rubyActive + .rubyDelimClose {
 .ProseMirror-focused .vedBlockCaret {
   background-color: var(--ved-block-caret, rgba(90, 140, 220, 0.45));
 }
+
+/* The block caret's WIDGET form — positions with no character to tint
+ * (paragraph end, ruby boundary/seam, empty line). The box copies the
+ * boundary caret's constraints exactly (see .vedBoundaryCaret: non-degenerate
+ * for the caret/IME rect, zero net layout footprint); the ::after paints an
+ * empty CELL (1em fullwidth) in the overflow, anchored line-under like the
+ * boundary bar. */
+.vedBlockCaretBox {
+  display: inline-block;
+  inline-size: 1px;
+  margin-inline-end: -1px;
+  block-size: 1em;
+  position: relative;
+  vertical-align: text-bottom;
+}
+.ProseMirror-focused .vedBlockCaretBox::after {
+  content: "";
+  position: absolute;
+  inset-block-end: 0;
+  block-size: 1em;
+  inset-inline-start: 0;
+  inline-size: 1em;
+  background: var(--ved-block-caret, rgba(90, 140, 220, 0.45));
+}
 @keyframes vedCaretBlink {
   0%,
   50% {

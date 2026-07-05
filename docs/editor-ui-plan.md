@@ -294,10 +294,14 @@ Decisions from the design review (see CONTEXT.md **view config**):
     in the decoration delta layer. `@ved/vim` is a fourth workspace package —
     pure reducer (model.ts, unit-tested) + adapter (extension.ts) — proving
     the seam suffices for third parties; the shell adds `useVimStore`, a
-    toolbar toggle, and a mode chip. Smoke: `test/e2e/vim-mode.ts`. Owed:
-    real-mozc verification of the normal-mode composition revert
-    (`mozc/vim-normal-composition`). See architecture.md "Extensions" and
-    `docs/extensions.md`.
+    toolbar toggle, and a mode chip. Round 2 filled the modal surface —
+    linewise visual `V`, `s`/`S`, `r`, `f F t T ; ,`, `J`, `X`, count
+    `gg`/`G`, visual paste — plus `moveCaretVisual`/`writingAxis` in the
+    public seam (hjkl = the arrows' visual walk; vertical j/k = next/prev
+    column) and the block caret's widget form (a block at EVERY position).
+    Smoke: `test/e2e/vim-mode.ts`. Owed: real-mozc verification of the
+    normal-mode composition revert (`mozc/vim-normal-composition`). See
+    architecture.md "Extensions" and `docs/extensions.md`.
 
 ### Phase 2 — file browser sidebar
 

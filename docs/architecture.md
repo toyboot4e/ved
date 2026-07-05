@@ -403,13 +403,19 @@ never ProseMirror values — so extensions cannot violate the identity model:
   (hidden markup, read-only reading) onto the base (`snapToGlyph`).
 - **Movement** reuses the arrow-key movers: `moveCaret('char'|'line', dir)`
   gets ruby stops, axis rotation, and the line-move goal column for free;
+  `moveCaretVisual('up'|'down'|'left'|'right')` is the SPATIAL form — exactly
+  the matching arrow key, so a modal extension walks the screen without
+  re-deriving the writing-mode rotation ('left' in vertical-rl is the next
+  column); `writingAxis()` tells a keymap which spatial roles to assign;
   `caretStop(offset, dir)` is the pure stop query.
 - **Commands**: `runCommand`/`registerCommand` against the open registry.
-- **Appearance**: `setCaretShape('bar'|'block')` — block renders as an inline
-  decoration over the character under the caret in the per-move DELTA layer
-  (native bar suppressed via `.vedNativeCaretOff`; positions with no visible
-  character fall back to the bar) — and `setContentClass` (survives the
-  policy/mode class swap).
+- **Appearance**: `setCaretShape('bar'|'block')` — the block caret covers
+  EVERY position, in the per-move DELTA layer: an inline decoration tints the
+  character under the caret; where none sits under it (paragraph end, ruby
+  boundary/seam, empty line) a widget paints an empty cell
+  (`vedBlockCaretBox`, the boundary caret's box recipe), replacing the
+  boundary bar. Native bar suppressed via `.vedNativeCaretOff` either way.
+  `setContentClass` survives the policy/mode class swap.
 
 Dispatch order on keydown: **IME guard → extension `handleKey` chain → chord
 table (command registry) → built-in handlers → PM keymaps.** The guard sits
@@ -425,11 +431,16 @@ pre-composition document at `onCompositionEnd` — an ordinary plain-string edit
 at a legal time.
 
 `@ved/vim` splits model from view: `model.ts` is a pure reducer
-(state × key × {text, selection, caretStop} → state + effects — select /
-replace / moveLine / command / breakUndo), so the modal semantics unit-test as
-plain functions; `extension.ts` merely executes effects against the context
+(state × key × {text, selection, caretStop, axis} → state + effects — select /
+replace / moveVisual / command / breakUndo), so the modal semantics unit-test
+as plain functions; `extension.ts` merely executes effects against the context
 and reports mode changes (the shell's `useVimStore` renders the toggle + mode
-chip, `desktop vim.ts`). The whole loop is pinned by `test/e2e/vim-mode.ts`.
+chip, `desktop vim.ts`). Bare h/j/k/l are the VISUAL WALK (`moveCaretVisual`):
+j/k mean next/previous line — the next/previous COLUMN in vertical writing —
+h/l the characters; as operator targets h/l stay pure character motions. The
+key set and its deviations are the `model.ts` header (linewise `V`, `s`/`S`,
+`r`, `f F t T ; ,`, `J` joins without a space — Japanese prose). The whole
+loop is pinned by `test/e2e/vim-mode.ts`.
 
 ## Layout: writing modes and the page
 

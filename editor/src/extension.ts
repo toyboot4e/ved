@@ -23,6 +23,10 @@ export type CaretShape = 'bar' | 'block';
 /** A selection in plain offsets. `head` is the moving end. */
 export type EditorSelectionOffsets = { readonly anchor: number; readonly head: number };
 
+/** A spatial direction on screen — what an arrow key means before the
+ *  writing mode decides which axis is characters and which is lines. */
+export type VisualDirection = 'up' | 'down' | 'left' | 'right';
+
 /** The capabilities handed to an extension at attach time. */
 export type EditorExtensionContext = {
   /** The exact plain text (the document IS this string). */
@@ -43,6 +47,15 @@ export type EditorExtensionContext = {
    *  column apply. `dir` −1 is backward (previous character / previous
    *  line). */
   readonly moveCaret: (axis: 'char' | 'line', dir: 1 | -1, extend?: boolean) => void;
+  /** Move the caret one step in a SPATIAL direction — exactly what the
+   *  matching arrow key does: the writing mode decides which axis is
+   *  characters and which is lines ('left' in vertical-rl is the NEXT
+   *  column, 'down' the next character). A modal extension walking the
+   *  screen maps its keys here instead of re-deriving the rotation. */
+  readonly moveCaretVisual: (direction: VisualDirection, extend?: boolean) => void;
+  /** The current writing AXIS ('vertical' covers every vertical-rl mode) —
+   *  what a keymap needs to assign spatial roles to its movement keys. */
+  readonly writingAxis: () => 'horizontal' | 'vertical';
   /** The next legal caret stop from `offset` (pure query — the editor's
    *  character-movement rule: collapsed ruby markup and readings are skipped,
    *  base interiors step char by char). Returns `offset` at a document
