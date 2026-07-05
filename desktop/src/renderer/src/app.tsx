@@ -26,6 +26,7 @@ import { useInvisiblesStore } from './invisibles';
 import { closeSearch, matchSearchCommand, useSearchStore } from './search';
 import { useThemeStore } from './theme';
 import { useViewConfigStore, viewConfigToCss } from './view-config';
+import { NO_EXTENSIONS, useVimStore, VIM_EXTENSIONS } from './vim';
 
 const INITIAL_TEXT = '|ルビ(ruby)';
 
@@ -35,6 +36,7 @@ export const App = (): React.JSX.Element => {
   const viewConfig = useViewConfigStore((s) => s.config);
   const invisibles = useInvisiblesStore((s) => s.invisibles);
   const theme = useThemeStore((s) => s.theme);
+  const vimEnabled = useVimStore((s) => s.enabled);
 
   // Apply the theme by setting `data-theme` on <html>; main.scss resolves the
   // `--ved-*` token palette from it ('system' follows the OS via a media query).
@@ -283,6 +285,7 @@ export const App = (): React.JSX.Element => {
         invisibles={invisibles}
         searchHighlights={searchHighlights}
         onSearchOps={handleSearchOps}
+          extensions={vimEnabled ? VIM_EXTENSIONS : NO_EXTENSIONS}
       />
       <div className={styles.footer}>
         <p id='counter' className={styles.footerCounter}></p>

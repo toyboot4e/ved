@@ -65,7 +65,7 @@
   // anyway, and @ved/editor's `exports` blocks deep imports of its internals.
   "overrides": [
     {
-      "includes": ["desktop/**/*.{ts,tsx}", "web/**/*.{ts,tsx}"],
+      "includes": ["desktop/**/*.{ts,tsx}", "vim/**/*.{ts,tsx}", "web/**/*.{ts,tsx}"],
       "linter": {
         "rules": {
           "style": {

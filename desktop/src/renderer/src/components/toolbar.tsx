@@ -4,6 +4,7 @@ import { HorizontalIcon, VerticalColumnsIcon, VerticalIcon, VerticalRowsIcon } f
 import { InvisiblesControls } from './invisibles-controls';
 import { ThemeToggle } from './theme-toggle';
 import { ViewConfigControls } from './view-config-controls';
+import { VimToggle } from './vim-toggle';
 
 /** Properties of {@link Toolbar}. */
 export type ToolbarProps = {
@@ -109,6 +110,7 @@ export const Toolbar = ({
       </fieldset>
       <InvisiblesControls />
       <ViewConfigControls writingMode={writingMode} />
+      <VimToggle />
       <ThemeToggle />
     </div>
   );

@@ -131,6 +131,19 @@ that will persist both).
 _Avoid_: dark mode (one theme, not the axis), skin, color scheme (the CSS
 media feature, not our store).
 
+**Extension** (editor):
+Third-party code driving the editor through the ONE public seam — the
+`extensions` prop and `EditorExtensionContext` (plain strings + plain offsets,
+never ProseMirror values). Registers **commands**, intercepts non-IME keys,
+edits via the exact plain-string paths. `@ved/vim` is the reference extension.
+_Avoid_: plugin (ProseMirror `Plugin` is an editor-core internal — an
+extension never sees one), addon.
+
+**Vim mode** (the toggle):
+Whether the `@ved/vim` extension is attached (toolbar toggle, `useVimStore`).
+Its inner state is a **Vim mode** proper: `normal` / `insert` / `visual`.
+Always "Vim mode" with the qualifier — see the "mode" ambiguity flag.
+
 **Search**:
 The find/replace facility over the active buffer's plain string (Ctrl+F /
 Ctrl+R). A **match** is a plain-offset range; highlights are view-only
@@ -146,15 +159,17 @@ _Avoid_: find (prose only — "search" in identifiers), occurrence (use
 A workspace unit of the ved monorepo (a `package.json` under the pnpm
 workspace) with its own dependencies and boundary. The canonical unit of
 the split; "ved" (the **project**) is the whole monorepo, never one package.
-The three packages are `@ved/editor` (the **editor core** — the sole
-prosemirror consumer), `@ved/desktop` (the Electron product shell), and
+The four packages are `@ved/editor` (the **editor core** — the sole
+prosemirror consumer), `@ved/vim` (Vim-like modal editing, an editor
+**extension**), `@ved/desktop` (the Electron product shell), and
 `@ved/web` (the preview-site shell). Named by role/platform, never by tech.
 _Avoid_: project (means the whole), module (means a single file), subproject.
 
 ## Flagged ambiguities
 
-- **"Mode"** is overloaded: always qualify as **writing mode** (layout) or
-  **appear policy** (ruby rendering). Bare "mode" is banned.
+- **"Mode"** is overloaded: always qualify as **writing mode** (layout),
+  **appear policy** (ruby rendering), or **Vim mode** (normal/insert/visual).
+  Bare "mode" is banned.
 - **"Ruby"** names the whole construct; the gloss alone is the **reading** /
   **rt**, never "the ruby."
 

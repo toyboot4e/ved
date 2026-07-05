@@ -1,6 +1,7 @@
 packages:
   - editor
   - desktop
+  - vim
   - web
 
 # electron-vite resolves `electron/package.json` from its own location in the
@@ -15,11 +16,13 @@ publicHoistPattern:
 # electron@42 no longer ships a postinstall at all — its binary download
 # runs from this project's own postinstall instead. The others work without
 # their build scripts (platform binaries ship as optional dependencies;
-# electron-winstaller is Windows-only).
+# electron-winstaller is Windows-only). node-pty compiles its native addon
+# in its install script (no prebuilt binaries), so it must run.
 allowBuilds:
   electron: true
   esbuild: false
   '@parcel/watcher': false
   electron-winstaller: false
+  node-pty: true
 minimumReleaseAgeExclude:
   - '@types/node@25.9.3'

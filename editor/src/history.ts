@@ -47,6 +47,13 @@ export class PlainTextHistory {
     this.lastPushTime = now;
   }
 
+  /** End the current batch: the next push starts a fresh entry even inside
+   *  the debounce window. A modal extension calls this at mode boundaries so
+   *  e.g. one insert-mode session undoes as its own unit. */
+  breakBatch(): void {
+    this.lastPushTime = 0;
+  }
+
   undo(): HistoryEntry | null {
     if (this.pointer <= 0) return null;
     // biome-ignore lint/style/noNonNullAssertion: bounds checked

@@ -24,6 +24,7 @@
 // caret-move-perf and click-perf assert caret moves cause none.
 import type { Node as PMNode } from 'prosemirror-model';
 import { Decoration, DecorationSet } from 'prosemirror-view';
+import type { CaretShape } from '../extension';
 import { type Appear, activeRuby, docLeaves, isHidden, type Leaf, lineOf } from './leaves';
 import { buildPosMap, posToOffset, serialize } from './model';
 
@@ -384,6 +385,7 @@ export const buildDecorations = (
   selTo: number = head,
   invisibles: Invisibles = NO_INVISIBLES,
   search: SearchHighlights | null = null,
+  caretShape: CaretShape = 'bar',
 ): DecorationSet => {
   if (!parseCache || parseCache.doc !== doc) parseCache = parseDoc(doc);
   const { text, leavesByLine, allRubies } = parseCache;
@@ -545,6 +547,31 @@ export const buildDecorations = (
       delta.push(Decoration.widget(head, boundaryCaret, { key: `bcaret-${head}`, side: 0, ignoreSelection: true }));
       const $h = doc.resolve(head);
       if ($h.depth >= 1) delta.push(Decoration.node($h.before(1), $h.after(1), { class: 'vedNativeCaretOff' }));
+    }
+
+    // Block caret (extension-set, extension.ts setCaretShape): tint the
+    // CHARACTER UNDER the caret and suppress the native bar on its paragraph.
+    // Only where a visible character sits under the caret in ONE leaf — plain
+    // text, or a base INTERIOR (a base-START offset maps OUTSIDE the ruby, so
+    // head+1 would span the node's open token, not the character). Everywhere
+    // else (paragraph end, a hidden-markup seam) the bar fall-back — the
+    // native caret or the boundary widget above — stays. Part of the per-move
+    // DELTA: O(line), no cached layer is touched.
+    if (caretShape === 'block') {
+      const under = lineLeaves.find(
+        (l) =>
+          headOffset >= l.from &&
+          headOffset < l.to &&
+          text[headOffset] !== '\n' &&
+          (l.kind === 'plain' || (l.kind === 'body' && headOffset > l.from)),
+      );
+      if (under) {
+        // Within one text leaf, PM positions are contiguous with offsets, so
+        // the character under `headOffset` spans exactly [head, head+1).
+        delta.push(Decoration.inline(head, head + 1, { class: 'vedBlockCaret' }));
+        const $h = doc.resolve(head);
+        if ($h.depth >= 1) delta.push(Decoration.node($h.before(1), $h.after(1), { class: 'vedNativeCaretOff' }));
+      }
     }
   }
 

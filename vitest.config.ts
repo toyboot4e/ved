@@ -22,6 +22,14 @@ export default defineConfig({
           environment: 'node',
         },
       },
+      {
+        test: {
+          name: 'vim',
+          root: './vim',
+          include: ['src/**/*.test.ts'],
+          environment: 'node',
+        },
+      },
     ],
   },
 });

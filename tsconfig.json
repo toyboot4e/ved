@@ -4,6 +4,7 @@
     { "path": "./editor" },
     { "path": "./desktop/tsconfig.node.json" },
     { "path": "./desktop/tsconfig.web.json" },
+    { "path": "./vim" },
     { "path": "./web" }
   ]
 }

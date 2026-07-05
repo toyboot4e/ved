@@ -353,6 +353,16 @@ ruby.rubyActive + .rubyDelimClose {
 .vedNativeCaretOff {
   caret-color: transparent;
 }
+
+/* Block caret (decorations.ts, extension-set via setCaretShape): a modal
+ * extension's normal-mode cursor — a steady tint over the CHARACTER UNDER the
+ * caret (an inline decoration, so no layout change; the native bar is
+ * suppressed on the paragraph via .vedNativeCaretOff). Steady, not blinking:
+ * a background can't reuse the ::after blink without covering the glyph.
+ * Shown only while the editor is focused, like the native caret. */
+.ProseMirror-focused .vedBlockCaret {
+  background-color: var(--ved-block-caret, rgba(90, 140, 220, 0.45));
+}
 @keyframes vedCaretBlink {
   0%,
   50% {

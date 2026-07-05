@@ -284,6 +284,21 @@ Decisions from the design review (see CONTEXT.md **view config**):
     `view.composing`. Smoke: `test/e2e/search-replace.ts`. See
     architecture.md "Search and replace".
 
+- [x] **Step V.5 — extension seam + @ved/vim.** *(done 2026-07-05)*
+  - User-requested. The `commands.ts` layer opened into a real registry
+    (`CORE_COMMANDS` + extension-registered ids; undo/redo migrated in from
+    hardcoded keys) and a new `extensions` prop / `EditorExtensionContext`
+    seam (extension.ts): plain strings + offsets only, edits through
+    `plainInsertTr`, movement through the arrow-key movers, IME safety
+    enforced by the seam itself. Block-caret shape (`setCaretShape`) renders
+    in the decoration delta layer. `@ved/vim` is a fourth workspace package —
+    pure reducer (model.ts, unit-tested) + adapter (extension.ts) — proving
+    the seam suffices for third parties; the shell adds `useVimStore`, a
+    toolbar toggle, and a mode chip. Smoke: `test/e2e/vim-mode.ts`. Owed:
+    real-mozc verification of the normal-mode composition revert
+    (`mozc/vim-normal-composition`). See architecture.md "Extensions" and
+    `docs/extensions.md`.
+
 ### Phase 2 — file browser sidebar
 
 A **workspace root** concept ("open folder…", persisted). Hand-rolled lazy

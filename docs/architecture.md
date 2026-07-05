@@ -63,6 +63,10 @@ editor/                @ved/editor — the editor core (the only prosemirror con
   src/editor.tsx         VedEditor: EditorView wiring — beforeinput/keys, dispatchTransaction
                          (apply → ruby repair → history push + onTextChange), caret reveal,
                          drag selection, React shell (writing modes, scroll-keep, tab snapshot/restore)
+  src/commands.ts        commands: open namespaced ids → EditorCommand semantics
+                         (CORE_COMMANDS) → Chord bindings (DEFAULT_KEYBINDINGS); a leaf module
+  src/extension.ts       the extension seam (types): EditorExtension /
+                         EditorExtensionContext — backend-neutral, plain strings + offsets
   src/parse.ts           plaintext → format spans; the only syntax knowledge (data-driven
                          delimiter tables RUBY_FRONTS + RUBY_PAIRS)
   src/history.ts         PlainTextHistory (backend-neutral; unit-tested)
@@ -84,6 +88,11 @@ editor/                @ved/editor — the editor core (the only prosemirror con
     page-gap.ts          VerticalRows page-gap widgets; suffix-incremental measure
     drag-select.ts       geometric drag selection across read-only ruby bases (unit-tested)
     ruby.css             global ruby/syntax styles (decorations emit literal class names)
+vim/                   @ved/vim — Vim-like modal editing, an editor EXTENSION built ONLY on
+                         @ved/editor's public entry (the proof the seam suffices)
+  src/model.ts           the Vim MODEL: a pure (state, key, doc view) → (state, effects)
+                         reducer — no editor, no DOM (unit-tested as plain functions)
+  src/extension.ts       the Vim VIEW/adapter: maps reducer effects onto the extension context
 desktop/               @ved/desktop — the Electron product
   src/shared/ipc.ts      typed IPC contract (channels + VedApi); renderer sees window.ved
   src/main/              index.ts (Wayland/IME Chromium switches), file-service.ts (dialogs +
@@ -149,9 +158,13 @@ switching policies never touches the document.
 Ctrl+/ toggles ByCharacter ⇄ Rich: from ByCharacter to Rich, from anywhere
 else to ByCharacter. (Cmd on macOS. Letter chords are file shortcuts —
 Ctrl+O/S/Shift+S — handled at the app level, `app.tsx`.) Editor shortcuts live
-in a command layer, `commands.ts`: stable command ids, pure resolvers, and a
-swappable Chord → command table (`DEFAULT_KEYBINDINGS`, overridable via the
-editor's `keybindings` prop) — the seam for user configuration and plugins.
+in a command layer, `commands.ts`: an OPEN, namespaced command vocabulary
+(`CORE_COMMANDS` seeds the registry — the appear policies plus
+`history.undo`/`history.redo`; extensions register more) and a swappable
+Chord → id table (`DEFAULT_KEYBINDINGS`, overridable via the editor's
+`keybindings` prop — the override REPLACES the whole table, undo/redo
+included). Commands run against `EditorCommandContext` at dispatch time; the
+module stays a leaf.
 
 - **Collapsed** (Rich, or any inactive ruby): the base shows with the
   read-only `<rt>` annotation; the delimiters are not rendered; the reading is
@@ -371,6 +384,52 @@ with a 500 ms debounce; undo/redo rebuilds via `docFromText` + `offsetToPos`.
 undo restores the caret to wherever the *earlier* edit left it. A debounced
 push replaces the newest entry, keeping the batch's original `cursorBefore`;
 undo truncates the redo tail. (`history.test.ts`, `undo-cursor-restore.ts`.)
+`breakBatch()` ends the current batch on demand — a modal extension calls it
+at mode boundaries so an insert-mode session undoes as one unit.
+
+## Extensions
+
+`extension.ts` is HOW third-party code drives the editor (authoring guide:
+`docs/extensions.md`). An extension is `{ id, attach(ctx) → hooks }`, listed in
+the editor's `extensions` prop (stable array identity; attach/detach reconciles
+on identity change, deferred to compositionend while composing). Everything
+crossing the seam is **backend-neutral** — plain strings and plain offsets,
+never ProseMirror values — so extensions cannot violate the identity model:
+
+- **Edits** route through the exact plain-string paths: `replaceRange` is a
+  select + `plainInsertTr` (canonical rebuild, repair, one history entry).
+- **Selection** (`setSelection`) clamps, keeps any legal caret stop
+  (`caretStops` — a ruby's outer boundary is one), and snaps a homeless offset
+  (hidden markup, read-only reading) onto the base (`snapToGlyph`).
+- **Movement** reuses the arrow-key movers: `moveCaret('char'|'line', dir)`
+  gets ruby stops, axis rotation, and the line-move goal column for free;
+  `caretStop(offset, dir)` is the pure stop query.
+- **Commands**: `runCommand`/`registerCommand` against the open registry.
+- **Appearance**: `setCaretShape('bar'|'block')` — block renders as an inline
+  decoration over the character under the caret in the per-move DELTA layer
+  (native bar suppressed via `.vedNativeCaretOff`; positions with no visible
+  character fall back to the bar) — and `setContentClass` (survives the
+  policy/mode class swap).
+
+Dispatch order on keydown: **IME guard → extension `handleKey` chain → chord
+table (command registry) → built-in handlers → PM keymaps.** The guard sits
+first, so composing input (`isComposing`/keyCode 229) NEVER reaches an
+extension; an extension returns false for anything it doesn't bind so app
+chords (Ctrl+O/S…) keep bubbling. `handleTextInput` can block a non-IME
+`beforeinput` insertion.
+
+**IME policy for modal extensions** (mozc verification owed —
+`mozc/vim-normal-composition`): a composition is never disturbed. Outside
+insert mode @ved/vim lets a composition run to completion, then restores the
+pre-composition document at `onCompositionEnd` — an ordinary plain-string edit
+at a legal time.
+
+`@ved/vim` splits model from view: `model.ts` is a pure reducer
+(state × key × {text, selection, caretStop} → state + effects — select /
+replace / moveLine / command / breakUndo), so the modal semantics unit-test as
+plain functions; `extension.ts` merely executes effects against the context
+and reports mode changes (the shell's `useVimStore` renders the toggle + mode
+chip, `desktop vim.ts`). The whole loop is pinned by `test/e2e/vim-mode.ts`.
 
 ## Layout: writing modes and the page
 
