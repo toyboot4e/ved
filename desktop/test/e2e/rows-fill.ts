@@ -18,8 +18,10 @@ const geom = () =>
     const cs = getComputedStyle(root);
     return {
       windowW: window.innerWidth,
+      windowH: window.innerHeight,
       rootW: root.getBoundingClientRect().width,
       scrollerW: scroller.clientWidth,
+      scrollerH: scroller.getBoundingClientRect().height,
       contentRight: content.getBoundingClientRect().right,
       // One page-fixed root width: page-row + rt allowance + horizontal padding.
       editorWidth: Number.parseFloat(cs.getPropertyValue('width')),
@@ -58,12 +60,35 @@ try {
   assert.ok(text?.includes('あ'), 'typing works in the widened rows viewport');
   step('editing works in the widened viewport');
 
-  // Leaving rows restores the page-fixed widths (no sticky stretch).
+  // Returning to VerticalColumns restores the page-fixed width (rows' stretch
+  // is not sticky). Only continuous Vertical fills the pane width; the paged
+  // modes and Horizontal keep restricted widths.
+  await clickWritingMode(page, 'Vertical Columns');
+  await page.waitForTimeout(300);
+  const back = await geom();
+  assert.ok(back.rootW < 900, `VerticalColumns root is page-fixed again: ${back.rootW} < 900`);
+  step('returning to VerticalColumns restores the page-fixed width');
+
+  // Horizontal keeps a RESTRICTED (page-fixed, centered) width but GROWS in
+  // height: its width is the fixed line measure; the scroller fills the pane
+  // height (far taller than the one-page box it used to hug).
   await clickWritingMode(page, 'Horizontal');
   await page.waitForTimeout(300);
   const horiz = await geom();
-  assert.ok(horiz.rootW < 900, `Horizontal root is page-fixed again: ${horiz.rootW} < 900`);
-  step('leaving VerticalRows restores the page-fixed width');
+  assert.ok(horiz.rootW < 900, `Horizontal width stays page-fixed: ${horiz.rootW} < 900`);
+  assert.ok(horiz.windowW - horiz.rootW > 300, `Horizontal is a centered column, not full width: ${horiz.rootW}`);
+  assert.ok(
+    horiz.scrollerH > horiz.windowH * 0.6,
+    `Horizontal scroller grows to fill the pane height: ${horiz.scrollerH} > 0.6 × ${horiz.windowH}`,
+  );
+  step('Horizontal keeps a restricted width and grows in height');
+
+  // Vertical (continuous) fills the pane WIDTH, like rows.
+  await clickWritingMode(page, 'Vertical');
+  await page.waitForTimeout(300);
+  const vert = await geom();
+  assert.ok(Math.abs(vert.rootW - vert.windowW) < 2, `Vertical fills the pane width: ${vert.rootW} ≈ ${vert.windowW}`);
+  step('continuous Vertical fills the pane width');
 } catch (e) {
   fail(e instanceof Error ? e.message : String(e));
 } finally {

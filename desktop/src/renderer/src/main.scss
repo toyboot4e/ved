@@ -19,6 +19,9 @@
   --ved-fg: #222222;
   --ved-fg-muted: #555555;
   --ved-chrome-bg: #ececec;
+  // Side/bottom panels (file browser): quieter than the chrome gray so the
+  // editor page stays the visual anchor — near-white with a paper warmth.
+  --ved-panel-bg: #faf9f7;
   --ved-hover-bg: #d8d8d8;
   --ved-border: #808080;
   --ved-border-faint: #d0d0d0;
@@ -46,6 +49,7 @@
   --ved-fg: #e6e6e6;
   --ved-fg-muted: #a0a0a0;
   --ved-chrome-bg: #2a2a2a;
+  --ved-panel-bg: #232323;
   --ved-hover-bg: #3a3a3a;
   --ved-border: #3a3a3a;
   --ved-border-faint: #333333;

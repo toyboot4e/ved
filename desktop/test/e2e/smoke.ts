@@ -97,8 +97,8 @@ try {
   // --- File IPC layer (window.ved; dialogs stubbed via env vars) ---
   const opened = await page.evaluate(() => window.ved.openFile());
   assert.equal(opened?.path, openPath);
-  assert.equal(opened?.text, '|空(そら)は青い');
-  step('ved.openFile reads through the dialog stub');
+  assert.deepEqual(opened?.read, { kind: 'text', text: '|空(そら)は青い' });
+  step('ved.openFile reads (content-sniffed) through the dialog stub');
 
   const savePath = join(tmp, 'save.txt');
   await page.evaluate((args) => window.ved.saveFile(args.path, args.text), { path: savePath, text: '保存した\n' });

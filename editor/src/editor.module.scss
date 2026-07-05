@@ -150,6 +150,14 @@ $footer-height: $font-size + $pad-y * 2;
   &.rowsMode {
     width: 100%;
   }
+
+  // Continuous modes (Horizontal, Vertical) fill the pane instead of sitting
+  // as a fixed centered column — their free axis uses the space, exactly like
+  // VerticalRows. Only VerticalColumns keeps its fixed centered page width.
+  // (The scroller stretches to match: .editor.fillMode below.)
+  &.fillMode {
+    width: 100%;
+  }
 }
 
 .header {
@@ -307,6 +315,21 @@ $footer-height: $font-size + $pad-y * 2;
   &:not(.vertMode) {
     overflow-y: auto;
   }
+
+  // Continuous Vertical fills the pane width (its horizontal scroll shows more
+  // columns). The scroller stretches to match .root.fillMode.
+  &.fillMode {
+    width: auto;
+    align-self: stretch;
+  }
+
+  // Horizontal: the width stays the fixed line measure (centered), but the
+  // scroller GROWS to fill the pane height instead of hugging one page box —
+  // more lines are visible and overflow scrolls inside (.editorContent.growMode
+  // fills the taller frame).
+  &.growMode {
+    flex: 1 1 auto;
+  }
 }
 
 .editorContent {
@@ -328,6 +351,15 @@ $footer-height: $font-size + $pad-y * 2;
     box-sizing: border-box;
     padding: $pad-y $pad-x;
     padding-inline-start: calc(#{$pad-x} + #{$line-gutter}); // line-number gutter
+  }
+
+  // Horizontal fills the grown scroller (.editor.growMode) rather than one
+  // fixed page box: the frame is as tall as the pane, text flows from the top,
+  // and overflow scrolls. `min-height: 100%` fills a short document; `height:
+  // auto` lets a long one grow past a page.
+  &.growMode {
+    height: auto;
+    min-height: 100%;
   }
 
   > * {

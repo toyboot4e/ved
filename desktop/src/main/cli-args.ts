@@ -3,7 +3,7 @@
 // under vitest (the glue lives in `file-service.ts`).
 import { resolve } from 'node:path';
 import type { CliFile } from '../shared/ipc';
-import { readTextFile } from './fs-io';
+import { readTextFileChecked } from './fs-io';
 
 /**
  * The file paths named on the command line, resolved against `cwd`.
@@ -18,15 +18,19 @@ export const cliFilePaths = (argv: readonly string[], isPackaged: boolean, cwd: 
 };
 
 /**
- * Reads each path as UTF-8. A path that does not exist yet becomes a "new
- * file" entry with empty text (save creates it); an unreadable path (a
- * directory, no permission) is skipped with a warning.
+ * Reads each path as UTF-8, content-sniffed (`readTextFileChecked`): a
+ * binary file is skipped with a warning — the same refusal as every other
+ * open path. A path that does not exist yet becomes a "new file" entry with
+ * empty text (save creates it); an unreadable path (a directory, no
+ * permission) is skipped with a warning.
  */
 export const readCliFiles = async (paths: readonly string[]): Promise<CliFile[]> => {
   const files: CliFile[] = [];
   for (const path of paths) {
     try {
-      files.push({ path, text: await readTextFile(path) });
+      const read = await readTextFileChecked(path);
+      if (read.kind === 'text') files.push({ path, text: read.text });
+      else console.warn(`ved: skipping command-line argument ${path}: not a text file`);
     } catch (error) {
       if ((error as NodeJS.ErrnoException).code === 'ENOENT') files.push({ path, text: '' });
       else console.warn(`ved: skipping command-line argument ${path}: ${String(error)}`);

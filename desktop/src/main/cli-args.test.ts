@@ -44,6 +44,14 @@ describe('readCliFiles', () => {
     ]);
   });
 
+  it('skips binary content (sniffed, not extension-judged)', async () => {
+    const bin = join(tmp, 'movie.txt'); // a lying extension
+    const text = join(tmp, 'b.txt');
+    await writeFile(bin, Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x00, 0x01]));
+    await writeFile(text, 'BBB', 'utf-8');
+    expect(await readCliFiles([bin, text])).toEqual([{ path: text, text: 'BBB' }]);
+  });
+
   it('skips unreadable paths (a directory)', async () => {
     const dir = join(tmp, 'sub');
     await mkdir(dir);

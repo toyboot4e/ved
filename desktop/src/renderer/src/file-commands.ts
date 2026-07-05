@@ -73,6 +73,28 @@ export const matchTabCommand = (event: ChordEvent, isDarwin: boolean): TabComman
   return null;
 };
 
+export type ViewCommand = 'toggleSidebar' | 'toggleShell';
+
+/**
+ * Maps a keydown to a view command (Ctrl+B sidebar, Ctrl+` shell panel;
+ * Cmd on macOS). `null` when the event is not ours.
+ */
+export const matchViewCommand = (event: ChordEvent, isDarwin: boolean): ViewCommand | null => {
+  if (event.isComposing || event.keyCode === 229) return null;
+  const mod = isDarwin ? event.metaKey : event.ctrlKey;
+  if (!mod || event.altKey || event.shiftKey) return null;
+  const key = event.key.toLowerCase();
+  if (key === 'b') return 'toggleSidebar';
+  if (key === '`') return 'toggleShell';
+  return null;
+};
+
+/** The parent directory of a path; `undefined` when there is none. */
+export const dirName = (path: string): string | undefined => {
+  const m = path.match(/^(.*)[/\\][^/\\]+$/);
+  return m ? m[1] || '/' : undefined;
+};
+
 /** The display name of a document: its base name, or a placeholder when untitled. */
 export const fileName = (path: string | null): string => path?.split(/[/\\]/).at(-1) ?? '無題';
 

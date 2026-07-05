@@ -1,7 +1,7 @@
-// The search & replace bar (search-bar.tsx): one chrome row between the tab
-// bar and the editor. Colors come from the `--ved-*` theme tokens; the native
-// inputs need explicit colors (form controls don't inherit `color` — see
-// architecture.md "Theming").
+// The search & replace bar (search-bar.tsx): a full-width chrome row docked at
+// the bottom of the editor area (above the shell panel). Colors come from the
+// `--ved-*` theme tokens; the native inputs need explicit colors (form
+// controls don't inherit `color` — see architecture.md "Theming").
 .searchBar {
   flex: none;
   display: flex;
@@ -9,7 +9,8 @@
   gap: 6px;
   padding: 4px 8px;
   background: var(--ved-chrome-bg);
-  border-block-end: 1px solid var(--ved-border-faint);
+  // At the window bottom now, so the divider sits on top.
+  border-block-start: 1px solid var(--ved-border-faint);
 }
 
 .input {

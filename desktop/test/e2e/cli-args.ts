@@ -17,11 +17,13 @@ const root = new URL('../../', import.meta.url).pathname;
 const tmp = await mkdtemp(join(tmpdir(), 'ved-e2e-'));
 const existing = join(tmp, 'a.txt');
 const missing = join(tmp, 'new.txt');
+const binary = join(tmp, 'bin.txt'); // binary CONTENT behind a lying extension
 await writeFile(existing, 'AAA', 'utf-8');
+await writeFile(binary, Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x00, 0x01, 0x02]));
 
 const app = await _electron.launch({
   executablePath: electronPath as unknown as string,
-  args: [`${root}out/main/index.js`, existing, missing],
+  args: [`${root}out/main/index.js`, existing, missing, binary],
   env: {
     ...(process.env as Record<string, string>),
     // Same hygiene as launchVed: IME detached, window hidden, isolated profile
@@ -41,10 +43,11 @@ const editorText = () =>
   page.evaluate(() => document.getElementById('editor-content')?.textContent?.replaceAll('﻿', ''));
 
 try {
-  // The CLI files arrive over IPC after mount — wait for the tabs to settle
+  // The CLI files arrive over IPC after mount — wait for the tabs to settle.
+  // The binary argument is content-sniffed and skipped: exactly two tabs.
   await page.waitForFunction(() => document.querySelectorAll('[role=tab]').length === 2);
   assert.deepEqual(await tabTitles(), ['a.txt', 'new.txt']);
-  step('a tab per argument; the untitled sample tab is dropped');
+  step('a tab per TEXT argument; the untitled sample tab and the binary argument are dropped');
 
   assert.equal(await editorText(), 'AAA');
   step('the first argument is the active tab, showing its file content');

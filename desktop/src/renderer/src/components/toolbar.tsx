@@ -1,5 +1,6 @@
 import { AppearPolicy, editorStyles as styles, WritingMode } from '@ved/editor';
 import type React from 'react';
+import { useWorkspaceStore } from '../workspace';
 import { HorizontalIcon, VerticalColumnsIcon, VerticalIcon, VerticalRowsIcon } from './icons/WritingModeIcons';
 import { InvisiblesControls } from './invisibles-controls';
 import { ThemeToggle } from './theme-toggle';
@@ -67,8 +68,22 @@ export const Toolbar = ({
   appearPolicy,
   setAppearPolicy,
 }: ToolbarProps): React.JSX.Element => {
+  const sidebarOpen = useWorkspaceStore((s) => s.sidebarOpen);
+  const toggleSidebar = useWorkspaceStore((s) => s.toggleSidebar);
   return (
     <div className={styles.toolbar}>
+      <fieldset className={styles.toolbarGroup} aria-label='Sidebar' onMouseDown={keepEditorFocus}>
+        <button
+          type='button'
+          className={styles.toolbarButton}
+          aria-pressed={sidebarOpen}
+          aria-label='Toggle sidebar'
+          title='File browser sidebar (Ctrl+B)'
+          onClick={toggleSidebar}
+        >
+          ☰
+        </button>
+      </fieldset>
       <fieldset className={styles.toolbarGroup} aria-label='Writing mode' onMouseDown={keepEditorFocus}>
         <span className={styles.toolbarGroupLabel} aria-hidden='true' title='Text direction and layout'>
           Writing

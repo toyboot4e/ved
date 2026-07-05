@@ -1,0 +1,39 @@
+// App shell: sidebar | editor column (editor UI plan, Phase 2 "Shell layout").
+// The editor column keeps its own fixed page-geometry width and centers in
+// the remaining space, exactly as it did against the window before.
+.shell {
+  display: flex;
+  width: 100%;
+  height: 100%;
+}
+
+.main {
+  flex: 1 1 0;
+  min-width: 0;
+  height: 100%;
+  display: flex;
+  flex-direction: column;
+}
+
+.editorPane {
+  flex: 1 1 0;
+  min-height: 0;
+  // A page wider than the pane (narrow window / wide sidebar) stays reachable
+  overflow-x: auto;
+}
+
+// Transient app notice (e.g. "not a text file" refusals from any open path)
+.notice {
+  position: fixed;
+  left: 12px;
+  bottom: 12px;
+  z-index: 20;
+  margin: 0;
+  padding: 7px 14px;
+  font-size: 12px;
+  border: 1px solid var(--ved-border-faint, #d0d0d0);
+  border-radius: 6px;
+  background: var(--ved-chrome-bg, #ececec);
+  color: var(--ved-fg, #222);
+  box-shadow: 0 2px 10px rgba(0, 0, 0, 0.15);
+}

@@ -4,6 +4,7 @@ import { app, BrowserWindow, Menu, shell } from 'electron';
 import icon from '../../resources/icon.png?asset';
 import { installCloseGuard, registerCloseGuard } from './close-guard';
 import { registerFileService } from './file-service';
+import { killAllShells, registerShellService } from './shell-service';
 
 // e2e seam: an isolated per-run profile. Parallel smoke drivers would race
 // (and pollute) the shared userData — session restore, Chromium caches.
@@ -119,6 +120,7 @@ app.whenReady().then(() => {
   });
 
   registerFileService();
+  registerShellService();
   registerCloseGuard();
 
   createWindow();
@@ -129,6 +131,10 @@ app.whenReady().then(() => {
     if (BrowserWindow.getAllWindows().length === 0) createWindow();
   });
 });
+
+// Integrated-shell PTYs are children of THIS process — kill them on quit so
+// no shell outlives the window.
+app.on('will-quit', killAllShells);
 
 // Quit when all windows are closed, except on macOS. There, it's common
 // for applications and their menu bar to stay active until the user quits

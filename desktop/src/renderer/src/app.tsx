@@ -9,14 +9,20 @@ import {
 } from '@ved/editor';
 import { clsx } from 'clsx';
 import { useCallback, useEffect, useMemo, useReducer, useRef, useState } from 'react';
+import appStyles from './app.module.scss';
 import { activeBuffer, type BufferId, buffersReducer, initBuffers, isDirty, someInactiveDirty } from './buffers';
 import { SearchBar, type SearchFocusRequest } from './components/search-bar';
+import { ShellPanel } from './components/shell-panel';
+import { Sidebar } from './components/sidebar';
 import { TabBar } from './components/tab-bar';
 import { Toolbar } from './components/toolbar';
 import {
+  dirName,
   type FileCommand,
+  fileName,
   matchFileCommand,
   matchTabCommand,
+  matchViewCommand,
   saveOrSaveAs,
   saveViaDialog,
   type TabCommand,
@@ -24,9 +30,11 @@ import {
 } from './file-commands';
 import { useInvisiblesStore } from './invisibles';
 import { closeSearch, matchSearchCommand, useSearchStore } from './search';
+import { useShellStore } from './shells';
 import { useThemeStore } from './theme';
 import { useViewConfigStore, viewConfigToCss } from './view-config';
 import { NO_EXTENSIONS, useVimStore, VIM_EXTENSIONS } from './vim';
+import { useWorkspaceStore } from './workspace';
 
 const INITIAL_TEXT = '|ルビ(ruby)';
 
@@ -156,11 +164,48 @@ export const App = (): React.JSX.Element => {
     [state.buffers, active.id],
   );
 
+  // Transient app notice (bottom-left toast) — every open path that REFUSES
+  // a non-text file (content sniff in main: sidebar click, Ctrl+O dialog)
+  // reports through here.
+  const [notice, setNotice] = useState<string | null>(null);
+  const noticeTimer = useRef<ReturnType<typeof setTimeout> | undefined>(undefined);
+  const showNotice = useCallback((message: string) => {
+    clearTimeout(noticeTimer.current);
+    setNotice(message);
+    noticeTimer.current = setTimeout(() => setNotice(null), 4000);
+  }, []);
+  useEffect(() => () => clearTimeout(noticeTimer.current), []);
+
+  const notTextNotice = useCallback(
+    (path: string) => showNotice(`テキストファイルではありません: ${fileName(path)}`),
+    [showNotice],
+  );
+
   const handleOpen = useCallback(async () => {
     const opened = await window.ved.openFile();
     if (!opened) return;
-    dispatch({ type: 'openPath', path: opened.path, text: opened.text });
-  }, []);
+    if (opened.read.kind !== 'text') {
+      notTextNotice(opened.path);
+      return;
+    }
+    dispatch({ type: 'openPath', path: opened.path, text: opened.read.text });
+  }, [notTextNotice]);
+
+  // Opening from the sidebar tree: the path is known, no dialog. Main sniffs
+  // the CONTENT and refuses non-text files, reported via the shared notice.
+  // `openPath` focuses the existing tab when the path is already open (the
+  // fresh read is discarded — the open buffer, possibly dirty, wins).
+  const handleOpenTreeFile = useCallback(
+    async (path: string): Promise<void> => {
+      const result = await window.ved.readFile(path);
+      if (result.kind !== 'text') {
+        notTextNotice(path);
+        return;
+      }
+      dispatch({ type: 'openPath', path, text: result.text });
+    },
+    [notTextNotice],
+  );
 
   const handleSave = useCallback(
     async (saveAs: boolean) => {
@@ -199,8 +244,8 @@ export const App = (): React.JSX.Element => {
     const onKeyDown = (event: KeyboardEvent): void => {
       // A key an editor EXTENSION consumed (Vim owns Ctrl+F/B as page
       // scrolling in normal mode) never reaches this window listener: the
-      // editor stopPropagation()s it (editor.tsx handleKeyDown). We deliberately
-      // do NOT also guard on `event.defaultPrevented` — ProseMirror
+      // editor stopPropagation()s it (editor.tsx handleKeyDown). We must NOT
+      // additionally guard on `event.defaultPrevented` here — ProseMirror
       // preventDefaults keys it handles WITHOUT stopping propagation (Escape
       // among them), and this listener's Escape-closes-search must still run.
       const fileCommand = matchFileCommand(event, isDarwin);
@@ -213,6 +258,17 @@ export const App = (): React.JSX.Element => {
       if (tabCommand) {
         event.preventDefault();
         runTabCommand(tabCommand);
+        return;
+      }
+      const viewCommand = matchViewCommand(event, isDarwin);
+      if (viewCommand === 'toggleSidebar') {
+        event.preventDefault();
+        useWorkspaceStore.getState().toggleSidebar();
+        return;
+      }
+      if (viewCommand === 'toggleShell') {
+        event.preventDefault();
+        useShellStore.getState().toggle();
         return;
       }
       const searchCommand = matchSearchCommand(event, isDarwin);
@@ -235,67 +291,103 @@ export const App = (): React.JSX.Element => {
     return () => window.removeEventListener('keydown', onKeyDown);
   }, [runFileCommand, runTabCommand]);
 
+  const sidebarOpen = useWorkspaceStore((s) => s.sidebarOpen);
+  const sidebarSide = useWorkspaceStore((s) => s.sidebarSide);
+  const roots = useWorkspaceStore((s) => s.roots);
+  // New shells open in the active file's directory, else the first workspace
+  // root, else $HOME (main's fallback).
+  const shellCwd = (active.path !== null ? dirName(active.path) : undefined) ?? roots[0];
+  const sidebar = sidebarOpen ? <Sidebar onOpenFile={handleOpenTreeFile} /> : null;
+
   return (
-    // vertMode on the root transposes the page geometry (CSS custom props);
-    // the view config overrides the geometry custom props inline
-    // (view-config.ts). pagesPerRow only means something in VerticalColumns —
-    // pin it to 1 elsewhere so the root/page widths stay one page.
-    // rowsMode widens the root to the window: VerticalRows scrolls along the
-    // horizontal axis, so the viewport is free there — a wide window shows
-    // more lines (editor.module.scss .root.rowsMode).
-    <div
-      className={clsx(
-        styles.root,
-        writingMode !== WritingMode.Horizontal && styles.vertMode,
-        writingMode === WritingMode.VerticalRows && styles.rowsMode,
-      )}
-      style={viewConfigToCss(
-        writingMode === WritingMode.VerticalColumns ? viewConfig : { ...viewConfig, pagesPerRow: 1 },
-      )}
-    >
-      {/* Also makes space for traffic lights (macOS only) */}
-      <div className={styles.header}>
-        <Toolbar
-          writingMode={writingMode}
-          setWritingMode={setWritingMode}
-          appearPolicy={appearPolicy}
-          setAppearPolicy={setAppearPolicy}
-        />
+    // Shell row: sidebar | editor column (editor pane over the shell panel),
+    // with the sidebar docked to either edge. The editor column keeps its
+    // fixed page-geometry width and centers in the remaining pane
+    // (app.module.scss).
+    <div className={appStyles.shell}>
+      {sidebarSide === 'left' && sidebar}
+      <div className={appStyles.main}>
+        <div className={appStyles.editorPane}>
+          {/*
+          vertMode on the root transposes the page geometry (CSS custom props);
+          the view config overrides the geometry custom props inline
+          (view-config.ts). pagesPerRow only means something in VerticalColumns —
+          pin it to 1 elsewhere so the root/page widths stay one page.
+          rowsMode widens the root to the pane: VerticalRows scrolls along the
+          horizontal axis, so the viewport is free there — a wide pane shows
+          more lines (editor.module.scss .root.rowsMode).
+        */}
+          <div
+            className={clsx(
+              styles.root,
+              writingMode !== WritingMode.Horizontal && styles.vertMode,
+              writingMode === WritingMode.VerticalRows && styles.rowsMode,
+              // Continuous Vertical fills the pane WIDTH. Horizontal keeps its
+              // fixed line-measure width (centered) and instead grows in
+              // HEIGHT — handled on the editor scroller (growMode), so the root
+              // stays page-fixed here. VerticalColumns stays fixed; VerticalRows
+              // already fills via rowsMode.
+              writingMode === WritingMode.Vertical && styles.fillMode,
+            )}
+            style={viewConfigToCss(
+              writingMode === WritingMode.VerticalColumns ? viewConfig : { ...viewConfig, pagesPerRow: 1 },
+            )}
+          >
+            {/* Also makes space for traffic lights (macOS only) */}
+            <div className={styles.header}>
+              <Toolbar
+                writingMode={writingMode}
+                setWritingMode={setWritingMode}
+                appearPolicy={appearPolicy}
+                setAppearPolicy={setAppearPolicy}
+              />
+            </div>
+            <TabBar
+              tabs={state.buffers.map((b) => ({
+                id: b.id,
+                path: b.path,
+                dirty: b.id === active.id ? dirty : isDirty(b),
+              }))}
+              activeId={active.id}
+              onSelect={handleSelect}
+              onClose={handleClose}
+            />
+            <VedEditor
+              key={active.id}
+              initialText={active.text}
+              history={active.history}
+              initialCursor={active.cursor}
+              initialAnchor={active.anchor}
+              initialScroll={active.scroll}
+              writingMode={writingMode}
+              appearPolicy={appearPolicy}
+              setAppearPolicy={setAppearPolicy}
+              onTextChange={onTextChange}
+              onSnapshot={(snapshot) => handleSnapshot(active.id, snapshot)}
+              viewConfigEpoch={viewConfig}
+              invisibles={invisibles}
+              searchHighlights={searchHighlights}
+              onSearchOps={handleSearchOps}
+              extensions={vimEnabled ? VIM_EXTENSIONS : NO_EXTENSIONS}
+            />
+            <div className={styles.footer}>
+              <p id='counter' className={styles.footerCounter}></p>
+            </div>
+          </div>
+        </div>
+        {/* Search & replace: a full-width bar docked at the bottom of the
+            editor area (above the shell panel), not a row inside the page column. */}
+        {searchOpen && (
+          <SearchBar getText={() => textRef.current} getOps={() => searchOpsRef.current} focusRequest={searchFocus} />
+        )}
+        <ShellPanel defaultCwd={shellCwd} />
       </div>
-      <TabBar
-        tabs={state.buffers.map((b) => ({
-          id: b.id,
-          path: b.path,
-          dirty: b.id === active.id ? dirty : isDirty(b),
-        }))}
-        activeId={active.id}
-        onSelect={handleSelect}
-        onClose={handleClose}
-      />
-      {searchOpen && (
-        <SearchBar getText={() => textRef.current} getOps={() => searchOpsRef.current} focusRequest={searchFocus} />
+      {sidebarSide === 'right' && sidebar}
+      {notice !== null && (
+        <p className={appStyles.notice} role='status'>
+          {notice}
+        </p>
       )}
-      <VedEditor
-        key={active.id}
-        initialText={active.text}
-        history={active.history}
-        initialCursor={active.cursor}
-        initialAnchor={active.anchor}
-        initialScroll={active.scroll}
-        writingMode={writingMode}
-        appearPolicy={appearPolicy}
-        setAppearPolicy={setAppearPolicy}
-        onTextChange={onTextChange}
-        onSnapshot={(snapshot) => handleSnapshot(active.id, snapshot)}
-        viewConfigEpoch={viewConfig}
-        invisibles={invisibles}
-        searchHighlights={searchHighlights}
-        onSearchOps={handleSearchOps}
-          extensions={vimEnabled ? VIM_EXTENSIONS : NO_EXTENSIONS}
-      />
-      <div className={styles.footer}>
-        <p id='counter' className={styles.footerCounter}></p>
-      </div>
     </div>
   );
 };

@@ -2,9 +2,11 @@ import { describe, expect, it } from 'vitest';
 import type { VedFileApi } from '../../shared/ipc';
 import {
   type ChordEvent,
+  dirName,
   fileName,
   matchFileCommand,
   matchTabCommand,
+  matchViewCommand,
   saveOrSaveAs,
   windowTitle,
 } from './file-commands';
@@ -14,6 +16,9 @@ const fakeApi = (overrides: Partial<VedFileApi>): VedFileApi => ({
   openFile: () => Promise.resolve(null),
   saveFile: () => Promise.resolve(),
   saveFileAs: () => Promise.resolve(null),
+  readFile: () => Promise.resolve({ kind: 'text', text: '' }),
+  readDir: () => Promise.resolve([]),
+  openDirDialog: () => Promise.resolve(null),
   ...overrides,
 });
 
@@ -107,6 +112,51 @@ describe('matchTabCommand', () => {
     expect(matchTabCommand(chord({ key: 'n', ctrlKey: true, isComposing: true }), false)).toBeNull();
     expect(matchTabCommand(chord({ key: 'n', ctrlKey: true, altKey: true }), false)).toBeNull();
     expect(matchTabCommand(chord({ key: 'q', ctrlKey: true }), false)).toBeNull();
+  });
+});
+
+describe('matchViewCommand', () => {
+  const chord = (overrides: Partial<ChordEvent>): ChordEvent => ({
+    key: 'b',
+    ctrlKey: false,
+    metaKey: false,
+    shiftKey: false,
+    altKey: false,
+    isComposing: false,
+    keyCode: 66,
+    ...overrides,
+  });
+
+  it('maps Ctrl+B (Cmd on macOS) to the sidebar toggle', () => {
+    expect(matchViewCommand(chord({ ctrlKey: true }), false)).toBe('toggleSidebar');
+    expect(matchViewCommand(chord({ metaKey: true }), true)).toBe('toggleSidebar');
+    expect(matchViewCommand(chord({ metaKey: true }), false)).toBeNull();
+  });
+
+  it('maps Ctrl+` to the shell-panel toggle', () => {
+    expect(matchViewCommand(chord({ key: '`', ctrlKey: true, keyCode: 192 }), false)).toBe('toggleShell');
+    expect(matchViewCommand(chord({ key: '`', metaKey: true, keyCode: 192 }), true)).toBe('toggleShell');
+    expect(matchViewCommand(chord({ key: '`', keyCode: 192 }), false)).toBeNull();
+  });
+
+  it('ignores composition, extra modifiers, and other keys', () => {
+    expect(matchViewCommand(chord({ ctrlKey: true, isComposing: true }), false)).toBeNull();
+    expect(matchViewCommand(chord({ ctrlKey: true, keyCode: 229 }), false)).toBeNull();
+    expect(matchViewCommand(chord({ ctrlKey: true, shiftKey: true }), false)).toBeNull();
+    expect(matchViewCommand(chord({ ctrlKey: true, altKey: true }), false)).toBeNull();
+    expect(matchViewCommand(chord({ key: 'p', ctrlKey: true }), false)).toBeNull();
+  });
+});
+
+describe('dirName', () => {
+  it('yields the parent directory', () => {
+    expect(dirName('/home/me/novel/第一章.txt')).toBe('/home/me/novel');
+    expect(dirName('C:\\docs\\a.txt')).toBe('C:\\docs');
+  });
+
+  it('keeps the root and rejects bare names', () => {
+    expect(dirName('/a.txt')).toBe('/');
+    expect(dirName('a.txt')).toBeUndefined();
   });
 });
 

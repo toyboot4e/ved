@@ -10,6 +10,16 @@ export const IpcChannel = {
   SaveFileAs: 'ved:file:save-as',
   SetDirty: 'ved:window:set-dirty',
   ConfirmDiscard: 'ved:window:confirm-discard',
+  ReadFile: 'ved:file:read',
+  ReadDir: 'ved:file:read-dir',
+  OpenDirDialog: 'ved:file:open-dir',
+  ShellCreate: 'ved:shell:create',
+  ShellResume: 'ved:shell:resume',
+  ShellInput: 'ved:shell:input',
+  ShellResize: 'ved:shell:resize',
+  ShellKill: 'ved:shell:kill',
+  ShellData: 'ved:shell:data',
+  ShellExit: 'ved:shell:exit',
 } as const;
 
 /** A file named on the command line, read at startup. A path that does not
@@ -19,16 +29,31 @@ export type CliFile = {
   readonly text: string;
 };
 
-/** A file picked and read via the open dialog; `null` means canceled. */
+/** A file picked via the open dialog; `null` means canceled. `read` reports
+ * a binary refusal (content sniff, see {@link ReadFileResult}) — the shell
+ * tells the user instead of opening it. */
 export type OpenFileResult = {
   readonly path: string;
-  readonly text: string;
+  readonly read: ReadFileResult;
 } | null;
 
 /** The path chosen via the save dialog; `null` means canceled. */
 export type SaveFileAsResult = {
   readonly path: string;
 } | null;
+
+/** One entry of a directory listing (file-browser sidebar). */
+export type DirEntry = {
+  readonly name: string;
+  /** Absolute path (parent + name, joined by main). */
+  readonly path: string;
+  readonly kind: 'dir' | 'file';
+};
+
+/** A known path read by CONTENT: `binary` means "not UTF-8 text" — sniffed
+ * from the bytes (NUL check + strict decode), never from the extension —
+ * and the shell must not open it as a buffer. */
+export type ReadFileResult = { readonly kind: 'text'; readonly text: string } | { readonly kind: 'binary' };
 
 /** The file portion of the renderer-facing API. */
 export type VedFileApi = {
@@ -40,12 +65,37 @@ export type VedFileApi = {
   readonly saveFile: (path: string, text: string) => Promise<void>;
   /** Shows a save dialog and writes text to the chosen path. */
   readonly saveFileAs: (text: string, defaultPath?: string) => Promise<SaveFileAsResult>;
+  /** Reads a known path (sidebar/quick-open; no dialog), refusing non-text
+   * content by byte sniff (see {@link ReadFileResult}). */
+  readonly readFile: (path: string) => Promise<ReadFileResult>;
+  /** Lists one directory level, directories first (lazy tree expand). */
+  readonly readDir: (path: string) => Promise<readonly DirEntry[]>;
+  /** Shows a directory picker; `null` means canceled. */
+  readonly openDirDialog: () => Promise<string | null>;
+};
+
+export type Unsubscribe = () => void;
+
+/** The shell portion of the renderer-facing API (integrated terminal). A
+ * shell is a PTY in the main process, addressed by the numeric id
+ * `createShell` returns; output streams back via `onShellData`. */
+export type VedShellApi = {
+  /** Spawns the user's shell in `cwd` (falls back to $HOME). The PTY starts
+   * PAUSED so no output is lost — call `resumeShell` once listeners are up. */
+  readonly createShell: (cwd?: string) => Promise<number>;
+  readonly resumeShell: (id: number) => void;
+  readonly writeShell: (id: number, data: string) => void;
+  readonly resizeShell: (id: number, cols: number, rows: number) => void;
+  readonly killShell: (id: number) => void;
+  readonly onShellData: (cb: (id: number, data: string) => void) => Unsubscribe;
+  readonly onShellExit: (cb: (id: number, exitCode: number) => void) => Unsubscribe;
 };
 
 /** The full renderer-facing API, exposed as `window.ved` by the preload. */
-export type VedApi = VedFileApi & {
-  /** Reports the aggregate dirty state; main consults it in the close guard. */
-  readonly setDirty: (dirty: boolean) => void;
-  /** Native "discard unsaved changes?" confirm; `true` = discard, `false` = keep. */
-  readonly confirmDiscard: () => Promise<boolean>;
-};
+export type VedApi = VedFileApi &
+  VedShellApi & {
+    /** Reports the aggregate dirty state; main consults it in the close guard. */
+    readonly setDirty: (dirty: boolean) => void;
+    /** Native "discard unsaved changes?" confirm; `true` = discard, `false` = keep. */
+    readonly confirmDiscard: () => Promise<boolean>;
+  };

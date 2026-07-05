@@ -433,14 +433,18 @@ The deferred 2D case is noted in `editor.tsx` next to the new CSS, so a future
 contributor who wants N≥2 pages per row finds the documented constraint (docs/architecture.md) rather than re-deriving
 it.
 
-- [x] **6e. Continuous modes fill the pane** *(done 2026-07-05)*. The two
-  non-paged modes — Horizontal and Vertical — widen to the pane (a
-  `fillMode` class: `.root` and the `.editor` scroller go `width:100%` /
-  `align-self:stretch`) instead of sitting as a fixed centered column, so a
-  wide window shows more of the text — Vertical's horizontal scroll reveals
-  more columns; Horizontal frames the fixed line column (still capped at
-  `--line-length`) full-width. The paged modes keep fixed page widths
-  (VerticalColumns centered; VerticalRows already filled via `rowsMode`).
+- [x] **6e. Continuous modes use the pane along their FREE axis**
+  *(done 2026-07-06)*. Each non-paged mode expands along the axis its scroll
+  frees, instead of sitting as a fixed page box with dead margins:
+  - **Vertical** fills the pane WIDTH (`fillMode`: `.root` + the `.editor`
+    scroller go `width:100%` / `align-self:stretch`) — its horizontal scroll
+    then reveals more columns.
+  - **Horizontal** keeps its RESTRICTED width (the fixed `--line-length`
+    measure, centered) and instead GROWS in HEIGHT (`growMode`: the scroller
+    `flex:1 1 auto`, the content `min-height:100%`) — the frame fills the pane
+    height, text flows from the top, and overflow scrolls inside.
+  The paged modes are unchanged (VerticalColumns fixed & centered;
+  VerticalRows already fills via `rowsMode`). Smoke: `test/e2e/rows-fill.ts`.
 
 ### Phase 7 — integrated shell *(step 7a done 2026-07-05)*
 

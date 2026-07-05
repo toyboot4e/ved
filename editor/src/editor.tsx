@@ -174,6 +174,41 @@ const moveChar = (view: EditorView, policy: Appear, reverse: boolean, extend: bo
   view.dispatch(view.state.tr.setSelection(sel).scrollIntoView());
 };
 
+/** Move the caret by one LOGICAL (model) line — the adjacent paragraph — at
+ *  the same column (offset from the line start), snapped to a legal caret
+ *  stop. Geometry-free and deterministic: Vim's `j`/`k`, which step ACTUAL
+ *  lines rather than wrapped display lines (the geometric `moveCaretByLine`).
+ *  No-op at the first/last line. Column is taken fresh each call (no
+ *  desired-column memory across a short line yet — a possible refinement). */
+const moveByLogicalLine = (view: EditorView, policy: Appear, reverse: boolean, extend: boolean): void => {
+  const { doc, selection } = view.state;
+  const text = serialize(doc);
+  const head = posToOffset(doc, selection.head);
+  const lineStart = head === 0 ? 0 : text.lastIndexOf('\n', head - 1) + 1;
+  const col = head - lineStart;
+  let targetOff: number;
+  if (reverse) {
+    if (lineStart === 0) return; // already on the first line
+    const prevStart = text.lastIndexOf('\n', lineStart - 2) + 1;
+    const prevLen = lineStart - 1 - prevStart; // excludes the '\n'
+    targetOff = prevStart + Math.min(col, prevLen);
+  } else {
+    const nlIdx = text.indexOf('\n', head);
+    if (nlIdx < 0) return; // already on the last line
+    const nextStart = nlIdx + 1;
+    const nextEndIdx = text.indexOf('\n', nextStart);
+    const nextLen = (nextEndIdx < 0 ? text.length : nextEndIdx) - nextStart;
+    targetOff = nextStart + Math.min(col, nextLen);
+  }
+  // The target column may land on ruby markup (not a caret stop) — snap it.
+  const legal = caretStops(text, targetOff, policy).includes(targetOff)
+    ? targetOff
+    : snapToGlyph(docLeaves(text), targetOff);
+  const pos = offsetToPos(doc, legal);
+  const sel = extend ? TextSelection.create(doc, selection.anchor, pos) : TextSelection.create(doc, pos);
+  view.dispatch(view.state.tr.setSelection(sel).scrollIntoView());
+};
+
 /** The EXACT plain-string deletion of a PM range: the plain string loses exactly
  *  the corresponding offset range, and the touched paragraphs are rebuilt as
  *  the canonical projection of their merged text (`inlineNodesFor`). A raw
@@ -954,8 +989,14 @@ const revealCaretInScroller = (scroller: HTMLElement, view: EditorView, mode: Sc
 
 // Layout classes for the contenteditable. Ruby visibility is decoration-driven
 // (no appear root class needed — pm/decorations decides per leaf).
-const CONTENT_CLASS = (vert: boolean, multiCol: boolean, rows: boolean): string =>
-  clsx(styles.editorContent, vert && styles.vertMode, multiCol && styles.multiColMode, rows && styles.rowsMode);
+const CONTENT_CLASS = (vert: boolean, multiCol: boolean, rows: boolean, grow: boolean): string =>
+  clsx(
+    styles.editorContent,
+    vert && styles.vertMode,
+    multiCol && styles.multiColMode,
+    rows && styles.rowsMode,
+    grow && styles.growMode,
+  );
 
 const NO_INVISIBLES: Invisibles = { newline: false, whitespace: false };
 
@@ -964,11 +1005,14 @@ export const VedEditor = (props: VedEditorProps): React.JSX.Element => {
   const vert = writingMode !== WritingMode.Horizontal;
   const multiCol = writingMode === WritingMode.VerticalColumns;
   const rows = writingMode === WritingMode.VerticalRows;
-  // Continuous (non-paged) modes — Horizontal and Vertical — fill the pane
-  // rather than sitting as a fixed centered column, so a wide window shows
-  // more of the text (Vertical's horizontal scroll axis; Horizontal's line
-  // column in a full-width frame). VerticalRows already fills via rowsMode.
-  const fill = !multiCol && !rows;
+  // Continuous Vertical fills the pane WIDTH (its free axis is the horizontal
+  // scroll, so a wide window shows more columns). VerticalRows already fills
+  // via rowsMode.
+  const fill = vert && !multiCol && !rows;
+  // Horizontal's free axis is the opposite: its width is the fixed line
+  // measure (--line-length), so it stays a restricted centered column and
+  // instead GROWS in height to fill the pane (more lines, scrolling inside).
+  const grow = !vert;
 
   const scrollerRef = useRef<HTMLDivElement>(null);
   const viewRef = useRef<EditorView | null>(null);
@@ -1439,6 +1483,29 @@ export const VedEditor = (props: VedEditorProps): React.JSX.Element => {
           moveCaretByLine(view, extend, dir < 0, goalInlineRef);
         }
       },
+      moveCaretVisual: (direction, extend = false) => {
+        if (view.composing) return;
+        // Resolve the screen direction to the (axis, reverse) the arrow key
+        // uses in this writing mode: vertical rotates the axes (left/right =
+        // line, up/down = char), horizontal keeps them.
+        const isVert = live.current.writingMode !== WritingMode.Horizontal;
+        const arrow = { up: 'ArrowUp', down: 'ArrowDown', left: 'ArrowLeft', right: 'ArrowRight' }[direction];
+        const act = (isVert ? VERT_ARROWS : HORIZ_ARROWS)[arrow];
+        if (!act) return;
+        if (act.axis === 'char') {
+          goalInlineRef.current = null;
+          moveChar(view, policyClassRef.current, act.reverse, extend);
+        } else if (isVert) {
+          // The cross axis in vertical = between COLUMNS: a spatial, VISUAL
+          // move (adjacent column), the same as the arrow keys.
+          moveCaretByLine(view, extend, act.reverse, goalInlineRef);
+        } else {
+          // The cross axis in horizontal = a LOGICAL model-line move (Vim's
+          // j/k step actual lines, not wrapped display rows).
+          goalInlineRef.current = null;
+          moveByLogicalLine(view, policyClassRef.current, act.reverse, extend);
+        }
+      },
       scrollPage: (dir, half = false) => {
         if (view.composing) return;
         const s = scrollerRef.current;
@@ -1513,7 +1580,7 @@ export const VedEditor = (props: VedEditorProps): React.JSX.Element => {
     syncExtensions(live.current.extensions ?? []);
 
     view.dom.id = 'editor-content';
-    view.dom.classList.add(...CONTENT_CLASS(vert, multiCol, rows).split(' ').filter(Boolean));
+    view.dom.classList.add(...CONTENT_CLASS(vert, multiCol, rows, grow).split(' ').filter(Boolean));
 
     // Per-visual-line overlay: numbers + the current-line highlight (replaces
     // the CSS counter and the paragraph-wide highlight). Re-measure on mount,
@@ -1535,13 +1602,28 @@ export const VedEditor = (props: VedEditorProps): React.JSX.Element => {
         // (same line as `head`). Only the overlay uses this; the native-caret
         // seam (`__vedCaretRect`) is unaffected.
         const atParaEnd = sel.empty && head === sel.$head.end() && head > sel.$head.start();
+        // A caret at a ruby's LEADING boundary (the next node is a ruby): at a
+        // soft wrap that boundary is ambiguous and `coordsAtPos(head)` can
+        // report the PREVIOUS visual row's end — the highlight then slips one
+        // line back when a ruby starts the 2nd+ row of a wrapped paragraph.
+        // The ruby's base GLYPH is unambiguously in the ruby's real row, so
+        // anchor into it (`rubyStart + 2` = base content start). Safe off a
+        // wrap too (same row as the boundary).
+        const after = sel.empty ? sel.$head.nodeAfter : null;
         // EXCEPT when the paragraph ends with a ruby: `head - 1` lands inside the
         // ruby's content (the reading `<rt>` end), whose rect is the superscript —
         // a different column — so the highlight slips one column back. Anchor into
         // the trailing ruby's BASE instead (`rubyStart + 2` = its content start),
         // which renders in the ruby's real column.
         const before = atParaEnd ? sel.$head.nodeBefore : null;
-        const anchor = before?.type.name === 'ruby' ? head - before.nodeSize + 2 : atParaEnd ? head - 1 : head;
+        const anchor =
+          after?.type.name === 'ruby'
+            ? head + 2
+            : before?.type.name === 'ruby'
+              ? head - before.nodeSize + 2
+              : atParaEnd
+                ? head - 1
+                : head;
         return view.coordsAtPos(anchor);
       } catch {
         return null;
@@ -2362,7 +2444,7 @@ export const VedEditor = (props: VedEditorProps): React.JSX.Element => {
     view.dom.classList.add(
       'ProseMirror',
       ...pmState,
-      ...CONTENT_CLASS(vert, multiCol, rows).split(' ').filter(Boolean),
+      ...CONTENT_CLASS(vert, multiCol, rows, grow).split(' ').filter(Boolean),
       // Extension-owned classes survive the swap (extension.ts setContentClass).
       ...extClassesRef.current,
     );
@@ -2375,7 +2457,7 @@ export const VedEditor = (props: VedEditorProps): React.JSX.Element => {
       const s = scrollerRef.current;
       if (s) revealCaretInScroller(s, view, toScrollMode(writingMode));
     }
-  }, [appearPolicy, vert, multiCol, rows, writingMode]);
+  }, [appearPolicy, vert, multiCol, rows, grow, writingMode]);
 
   // View-config change (see VedEditorProps.viewConfigEpoch): re-measure the
   // overlay and the page-gap widgets. Size-AFFECTING config changes are also
@@ -2424,6 +2506,7 @@ export const VedEditor = (props: VedEditorProps): React.JSX.Element => {
         multiCol && styles.multiColMode,
         rows && styles.rowsMode,
         fill && styles.fillMode,
+        grow && styles.growMode,
       )}
     />
   );

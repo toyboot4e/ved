@@ -1,15 +1,24 @@
 import { app, BrowserWindow, dialog, ipcMain, type WebContents } from 'electron';
-import { type CliFile, IpcChannel, type OpenFileResult, type SaveFileAsResult } from '../shared/ipc';
+import {
+  type CliFile,
+  type DirEntry,
+  IpcChannel,
+  type OpenFileResult,
+  type ReadFileResult,
+  type SaveFileAsResult,
+} from '../shared/ipc';
 import { cliFilePaths, readCliFiles } from './cli-args';
-import { readTextFile, writeTextFileAtomic } from './fs-io';
+import { listDir, readTextFileChecked, writeTextFileAtomic } from './fs-io';
 
 // Native dialogs cannot be driven by Playwright, so the smoke test injects
-// fixed paths through these environment variables instead. The open stub may
-// be a comma-separated list, consumed one path per call (clamped to the last)
-// so a test can open several distinct files.
+// fixed paths through these environment variables instead. The open stubs
+// (file AND directory) may be comma-separated lists, consumed one path per
+// call (clamped to the last) so a test can open several distinct targets.
 const SMOKE_OPEN_PATH = 'VED_SMOKE_OPEN_PATH';
 const SMOKE_SAVE_PATH = 'VED_SMOKE_SAVE_PATH';
+const SMOKE_OPEN_DIR_PATH = 'VED_SMOKE_OPEN_DIR_PATH';
 let openStubCall = 0;
+let openDirStubCall = 0;
 
 const pickOpenPath = async (sender: WebContents): Promise<string | null> => {
   const stub = process.env[SMOKE_OPEN_PATH];
@@ -23,6 +32,21 @@ const pickOpenPath = async (sender: WebContents): Promise<string | null> => {
   const win = BrowserWindow.fromWebContents(sender);
   if (!win) return null;
   const result = await dialog.showOpenDialog(win, { properties: ['openFile'] });
+  return result.canceled ? null : (result.filePaths[0] ?? null);
+};
+
+const pickDirPath = async (sender: WebContents): Promise<string | null> => {
+  const stub = process.env[SMOKE_OPEN_DIR_PATH];
+  if (stub) {
+    const paths = stub.split(',');
+    const path = paths[Math.min(openDirStubCall, paths.length - 1)] ?? null;
+    openDirStubCall++;
+    return path;
+  }
+
+  const win = BrowserWindow.fromWebContents(sender);
+  if (!win) return null;
+  const result = await dialog.showOpenDialog(win, { properties: ['openDirectory'] });
   return result.canceled ? null : (result.filePaths[0] ?? null);
 };
 
@@ -45,7 +69,7 @@ export const registerFileService = (): void => {
   ipcMain.handle(IpcChannel.OpenFile, async (event): Promise<OpenFileResult> => {
     const path = await pickOpenPath(event.sender);
     if (!path) return null;
-    return { path, text: await readTextFile(path) };
+    return { path, read: await readTextFileChecked(path) };
   });
 
   ipcMain.handle(IpcChannel.SaveFile, async (_event, path: string, text: string): Promise<void> => {
@@ -61,4 +85,10 @@ export const registerFileService = (): void => {
       return { path };
     },
   );
+
+  ipcMain.handle(IpcChannel.ReadFile, (_event, path: string): Promise<ReadFileResult> => readTextFileChecked(path));
+
+  ipcMain.handle(IpcChannel.ReadDir, (_event, path: string): Promise<DirEntry[]> => listDir(path));
+
+  ipcMain.handle(IpcChannel.OpenDirDialog, (event): Promise<string | null> => pickDirPath(event.sender));
 };
