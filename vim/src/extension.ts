@@ -74,6 +74,31 @@ export const createVimExtension = (options: VimExtensionOptions = {}): EditorExt
         case 'breakUndo':
           ctx.breakUndoGroup();
           break;
+        case 'repeat':
+          replayLastChange(effect.count);
+          break;
+      }
+    };
+
+    // Dot-repeat: re-feed the recorded change's keys through the reducer,
+    // stepping the LIVE document between keys (the reducer can't within one
+    // call), N times. `replay: true` suppresses re-recording. Insert-mode text
+    // returns unhandled during replay — the editor would type it live, so here
+    // we insert it ourselves.
+    const replayLastChange = (count: number): void => {
+      const keys = state.lastChange;
+      if (!keys) return;
+      for (let n = 0; n < count; n++) {
+        for (const k of keys) {
+          const step = vimKeydown(state, k, docView(), { replay: true });
+          state = step.state;
+          if (step.handled) {
+            for (const e of step.effects) if (e.kind !== 'repeat') applyEffect(e);
+          } else if (state.mode === 'insert' && k.key.length === 1 && !k.ctrl && !k.meta && !k.alt) {
+            const sel = ctx.getSelection();
+            ctx.replaceRange(sel.head, sel.head, k.key);
+          }
+        }
       }
     };
 

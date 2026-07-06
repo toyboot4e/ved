@@ -42,25 +42,46 @@ const play = (
   let st = state;
   const effects: VimEffect[] = [];
   const handled: boolean[] = [];
-  for (const k of keys) {
-    const step: VimStep = vimKeydown(st, typeof k === 'string' ? key(k) : k, docOf(cur.text, cur.head, cur.anchor));
-    st = step.state;
-    handled.push(step.handled);
-    for (const e of step.effects) {
-      effects.push(e);
-      if (e.kind === 'replace') {
-        const after = e.from + e.text.length;
-        cur = { text: cur.text.slice(0, e.from) + e.text + cur.text.slice(e.to), head: after, anchor: after };
-      } else if (e.kind === 'select') {
-        cur = { ...cur, anchor: e.anchor, head: e.head };
-      } else if (e.kind === 'moveVisual' && (e.direction === 'left' || e.direction === 'right')) {
-        const d = e.direction === 'right' ? 1 : -1;
-        let h = cur.head;
-        for (let i = 0; i < e.count; i++) h = Math.max(0, Math.min(cur.text.length, h + d));
-        cur = { ...cur, head: h, anchor: e.extend ? cur.anchor : h };
-      }
+  const isPrintable = (k: VimKey): boolean => k.key.length === 1 && !k.ctrl && !k.meta && !k.alt;
+  const insertChar = (ch: string): void => {
+    cur = {
+      text: cur.text.slice(0, cur.head) + ch + cur.text.slice(cur.head),
+      head: cur.head + 1,
+      anchor: cur.head + 1,
+    };
+  };
+  function applyEffect(e: VimEffect): void {
+    effects.push(e);
+    if (e.kind === 'replace') {
+      const after = e.from + e.text.length;
+      cur = { text: cur.text.slice(0, e.from) + e.text + cur.text.slice(e.to), head: after, anchor: after };
+    } else if (e.kind === 'select') {
+      cur = { ...cur, anchor: e.anchor, head: e.head };
+    } else if (e.kind === 'moveVisual' && (e.direction === 'left' || e.direction === 'right')) {
+      const d = e.direction === 'right' ? 1 : -1;
+      let h = cur.head;
+      for (let i = 0; i < e.count; i++) h = Math.max(0, Math.min(cur.text.length, h + d));
+      cur = { ...cur, head: h, anchor: e.extend ? cur.anchor : h };
+    } else if (e.kind === 'repeat') {
+      // Mirror the adapter's dot-repeat replay.
+      for (let n = 0; n < e.count; n++) for (const rk of st.lastChange ?? []) feed(rk, true);
     }
   }
+  // Feed one key. `replay` matches the adapter's suppressed-recording replay;
+  // an unhandled printable in insert mode is inserted by "the editor" (us).
+  function feed(k: VimKey, replay: boolean): void {
+    const step: VimStep = vimKeydown(
+      st,
+      k,
+      docOf(cur.text, cur.head, cur.anchor),
+      replay ? { replay: true } : undefined,
+    );
+    st = step.state;
+    if (!replay) handled.push(step.handled);
+    if (step.handled) for (const e of step.effects) applyEffect(e);
+    else if (st.mode === 'insert' && isPrintable(k)) insertChar(k.key);
+  }
+  for (const k of keys) feed(typeof k === 'string' ? key(k) : k, false);
   return { state: st, ...cur, effects, handled };
 };
 
@@ -74,10 +95,10 @@ describe('modes', () => {
     expect(back.head).toBe(1); // one step left, like Vim
   });
 
-  it('insert mode passes ordinary keys through unhandled', () => {
+  it('insert mode passes ordinary keys through unhandled (the editor inserts them)', () => {
     const r = play('abc', 0, ['i', 'x']);
-    expect(r.handled).toEqual([true, false]);
-    expect(r.text).toBe('abc'); // the editor, not the reducer, inserts
+    expect(r.handled).toEqual([true, false]); // the reducer does not consume the text key
+    expect(r.text).toBe('xabc'); // …the editor (here, the test harness) inserts it
   });
 
   it('normal mode swallows unbound printable keys (never types)', () => {
@@ -466,6 +487,45 @@ describe('text objects (i/a)', () => {
 
   it('an unknown object key cancels', () => {
     expect(play('foo', 0, ['d', 'i', 'z']).text).toBe('foo');
+  });
+});
+
+describe('dot-repeat (.)', () => {
+  it('. repeats a simple edit (x)', () => {
+    const r = play('abcde', 0, ['x', 'x', '.']); // delete a, b (x x), then . deletes c
+    expect(r.text).toBe('de');
+  });
+
+  it('. repeats an operator (dw)', () => {
+    const r = play('one two three', 0, ['d', 'w', '.']);
+    expect(r.text).toBe('three');
+  });
+
+  it('. repeats an insert change including the typed text (ciw)', () => {
+    // change 'one' → 'X', move to 'two', repeat → 'X'
+    const r = play('one two', 0, ['c', 'i', 'w', 'X', key('Escape'), 'w', '.']);
+    expect(r.text).toBe('X X');
+  });
+
+  it('. repeats an append (A…Esc) at the new caret', () => {
+    // A! on line 1, then G to the last line, then . appends ! there too.
+    const r = play('a\nb', 0, ['A', '!', key('Escape'), 'G', '.']);
+    expect(r.text).toBe('a!\nb!');
+  });
+
+  it('N. repeats N times', () => {
+    expect(play('abcdef', 0, ['x', '3', '.']).text).toBe('ef'); // x, then 3× repeat = 4 deletes
+  });
+
+  it('a motion between changes does not become the repeat; . still repeats the edit', () => {
+    // x deletes 'a' → 'bc' (caret 0); l → caret on 'c'; . repeats x → deletes 'c'.
+    const r = play('abc', 0, ['x', 'l', '.']);
+    expect(r.text).toBe('b');
+    expect(r.state.lastChange).not.toBeNull();
+  });
+
+  it('~ is repeatable', () => {
+    expect(play('abc', 0, ['~', '.']).text).toBe('ABc');
   });
 });
 

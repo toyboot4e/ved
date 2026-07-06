@@ -238,6 +238,23 @@ try {
   assert.equal(await caretOffset(page), 4, 'N reverses to the previous match');
   step('/ search + n/N with the command-line indicator');
 
+  // --- dot-repeat: . replays the last change, INCLUDING the typed text. Real
+  // keydowns (not insertText) so the reducer records the inserted char. ---
+  await toggleVim();
+  await setDoc(page, 'one two');
+  await toggleVim();
+  await setCaret(page, 0);
+  await press('ciw'); // delete 'one', enter insert
+  assert.equal(await modeChip(), 'INSERT', 'ciw enters insert');
+  await page.keyboard.press('X');
+  await page.keyboard.press('Escape');
+  await page.waitForTimeout(60);
+  assert.equal(await docText(page), 'X two', 'ciw + X replaces the word');
+  await press('w'); // to 'two'
+  await press('.'); // repeat the whole change
+  assert.equal(await docText(page), 'X X', 'dot-repeat replays ciw + the typed X at the new word');
+  step('dot-repeat: . replays the last change including inserted text');
+
   // --- Toggle off: everything back to ordinary editing (still in the current
   // doc/mode from the horizontal test — mode-independent). ---
   await toggleVim();

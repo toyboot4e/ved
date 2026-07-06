@@ -452,10 +452,14 @@ the app's window listener) — insert mode leaves those chords to the app.
 **Search** (`/`?`?`n`N`*`#`) runs in the reducer as a command-line mode — the
 pattern accumulates in state, the extension reports it via `onCommandLine` and
 the shell renders the `/pattern` line; literal + case-sensitive, not
-incremental, and not IME-aware (raw keydowns). The full key set and its
-deviations — motions, operators + TEXT OBJECTS (`iw`/`a(`/`ip`…), `%`, `~`,
-etc. — are the `model.ts` header; deferred: dot-repeat, macros, marks, named
-registers, ex commands. The whole loop is pinned by `test/e2e/vim-mode.ts`.
+incremental, and not IME-aware (raw keydowns). **Dot-repeat** (`.`): a
+`record()` wrapper keeps the last change's KEY sequence — insert-mode text
+included, since the reducer sees every keydown — as `lastChange`; `.` emits a
+`repeat` effect and the ADAPTER replays those keys (the reducer can't step a
+mutating doc within one call). The full key set and its deviations — motions,
+operators + TEXT OBJECTS (`iw`/`a(`/`ip`…), `%`, `~`, etc. — are the `model.ts`
+header; deferred: macros, marks, named registers, ex commands. The whole loop
+is pinned by `test/e2e/vim-mode.ts`.
 
 ## Layout: writing modes and the page
 

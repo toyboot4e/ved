@@ -33,8 +33,14 @@
 //   - the caret may rest AT a line end (Vim's virtualedit=onemore) — ved's
 //     caret is a boundary, not a cell;
 //   - J joins WITHOUT inserting a space (Japanese prose has none to add);
-//   - one unnamed register; NO dot-repeat, macros, marks, named registers,
-//     or ex commands (`:`) yet.
+//   - dot-repeat `.`: the record() wrapper keeps the last change's KEY
+//     sequence (incl. insert-mode text — the reducer sees every keydown) as
+//     `lastChange`; `.` emits a `repeat` effect and the ADAPTER replays those
+//     keys (the reducer can't step a mutating doc within one call). `N.`
+//     replays N times. Not recorded: motions, undo/redo, visual-mode changes;
+//     IME-typed insert text is not captured (same caveat as search);
+//   - one unnamed register; NO macros, marks, named registers, or ex commands
+//     (`:`) yet.
 
 export type VimMode = 'normal' | 'insert' | 'visual';
 export type VimVisualKind = 'char' | 'line';
@@ -79,7 +85,11 @@ export type VimEffect =
     }
   | { readonly kind: 'scrollPage'; readonly dir: 1 | -1; readonly half: boolean }
   | { readonly kind: 'command'; readonly id: string }
-  | { readonly kind: 'breakUndo' };
+  | { readonly kind: 'breakUndo' }
+  /** Replay the last recorded change `count` times (dot-repeat `.`). Handled
+   *  entirely in the adapter — the reducer can't step a mutating doc within
+   *  one call. */
+  | { readonly kind: 'repeat'; readonly count: number };
 
 export type VimRegister = { readonly text: string; readonly linewise: boolean };
 
@@ -109,6 +119,12 @@ export type VimState = {
   /** The last f/F/t/T, for `;` (repeat) and `,` (reverse). */
   readonly lastFind: { readonly op: FindOp; readonly ch: string } | null;
   readonly register: VimRegister | null;
+  /** The keys of the change currently being recorded (for dot-repeat), and
+   *  whether it has modified the document yet. Null when no command is being
+   *  tracked. Managed by the record() wrapper, not the command handlers. */
+  readonly recording: { readonly keys: readonly VimKey[]; readonly changed: boolean } | null;
+  /** The completed last change's key sequence — what `.` replays. */
+  readonly lastChange: readonly VimKey[] | null;
 };
 
 export const VIM_INITIAL: VimState = {
@@ -123,6 +139,8 @@ export const VIM_INITIAL: VimState = {
   lastSearch: null,
   lastFind: null,
   register: null,
+  recording: null,
+  lastChange: null,
 };
 
 export type VimStep = {
@@ -633,7 +651,58 @@ const NAMED_KEYS: Readonly<Record<string, string>> = {
   ' ': 'l',
 };
 
-export const vimKeydown = (state: VimState, key: VimKey, doc: VimDocView): VimStep => {
+/** True when `state` is at rest — a normal-mode caret with no pending prefix,
+ *  count, operator, or command line. Marks the end of a recorded change. */
+const atRest = (s: VimState): boolean =>
+  s.mode === 'normal' &&
+  !s.operator &&
+  !s.charPending &&
+  !s.textObjectPending &&
+  !s.gPending &&
+  !s.commandLine &&
+  s.count === null;
+
+const isInsertChar = (key: VimKey): boolean => key.key.length === 1 && !key.ctrl && !key.meta && !key.alt;
+
+/** Maintain the dot-repeat recording around a raw dispatch (model.ts owns
+ *  this, not the command handlers): begin recording when a fresh command
+ *  starts from a resting normal state, append every subsequent key, and — when
+ *  the sequence returns to rest — keep it as `lastChange` if it modified the
+ *  document (a replace effect, or text typed in insert mode). Visual mode is
+ *  not recorded (v1). */
+const record = (incoming: VimState, key: VimKey, raw: VimStep): VimStep => {
+  const editsNow =
+    raw.effects.some((e) => e.kind === 'replace') || (incoming.mode === 'insert' && !raw.handled && isInsertChar(key));
+  let rec = incoming.recording;
+  if (rec === null) {
+    if (!atRest(incoming)) return raw; // mid-sequence key with no recording (shouldn't happen) — ignore
+    rec = { keys: [key], changed: editsNow };
+  } else {
+    rec = { keys: [...rec.keys, key], changed: rec.changed || editsNow };
+  }
+  if (raw.state.mode === 'visual') return { ...raw, state: { ...raw.state, recording: null } };
+  if (atRest(raw.state)) {
+    return {
+      ...raw,
+      state: { ...raw.state, recording: null, lastChange: rec.changed ? rec.keys : raw.state.lastChange },
+    };
+  }
+  return { ...raw, state: { ...raw.state, recording: rec } };
+};
+
+/** The public entry. `opts.replay` is set by the adapter while replaying a
+ *  recorded change (dot-repeat) so the replay is not itself recorded. */
+export const vimKeydown = (
+  state: VimState,
+  key: VimKey,
+  doc: VimDocView,
+  opts?: { readonly replay?: boolean },
+): VimStep => {
+  const raw = dispatch(state, key, doc);
+  return opts?.replay ? raw : record(state, key, raw);
+};
+
+const dispatch = (state: VimState, key: VimKey, doc: VimDocView): VimStep => {
   // The search command line owns every key while open (before mode/meta gates
   // — a `/`-pattern may contain any character).
   if (state.commandLine) return commandLineKey(state, key, doc);
@@ -970,6 +1039,10 @@ const normalKey = (state: VimState, k: string, count: number, hasCount: boolean,
       return paste(state, doc, count, false);
     case 'u':
       return { state, effects: [{ kind: 'command', id: 'history.undo' }], handled: true };
+    case '.':
+      // Dot-repeat: replay the last change (the adapter steps the doc). `N.`
+      // replays N times.
+      return state.lastChange ? { state, effects: [{ kind: 'repeat', count }], handled: true } : swallow(state);
     case '~':
       return toggleCase(state, doc, count);
     case '/':

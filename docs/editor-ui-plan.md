@@ -315,11 +315,13 @@ Decisions from the design review (see CONTEXT.md **view config**):
     not incremental, not IME-aware). A pre-existing overlay bug surfaced en
     route — `pickLine` matched on the caret block EDGE, so the current-line
     highlight lagged a row in wrapped paragraphs (overlapping line boxes); now
-    it matches on the caret block CENTER (`line-highlight-ruby-wrap.ts`). Smoke:
-    `test/e2e/vim-mode.ts`. Deferred: dot-repeat, macros, marks, named
-    registers, ex commands. Owed: real-mozc verification of the normal-mode
-    composition revert (`mozc/vim-normal-composition`). See architecture.md
-    "Extensions" and `docs/extensions.md`.
+    it matches on the caret block CENTER (`line-highlight-ruby-wrap.ts`).
+    Dot-repeat `.` records the last change's key sequence (insert-mode text
+    included) and the adapter replays it. Smoke: `test/e2e/vim-mode.ts`.
+    Deferred: macros, marks, named registers, ex commands. Owed: real-mozc
+    verification of the normal-mode composition revert
+    (`mozc/vim-normal-composition`). See architecture.md "Extensions" and
+    `docs/extensions.md`.
 
 ### Phase 2 — file browser sidebar
 
