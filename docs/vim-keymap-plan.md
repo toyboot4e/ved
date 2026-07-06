@@ -1,6 +1,7 @@
 # Plan: composable, user-configurable Vim keymaps
 
-Status: **M1 shipped (2026-07-07); M2/K1–K3 not started.** The
+Status: **M1, M2 (imap), and K1 (named actions + `{action}` RHS) shipped
+(2026-07-07); K2/K3 not started.** The
 front layer delivers user-configurable mappings WITHOUT first refactoring the
 built-in dispatch — the built-in cascade acts as Vim's "default table", so the
 noremap/map distinction falls out of whether fed keys consult the user tries
@@ -97,12 +98,24 @@ Until then, the smoke seam doubles as the manual override: the shell reads
   adapter loop against a FAKE context (`extension.test.ts` — live-doc
   stepping between RHS keys, insert-text RHS, dot-repeat post-expansion,
   the remap-cycle budget); e2e: `vim-mode.ts` "user keymap maps Q → 0".
-- [ ] **M2. imap** — after a design pass on IME interaction (an imap must
-  never fire during composition; likely keydown-only, non-composing keys).
-- [ ] **K1. Name the built-in primitives.** Extract `normalKey`/`visualKey`/
-  `commandKey` bodies into an `ACTIONS` table + `DEFAULT_KEYMAP` data. Pure
-  refactor pinned by the existing suites. Unlocks `{action: id}` RHS in user
-  configs and `registerPrimitive` for third-party extensions.
+- [x] **M2. imap.** *(done 2026-07-07)* The insert walk NEVER swallows: the
+  LHS prefix types live and a match DELETES it before feeding the RHS (`jj` →
+  `<Esc>`), so an interrupting composition/click/abort loses nothing — the
+  adapter merely resets the walk at compositionstart (observation-only). A
+  liveness check (prefix still before the caret) invalidates stale walks; a
+  dead end retries the key as a fresh walk. Prefix keys record as typed text
+  and a match STRIPS them, so `.` replays the net change. Insert LHS keys
+  must be plain printable characters (compile error — chords insert
+  nothing). e2e: `vim-mode.ts` "imap jj → Esc".
+- [x] **K1. Named actions + `{action}` RHS.** *(done 2026-07-07)* The
+  normal/visual command switches are now `NORMAL_ACTIONS`/`VISUAL_ACTIONS`
+  tables (id → pure function) + `NORMAL_BINDINGS`/`VISUAL_BINDINGS` data
+  (key → id) — behavior-preserving, pinned by the suites. User configs may
+  bind a primitive directly: `{action: 'delete.charForward'}` (normal/visual
+  only; ids validated at construction against `VIM_ACTIONS_BY_MODE`; NOT
+  dot-repeatable — it runs outside the key recording, Vim's `<Plug>`-without-
+  repeat.vim limit). Still open for a later slice: `registerPrimitive`
+  (per-instance custom actions — needs instance-scoped tables).
 - [ ] **K2. One trie.** Compile `DEFAULT_KEYMAP` through the same
   `compileKeymap`; fold `gPending`/`textObjectPending` into the walk
   (`charPending` stays a capture-char leaf — a trie cannot enumerate "any

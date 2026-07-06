@@ -9,6 +9,7 @@ import type { ChordEvent, EditorExtension, EditorExtensionContext } from '@ved/e
 import { compileKeymap, type VimKeymapConfig } from './keymap';
 import type { VimKey } from './keys';
 import {
+  VIM_ACTIONS_BY_MODE,
   VIM_INITIAL,
   type VimDocView,
   type VimEffect,
@@ -49,7 +50,7 @@ const NORMAL_CLASS = 'vedVimNormal';
 const FEED_BUDGET = 256;
 
 export const createVimExtension = (options: VimExtensionOptions = {}): EditorExtension => {
-  const keymap = options.keymap ? compileKeymap(options.keymap) : undefined;
+  const keymap = options.keymap ? compileKeymap(options.keymap, { knownActions: VIM_ACTIONS_BY_MODE }) : undefined;
   return {
     id: 'vim',
     attach(ctx: EditorExtensionContext) {
@@ -201,6 +202,10 @@ export const createVimExtension = (options: VimExtensionOptions = {}): EditorExt
         // insert mode (programmatic insertText &c.) is blocked.
         handleTextInput: (): boolean => state.mode !== 'insert',
         onCompositionStart: (): void => {
+          // A composition interrupting an insert-map walk: the typed prefix
+          // is LIVE text (the insert walk never swallows), so resetting the
+          // walk loses nothing — and stays observation-only.
+          if (state.mapPending) state = { ...state, mapPending: null };
           if (state.mode === 'insert') return;
           const sel = ctx.getSelection();
           composeUndo = { text: ctx.getText(), anchor: sel.anchor, head: sel.head };

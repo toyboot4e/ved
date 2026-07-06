@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import { compileKeymap } from './keymap';
 import {
+  VIM_ACTIONS_BY_MODE,
   VIM_INITIAL,
   type VimDocView,
   type VimEffect,
@@ -629,71 +630,71 @@ describe('pending-state hygiene', () => {
   });
 });
 
-describe('user mapping front layer', () => {
-  // A mini adapter loop for mapped play: executes feedKeys (the adapter's
-  // job) by re-feeding with the effect's noremap flag, tracking replaces.
-  const playMapped = (
-    config: Parameters<typeof compileKeymap>[0],
-    text: string,
-    head: number,
-    keys: (string | VimKey)[],
-  ): { state: VimState; text: string; head: number; handled: boolean[]; fed: VimKey[] } => {
-    const km = compileKeymap(config);
-    let cur = { text, head, anchor: head };
-    let st = VIM_INITIAL;
-    const handled: boolean[] = [];
-    const fed: VimKey[] = [];
-    function feed(k: VimKey, opts: VimKeydownOpts): void {
-      const step = vimKeydown(st, k, docOf(cur.text, cur.head, cur.anchor), opts);
-      st = step.state;
-      if (step.handled) {
-        for (const e of step.effects) apply(e);
-      } else if (st.mode === 'insert' && k.key.length === 1 && !k.ctrl && !k.meta && !k.alt) {
-        cur = {
-          text: cur.text.slice(0, cur.head) + k.key + cur.text.slice(cur.head),
-          head: cur.head + 1,
-          anchor: cur.head + 1,
-        };
-      }
+// A mini adapter loop for mapped play: executes feedKeys (the adapter's
+// job) by re-feeding with the effect's noremap flag, tracking replaces.
+const playMapped = (
+  config: Parameters<typeof compileKeymap>[0],
+  text: string,
+  head: number,
+  keys: (string | VimKey)[],
+): { state: VimState; text: string; head: number; handled: boolean[]; fed: VimKey[] } => {
+  const km = compileKeymap(config);
+  let cur = { text, head, anchor: head };
+  let st = VIM_INITIAL;
+  const handled: boolean[] = [];
+  const fed: VimKey[] = [];
+  function feed(k: VimKey, opts: VimKeydownOpts): void {
+    const step = vimKeydown(st, k, docOf(cur.text, cur.head, cur.anchor), opts);
+    st = step.state;
+    if (step.handled) {
+      for (const e of step.effects) apply(e);
+    } else if (st.mode === 'insert' && k.key.length === 1 && !k.ctrl && !k.meta && !k.alt) {
+      cur = {
+        text: cur.text.slice(0, cur.head) + k.key + cur.text.slice(cur.head),
+        head: cur.head + 1,
+        anchor: cur.head + 1,
+      };
     }
-    function apply(e: VimEffect): void {
-      if (e.kind === 'replace') {
-        const after = e.from + e.text.length;
-        cur = { text: cur.text.slice(0, e.from) + e.text + cur.text.slice(e.to), head: after, anchor: after };
-      } else if (e.kind === 'select') {
-        cur = { ...cur, anchor: e.anchor, head: e.head };
-      } else if (e.kind === 'moveVisual' && (e.direction === 'left' || e.direction === 'right')) {
-        const d = e.direction === 'right' ? 1 : -1;
-        let h = cur.head;
-        for (let i = 0; i < e.count; i++) h = Math.max(0, Math.min(cur.text.length, h + d));
-        cur = { ...cur, head: h, anchor: e.extend ? cur.anchor : h };
-      } else if (e.kind === 'feedKeys') {
-        for (const k of e.keys) {
-          fed.push(k);
-          feed(k, e.noremap ? { keymap: km, noremap: true } : { keymap: km });
-        }
-      } else if (e.kind === 'repeat') {
-        for (let n = 0; n < e.count; n++) for (const rk of st.lastChange ?? []) feed(rk, { replay: true });
+  }
+  function apply(e: VimEffect): void {
+    if (e.kind === 'replace') {
+      const after = e.from + e.text.length;
+      cur = { text: cur.text.slice(0, e.from) + e.text + cur.text.slice(e.to), head: after, anchor: after };
+    } else if (e.kind === 'select') {
+      cur = { ...cur, anchor: e.anchor, head: e.head };
+    } else if (e.kind === 'moveVisual' && (e.direction === 'left' || e.direction === 'right')) {
+      const d = e.direction === 'right' ? 1 : -1;
+      let h = cur.head;
+      for (let i = 0; i < e.count; i++) h = Math.max(0, Math.min(cur.text.length, h + d));
+      cur = { ...cur, head: h, anchor: e.extend ? cur.anchor : h };
+    } else if (e.kind === 'feedKeys') {
+      for (const k of e.keys) {
+        fed.push(k);
+        feed(k, e.noremap ? { keymap: km, noremap: true } : { keymap: km });
       }
+    } else if (e.kind === 'repeat') {
+      for (let n = 0; n < e.count; n++) for (const rk of st.lastChange ?? []) feed(rk, { replay: true });
     }
-    for (const k of keys) {
-      const vk = typeof k === 'string' ? key(k) : k;
-      const step = vimKeydown(st, vk, docOf(cur.text, cur.head, cur.anchor), { keymap: km });
-      st = step.state;
-      handled.push(step.handled);
-      if (step.handled) {
-        for (const e of step.effects) apply(e);
-      } else if (st.mode === 'insert' && vk.key.length === 1 && !vk.ctrl && !vk.meta && !vk.alt) {
-        cur = {
-          text: cur.text.slice(0, cur.head) + vk.key + cur.text.slice(cur.head),
-          head: cur.head + 1,
-          anchor: cur.head + 1,
-        };
-      }
+  }
+  for (const k of keys) {
+    const vk = typeof k === 'string' ? key(k) : k;
+    const step = vimKeydown(st, vk, docOf(cur.text, cur.head, cur.anchor), { keymap: km });
+    st = step.state;
+    handled.push(step.handled);
+    if (step.handled) {
+      for (const e of step.effects) apply(e);
+    } else if (st.mode === 'insert' && vk.key.length === 1 && !vk.ctrl && !vk.meta && !vk.alt) {
+      cur = {
+        text: cur.text.slice(0, cur.head) + vk.key + cur.text.slice(cur.head),
+        head: cur.head + 1,
+        anchor: cur.head + 1,
+      };
     }
-    return { state: st, text: cur.text, head: cur.head, handled, fed };
-  };
+  }
+  return { state: st, text: cur.text, head: cur.head, handled, fed };
+};
 
+describe('user mapping front layer', () => {
   it('a mapped key expands to its RHS (H → 0 = line start)', () => {
     const r = playMapped({ normal: { H: '0' } }, 'abc def', 4, ['H']);
     expect(r.head).toBe(0);
@@ -757,5 +758,71 @@ describe('user mapping front layer', () => {
   it('a count rides through a mapped motion', () => {
     const r = playMapped({ normal: { L: 'l' } }, 'abcdef', 0, ['3', 'L']);
     expect(r.head).toBe(3);
+  });
+});
+
+describe('insert-mode mappings (imap)', () => {
+  const playInsert = playMapped;
+
+  it('jj → <Esc>: the prefix types live, the match deletes it and escapes', () => {
+    const r = playInsert({ insert: { jj: '<Esc>' } }, 'abc', 0, ['i', 'j', 'j']);
+    expect(r.text).toBe('abc'); // the live 'j' was deleted by the match
+    expect(r.state.mode).toBe('normal');
+  });
+
+  it('a dead-ended prefix stays as ordinary text', () => {
+    const r = playInsert({ insert: { jj: '<Esc>' } }, 'abc', 0, ['i', 'j', 'a']);
+    expect(r.text).toBe('jaabc');
+    expect(r.state.mode).toBe('insert');
+  });
+
+  it('a dead end retries the key as a fresh walk (jja still matches on the 3rd j… pattern)', () => {
+    // Map kk; type k, j, k, k: 'k' pends, 'j' dead-ends (kj typed), then k,k match.
+    const r = playInsert({ insert: { kk: '<Esc>' } }, '', 0, ['i', 'k', 'j', 'k', 'k']);
+    expect(r.text).toBe('kj');
+    expect(r.state.mode).toBe('normal');
+  });
+
+  it('Escape aborts a walk and leaves insert; the prefix stays', () => {
+    const r = playInsert({ insert: { jj: '<Esc>' } }, '', 0, ['i', 'j', key('Escape')]);
+    expect(r.text).toBe('j');
+    expect(r.state.mode).toBe('normal');
+  });
+
+  it('an insert RHS can type text (single-key expansion)', () => {
+    const r = playInsert({ insert: { q: '()' } }, '', 0, ['i', 'q']);
+    expect(r.text).toBe('()');
+  });
+
+  it('dot-repeat replays the NET change (prefix chars stripped from the recording)', () => {
+    // i, x, j, j: types 'x', jj escapes (net: insert x). '.' repeats: another x.
+    const r = playInsert({ insert: { jj: '<Esc>' } }, '', 0, ['i', 'x', 'j', 'j', '.']);
+    expect(r.text).toBe('xx');
+  });
+
+  it('insert LHS must be plain printable characters', () => {
+    expect(() => compileKeymap({ insert: { '<C-j>': '<Esc>' } })).toThrow(/plain printable/);
+    expect(() => compileKeymap({ insert: { 'a<Esc>': 'x' } })).toThrow(/plain printable/);
+  });
+});
+
+describe('{action} RHS (named primitives as mapping targets)', () => {
+  it('a normal-mode action binding runs the primitive with the count', () => {
+    const r = playMapped({ normal: { Q: { action: 'delete.charForward' } } }, 'abcdef', 0, ['2', 'Q']);
+    expect(r.text).toBe('cdef'); // 2Q = delete 2 chars, count consumed
+    expect(r.state.count).toBeNull();
+  });
+
+  it('a visual-mode action binding operates on the selection', () => {
+    const r = playMapped({ visual: { D: { action: 'visual.delete' } } }, 'abcdef', 0, ['v', 'l', 'l', 'D']);
+    expect(r.text).toBe('def'); // v + 2 steps = 'abc' inclusive, deleted
+    expect(r.state.mode).toBe('normal');
+  });
+
+  it('every built-in normal/visual binding id is a valid {action} target', () => {
+    expect(VIM_ACTIONS_BY_MODE.normal.has('insert.here')).toBe(true);
+    expect(VIM_ACTIONS_BY_MODE.normal.has('yank.toLineEnd')).toBe(true);
+    expect(VIM_ACTIONS_BY_MODE.visual.has('visual.pasteOver')).toBe(true);
+    expect(VIM_ACTIONS_BY_MODE.operatorPending.size).toBe(0);
   });
 });

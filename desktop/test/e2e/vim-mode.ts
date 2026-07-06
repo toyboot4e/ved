@@ -38,9 +38,13 @@ const press = async (keys: string, settleMs = 60) => {
 try {
   // User keymap smoke seam: window.__vedVimKeymap is read on the FIRST Vim
   // toggle (the extension builds lazily) — set it before any toggle. Q is
-  // unbound in the defaults and unused by this driver.
+  // unbound in the defaults and unused by this driver; no other test types a
+  // 'j' in insert mode, so the jj imap cannot misfire.
   await page.evaluate(() => {
-    (window as unknown as { __vedVimKeymap: unknown }).__vedVimKeymap = { normal: { Q: '0' } };
+    (window as unknown as { __vedVimKeymap: unknown }).__vedVimKeymap = {
+      normal: { Q: '0' },
+      insert: { jj: '<Esc>' },
+    };
   });
   await page.click('#editor-content');
   await setDoc(page, TEXT);
@@ -397,6 +401,21 @@ try {
   await press('Q');
   assert.equal(await caretOffset(page), 0, 'user-mapped Q runs its RHS (0 = line start)');
   step('user keymap maps Q → 0 through the window seam');
+
+  // --- imap jj → <Esc>: the first j TYPES (live prefix), the second deletes
+  // it and escapes — net document unchanged, mode back to NORMAL. A dead end
+  // (j + another char) keeps the j as ordinary text. ---
+  const beforeImap = await docText(page);
+  await press('i');
+  await press('jj', 200);
+  assert.equal(await modeChip(), 'NORMAL', 'jj escaped insert mode');
+  assert.equal(await docText(page), beforeImap, 'the live j prefix was deleted by the match');
+  await press('i');
+  await press('ja', 200);
+  assert.ok((await docText(page)).includes('ja'), 'a dead-ended imap prefix stays as typed text');
+  await page.keyboard.press('Escape');
+  await press('u'); // restore the doc
+  step('imap jj → Esc: live prefix, match deletes, dead end types');
 
   // --- Toggle off: everything back to ordinary editing (still in the current
   // doc/mode from the horizontal test — mode-independent). ---

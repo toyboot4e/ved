@@ -123,3 +123,12 @@ describe('vim adapter with a fake context', () => {
     expect(t.calls).toContain('caretShape:bar');
   });
 });
+
+describe('{action} RHS through the adapter', () => {
+  it('binds a named primitive directly and validates the id at construction', () => {
+    const t = attach('abc', { keymap: { normal: { Q: { action: 'delete.charForward' } } } });
+    t.press('Q');
+    expect(t.state.text).toBe('bc');
+    expect(() => createVimExtension({ keymap: { normal: { Q: { action: 'no.such' } } } })).toThrow(/unknown action/);
+  });
+});

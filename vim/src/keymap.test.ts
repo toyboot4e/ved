@@ -6,13 +6,31 @@ describe('compileKeymap + walkKeymap', () => {
   it('compiles a single-key mapping (noremap by default)', () => {
     const km = compileKeymap({ normal: { H: '0' } });
     const walk = walkKeymap(km.normal, [plainKey('H')]);
-    expect(walk).toEqual({ kind: 'match', binding: { keys: [plainKey('0')], remap: false } });
+    expect(walk).toEqual({ kind: 'match', binding: { kind: 'keys', keys: [plainKey('0')], remap: false } });
   });
 
   it('carries the remap flag from the object RHS form', () => {
     const km = compileKeymap({ normal: { H: { rhs: '0', remap: true } } });
     const walk = walkKeymap(km.normal, [plainKey('H')]);
-    expect(walk.kind === 'match' && walk.binding.remap).toBe(true);
+    expect(walk.kind === 'match' && walk.binding.kind === 'keys' && walk.binding.remap).toBe(true);
+  });
+
+  it('{action} RHS compiles to an action binding; ids validate against knownActions', () => {
+    const km = compileKeymap({ normal: { Q: { action: 'delete.charForward' } } });
+    expect(walkKeymap(km.normal, [plainKey('Q')])).toEqual({
+      kind: 'match',
+      binding: { kind: 'action', action: 'delete.charForward' },
+    });
+    const known = { normal: new Set(['delete.charForward']) };
+    expect(() => compileKeymap({ normal: { Q: { action: 'nope' } } }, { knownActions: known })).toThrow(
+      /unknown action/,
+    );
+    expect(() => compileKeymap({ insert: { q: { action: 'delete.charForward' } } })).toThrow(
+      /only available in normal and visual/,
+    );
+    expect(() => compileKeymap({ operatorPending: { q: { action: 'delete.charForward' } } })).toThrow(
+      /only available in normal and visual/,
+    );
   });
 
   it('walks multi-key LHS: strict prefix = pending, full = match, off = miss', () => {

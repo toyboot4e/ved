@@ -555,9 +555,18 @@ effect the adapter re-enters key by key (the dot-repeat loop generalized,
 budget-guarded against mapping cycles), and a dead-ended walk replays its
 swallowed keys through the built-ins as if typed. Fed keys record, so `.`
 repeats the expansion. The layer never runs where a key is an ARGUMENT
-(`f`/`r`, text objects, the search line) or real typing (insert mode). The
-shell reads `window.__vedVimKeymap` on the first toggle — the smoke seam, and
-the manual override until phase-4 `config.json` hydrates the same shape.
+(`f`/`r`, text objects, the search line). INSERT maps (`jj` → `<Esc>`) use a
+different walk that never swallows: the prefix types live and a match deletes
+it before feeding the RHS — an interrupting composition/click loses nothing
+(the walk just resets at compositionstart), and a match strips the prefix
+keys from the dot-repeat recording so `.` replays the net change. Insert LHS
+keys must be plain printable characters. Built-in normal/visual commands are
+NAMED ACTIONS in data tables (key → id → pure function, `model.ts`
+`NORMAL_ACTIONS`/`VISUAL_ACTIONS`); an RHS can bind one directly —
+`{action: 'delete.charForward'}` — validated against `VIM_ACTIONS_BY_MODE`
+at construction (not dot-repeatable, like Vim's `<Plug>` without repeat.vim).
+The shell reads `window.__vedVimKeymap` on the first toggle — the smoke seam,
+and the manual override until phase-4 `config.json` hydrates the same shape.
 
 ## Layout: writing modes and the page
 
