@@ -1,0 +1,198 @@
+// Quick-open overlay (quick-open.tsx): a large, centered modal fuzzy file
+// picker — an input row over a two-pane body (result list | file preview).
+// Colors come from the `--ved-*` theme tokens; the native input needs explicit
+// colors (form controls don't inherit `color` — see architecture.md "Theming").
+.overlay {
+  position: fixed;
+  inset: 0;
+  z-index: 30;
+  display: flex;
+  justify-content: center;
+  align-items: flex-start;
+  padding-block-start: 4vh;
+  background: rgba(0, 0, 0, 0.28);
+}
+
+// Near-fullscreen: the list must show MANY files at once (and the preview a
+// real page of text), so the panel takes almost the whole window.
+.panel {
+  display: flex;
+  flex-direction: column;
+  inline-size: min(1600px, 96vw);
+  block-size: 90vh;
+  overflow: hidden;
+  background: var(--ved-chrome-bg);
+  color: var(--ved-fg);
+  border: 1px solid var(--ved-border);
+  border-radius: 8px;
+  box-shadow: 0 12px 40px rgba(0, 0, 0, 0.35);
+}
+
+.inputRow {
+  flex: none;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 8px;
+  border-block-end: 1px solid var(--ved-border-faint);
+}
+
+.input {
+  flex: 1 1 auto;
+  min-inline-size: 0;
+  padding: 8px 10px;
+  font-size: 14px;
+  color: var(--ved-fg);
+  background: var(--ved-input-bg);
+  border: 1px solid var(--ved-input-border);
+  border-radius: 5px;
+
+  &:focus {
+    outline: 2px solid var(--ved-accent);
+    outline-offset: -1px;
+  }
+}
+
+.toggle {
+  flex: none;
+  padding: 6px 12px;
+  font-size: 12px;
+  color: var(--ved-fg);
+  background: var(--ved-input-bg);
+  border: 1px solid var(--ved-input-border);
+  border-radius: 5px;
+  cursor: pointer;
+  white-space: nowrap;
+}
+
+.toggleOn {
+  color: var(--ved-accent-fg);
+  background: var(--ved-accent);
+  border-color: var(--ved-accent);
+}
+
+// Mode switch (file search | open-file search): a segmented pair, the active
+// mode filled with the accent like the text-only toggle. A fieldset for the
+// group semantics — reset its native box.
+.modes {
+  flex: none;
+  display: flex;
+  gap: 4px;
+  margin: 0;
+  padding: 0;
+  border: none;
+}
+
+.modeButton {
+  flex: none;
+  padding: 6px 12px;
+  font-size: 12px;
+  color: var(--ved-fg);
+  background: var(--ved-input-bg);
+  border: 1px solid var(--ved-input-border);
+  border-radius: 5px;
+  cursor: pointer;
+  white-space: nowrap;
+}
+
+.modeOn {
+  color: var(--ved-accent-fg);
+  background: var(--ved-accent);
+  border-color: var(--ved-accent);
+}
+
+// Two panes fill the rest: a fixed-ish list column and a growing preview.
+.body {
+  flex: 1 1 auto;
+  display: flex;
+  min-block-size: 0;
+}
+
+.list {
+  flex: none;
+  inline-size: 44%;
+  max-inline-size: 640px;
+  padding: 6px;
+  overflow-y: auto;
+  border-inline-end: 1px solid var(--ved-border-faint);
+}
+
+.row {
+  padding: 5px 10px;
+  border-radius: 5px;
+  font-size: 13px;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  cursor: pointer;
+  color: var(--ved-fg);
+}
+
+.rowSelected {
+  background: var(--ved-accent);
+  color: var(--ved-accent-fg);
+}
+
+.match {
+  background: transparent;
+  color: var(--ved-search-active);
+  font-weight: 700;
+}
+
+.rowSelected .match {
+  color: inherit;
+  text-decoration: underline;
+}
+
+.emptyNote {
+  padding: 10px;
+  font-size: 13px;
+  color: var(--ved-fg-muted);
+}
+
+// The capped-list footer: how many more matches exist beyond the render cap.
+.overflowNote {
+  padding: 8px 10px;
+  font-size: 12px;
+  color: var(--ved-fg-muted);
+}
+
+// Preview pane: a plain, horizontal text view of the selected file.
+.preview {
+  flex: 1 1 auto;
+  display: flex;
+  flex-direction: column;
+  min-inline-size: 0;
+  background: var(--ved-panel-bg, var(--ved-bg));
+}
+
+.previewHeader {
+  flex: none;
+  padding: 6px 12px;
+  font-size: 12px;
+  color: var(--ved-fg-muted);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  border-block-end: 1px solid var(--ved-border-faint);
+}
+
+.previewBody {
+  flex: 1 1 auto;
+  margin: 0;
+  padding: 10px 12px;
+  overflow: auto;
+  font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+  font-size: 12px;
+  line-height: 1.5;
+  white-space: pre;
+  color: var(--ved-fg);
+  direction: ltr;
+}
+
+.previewNote {
+  margin: 0;
+  padding: 12px;
+  font-size: 12px;
+  color: var(--ved-fg-muted);
+}

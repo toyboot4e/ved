@@ -19,6 +19,7 @@ const fakeApi = (overrides: Partial<VedFileApi>): VedFileApi => ({
   readFile: () => Promise.resolve({ kind: 'text', text: '' }),
   readDir: () => Promise.resolve([]),
   openDirDialog: () => Promise.resolve(null),
+  listWorkspaceFiles: () => Promise.resolve([]),
   ...overrides,
 });
 

@@ -251,6 +251,61 @@ mid-composition; Esc closes and refocuses the editor, dropping the highlights
 with the bar (they are never model state). Verified in
 `test/e2e/search-replace.ts`.
 
+## Quick open (Ctrl+P)
+
+A fuzzy picker in one of two MODES — workspace **files** or the open
+**buffers** (tab switching) — split across the process boundary; only plain
+paths cross it.
+
+- **Index** (main, `main/workspace-index.ts`): `listWorkspaceFiles(roots)`
+  walks each root into one flat `WorkspaceFile` (`{ path, label }`) list,
+  SORTED by label — the palette's empty-query view is this list verbatim, and
+  raw walk order read as "files are missing". `.gitignore` is honored with the
+  `ignore` package: a directory's `.gitignore`
+  becomes a `Layer` that governs its subtree only (nested files stack; each
+  layer re-relativizes the path since `ignore` matches relative to the file's
+  own location). `.git` is skipped at every depth, directory symlinks are never
+  followed (loop safety), and `MAX_FILES_PER_ROOT` bounds a pathological tree.
+  Per-root results are cached and deduped by absolute path; `invalidateRoot` is
+  the seam the phase-2 fs watcher will call (dormant until then, so the index
+  is a fresh-on-open snapshot). Labels get the root base name prefixed when
+  more than one root is open. No `electron` import — unit-tested.
+- **Matcher + store** (renderer, `quick-open.ts`): `rankFiles`/`rankBuffers`
+  run `fuzzysort` over the label into mode-agnostic `QuickOpenItem`s (match
+  indices for highlighting; `bufferId` when choosing means a tab switch),
+  capped at `RESULT_LIMIT` (500) with the uncapped `total` alongside — the
+  list footer reports the overflow ("type to narrow"), so nothing silently
+  looks missing. An empty query yields the whole (sorted) pool up to the cap.
+  A **text-only** toggle (`textOnly`,
+  kept across opens) first drops known-binary EXTENSIONS (`isTextLabel`, a
+  cosmetic denylist — SVG and extensionless files stay; openability is still
+  content-sniffed on choose); files mode only. The Zustand store snapshots
+  BOTH pools on open (the index async from main, the tab strip synchronously)
+  and re-ranks the active one per keystroke — matching never touches React.
+  `openPalette('buffers')` starts directly in open-file search (the seam for
+  a future shortcut); Ctrl+P always opens files mode, and `setMode` (the two
+  header buttons) switches pools keeping the query.
+- **Overlay** (`components/quick-open.tsx`): a near-fullscreen modal — an
+  input row (mode buttons ファイル/開いているファイル, the input, the
+  text-only toggle) over a two-pane body: the result list (each
+  row the relative path with fuzzy-match highlights) and a **preview** pane that
+  reads the selected entry's path on demand (`readFile`, cached per path,
+  binary/empty states, char-capped; an untitled buffer has no path — empty
+  pane). Arrow keys + Enter, Esc / backdrop-click to close, hover
+  to select. Choosing dispatches by item: `bufferId` → tab switch, else path →
+  the content-sniffed open. The input owns focus while open; the editor stays
+  MOUNTED underneath, so its selection survives with no save/restore, and
+  `closeQuickOpen` just refocuses it (mirrors `closeSearch`). Nav/close keys are
+  ignored mid-composition.
+
+While the palette is open the app-root keydown listener defers to
+`handleQuickOpenKey`, which swallows recognized app chords (Ctrl+W &c. must not
+leak to the shell) but lets editing chords and printable keys reach the input —
+this is the `overlay` keymap scope, ahead of a formal registry. The store is
+built generic (`items`, not `files`) so the same overlay can back the
+`Ctrl+Shift+P` command palette later; `matchQuickOpenCommand` leaves Shift+P
+unclaimed. Verified in `test/e2e/quick-open.ts`.
+
 ## Structure repair
 
 `pm/structure.ts repair`: when typing completes or breaks ruby syntax, the

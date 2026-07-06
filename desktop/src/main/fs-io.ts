@@ -6,6 +6,17 @@ import type { DirEntry, ReadFileResult } from '../shared/ipc';
 
 export const readTextFile = (path: string): Promise<string> => readFile(path, 'utf-8');
 
+/** True when the path is a directory. Ctrl+O may resolve to one (the open
+ * dialog allows folders), in which case the shell adds it as a workspace root
+ * instead of reading it. A missing/unreadable path is not a directory. */
+export const isDirectory = async (path: string): Promise<boolean> => {
+  try {
+    return (await stat(path)).isDirectory();
+  } catch {
+    return false;
+  }
+};
+
 /** Is this content NOT text? Sniffed from the BYTES (a NUL in the head, the
  * git heuristic), never from the extension — extensions lie in both
  * directions. UTF-16 reads as binary too: ved is UTF-8-only for now. */

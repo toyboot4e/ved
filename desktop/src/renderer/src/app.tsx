@@ -11,6 +11,7 @@ import { clsx } from 'clsx';
 import { useCallback, useEffect, useMemo, useReducer, useRef, useState } from 'react';
 import appStyles from './app.module.scss';
 import { activeBuffer, type BufferId, buffersReducer, initBuffers, isDirty, someInactiveDirty } from './buffers';
+import { QuickOpen } from './components/quick-open';
 import { SearchBar, type SearchFocusRequest } from './components/search-bar';
 import { ShellPanel } from './components/shell-panel';
 import { Sidebar } from './components/sidebar';
@@ -29,6 +30,7 @@ import {
   windowTitle,
 } from './file-commands';
 import { useInvisiblesStore } from './invisibles';
+import { handleQuickOpenKey, matchQuickOpenCommand, useQuickOpenStore } from './quick-open';
 import { closeSearch, matchSearchCommand, useSearchStore } from './search';
 import { useShellStore } from './shells';
 import { useThemeStore } from './theme';
@@ -184,6 +186,14 @@ export const App = (): React.JSX.Element => {
   const handleOpen = useCallback(async () => {
     const opened = await window.ved.openFile();
     if (!opened) return;
+    // A folder chosen in the open dialog is added as a sidebar root (revealing
+    // the sidebar), not opened as a buffer.
+    if (opened.kind === 'directory') {
+      const ws = useWorkspaceStore.getState();
+      ws.addRoot(opened.path);
+      if (!ws.sidebarOpen) ws.toggleSidebar();
+      return;
+    }
     if (opened.read.kind !== 'text') {
       notTextNotice(opened.path);
       return;
@@ -242,12 +252,23 @@ export const App = (): React.JSX.Element => {
   useEffect(() => {
     const isDarwin = window.electron.process.platform === 'darwin';
     const onKeyDown = (event: KeyboardEvent): void => {
+      // While the quick-open overlay is open its input owns the keyboard —
+      // it handles navigation/close, and this swallows app chords so they
+      // don't leak to the shell (quick-open.ts handleQuickOpenKey).
+      if (handleQuickOpenKey(event, isDarwin)) return;
+
       // A key an editor EXTENSION consumed (Vim owns Ctrl+F/B as page
       // scrolling in normal mode) never reaches this window listener: the
       // editor stopPropagation()s it (editor.tsx handleKeyDown). We must NOT
       // additionally guard on `event.defaultPrevented` here — ProseMirror
       // preventDefaults keys it handles WITHOUT stopping propagation (Escape
       // among them), and this listener's Escape-closes-search must still run.
+      const quickOpenCommand = matchQuickOpenCommand(event, isDarwin);
+      if (quickOpenCommand) {
+        event.preventDefault();
+        useQuickOpenStore.getState().openPalette();
+        return;
+      }
       const fileCommand = matchFileCommand(event, isDarwin);
       if (fileCommand) {
         event.preventDefault();
@@ -294,6 +315,7 @@ export const App = (): React.JSX.Element => {
   const sidebarOpen = useWorkspaceStore((s) => s.sidebarOpen);
   const sidebarSide = useWorkspaceStore((s) => s.sidebarSide);
   const roots = useWorkspaceStore((s) => s.roots);
+  const quickOpenOpen = useQuickOpenStore((s) => s.open);
   // New shells open in the active file's directory, else the first workspace
   // root, else $HOME (main's fallback).
   const shellCwd = (active.path !== null ? dirName(active.path) : undefined) ?? roots[0];
@@ -383,6 +405,14 @@ export const App = (): React.JSX.Element => {
         <ShellPanel defaultCwd={shellCwd} />
       </div>
       {sidebarSide === 'right' && sidebar}
+      {quickOpenOpen && (
+        <QuickOpen
+          roots={roots}
+          buffers={state.buffers.map((b) => ({ id: b.id, path: b.path, label: b.path ?? '無題' }))}
+          onOpenFile={handleOpenTreeFile}
+          onSelectBuffer={handleSelect}
+        />
+      )}
       {notice !== null && (
         <p className={appStyles.notice} role='status'>
           {notice}

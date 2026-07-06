@@ -1,11 +1,11 @@
 # Plan: editor UI (app shell)
 
 Status: **in progress** (2026-07) — phases 0–1 are complete; the view-config
-interlude and phase 6 (VerticalRows) shipped out of order. Phase 2
-(file-browser sidebar) is in progress: the multi-root tree shipped (step 2a);
-watching and resize remain. The app is a multi-buffer tabbed editor with
-open/save (Ctrl+O/S/Shift+S over the `window.ved` IPC layer), dirty markers,
-and a dirty-close confirm guard.
+interlude, phase 3 (Ctrl+P quick open), and phase 6 (VerticalRows) shipped out
+of order. Phase 2 (file-browser sidebar) is nearly done: the multi-root tree,
+resize, and binary refusal shipped; only watching (2b) remains. The app is a
+multi-buffer tabbed editor with open/save (Ctrl+O/S/Shift+S over the
+`window.ved` IPC layer), dirty markers, and a dirty-close confirm guard.
 
 Goal: grow ved from "an editor surface" into "an editor app" — file open/save,
 a tab bar, a file-browser sidebar, Ctrl+P quick open, and configuration —
@@ -356,7 +356,11 @@ costs more than the lines it saves.
   grew `readFile` (→ `ReadFileResult`) / `readDir` / `openDirDialog`
   (dir-picker seam: `VED_SMOKE_OPEN_DIR_PATH`, a comma-list consumed per
   call). Dot-entries stay out of the tree (`listDir`). Smoke:
-  `test/e2e/sidebar.ts`.
+  `test/e2e/sidebar.ts`. *(2026-07-06)* The **Ctrl+O** open dialog also allows
+  a FOLDER: main branches on the resolved path's kind (`fs-io.ts isDirectory`;
+  `OpenFileResult` is now a `file | directory` union), and a chosen folder is
+  added as a root and reveals the sidebar rather than opening a buffer. Smoke:
+  `test/e2e/open-folder.ts`.
 - [ ] **2b. Watching.** `chokidar` in main on each root (ignoring
   `.gitignore`d dirs), debounced `FsChangeEvent`s over IPC; the tree
   refreshes the affected directory, and the Ctrl+P index (phase 3)
@@ -374,26 +378,52 @@ costs more than the lines it saves.
 
 Roots/visibility persistence rides Phase 4's `config.json`.
 
-### Phase 3 — Ctrl+P quick open
+### Phase 3 — Ctrl+P quick open *(done 2026-07-06)*
 
-- **Index** (main process): walk the workspace root respecting `.gitignore`
-  (the `ignore` npm package over hand-walked dirs; no ripgrep dependency),
-  cache the list, invalidate via the phase-2 watcher. For a prose workspace
-  this is thousands of paths at most — no incremental index needed.
-- **Matcher** (renderer): `fuzzysort` — fast, tiny, gives highlight ranges.
-  (`fzf-for-js` is the alternative; `cmdk` is rejected — it bundles
-  rendering and focus behavior we need to control ourselves next to Slate.)
-- **UI**: hand-rolled modal overlay — input + result list, render top ~50
-  matches, arrow keys + Enter, Esc closes. Focus discipline is the whole
-  trick: opening saves the editor selection as a plain-offset cursor, closing
-  refocuses the view and restores it (the history/tab-switch cursor-restore
-  path already exists).
-  The overlay registers the `overlay` keymap scope so editor chords are
-  inert while it's open.
+- [x] **Ctrl+P quick open.** *(done 2026-07-06)*
+  - **Index** (main process, `main/workspace-index.ts`): walks each workspace
+    root respecting `.gitignore` (the `ignore` npm package over a hand-walked
+    tree; nested `.gitignore` files stack over their subtree; `.git` always
+    skipped; directory symlinks never followed) into one flat `WorkspaceFile`
+    list, sorted by label (the empty-query view IS this list). Per-root
+    results are cached (`invalidateRoot` is the seam the
+    phase-2 watcher will call — dormant until 2b), deduped by absolute path,
+    with each label prefixed by the root base name when several roots are open.
+    A `MAX_FILES_PER_ROOT` guard bounds pathological trees. New IPC:
+    `listWorkspaceFiles(roots)`.
+  - **Matcher** (renderer, `quick-open.ts`): `fuzzysort` over the label into
+    mode-agnostic items, capped at `RESULT_LIMIT` (500) with the uncapped
+    total alongside (the list footer reports the overflow). An empty query
+    shows the whole sorted pool up to the cap. A **text-only** toggle
+    (`isTextLabel`, a cosmetic
+    binary-extension denylist) filters first (files mode). Pure
+    `rankFiles`/`rankBuffers` + a Zustand store
+    holding both pool snapshots taken on open (matching stays out of React).
+  - **Modes**: files search and open-file (buffer) search, switched by the two
+    header buttons; choosing a buffer row switches to that tab instead of
+    opening a new one. `openPalette('buffers')` starts directly in buffer
+    search — the seam for a future shortcut; Ctrl+P opens files mode.
+  - **UI** (`components/quick-open.tsx`): hand-rolled near-fullscreen modal —
+    an input row (mode buttons, input, text-only toggle) over a two-pane body:
+    the result list
+    (each row the RELATIVE PATH, fuzzy-highlighted) and a **preview** pane that
+    reads the selected file on demand (cached per path; binary/empty states).
+    Arrow keys + Enter, Esc / backdrop-click closes, hover selects. The input
+    OWNS focus while open; closing hands focus back to the editor
+    (`closeQuickOpen`, mirroring `closeSearch`). The editor stays mounted under
+    the overlay, so its selection is preserved with no save/restore. IME-safe:
+    nav/close keys ignored mid-composition.
+  - **Scope**: while the palette is open the app keydown listener defers to
+    `handleQuickOpenKey` — it swallows recognized app chords (so Ctrl+W &c.
+    don't leak to the shell) while editing chords and printable keys reach the
+    input. This is the `overlay` keymap scope, ahead of a formal registry.
+  - Smoke: `test/e2e/quick-open.ts`. Units: `main/workspace-index.test.ts`,
+    `renderer/src/quick-open.test.ts`. See architecture.md "Quick open".
 
-The same overlay component becomes the **command palette** (`Ctrl+Shift+P`)
-later, listing the keymap registry's commands — design the overlay as
-"input + generic item provider" from the start.
+The same store/overlay is built to back the **command palette**
+(`Ctrl+Shift+P`) later — "input + generic item provider", hence the store's
+`items` (not `files`); `matchQuickOpenCommand` deliberately leaves Shift+P
+unclaimed for it.
 
 ### Phase 4 — configuration
 

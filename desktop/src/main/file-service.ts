@@ -6,9 +6,11 @@ import {
   type OpenFileResult,
   type ReadFileResult,
   type SaveFileAsResult,
+  type WorkspaceFile,
 } from '../shared/ipc';
 import { cliFilePaths, readCliFiles } from './cli-args';
-import { listDir, readTextFileChecked, writeTextFileAtomic } from './fs-io';
+import { isDirectory, listDir, readTextFileChecked, writeTextFileAtomic } from './fs-io';
+import { listWorkspaceFiles } from './workspace-index';
 
 // Native dialogs cannot be driven by Playwright, so the smoke test injects
 // fixed paths through these environment variables instead. The open stubs
@@ -31,7 +33,10 @@ const pickOpenPath = async (sender: WebContents): Promise<string | null> => {
 
   const win = BrowserWindow.fromWebContents(sender);
   if (!win) return null;
-  const result = await dialog.showOpenDialog(win, { properties: ['openFile'] });
+  // Allow a FILE or a DIRECTORY: a chosen folder is added as a workspace root.
+  // (macOS shows a unified picker; on Windows/Linux the two properties fold to
+  // one selector — the handler branches on the resolved path's kind either way.)
+  const result = await dialog.showOpenDialog(win, { properties: ['openFile', 'openDirectory'] });
   return result.canceled ? null : (result.filePaths[0] ?? null);
 };
 
@@ -69,7 +74,8 @@ export const registerFileService = (): void => {
   ipcMain.handle(IpcChannel.OpenFile, async (event): Promise<OpenFileResult> => {
     const path = await pickOpenPath(event.sender);
     if (!path) return null;
-    return { path, read: await readTextFileChecked(path) };
+    if (await isDirectory(path)) return { kind: 'directory', path };
+    return { kind: 'file', path, read: await readTextFileChecked(path) };
   });
 
   ipcMain.handle(IpcChannel.SaveFile, async (_event, path: string, text: string): Promise<void> => {
@@ -91,4 +97,9 @@ export const registerFileService = (): void => {
   ipcMain.handle(IpcChannel.ReadDir, (_event, path: string): Promise<DirEntry[]> => listDir(path));
 
   ipcMain.handle(IpcChannel.OpenDirDialog, (event): Promise<string | null> => pickDirPath(event.sender));
+
+  ipcMain.handle(
+    IpcChannel.ListWorkspaceFiles,
+    (_event, roots: readonly string[]): Promise<WorkspaceFile[]> => listWorkspaceFiles(roots),
+  );
 };

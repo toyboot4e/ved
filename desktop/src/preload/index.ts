@@ -24,6 +24,7 @@ const ved: VedApi = {
   readFile: (path) => ipcRenderer.invoke(IpcChannel.ReadFile, path),
   readDir: (path) => ipcRenderer.invoke(IpcChannel.ReadDir, path),
   openDirDialog: () => ipcRenderer.invoke(IpcChannel.OpenDirDialog),
+  listWorkspaceFiles: (roots) => ipcRenderer.invoke(IpcChannel.ListWorkspaceFiles, roots),
   createShell: (cwd) => ipcRenderer.invoke(IpcChannel.ShellCreate, cwd),
   resumeShell: (id) => ipcRenderer.send(IpcChannel.ShellResume, id),
   writeShell: (id, data) => ipcRenderer.send(IpcChannel.ShellInput, id, data),

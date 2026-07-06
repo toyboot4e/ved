@@ -13,6 +13,7 @@ export const IpcChannel = {
   ReadFile: 'ved:file:read',
   ReadDir: 'ved:file:read-dir',
   OpenDirDialog: 'ved:file:open-dir',
+  ListWorkspaceFiles: 'ved:workspace:list-files',
   ShellCreate: 'ved:shell:create',
   ShellResume: 'ved:shell:resume',
   ShellInput: 'ved:shell:input',
@@ -29,13 +30,14 @@ export type CliFile = {
   readonly text: string;
 };
 
-/** A file picked via the open dialog; `null` means canceled. `read` reports
- * a binary refusal (content sniff, see {@link ReadFileResult}) — the shell
- * tells the user instead of opening it. */
-export type OpenFileResult = {
-  readonly path: string;
-  readonly read: ReadFileResult;
-} | null;
+/** A target picked via the open dialog; `null` means canceled. The dialog
+ * allows picking a FILE or a DIRECTORY: a file carries its `read` (a binary
+ * refusal via content sniff — see {@link ReadFileResult} — so the shell tells
+ * the user instead of opening it); a directory is added as a workspace root. */
+export type OpenFileResult =
+  | { readonly kind: 'file'; readonly path: string; readonly read: ReadFileResult }
+  | { readonly kind: 'directory'; readonly path: string }
+  | null;
 
 /** The path chosen via the save dialog; `null` means canceled. */
 export type SaveFileAsResult = {
@@ -48,6 +50,15 @@ export type DirEntry = {
   /** Absolute path (parent + name, joined by main). */
   readonly path: string;
   readonly kind: 'dir' | 'file';
+};
+
+/** A file in the Ctrl+P quick-open index. `path` is absolute (used to open
+ * the buffer); `label` is what the user sees and fuzzy-matches against — the
+ * path relative to its root, prefixed with the root's base name when several
+ * roots are open, so the same relative path under two roots stays distinct. */
+export type WorkspaceFile = {
+  readonly path: string;
+  readonly label: string;
 };
 
 /** A known path read by CONTENT: `binary` means "not UTF-8 text" — sniffed
@@ -72,6 +83,10 @@ export type VedFileApi = {
   readonly readDir: (path: string) => Promise<readonly DirEntry[]>;
   /** Shows a directory picker; `null` means canceled. */
   readonly openDirDialog: () => Promise<string | null>;
+  /** Walks the workspace roots (honoring .gitignore) into one flat, deduped
+   * file list for quick open. Per-root results are cached in main; this is a
+   * snapshot taken when the palette opens. */
+  readonly listWorkspaceFiles: (roots: readonly string[]) => Promise<readonly WorkspaceFile[]>;
 };
 
 export type Unsubscribe = () => void;
