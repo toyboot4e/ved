@@ -132,3 +132,37 @@ describe('{action} RHS through the adapter', () => {
     expect(() => createVimExtension({ keymap: { normal: { Q: { action: 'no.such' } } } })).toThrow(/unknown action/);
   });
 });
+
+describe('macros through the adapter (K3)', () => {
+  it('records and replays through the feed queue, with the live doc stepping', () => {
+    const t = attach('abcdef');
+    t.press('q', 'a', 'x', 'q', '@', 'a', '@', '@');
+    expect(t.state.text).toBe('def');
+  });
+
+  it('a counted replay runs count times without growing the stack', () => {
+    const t = attach('abcdefgh');
+    t.press('q', 'a', 'x', 'q', '3', '@', 'a');
+    expect(t.state.text).toBe('efgh');
+  });
+
+  it('a macro replays THROUGH user mappings (typed keys re-expand)', () => {
+    const t = attach('abcdef', { keymap: { normal: { X: 'x' } } });
+    t.press('q', 'a', 'X', 'q', '@', 'a');
+    expect(t.state.text).toBe('cdef'); // X expanded during record AND replay
+  });
+
+  it('dot-repeat after a macro repeats the last change WITHIN it', () => {
+    const t = attach('abcdef');
+    t.press('q', 'a', 'x', 'x', 'q', '@', 'a', '.');
+    // record: xx (2 deleted); @a: 2 more; '.': ONE more (the last x), not @a.
+    expect(t.state.text).toBe('f');
+  });
+
+  it('reports the recording register via onMacroRecording', () => {
+    const regs: (string | null)[] = [];
+    const t = attach('abc', { onMacroRecording: (r) => regs.push(r) });
+    t.press('q', 'w', 'x', 'q');
+    expect(regs).toEqual(['w', null]);
+  });
+});

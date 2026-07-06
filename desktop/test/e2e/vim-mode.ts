@@ -60,8 +60,8 @@ try {
   assert.ok(cls.blockCaret, 'block caret decoration renders over the character under the caret');
   step('toggle on: NORMAL chip, vedVimNormal class, block caret');
 
-  // --- Normal mode never types ---
-  await press('q');
+  // --- Normal mode never types (z is unbound — q now records macros) ---
+  await press('z');
   await page.keyboard.insertText('な'); // bypasses keydown → the handleTextInput belt
   await page.waitForTimeout(80);
   assert.equal(await docText(page), TEXT, 'neither an unbound key nor raw insertText types in normal mode');
@@ -416,6 +416,17 @@ try {
   await page.keyboard.press('Escape');
   await press('u'); // restore the doc
   step('imap jj → Esc: live prefix, match deletes, dead end types');
+
+  // --- Macros: qa x q records one delete; @a replays it; @@ repeats. ---
+  await toggleVim();
+  await setDoc(page, 'abcdef');
+  await toggleVim();
+  await setCaret(page, 0);
+  await press('qaxq', 150); // record: delete 'a'
+  await press('@a', 150); // replay: delete 'b'
+  await press('@@', 150); // repeat: delete 'c'
+  assert.equal(await docText(page), 'def', 'qa x q / @a / @@ delete three characters');
+  step('macros: q records, @ replays, @@ repeats');
 
   // --- Toggle off: everything back to ordinary editing (still in the current
   // doc/mode from the horizontal test — mode-independent). ---

@@ -52,15 +52,22 @@
 //     keys (the reducer can't step a mutating doc within one call). `N.`
 //     replays N times. Not recorded: motions, undo/redo, visual-mode changes;
 //     IME-typed insert text is not captured (same caveat as search);
-//   - one unnamed register; NO macros, marks, named registers, or ex commands
-//     (`:`) yet;
+//   - macros: `q{reg}`…`q` records TYPED keys (fed/replayed keys excluded —
+//     a replay re-expands through mappings), `@{reg}` replays via the same
+//     feedKeys loop as mappings, `@@` repeats, counts multiply. `.` after a
+//     macro repeats the last change WITHIN it, like Vim;
+//   - one unnamed register (plus the macro registers); NO marks, named yank
+//     registers, or ex commands (`:`) yet;
 //   - USER MAPPINGS (keymap.ts, docs/vim-keymap-plan.md): a front layer in
 //     vimKeydown walks per-map-mode tries (nmap/xmap/omap/imap) BEFORE this
 //     dispatch; a match feeds its RHS keys back through the adapter
 //     (noremap by default), a dead-ended walk replays what it swallowed.
-//     Inactive during the command line, char/text-object arguments, and a
-//     built-in `g` prefix. The INSERT walk types its prefix LIVE and deletes
-//     it on a match (`jj` → Esc; IME/click-safe — see insertMappingKey).
+//     Inactive during the command line and char arguments. The INSERT walk
+//     types its prefix LIVE and deletes it on a match (`jj` → Esc; IME/
+//     click-safe — see insertMappingKey);
+//   - BUILT-IN SEQUENCES (`gg`, `g`+hjkl, the text objects) are entries in
+//     per-context tries walked by the same discipline (builtinLayerKey) —
+//     always active, so fed and replayed keys resolve them identically.
 //
 // All configurable, data-driven behavior (bracket pairs, find-chord targets,
 // join spacing) lives in ONE place — config.ts; user KEY mappings ride the
@@ -134,13 +141,9 @@ export type VimState = {
   readonly count: number | null;
   /** Pending operator (`d` of `dw`), waiting for its motion. */
   readonly operator: Operator | null;
-  /** A `g` was pressed, waiting for the second key (`gg`). */
-  readonly gPending: boolean;
-  /** A key waiting for its CHARACTER argument (`r`, `f`, `F`, `t`, `T`). */
-  readonly charPending: 'r' | FindOp | null;
-  /** A text-object kind (`i`/`a`) waiting for its object key (operator-pending
-   *  or visual mode — `diw`, `ci(`, `vip`). */
-  readonly textObjectPending: 'i' | 'a' | null;
+  /** A key waiting for its CHARACTER argument: `r` (replace), `f`/`F`/`t`/`T`
+   *  (find), `q` (macro register), `@` (macro replay register). */
+  readonly charPending: 'r' | 'q' | '@' | FindOp | null;
   /** The `/`(forward) / `?`(backward) search command line being typed, its
    *  accumulated pattern, or null when not searching. */
   readonly commandLine: { readonly forward: boolean; readonly text: string } | null;
@@ -155,10 +158,19 @@ export type VimState = {
   readonly recording: { readonly keys: readonly VimKey[]; readonly changed: boolean } | null;
   /** The completed last change's key sequence — what `.` replays. */
   readonly lastChange: readonly VimKey[] | null;
-  /** Keys swallowed so far by an in-progress USER MAPPING walk (a valid
-   *  strict prefix of some LHS). The walk re-runs from the trie root each
-   *  keydown, so only the keys are stored. */
-  readonly mapPending: readonly VimKey[] | null;
+  /** Keys accumulated by an in-progress SEQUENCE walk — a user-mapping LHS
+   *  prefix (`layer: 'user'`) or a built-in multi-key sequence like `gg` or
+   *  `iw` (`layer: 'builtin'`). The walk re-runs from the trie root each
+   *  keydown, so only the keys are stored; the layers never walk at once. */
+  readonly mapPending: { readonly layer: 'user' | 'builtin'; readonly keys: readonly VimKey[] } | null;
+  /** Recorded macros by register (`q{reg}` records, `@{reg}` replays). */
+  readonly macros: Readonly<Record<string, readonly VimKey[]>>;
+  /** The macro being recorded: register + the REAL keys captured so far
+   *  (vimKeydown captures them — replayed/fed keys are excluded, so a macro
+   *  holds what was TYPED and re-expands through mappings on replay). */
+  readonly macroRecording: { readonly reg: string; readonly keys: readonly VimKey[] } | null;
+  /** The register of the last `@` replay, for `@@`. */
+  readonly lastMacro: string | null;
 };
 
 export const VIM_INITIAL: VimState = {
@@ -166,9 +178,7 @@ export const VIM_INITIAL: VimState = {
   visualKind: 'char',
   count: null,
   operator: null,
-  gPending: false,
   charPending: null,
-  textObjectPending: null,
   commandLine: null,
   lastSearch: null,
   lastFind: null,
@@ -176,6 +186,9 @@ export const VIM_INITIAL: VimState = {
   recording: null,
   lastChange: null,
   mapPending: null,
+  macros: {},
+  macroRecording: null,
+  lastMacro: null,
 };
 
 export type VimStep = {
@@ -737,9 +750,7 @@ const clearPending = (state: VimState): VimState => ({
   ...state,
   count: null,
   operator: null,
-  gPending: false,
   charPending: null,
-  textObjectPending: null,
 });
 
 /** Keys with names longer than one character, remapped to their one-char vim
@@ -753,15 +764,10 @@ const NAMED_KEYS: Readonly<Record<string, string>> = {
 };
 
 /** True when `state` is at rest — a normal-mode caret with no pending prefix,
- *  count, operator, or command line. Marks the end of a recorded change. */
+ *  count, operator, sequence walk, or command line. Marks the end of a
+ *  recorded change. */
 const atRest = (s: VimState): boolean =>
-  s.mode === 'normal' &&
-  !s.operator &&
-  !s.charPending &&
-  !s.textObjectPending &&
-  !s.gPending &&
-  !s.commandLine &&
-  s.count === null;
+  s.mode === 'normal' && !s.operator && !s.charPending && !s.mapPending && !s.commandLine && s.count === null;
 
 const isInsertChar = (key: VimKey): boolean => key.key.length === 1 && !key.ctrl && !key.meta && !key.alt;
 
@@ -798,22 +804,47 @@ export type VimKeydownOpts = {
   /** Feeding a noremap RHS (or a dead-ended walk's replay): skip the user
    *  mapping layer; everything else (recording included) runs normally. */
   readonly noremap?: boolean;
+  /** The key is FED (a mapping RHS / macro replay), not typed. Excluded from
+   *  macro capture — a macro holds what was typed, and its replay re-expands. */
+  readonly fed?: boolean;
   /** The compiled user keymap. Absent = no user mappings. */
   readonly keymap?: CompiledKeymap;
 };
 
-/** The public entry. The USER MAPPING front layer runs before the built-in
- *  dispatch: user LHS win over built-ins (that is what remapping means), and
- *  an unmatched walk replays its swallowed keys through the built-ins via a
- *  noremap `feedKeys`. Walk steps bypass record() — the EXPANSION records
- *  (fed keys run without `replay`), so `.` repeats post-expansion keys. */
+/** The public entry, as LAYERS over the core dispatch:
+ *
+ *  1. USER MAPPINGS (when `opts.keymap` is set; skipped for `noremap`/
+ *     `replay` keys): user LHS win over built-ins — that is what remapping
+ *     means — and an unmatched walk replays its swallowed keys via a noremap
+ *     `feedKeys`. User walk steps BYPASS record(): the expansion records
+ *     instead, so `.` repeats post-expansion keys.
+ *  2. BUILT-IN SEQUENCES (`gg`, `g`+hjkl, text objects `iw`/`a(`…): the same
+ *     trie walk, ALWAYS active — replayed and fed keys resolve them
+ *     identically. Their steps RECORD (the walked keys are part of the
+ *     change; a replay re-walks them).
+ *  3. The core dispatch (single keys, counts, operators, arguments). */
 export const vimKeydown = (state: VimState, key: VimKey, doc: VimDocView, opts?: VimKeydownOpts): VimStep => {
+  const step = keydownLayers(state, key, doc, opts);
+  // Macro capture: REAL keys only (fed/replayed keys re-derive from these on
+  // replay), and never the q that starts or stops the recording — capture
+  // requires a recording live on BOTH sides of the step.
+  if (!opts?.replay && !opts?.fed && state.macroRecording && step.state.macroRecording) {
+    const mr = step.state.macroRecording;
+    return { ...step, state: { ...step.state, macroRecording: { ...mr, keys: [...mr.keys, key] } } };
+  }
+  return step;
+};
+
+const keydownLayers = (state: VimState, key: VimKey, doc: VimDocView, opts?: VimKeydownOpts): VimStep => {
   let st = state;
   if (opts?.keymap && !opts.noremap && !opts.replay) {
     const mapped = mappingLayerKey(st, key, opts.keymap, doc);
     if (mapped?.kind === 'step') return mapped.step;
     if (mapped?.kind === 'pass') st = mapped.state; // walk advanced/reset; the key proceeds
   }
+  const builtin = builtinLayerKey(st, key, doc);
+  if (builtin?.kind === 'step') return opts?.replay ? builtin.step : record(st, key, builtin.step);
+  if (builtin?.kind === 'pass') st = builtin.state;
   const raw = dispatch(st, key, doc);
   return opts?.replay ? raw : record(st, key, raw);
 };
@@ -837,8 +868,9 @@ const mappingLayerKey = (state: VimState, key: VimKey, keymap: CompiledKeymap, d
   if (state.commandLine) return null;
   if (isLoneModifier(key)) return null; // fired before the chord's real key; keeps the walk
   if (state.mode === 'insert') return insertMappingKey(state, key, keymap.insert, doc);
-  if (state.charPending || state.textObjectPending || state.gPending) return null;
-  const pending = state.mapPending ?? [];
+  if (state.charPending) return null; // the next key is an ARGUMENT
+  if (state.mapPending && state.mapPending.layer !== 'user') return null; // a builtin walk owns the keys
+  const pending = state.mapPending?.keys ?? [];
   if (pending.length > 0 && key.key === 'Escape') {
     // Cancel the walk, discarding the swallowed keys (as Vim does).
     return { kind: 'step', step: { state: { ...state, mapPending: null }, effects: [], handled: true } };
@@ -847,7 +879,10 @@ const mappingLayerKey = (state: VimState, key: VimKey, keymap: CompiledKeymap, d
   const keys = [...pending, key];
   const walk = walkKeymap(keymap[mode], keys);
   if (walk.kind === 'pending') {
-    return { kind: 'step', step: { state: { ...state, mapPending: keys }, effects: [], handled: true } };
+    return {
+      kind: 'step',
+      step: { state: { ...state, mapPending: { layer: 'user', keys } }, effects: [], handled: true },
+    };
   }
   if (walk.kind === 'match') {
     return { kind: 'step', step: runBinding(state, walk.binding, mode, doc) };
@@ -903,7 +938,7 @@ const insertMappingKey = (
   trie: CompiledKeymap['insert'],
   doc: VimDocView,
 ): MappingResult => {
-  const pending = state.mapPending ?? [];
+  const pending = state.mapPending?.layer === 'user' ? state.mapPending.keys : [];
   if (!isPlainChar(key)) {
     // Chords / Escape / named keys abort the walk; the typed prefix stays.
     return pending.length ? { kind: 'pass', state: { ...state, mapPending: null } } : null;
@@ -918,7 +953,7 @@ const insertMappingKey = (
   for (const base of bases) {
     const walk = walkKeymap(trie, [...base, key]);
     if (walk.kind === 'pending') {
-      return { kind: 'pass', state: { ...state, mapPending: [...base, key] } };
+      return { kind: 'pass', state: { ...state, mapPending: { layer: 'user', keys: [...base, key] } } };
     }
     if (walk.kind === 'match' && walk.binding.kind === 'keys') {
       // (compile rejects {action} RHS in insert mode, so `keys` is the only
@@ -945,6 +980,125 @@ const insertMappingKey = (
     }
   }
   return pending.length ? { kind: 'pass', state: { ...state, mapPending: null } } : null;
+};
+
+// ---------------------------------------------------------------------------
+// Built-in sequences (K2 — the same trie walk as user maps)
+//
+// Every multi-key BUILT-IN — `gg`, `g`+hjkl, the text objects `iw`/`a(`… —
+// is an entry in a per-context trie walked by builtinLayerKey, replacing the
+// old gPending/textObjectPending flags. The context mirrors the map modes:
+// operator pending / visual / normal (so `i` is a text-object prefix only
+// where Vim's omap/xmap would bind it, and plain insert elsewhere).
+// ---------------------------------------------------------------------------
+
+type BuiltinTrie = { readonly children: Map<string, BuiltinTrie>; action: VimAction | null };
+
+/** Build a trie from plain-char sequences (all built-ins are plain chars). */
+const builtinTrie = (entries: Readonly<Record<string, VimAction>>): BuiltinTrie => {
+  const root: BuiltinTrie = { children: new Map(), action: null };
+  for (const [seq, action] of Object.entries(entries)) {
+    let node = root;
+    for (const ch of seq) {
+      let child = node.children.get(ch);
+      if (!child) {
+        child = { children: new Map(), action: null };
+        node.children.set(ch, child);
+      }
+      node = child;
+    }
+    node.action = action;
+  }
+  return root;
+};
+
+const walkBuiltin = (
+  root: BuiltinTrie,
+  keys: readonly VimKey[],
+): { kind: 'pending' } | { kind: 'match'; action: VimAction } | { kind: 'miss' } => {
+  let node = root;
+  for (const k of keys) {
+    const child = node.children.get(k.key);
+    if (!child) return { kind: 'miss' };
+    node = child;
+  }
+  if (node.action) return { kind: 'match', action: node.action };
+  return { kind: 'pending' };
+};
+
+/** `g` + h/j/k/l = the DISPLAY (visual) line/column walk — the wrapped
+ *  column/row, as opposed to bare hjkl's logical paragraph walk. */
+const displayWalk =
+  (direction: VimVisualDirection): VimAction =>
+  (state, env, _doc) => ({
+    state: clearPending(state),
+    effects: [{ kind: 'moveVisual', direction, count: env.count, extend: state.mode === 'visual', visualLine: true }],
+    handled: true,
+  });
+
+const G_SEQUENCES: Readonly<Record<string, VimAction>> = {
+  gg: (state, _env, doc) => commandKey(state, 'gg', doc),
+  gh: displayWalk('left'),
+  gj: displayWalk('down'),
+  gk: displayWalk('up'),
+  gl: displayWalk('right'),
+};
+
+/** Every key `textObjectRange` understands: word/WORD, paragraph, quotes,
+ *  `b`/`B` aliases, and BOTH chars of every bracket pair (config.ts —
+ *  Japanese brackets included). */
+const TEXT_OBJECT_KEYS: readonly string[] = [
+  ...new Set(['w', 'W', 'b', 'B', '"', "'", '`', 'p', ...BRACKET_PAIRS.flatMap(([o, c]) => [o, c])]),
+];
+
+const textObjectSequences = (): Record<string, VimAction> => {
+  const out: Record<string, VimAction> = {};
+  for (const kind of ['i', 'a'] as const) {
+    for (const obj of TEXT_OBJECT_KEYS) {
+      out[kind + obj] = (state, _env, doc) => textObjectStep(state, kind, obj, doc);
+    }
+  }
+  return out;
+};
+
+const BUILTIN_TRIES: Readonly<Record<'normal' | 'visual' | 'operatorPending', BuiltinTrie>> = {
+  normal: builtinTrie(G_SEQUENCES),
+  visual: builtinTrie({ ...G_SEQUENCES, ...textObjectSequences() }),
+  operatorPending: builtinTrie({ ...G_SEQUENCES, ...textObjectSequences() }),
+};
+
+/** The built-in sequence walk for one key (layer 2 of vimKeydown). Same
+ *  discipline as the user layer, with the built-ins' own semantics: a dead
+ *  end SWALLOWS and clears pendings (the old `gx`-types-nothing behavior),
+ *  Escape and chords cancel the walk but still reach the dispatch, and named
+ *  keys normalize first (`g`+Enter = `gj`, as the old g-prefix behaved). */
+const builtinLayerKey = (state: VimState, key: VimKey, doc: VimDocView): MappingResult => {
+  if (state.mode === 'insert' || state.commandLine || state.charPending) return null;
+  if (state.mapPending && state.mapPending.layer !== 'builtin') return null;
+  if (isLoneModifier(key)) return null;
+  const pending = state.mapPending?.keys ?? [];
+  if (key.ctrl || key.meta || key.alt || key.key === 'Escape') {
+    // Never sequence material: drop the walk; the dispatch still sees the
+    // key itself (Escape exits modes, chords bubble to the app).
+    return pending.length ? { kind: 'pass', state: { ...state, mapPending: null } } : null;
+  }
+  const k = NAMED_KEYS[key.key] ?? key.key;
+  if (k.length !== 1) return null; // arrows &c. — the editor's own handlers
+  const context = state.operator ? 'operatorPending' : state.mode === 'visual' ? 'visual' : 'normal';
+  const keys = [...pending, { ...key, key: k }];
+  const walk = walkBuiltin(BUILTIN_TRIES[context], keys);
+  if (walk.kind === 'pending') {
+    return {
+      kind: 'step',
+      step: { state: { ...state, mapPending: { layer: 'builtin', keys } }, effects: [], handled: true },
+    };
+  }
+  if (walk.kind === 'match') {
+    const env: VimActionEnv = { count: state.count ?? 1, hasCount: state.count !== null };
+    return { kind: 'step', step: walk.action({ ...state, mapPending: null }, env, doc) };
+  }
+  if (pending.length === 0) return null; // the key starts no sequence — the dispatch's business
+  return { kind: 'step', step: swallow({ ...clearPending(state), mapPending: null }) };
 };
 
 const dispatch = (state: VimState, key: VimKey, doc: VimDocView): VimStep => {
@@ -996,37 +1150,17 @@ const dispatch = (state: VimState, key: VimKey, doc: VimDocView): VimStep => {
     if (key.key.length !== 1) return swallow(clearPending(state));
     return resolveCharKey(state, key.key, doc);
   }
-  if (state.textObjectPending) {
-    if (key.key.length !== 1) return swallow(clearPending(state));
-    return resolveTextObject(state, key.key, doc);
-  }
   const k = NAMED_KEYS[key.key] ?? key.key;
   if (k.length !== 1) return unhandled(state);
   // Count digits accumulate; '0' is a motion when no count is pending.
-  if (k >= '1' && k <= '9' && !state.gPending) {
+  if (k >= '1' && k <= '9') {
     return { state: { ...state, count: (state.count ?? 0) * 10 + (k.charCodeAt(0) - 48) }, effects: [], handled: true };
   }
   if (k === '0' && state.count !== null) {
     return { state: { ...state, count: state.count * 10 }, effects: [], handled: true };
   }
-  if (state.gPending) {
-    const cleared = { ...state, gPending: false };
-    if (k === 'g') return commandKey(cleared, 'gg', doc);
-    // g + h/j/k/l = the DISPLAY (visual) line/column walk — the wrapped
-    // column/row, as opposed to bare hjkl's logical paragraph walk.
-    if (k === 'h' || k === 'j' || k === 'k' || k === 'l') {
-      const count = cleared.count ?? 1;
-      return {
-        state: clearPending(cleared),
-        effects: [
-          { kind: 'moveVisual', direction: WALK[k], count, extend: cleared.mode === 'visual', visualLine: true },
-        ],
-        handled: true,
-      };
-    }
-    return swallow(clearPending(state));
-  }
-  if (k === 'g') return { state: { ...state, gPending: true }, effects: [], handled: true };
+  // Multi-key built-ins (g-sequences, text objects) were consumed by
+  // builtinLayerKey before this point.
   return commandKey(state, k, doc);
 };
 
@@ -1062,6 +1196,24 @@ const resolveCharKey = (state: VimState, ch: string, doc: VimDocView): VimStep =
       handled: true,
     };
   }
+  if (pending === 'q') {
+    // Start recording into the register (any single character names one).
+    return { state: { ...cleared, macroRecording: { reg: ch, keys: [] } }, effects: [], handled: true };
+  }
+  if (pending === '@') {
+    // Replay a macro: feed its TYPED keys back (through mappings — that is
+    // what typing them would do), count times. `@@` = the last replayed one.
+    const reg = ch === '@' ? state.lastMacro : ch;
+    const macro = reg ? state.macros[reg] : undefined;
+    if (!reg || !macro || macro.length === 0) return swallow(cleared);
+    const keys: VimKey[] = [];
+    for (let n = 0; n < count; n++) keys.push(...macro);
+    return {
+      state: { ...cleared, lastMacro: reg },
+      effects: [{ kind: 'feedKeys', keys, noremap: false }],
+      handled: true,
+    };
+  }
   if (pending === null) return swallow(cleared);
   const withFind = { ...cleared, lastFind: { op: pending, ch } };
   const motion = findTarget(doc.text, doc.head, pending, ch, count);
@@ -1082,10 +1234,10 @@ const commandKey = (state: VimState, k: string, doc: VimDocView): VimStep => {
   const hasCount = state.count !== null;
   const cleared = clearPending(state);
   // Operator pending: this key is its target (a motion, the doubled operator
-  // = whole lines, or a find prefix). Anything else cancels the operator.
+  // = whole lines, or a find prefix; text objects were consumed by the
+  // builtin sequence layer). Anything else cancels the operator.
   if (state.operator) {
     if (k === state.operator) return linewiseOperator(cleared, state.operator, count, doc);
-    if (k === 'i' || k === 'a') return { state: { ...state, textObjectPending: k }, effects: [], handled: true };
     if (k === 'f' || k === 'F' || k === 't' || k === 'T') {
       return { state: { ...state, charPending: k }, effects: [], handled: true };
     }
@@ -1096,18 +1248,16 @@ const commandKey = (state: VimState, k: string, doc: VimDocView): VimStep => {
     return swallow(cleared);
   }
   if (state.mode === 'visual') {
-    // i/a select a text object (viw, ci( started from visual).
-    if (k === 'i' || k === 'a') return { state: { ...state, textObjectPending: k }, effects: [], handled: true };
     const visual = visualKey(cleared, k, count, hasCount, doc);
     if (visual) return visual;
   }
   return normalKey(cleared, k, count, hasCount, doc);
 };
 
-/** The object key after a pending `i`/`a`: compute the text object's range and
- *  either apply the pending operator or (in visual mode) set the selection. */
-const resolveTextObject = (state: VimState, objKey: string, doc: VimDocView): VimStep => {
-  const kind = state.textObjectPending === 'a' ? 'a' : 'i';
+/** A completed text object (`iw`, `a(`, `ip`… — matched by the builtin
+ *  sequence layer): compute its range and either apply the pending operator
+ *  or (in visual mode) set the selection. */
+const textObjectStep = (state: VimState, kind: 'i' | 'a', objKey: string, doc: VimDocView): VimStep => {
   const op = state.operator;
   const cleared = clearPending(state);
   const range = textObjectRange(kind, objKey, doc.text, doc.head);
@@ -1381,6 +1531,25 @@ const NORMAL_ACTIONS = {
   'search.prev': (state, _env, doc) => searchStep(state, doc, false),
   'search.wordForward': (state, _env, doc) => searchWordUnder(state, doc, true),
   'search.wordBackward': (state, _env, doc) => searchWordUnder(state, doc, false),
+  // q toggles: stop the live recording (saving the register — the stopping q
+  // itself is never captured), or await the register to record into.
+  'macro.record': (state) =>
+    state.macroRecording
+      ? {
+          state: {
+            ...state,
+            macros: { ...state.macros, [state.macroRecording.reg]: state.macroRecording.keys },
+            macroRecording: null,
+          },
+          effects: [],
+          handled: true,
+        }
+      : { state: { ...state, charPending: 'q' as const }, effects: [], handled: true },
+  'macro.play': (state, env) => ({
+    state: { ...state, charPending: '@' as const, count: env.hasCount ? env.count : null },
+    effects: [],
+    handled: true,
+  }),
 } satisfies Record<string, VimAction>;
 
 const NORMAL_BINDINGS: Readonly<Record<string, keyof typeof NORMAL_ACTIONS>> = {
@@ -1415,6 +1584,8 @@ const NORMAL_BINDINGS: Readonly<Record<string, keyof typeof NORMAL_ACTIONS>> = {
   N: 'search.prev',
   '*': 'search.wordForward',
   '#': 'search.wordBackward',
+  q: 'macro.record',
+  '@': 'macro.play',
 };
 
 /** The action ids a user `{action}` RHS may reference, per map mode (handed

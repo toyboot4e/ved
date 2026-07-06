@@ -28,6 +28,9 @@ export type VimExtensionOptions = {
   /** The `/`?`?` search command line as the user types it (e.g. `/foo`), or
    *  null when not searching — for the shell to render a command line. */
   readonly onCommandLine?: (line: string | null) => void;
+  /** The register a macro is being recorded into (`q{reg}`…`q`), or null —
+   *  for the shell to render a "recording @q" indicator. */
+  readonly onMacroRecording?: (reg: string | null) => void;
   /** Use a Japanese-aware word model for `w`/`b`/`e` (Intl.Segmenter — splits
    *  kana/kanji runs at real word boundaries). Off by default (CLASS_WORDS).
    *  A custom `WordModel` may be passed instead of `true`. */
@@ -45,9 +48,9 @@ export type VimExtensionOptions = {
 const NORMAL_CLASS = 'vedVimNormal';
 
 /** Fed keys allowed per real keydown — the mapping-cycle guard (a `remap:
- *  true` RHS re-enters the user layer). Generous: a legitimate expansion is
- *  a handful of keys. */
-const FEED_BUDGET = 256;
+ *  true` RHS re-enters the user layer). Generous enough for a counted macro
+ *  replay (`50@q` over a long macro); only a cycle realistically hits it. */
+const FEED_BUDGET = 4096;
 
 export const createVimExtension = (options: VimExtensionOptions = {}): EditorExtension => {
   const keymap = options.keymap ? compileKeymap(options.keymap, { knownActions: VIM_ACTIONS_BY_MODE }) : undefined;
@@ -82,6 +85,14 @@ export const createVimExtension = (options: VimExtensionOptions = {}): EditorExt
         if (line === lastCommandLine) return;
         lastCommandLine = line;
         options.onCommandLine?.(line);
+      };
+
+      let lastMacroReg: string | null = null;
+      const syncMacro = (): void => {
+        const reg = state.macroRecording?.reg ?? null;
+        if (reg === lastMacroReg) return;
+        lastMacroReg = reg;
+        options.onMacroRecording?.(reg);
       };
 
       // Visual selection rendering: charwise = inclusive of both ends (the
@@ -146,9 +157,11 @@ export const createVimExtension = (options: VimExtensionOptions = {}): EditorExt
         const step = vimKeydown(state, k, docView(), callOpts);
         state = step.state;
         if (step.handled) {
-          // lastChange never records a '.', but guard nested repeat anyway.
           for (const e of step.effects) {
-            if (callOpts.replay && e.kind === 'repeat') continue;
+            // A replayed change never re-runs nested feeders: skipping
+            // `feedKeys` makes `.` after `@a` repeat the last change WITHIN
+            // the macro (its fed keys were recorded), exactly like Vim.
+            if (callOpts.replay && (e.kind === 'repeat' || e.kind === 'feedKeys')) continue;
             applyEffect(e);
           }
         } else if (state.mode === 'insert' && k.key.length === 1 && !k.ctrl && !k.meta && !k.alt) {
@@ -165,13 +178,32 @@ export const createVimExtension = (options: VimExtensionOptions = {}): EditorExt
         for (let n = 0; n < count; n++) for (const k of keys) feedOne(k, { replay: true });
       };
 
-      // A mapping's RHS (or a dead-ended walk's swallowed keys). Fed keys
-      // RECORD normally — `.` repeats the expansion. noremap keys skip the
-      // user layer; remap keys re-enter it, so the budget is the cycle guard.
+      // A mapping's RHS, a macro replay, or a dead-ended walk's swallowed
+      // keys. Fed keys RECORD normally — `.` repeats the expansion — but are
+      // marked `fed` so a live MACRO recording excludes them (a macro holds
+      // what was typed). noremap keys skip the user layer; remap keys
+      // re-enter it, so the budget is the cycle guard. Runs as an explicit
+      // QUEUE, not recursion — a counted macro or a mapping cycle must not
+      // grow the call stack. Nested expansions go to the FRONT (depth-first,
+      // the order recursion would give).
+      const feedQueue: { k: VimKey; opts: VimKeydownOpts }[] = [];
+      let feeding = false;
       const feedKeys = (keys: readonly VimKey[], noremap: boolean): void => {
-        for (const k of keys) {
-          if (--feedBudget < 0) return;
-          feedOne(k, noremap ? { ...keyOpts, noremap: true } : keyOpts);
+        const opts: VimKeydownOpts = noremap ? { ...keyOpts, noremap: true, fed: true } : { ...keyOpts, fed: true };
+        feedQueue.unshift(...keys.map((k) => ({ k, opts })));
+        if (feeding) return; // the active pump drains the front-inserted keys
+        feeding = true;
+        try {
+          while (feedQueue.length > 0) {
+            if (--feedBudget < 0) {
+              feedQueue.length = 0;
+              return;
+            }
+            const next = feedQueue.shift();
+            if (next) feedOne(next.k, next.opts);
+          }
+        } finally {
+          feeding = false;
         }
       };
 
@@ -196,6 +228,7 @@ export const createVimExtension = (options: VimExtensionOptions = {}): EditorExt
           if (state.mode !== prevMode) syncMode(state.mode);
           syncCommandLine();
           syncVisual();
+          syncMacro();
           return step.handled;
         },
         // Belt over the keydown braces: any plain insertion arriving outside
@@ -225,6 +258,7 @@ export const createVimExtension = (options: VimExtensionOptions = {}): EditorExt
           ctx.setContentClass(NORMAL_CLASS, false);
           ctx.setVisualSelection('none');
           options.onCommandLine?.(null);
+          options.onMacroRecording?.(null);
         },
       };
     },

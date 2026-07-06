@@ -1,7 +1,8 @@
 # Plan: composable, user-configurable Vim keymaps
 
-Status: **M1, M2 (imap), and K1 (named actions + `{action}` RHS) shipped
-(2026-07-07); K2/K3 not started.** The
+Status: **complete (2026-07-07)** — M1 (user keymaps), M2 (imap), K1 (named
+actions + `{action}` RHS), K2 (built-in sequences on the trie walk), and K3
+(macros) are all shipped. Remaining follow-ups live at the end. The
 front layer delivers user-configurable mappings WITHOUT first refactoring the
 built-in dispatch — the built-in cascade acts as Vim's "default table", so the
 noremap/map distinction falls out of whether fed keys consult the user tries
@@ -116,15 +117,38 @@ Until then, the smoke seam doubles as the manual override: the shell reads
   dot-repeatable — it runs outside the key recording, Vim's `<Plug>`-without-
   repeat.vim limit). Still open for a later slice: `registerPrimitive`
   (per-instance custom actions — needs instance-scoped tables).
-- [ ] **K2. One trie.** Compile `DEFAULT_KEYMAP` through the same
-  `compileKeymap`; fold `gPending`/`textObjectPending` into the walk
-  (`charPending` stays a capture-char leaf — a trie cannot enumerate "any
-  character"); user and default layers become the same mechanism looked up in
-  order. Deletes the front/built-in split.
-- [ ] **K3. Macros.** `q`/`@` — recording is a state flag; replay IS
-  `feedKeys`. Nearly free after M1.
+- [x] **K2. Built-in sequences on the trie walk.** *(done 2026-07-07)* Every
+  multi-key built-in (`gg`, `g`+hjkl, all text objects incl. the Japanese
+  brackets) is an entry in per-context tries (normal / visual /
+  operator-pending — so `i` is a text-object prefix only where omap/xmap
+  would bind it) walked by `builtinLayerKey`, layer 2 of `vimKeydown`.
+  `gPending` and `textObjectPending` are DELETED; `charPending` stays (an
+  argument, not a sequence — a trie cannot enumerate "any character"); the
+  operator stays a map-mode switch. The builtin layer differs from the user
+  layer deliberately: always active (fed/replayed keys resolve identically),
+  its steps RECORD (walked keys are part of a change; replay re-walks them),
+  a dead end swallows and clears pendings (old `gx` behavior), and Escape/
+  chords cancel the walk but still reach the dispatch. `mapPending` carries a
+  layer tag; the layers never walk at once.
+- [x] **K3. Macros.** *(done 2026-07-07)* `q{reg}`…`q` records, `@{reg}`
+  replays, `@@` repeats, counts multiply (`3@a`). Capture lives in
+  `vimKeydown`: REAL keys only — fed (`opts.fed`) and replayed keys are
+  excluded, so a macro holds what was TYPED and re-expands through user
+  mappings on replay (Vim semantics). Replay IS the `feedKeys` loop, now an
+  explicit QUEUE in the adapter (nested expansions go to the front;
+  recursion would overflow on counted macros), budget 4096. `.` after `@a`
+  repeats the last change WITHIN the macro, like Vim (replays never re-run
+  nested feeders). `onMacroRecording` reports the live register for a future
+  statusline "recording @q" chip (shell UI not yet built).
 
-Feature backlog beyond keymaps (sentence motions, registers, marks/jumplist,
-ex `:` + IME-safe command line, `gn`, …) and the seams each needs: see the
-conversation log / architecture.md vim section; the two keystone seams are
-`onDocChanged` offset mapping and a shell-owned command-line input.
+Follow-ups (not started):
+
+- **registerPrimitive** — per-instance custom actions (a user-supplied
+  `(state, env, doc) => VimStep` under a namespaced id, usable as `{action}`
+  RHS). Needs instance-scoped action tables threaded through `runBinding`.
+- **Statusline "recording @q" chip** — the `onMacroRecording` option exists;
+  the desktop shell UI does not yet consume it.
+- Feature backlog beyond keymaps (sentence motions, registers, marks/
+  jumplist, ex `:` + IME-safe command line, `gn`, …) and the seams each
+  needs: see architecture.md's vim section; the two keystone seams are
+  `onDocChanged` offset mapping and a shell-owned command-line input.

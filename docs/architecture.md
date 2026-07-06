@@ -522,10 +522,15 @@ included, since the reducer sees every keydown — as `lastChange`; `.` emits a
 mutating doc within one call). `gg`/`G` KEEP the column; `Ctrl+A`/`Ctrl+X`
 increment/decrement the number at the caret; linewise `V` keeps the cursor and
 highlights the paragraph, charwise `v` is inclusive of the anchor cell
-(`setVisualSelection`). The full key set and its
-deviations — motions, operators + TEXT OBJECTS (`iw`/`a(`/`ip`…), `%`, `~`,
-etc. — are the `model.ts` header; deferred: macros, marks, named registers, ex
-commands. The whole loop is pinned by `test/e2e/vim-mode.ts`.
+(`setVisualSelection`). **Macros**: `q{reg}`…`q` records the TYPED keys —
+capture lives in `vimKeydown` and excludes fed/replayed keys, so a replay
+(`@{reg}`, `@@`, counts multiply) re-expands through user mappings, and `.`
+after a macro repeats the last change WITHIN it, as in Vim; the adapter runs
+all fed keys through one explicit queue (recursion would overflow a counted
+macro), and `onMacroRecording` reports the live register. The full key set and
+its deviations — motions, operators + TEXT OBJECTS (`iw`/`a(`/`ip`…), `%`,
+`~`, etc. — are the `model.ts` header; deferred: marks, named yank registers,
+ex commands. The whole loop is pinned by `test/e2e/vim-mode.ts`.
 
 Every **tunable, locale-dependent** value lives in ONE data leaf, `config.ts`:
 the bracket pairs `%` and the bracket text objects match (Japanese `「」（）
@@ -555,14 +560,22 @@ effect the adapter re-enters key by key (the dot-repeat loop generalized,
 budget-guarded against mapping cycles), and a dead-ended walk replays its
 swallowed keys through the built-ins as if typed. Fed keys record, so `.`
 repeats the expansion. The layer never runs where a key is an ARGUMENT
-(`f`/`r`, text objects, the search line). INSERT maps (`jj` → `<Esc>`) use a
+(`f`/`r`, the search line). INSERT maps (`jj` → `<Esc>`) use a
 different walk that never swallows: the prefix types live and a match deletes
 it before feeding the RHS — an interrupting composition/click loses nothing
 (the walk just resets at compositionstart), and a match strips the prefix
 keys from the dot-repeat recording so `.` replays the net change. Insert LHS
-keys must be plain printable characters. Built-in normal/visual commands are
-NAMED ACTIONS in data tables (key → id → pure function, `model.ts`
-`NORMAL_ACTIONS`/`VISUAL_ACTIONS`); an RHS can bind one directly —
+keys must be plain printable characters.
+
+The BUILT-IN multi-key sequences — `gg`, `g`+hjkl, every text object
+(`iw`/`a(`/`i「`…) — ride the SAME walk discipline as layer 2 of `vimKeydown`
+(`builtinLayerKey`, per-context tries: normal / visual / operator-pending, so
+`i` is a text-object prefix only where Vim's omap/xmap would bind it). The
+builtin layer is always active — fed and replayed keys resolve sequences
+identically — its steps RECORD (a replay re-walks them), and a dead end
+swallows and clears pendings (`gx` types nothing). Built-in normal/visual
+commands are NAMED ACTIONS in data tables (key → id → pure function,
+`model.ts` `NORMAL_ACTIONS`/`VISUAL_ACTIONS`); an RHS can bind one directly —
 `{action: 'delete.charForward'}` — validated against `VIM_ACTIONS_BY_MODE`
 at construction (not dot-repeatable, like Vim's `<Plug>` without repeat.vim).
 The shell reads `window.__vedVimKeymap` on the first toggle — the smoke seam,

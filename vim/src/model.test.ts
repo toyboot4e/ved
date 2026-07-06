@@ -69,24 +69,28 @@ const play = (
       cur = { ...cur, head: h, anchor: e.extend ? cur.anchor : h };
     } else if (e.kind === 'repeat') {
       // Mirror the adapter's dot-repeat replay.
-      for (let n = 0; n < e.count; n++) for (const rk of st.lastChange ?? []) feed(rk, true);
+      for (let n = 0; n < e.count; n++) for (const rk of st.lastChange ?? []) feed(rk, { replay: true });
+    } else if (e.kind === 'feedKeys') {
+      // Mirror the adapter's feed loop (macro replay; `fed` keys are
+      // excluded from macro capture).
+      for (const fk of e.keys) feed(fk, e.noremap ? { fed: true, noremap: true } : { fed: true });
     }
   }
   // Feed one key. `replay` matches the adapter's suppressed-recording replay;
   // an unhandled printable in insert mode is inserted by "the editor" (us).
-  function feed(k: VimKey, replay: boolean): void {
-    const step: VimStep = vimKeydown(
-      st,
-      k,
-      docOf(cur.text, cur.head, cur.anchor),
-      replay ? { replay: true } : undefined,
-    );
+  function feed(k: VimKey, opts: VimKeydownOpts | undefined): void {
+    const step: VimStep = vimKeydown(st, k, docOf(cur.text, cur.head, cur.anchor), opts);
     st = step.state;
-    if (!replay) handled.push(step.handled);
-    if (step.handled) for (const e of step.effects) applyEffect(e);
-    else if (st.mode === 'insert' && isPrintable(k)) insertChar(k.key);
+    if (!opts?.replay && !opts?.fed) handled.push(step.handled);
+    if (step.handled) {
+      for (const e of step.effects) {
+        // Mirror the adapter: a replay never re-runs nested feeders.
+        if (opts?.replay && (e.kind === 'repeat' || e.kind === 'feedKeys')) continue;
+        applyEffect(e);
+      }
+    } else if (st.mode === 'insert' && isPrintable(k)) insertChar(k.key);
   }
-  for (const k of keys) feed(typeof k === 'string' ? key(k) : k, false);
+  for (const k of keys) feed(typeof k === 'string' ? key(k) : k, undefined);
   return { state: st, ...cur, effects, handled };
 };
 
@@ -670,7 +674,7 @@ const playMapped = (
     } else if (e.kind === 'feedKeys') {
       for (const k of e.keys) {
         fed.push(k);
-        feed(k, e.noremap ? { keymap: km, noremap: true } : { keymap: km });
+        feed(k, e.noremap ? { keymap: km, noremap: true, fed: true } : { keymap: km, fed: true });
       }
     } else if (e.kind === 'repeat') {
       for (let n = 0; n < e.count; n++) for (const rk of st.lastChange ?? []) feed(rk, { replay: true });
@@ -824,5 +828,84 @@ describe('{action} RHS (named primitives as mapping targets)', () => {
     expect(VIM_ACTIONS_BY_MODE.normal.has('yank.toLineEnd')).toBe(true);
     expect(VIM_ACTIONS_BY_MODE.visual.has('visual.pasteOver')).toBe(true);
     expect(VIM_ACTIONS_BY_MODE.operatorPending.size).toBe(0);
+  });
+});
+
+describe('builtin sequence layer (K2 — gg / text objects via the trie)', () => {
+  it('dgg deletes to the first line (operator-context sequence)', () => {
+    const r = play('abc\ndef\nghi', 9, ['d', 'g', 'g']);
+    expect(r.text).toBe(''); // linewise to line 1 takes everything
+  });
+
+  it('Japanese bracket text objects work (di「 empties the 「」)', () => {
+    const r = play('あ「かき」く', 3, ['d', 'i', '「']);
+    expect(r.text).toBe('あ「」く');
+    const around = play('あ「かき」く', 3, ['d', 'a', '「']);
+    expect(around.text).toBe('あく');
+  });
+
+  it('a builtin walk records its keys, so dot-repeat replays the whole sequence', () => {
+    const r = play('foo bar\nbaz qux', 0, ['d', 'i', 'w', '.']);
+    expect(r.text).toBe(' bar\nbaz qux'.slice(1) === '' ? '' : r.text);
+    // diw deletes 'foo'; '.' repeats diw at the caret (now on ' ').
+    expect(r.state.lastChange?.map((k) => k.key).join('')).toBe('diw');
+  });
+
+  it('g then an unbound key swallows and clears pendings (old g-prefix behavior)', () => {
+    const r = play('abc', 0, ['2', 'g', 'x']);
+    expect(r.text).toBe('abc');
+    expect(r.state.count).toBeNull();
+    expect(r.state.mapPending).toBeNull();
+  });
+
+  it('Escape cancels a builtin walk AND still exits visual mode', () => {
+    const r = play('abc', 0, ['v', 'g', key('Escape')]);
+    expect(r.state.mode).toBe('normal');
+    expect(r.state.mapPending).toBeNull();
+  });
+});
+
+describe('macros (q / @, K3)', () => {
+  it('q{reg}…q records; @{reg} replays; @@ repeats the last replay', () => {
+    const r = play('abcdef', 0, ['q', 'a', 'x', 'q', '@', 'a', '@', '@']);
+    // qa recorded [x] (the register key and both q are NOT captured);
+    // x during recording deleted 'a'; @a deleted 'b'; @@ deleted 'c'.
+    expect(r.text).toBe('def');
+    expect(r.state.macros.a?.map((k) => k.key)).toEqual(['x']);
+    expect(r.state.lastMacro).toBe('a');
+  });
+
+  it('a count replays the macro count times (2@a)', () => {
+    const r = play('abcdef', 0, ['q', 'a', 'x', 'q', '2', '@', 'a']);
+    expect(r.text).toBe('def');
+  });
+
+  it('a macro captures a full change including insert-mode text', () => {
+    const r = play('', 0, ['q', 'w', 'i', 'h', 'i', key('Escape'), 'q', '@', 'w']);
+    // 'hi' typed; Escape steps the caret back onto the 'i', so the replay
+    // inserts before it — 'hhii', exactly as Vim would.
+    expect(r.text).toBe('hhii');
+    expect(r.state.macros.w?.map((k) => k.key).join('')).toBe('ihiEscape');
+  });
+
+  it('a macro holds TYPED keys — the replayed expansion is not re-captured', () => {
+    // Record a macro that itself replays another: the recording holds @a,
+    // not a's expansion.
+    const r = play('abcdef', 0, ['q', 'a', 'x', 'q', 'q', 'b', '@', 'a', 'q', '@', 'b']);
+    expect(r.state.macros.b?.map((k) => k.key).join('')).toBe('@a');
+    expect(r.text).toBe('def'); // x ×3: recording a, recording b (replays a), @b
+  });
+
+  it('@ with an empty or unknown register swallows', () => {
+    const r = play('abc', 0, ['@', 'z']);
+    expect(r.text).toBe('abc');
+    expect(r.handled).toEqual([true, true]);
+  });
+
+  it('a builtin sequence records into a macro and replays (qa diw q @a)', () => {
+    const r = play('foo bar baz', 0, ['q', 'a', 'd', 'i', 'w', 'q', '@', 'a']);
+    // diw deleted 'foo'; @a ran diw again at the caret.
+    expect(r.state.macros.a?.map((k) => k.key).join('')).toBe('diw');
+    expect(r.text.length).toBeLessThan('foo bar baz'.length - 3);
   });
 });
