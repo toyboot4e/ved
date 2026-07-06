@@ -21,9 +21,14 @@ import { Decoration, DecorationSet } from 'prosemirror-view';
 
 export const pageGapKey = new PluginKey<DecorationSet>('vedPageGap');
 
-const gapWidget = (): HTMLElement => {
+const gapWidget = (before: boolean) => (): HTMLElement => {
   const el = document.createElement('span');
-  el.className = 'ved-page-gap';
+  // `before`: the extra width opens toward the PREVIOUS line instead of the
+  // next (vertical-align: bottom, ruby.css) — the composition-time fallback
+  // for a boundary trapped inside the composition text node (see editor.tsx
+  // runPageGaps): rendered one line late, the gap still appears between the
+  // right lines.
+  el.className = before ? 'ved-page-gap ved-page-gap-before' : 'ved-page-gap';
   // Read-only like every ved widget: the widget sits exactly at the page
   // boundary, and an editable span there lets Chromium anchor an IME
   // composition against it — PM's reconciliation then kills the composition
@@ -32,9 +37,19 @@ const gapWidget = (): HTMLElement => {
   el.setAttribute('contenteditable', 'false');
   return el;
 };
+const gapAfter = gapWidget(false);
+const gapBefore = gapWidget(true);
+
+/** One page-gap widget: its PM position, and whether its gap opens BEFORE its
+ *  line (the composition-time fallback) rather than after. */
+export type PageGapPos = { readonly pos: number; readonly before?: boolean };
+
+/** The widget's decoration key — placement identity, used both to build the
+ *  set and to compare it against a freshly measured one. */
+export const pageGapDecoKey = (g: PageGapPos): string => `ved-page-gap-${g.pos}${g.before ? '-before' : ''}`;
 
 /** A transaction replacing the page-gap widget set (PM doc positions). */
-export const pageGapTr = (state: EditorState, positions: readonly number[]): Transaction =>
+export const pageGapTr = (state: EditorState, positions: readonly PageGapPos[]): Transaction =>
   state.tr.setMeta(pageGapKey, positions);
 
 export const pageGapPlugin = (): Plugin<DecorationSet> =>
@@ -43,14 +58,16 @@ export const pageGapPlugin = (): Plugin<DecorationSet> =>
     state: {
       init: () => DecorationSet.empty,
       apply(tr, set) {
-        const positions = tr.getMeta(pageGapKey) as readonly number[] | undefined;
+        const positions = tr.getMeta(pageGapKey) as readonly PageGapPos[] | undefined;
         if (positions !== undefined) {
           return DecorationSet.create(
             tr.doc,
             // side -1: the widget associates with the PRECEDING content, so at a
             // wrap boundary it stays on the page's last line (and an insertion
             // at the boundary lands after it).
-            positions.map((pos) => Decoration.widget(pos, gapWidget, { side: -1, key: `ved-page-gap-${pos}` })),
+            positions.map((g) =>
+              Decoration.widget(g.pos, g.before ? gapBefore : gapAfter, { side: -1, key: pageGapDecoKey(g) }),
+            ),
           );
         }
         // Between measurements, keep the widgets riding along with edits.

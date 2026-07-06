@@ -414,6 +414,14 @@ ruby.rubyActive + .rubyDelimClose {
   -webkit-user-select: none;
 }
 
+/* The composition-time fallback (see editor.tsx runPageGaps): pinned to the
+ * line-UNDER side instead, the extra width opens toward the PREVIOUS line —
+ * a widget rendered one line late still draws the gap between the right
+ * lines. */
+.ved-page-gap-before {
+  vertical-align: bottom;
+}
+
 /* Page-number folio (paged modes only — VerticalColumns / VerticalRows),
  * drawn by the line-number overlay at the bottom of each page, centered on
  * the page's measured span; plain text, no box (it sits in clear space —

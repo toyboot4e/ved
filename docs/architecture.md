@@ -49,6 +49,7 @@ defends one of four invariants (binding statements in `CLAUDE.md`):
 | 1 | **Selection deletion edits the plain string exactly (`plainDeleteTr`)** | `deleteSelection` (structural) | a structural delete leaves debris the string never contained (a phantom `()`), and repair is skipped while composing; `plainDeleteTr` removes exactly the offset range and rebuilds the paragraphs canonically. Also Enter-replace, IME entry | `editor.tsx` |
 | 3 | **Line numbers + highlight are a measured overlay** | a CSS counter on `<p>` | a wrapped paragraph needs one number + highlight per *visual* line; only measurement gives that | `line-numbers.ts` |
 | 4 | **Custom plain-text history (`PlainTextHistory`)** | `prosemirror-history` | operation-level undo is meaningless across structure repair; tabs snapshot strings | `history.ts` |
+| 2 | **The composition survives a caret-clearing conversion** | Blink leaves the selection null | an IME conversion that replaces an ISOLATED preedit text node (composing right after a ruby at a paragraph end) with a shorter candidate invalidates the DOM caret offset and Blink clears the selection FOR GOOD. Two-layer repair, either alone stays broken: (a) `domSelectionRange` answers a null selection, while composing, with the observer's last-changed text node — PM's `findCompositionNode` runs at flush BEFORE the `input` event, and with no node it redraws the preedit (killing it); (b) an `input` listener re-seats the real caret at that node's end, or the next IME query hits a caret-less context and fcitx5 confirms the preedit (Space "completes" instead of converting, no `compositionend`, the view stuck composing). Uses PM internals (`domSelectionRange`, `domObserver.lastChangedTextNode`); `mozc/space-convert.ts` guards the contract across upgrades | `editor.tsx` |
 | 2 | **IME composition is sacrosanct** | — | repairing, focusing, or remounting mid-composition cancels it and drops text | throughout |
 
 Everything else — bold/italic/縦中横, the ruby annotation, the page columns —
@@ -510,7 +511,17 @@ and they are structurally different:
   only lines from the first changed one re-walk. Suffix reuse is gated to
   Rich/Plain (other policies re-wrap on caret moves); a non-edit layout
   change schedules a full pass. (`page-gap-suffix.ts` via
-  `__vedGapLines`/`__vedGapLineEnds`.)
+  `__vedGapLines`/`__vedGapLineEnds`.) The re-measure runs DURING an IME
+  composition too (a paragraph spanning the boundary re-wraps per preedit
+  keystroke; the stale widget, riding the mapping, drifts onto the next
+  page's first line and jams it against the previous page). A boundary
+  trapped inside the composition TEXT NODE cannot render there (PM's
+  composition protection re-covers the node whole, dropping the widget), so
+  it is placed at the node's end — one line late — as a `ved-page-gap-before`
+  widget whose extra width opens toward the PREVIOUS line: the gap stays
+  between the right lines. The changed-set check compares against the LIVE
+  (mapped) widget identities, never a cached copy of the last dispatch.
+  Verified against real mozc (`mozc/gap-compose.ts`).
 
 The page-gap knobs are the page's margins around the border (view config
 `gap A`/`gap B` → `--page-gap-top`/`--page-gap-bottom`, default 1 cell): A =

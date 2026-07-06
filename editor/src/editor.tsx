@@ -39,7 +39,10 @@ import {
 } from './pm/model';
 import {
   type LineItem,
+  type PageGapPos,
   pageEndsFromLines,
+  pageGapDecoKey,
+  pageGapKey,
   pageGapPlugin,
   pageGapTr,
   posAfterEnclosingRuby,
@@ -1310,6 +1313,54 @@ export const VedEditor = (props: VedEditorProps): React.JSX.Element => {
     });
     viewRef.current = view;
 
+    // KEEP THE COMPOSITION IDENTIFIED THROUGH A CONVERSION (IME safety). When
+    // the preedit is an ISOLATED text node (composing right after a ruby at a
+    // paragraph end — nothing to merge with), a conversion that REPLACES it
+    // with a shorter candidate (かんじ → 感じ) invalidates the DOM caret offset
+    // and Blink transiently CLEARS the DOM selection. ProseMirror's
+    // findCompositionNode reads that null selection at flush time, loses the
+    // composition node, skips its composition protection, and redraws the
+    // preedit node — fcitx5 then silently commits it: Space "completes" the
+    // composition instead of converting, no compositionend ever fires, and the
+    // view is stuck composing (which also disables structure repair). Answer a
+    // null DOM selection, while composing, with the IME's last-changed text
+    // node — exactly the node PM is trying to find. domSelectionRange and
+    // domObserver.lastChangedTextNode are PM internals (no public seam reaches
+    // this moment); mozc/space-convert.ts guards the contract across upgrades.
+    type DomSelRange = { focusNode: Node | null; focusOffset: number; anchorNode: Node | null; anchorOffset: number };
+    const pmView = view as unknown as {
+      domSelectionRange: () => DomSelRange;
+      domObserver: { lastChangedTextNode: Text | null };
+    };
+    const nativeDomSelectionRange = pmView.domSelectionRange.bind(view);
+    pmView.domSelectionRange = (): DomSelRange => {
+      const range = nativeDomSelectionRange();
+      if (range.focusNode || !view.composing) return range;
+      const text = pmView.domObserver.lastChangedTextNode;
+      if (!text || !view.dom.contains(text)) return range;
+      const end = text.nodeValue?.length ?? 0;
+      return { focusNode: text, focusOffset: end, anchorNode: text, anchorOffset: end };
+    };
+    // Second layer of the same repair: the cleared selection is PERMANENT, not
+    // transient — nothing re-seats it, so the NEXT IME operation queries a
+    // caret-less context and fcitx5 resets (the preedit is confirmed; further
+    // Space presses insert spaces instead of cycling candidates). Restore the
+    // caret at the changed node's end when the conversion's `input` event
+    // shows it lost; a later update re-seats it wherever the IME wants. The
+    // `input` event arrives AFTER ProseMirror's observer flush, so this layer
+    // cannot replace the fallback above (verified: either alone stays red) —
+    // the fallback carries ProseMirror through the flush, this restores the
+    // real caret for the IME.
+    const reseatCompositionCaret = (): void => {
+      if (!view.composing) return;
+      const ds = view.dom.ownerDocument.getSelection();
+      if (ds?.focusNode) return;
+      const text = pmView.domObserver.lastChangedTextNode;
+      if (!text || !view.dom.contains(text)) return;
+      ds?.collapse(text, text.nodeValue?.length ?? 0);
+    };
+    view.dom.addEventListener('input', reseatCompositionCaret);
+
     // Test seams (read-only, harmless in production):
     //  - __vedCaret: a reliable GLOBAL caret offset (a DOM Range metric is
     //    unreliable across hidden markup); maps the live PM head to a plain
@@ -2156,7 +2207,6 @@ export const VedEditor = (props: VedEditorProps): React.JSX.Element => {
     // the full pass. Any non-edit layout change (mode/policy/resize/fonts)
     // schedules with `full`, dropping the cache.
     let pageGapRaf = 0;
-    let lastGapPositions: number[] = [];
     let measuredLineCount = 0; // visual lines seen by the last measurePageGaps
     let gapCache: {
       text: string;
@@ -2235,7 +2285,6 @@ export const VedEditor = (props: VedEditorProps): React.JSX.Element => {
       clearTimeout(pageGapTimer);
       pageGapRaf = 0;
       pageGapTimer = 0;
-      if (view.composing) return;
       // Rows: one endless band — every page boundary gets a widget. Columns
       // with pages-per-row > 1: widgets at INTRA-band boundaries only (the
       // band break itself separates pages via fragmentation).
@@ -2247,6 +2296,33 @@ export const VedEditor = (props: VedEditorProps): React.JSX.Element => {
         : multiColHere && pagesPerRow > 1
           ? measurePageGaps(pagesPerRow)
           : [];
+      // COMPOSING is measured too: the preedit re-wraps the page's last line,
+      // and a stale widget (riding the edit's mapping) drifts onto the NEXT
+      // page's first line — that line then jams against this page's last for
+      // the whole composition, with a double gap after it. The dispatch below
+      // is composition-safe (the preedit text node survives a redraw — see the
+      // conversion repair at view creation) EXCEPT a widget positioned INSIDE
+      // the composition TEXT NODE: it cannot render there (PM's composition
+      // protection re-covers the node whole, dropping the widget — verified
+      // against real mozc). A boundary trapped inside it is therefore rendered
+      // at the node's END — the first renderable spot, one line late — as a
+      // gap-BEFORE widget (ved-page-gap-before), whose extra width opens
+      // toward the PREVIOUS line: the gap still appears between the right
+      // lines. If the preedit can't be located (no DOM selection during a
+      // conversion transient), skip this round; the next update retries.
+      // Verified end to end against real mozc (mozc/gap-compose.ts).
+      let gaps: PageGapPos[] = positions.map((pos) => ({ pos }));
+      if (view.composing) {
+        const focus = view.dom.ownerDocument.getSelection()?.focusNode;
+        if (!(focus && focus.nodeType === 3 && view.dom.contains(focus))) return;
+        try {
+          const from = view.posAtDOM(focus, 0);
+          const to = from + (focus.nodeValue?.length ?? 0);
+          gaps = positions.map((pos) => (pos > from && pos < to ? { pos: to, before: true } : { pos }));
+        } catch {
+          return;
+        }
+      }
       // Rows: RESERVE the remainder of a partial last page as block-end
       // padding, so the page exists as a whole (scrollable blank space) and
       // the folio centers on the entire page. Padding never re-wraps lines
@@ -2260,14 +2336,18 @@ export const VedEditor = (props: VedEditorProps): React.JSX.Element => {
       }
       const reserveChanged = view.dom.style.paddingLeft !== reserve;
       if (reserveChanged) view.dom.style.paddingLeft = reserve;
-      if (
-        !reserveChanged &&
-        positions.length === lastGapPositions.length &&
-        positions.every((p, i) => p === lastGapPositions[i])
-      )
-        return;
-      lastGapPositions = positions;
-      view.dispatch(pageGapTr(view.state, positions));
+      // Compare against the LIVE widget identities (the plugin maps its set
+      // through edits between dispatches) — a cached copy of the last
+      // dispatch goes stale the moment an edit maps the widgets, and a stale
+      // "unchanged" here would leave a drifted gap in place (composing edits
+      // hit exactly that: the measured boundary offset is often numerically
+      // identical while the mapped widget has moved).
+      const wanted = gaps.map(pageGapDecoKey);
+      const live = (pageGapKey.getState(view.state)?.find() ?? []).map((d) =>
+        pageGapDecoKey({ pos: d.from, before: `${(d.spec as { key?: string }).key}`.endsWith('-before') }),
+      );
+      if (!reserveChanged && wanted.length === live.length && wanted.every((k, i) => k === live[i])) return;
+      view.dispatch(pageGapTr(view.state, gaps));
       // The widgets/reservation shift the layout — re-measure the numbers.
       lineNumbersRef.current?.schedule();
     };
@@ -2390,9 +2470,12 @@ export const VedEditor = (props: VedEditorProps): React.JSX.Element => {
         commitHistory(view.state);
         // Re-anchor for the next edit now that the IME word has settled.
         beforeOffsetRef.current = posToOffset(view.state.doc, view.state.selection.head);
-        // Page-gap re-measures were skipped during the composition — reconcile.
-        // The composition was an edit: its layout change starts at its own
-        // line, so the suffix cache stays valid.
+        // Reconcile the page gaps: composition-time re-measures render a
+        // boundary trapped inside the composition text node as the one-line-
+        // late gap-BEFORE fallback (see runPageGaps) — now that the node is
+        // ordinary text again, this pass restores the true after-widget. The
+        // composition was an edit: its layout change starts at its own line,
+        // so the suffix cache stays valid.
         pageGapsRef.current?.schedule(false);
         // The editor has settled: extensions may react (edits are legal now),
         // and a deferred attach/detach applies.

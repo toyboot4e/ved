@@ -33,6 +33,8 @@ export interface ImeDriver {
   engage(): Promise<void>;
   /** Inject romaji; the IME composes (does NOT commit). */
   type(romaji: string): Promise<void>;
+  /** Press Space: convert the preedit (henkan) / cycle candidates. */
+  convert(): Promise<void>;
   /** Commit the current composition. */
   commit(): Promise<void>;
   /** Drop any pending composition. */
@@ -117,6 +119,10 @@ const x11FcitxMozc: ImePlatform = {
         typeRaw(romaji);
         await page.waitForTimeout(romaji.length * 80 + 350);
       },
+      convert: async () => {
+        key('space');
+        await page.waitForTimeout(450);
+      },
       commit: async () => {
         key('Return');
         await page.waitForTimeout(350);
@@ -158,11 +164,11 @@ const FCITX_ENV = {
 /** Wayland key injection: a named-key press and a text typer, or null if no
  *  injector tool is usable on this host. */
 const waylandInjector = (): {
-  key: (name: 'henkan' | 'return' | 'escape') => void;
+  key: (name: 'henkan' | 'return' | 'escape' | 'space') => void;
   type: (s: string) => void;
 } | null => {
   // ydotool speaks Linux input keycodes (input-event-codes.h) through uinput.
-  const YDOTOOL_CODE = { henkan: 92, return: 28, escape: 1 } as const;
+  const YDOTOOL_CODE = { henkan: 92, return: 28, escape: 1, space: 57 } as const;
   const ydotoold =
     sh('command -v ydotool') !== '' && (sh('pgrep -x ydotoold') !== '' || !sh('ydotool debug').startsWith('ERR'));
   if (ydotoold) {
@@ -172,7 +178,7 @@ const waylandInjector = (): {
     };
   }
   // wtype speaks XKB keysym names (same vocabulary as xdotool key).
-  const WTYPE_KEYSYM = { henkan: 'Henkan_Mode', return: 'Return', escape: 'Escape' } as const;
+  const WTYPE_KEYSYM = { henkan: 'Henkan_Mode', return: 'Return', escape: 'Escape', space: 'space' } as const;
   if (sh('command -v wtype') !== '') {
     return {
       key: (name) => void sh(`wtype -k ${WTYPE_KEYSYM[name]}`),
@@ -212,6 +218,10 @@ const waylandFcitxMozc: ImePlatform = {
       type: async (romaji) => {
         inject.type(romaji);
         await page.waitForTimeout(romaji.length * 80 + 350);
+      },
+      convert: async () => {
+        inject.key('space');
+        await page.waitForTimeout(450);
       },
       commit: async () => {
         inject.key('return');
@@ -270,6 +280,10 @@ const macosKotoeri: ImePlatform = {
         osa(`tell application "System Events" to keystroke "${romaji}"`);
         await page.waitForTimeout(romaji.length * 80 + 350);
       },
+      convert: async () => {
+        osa('tell application "System Events" to key code 49'); // Space
+        await page.waitForTimeout(450);
+      },
       commit: async () => {
         osa('tell application "System Events" to key code 36'); // Return
         await page.waitForTimeout(350);
@@ -324,6 +338,10 @@ const windowsMsIme: ImePlatform = {
         ps(`[System.Windows.Forms.SendKeys]::SendWait('${romaji}')`);
         await page.waitForTimeout(romaji.length * 80 + 350);
       },
+      convert: async () => {
+        ps("[System.Windows.Forms.SendKeys]::SendWait(' ')");
+        await page.waitForTimeout(450);
+      },
       commit: async () => {
         ps("[System.Windows.Forms.SendKeys]::SendWait('{ENTER}')");
         await page.waitForTimeout(350);
@@ -356,6 +374,9 @@ export type MozcSession = {
   /** Inject romaji through the IME (composes), WITHOUT committing; returns the live
    *  (composing) serialized text. */
   type: (romaji: string) => Promise<string>;
+  /** Press Space: convert the preedit / cycle candidates; returns the live
+   *  (still composing) serialized text. */
+  convert: () => Promise<string>;
   /** Commit the current composition. Returns the committed text. */
   commit: () => Promise<string>;
   /** Drop any pending composition. */
@@ -387,6 +408,10 @@ export const openMozc = async (): Promise<MozcSession> => {
     page,
     type: async (romaji) => {
       await driver.type(romaji);
+      return txt();
+    },
+    convert: async () => {
+      await driver.convert();
       return txt();
     },
     commit: async () => {
