@@ -168,15 +168,17 @@ describe('motions', () => {
     expect(play(text, 0, ['e']).head).toBe(2); // ON the last char of 'foo'
   });
 
-  it('0 ^ $ address the line; gg/G the document; count gg/G goes to that line', () => {
-    const text = '  abc\ndef\nghi';
+  it('0 ^ $ address the line; gg/G KEEP the column; count gg/G goes to that line', () => {
+    const text = '  abc\ndef\nghi'; // lines at 0.., 6.., 10..
     expect(play(text, 4, ['0']).head).toBe(0);
     expect(play(text, 4, ['^']).head).toBe(2);
     expect(play(text, 2, ['$']).head).toBe(5);
-    expect(play(text, 7, ['g', 'g']).head).toBe(0);
-    expect(play(text, 0, ['G']).head).toBe(10); // start of the last line
-    expect(play(text, 0, ['2', 'G']).head).toBe(6); // goto line 2
-    expect(play(text, 12, ['2', 'g', 'g']).head).toBe(6);
+    expect(play(text, 7, ['g', 'g']).head).toBe(1); // col 1 of 'def' → col 1 of '  abc'
+    expect(play(text, 0, ['g', 'g']).head).toBe(0); // col 0 stays
+    expect(play(text, 12, ['G']).head).toBe(12); // col 2 of 'ghi' → already last line
+    expect(play(text, 8, ['g', 'g']).head).toBe(2); // col 2 → col 2 of '  abc'
+    expect(play(text, 0, ['2', 'G']).head).toBe(6); // goto line 2, col 0
+    expect(play(text, 12, ['2', 'g', 'g']).head).toBe(8); // col 2 → col 2 of 'def'
   });
 
   it('f/t find within the line (caret ON / BEFORE the char); F/T backward', () => {
@@ -297,6 +299,24 @@ describe('edits', () => {
     expect(play('あ', 0, ['~']).text).toBe('あ'); // no case: unchanged, still advances
   });
 
+  it('Ctrl+A / Ctrl+X increment / decrement the number at the caret', () => {
+    expect(play('x 9 y', 0, [key('a', { ctrl: true })]).text).toBe('x 10 y'); // scans to 9
+    expect(play('n 42', 2, [key('a', { ctrl: true })]).text).toBe('n 43');
+    expect(play('n 42', 2, [key('x', { ctrl: true })]).text).toBe('n 41');
+    expect(play('v 5', 2, ['3', key('a', { ctrl: true })]).text).toBe('v 8'); // count
+    expect(play('n -1', 2, [key('a', { ctrl: true })]).text).toBe('n 0'); // negative
+    expect(play('no nums', 0, [key('a', { ctrl: true })]).text).toBe('no nums'); // none → no-op
+  });
+
+  it('Ctrl+A leaves the caret on the last digit of the result', () => {
+    expect(play('x 99', 2, [key('a', { ctrl: true })]).head).toBe(4); // '100', caret on final 0
+  });
+
+  it('Ctrl+A is dot-repeatable', () => {
+    // 8 → 9 (Ctrl+A), then . → 10
+    expect(play('n 8', 2, [key('a', { ctrl: true }), '.']).text).toBe('n 10');
+  });
+
   it('o opens below, O above, both entering insert', () => {
     const below = play('aa\nbb', 0, ['o']);
     expect(below.text).toBe('aa\n\nbb');
@@ -378,10 +398,10 @@ describe('visual mode (charwise)', () => {
 });
 
 describe('visual mode (linewise, V)', () => {
-  it('V selects the whole line; d cuts it linewise', () => {
+  it('V is linewise WITHOUT moving the cursor; d still cuts the whole line', () => {
     const sel = play('aa\nbb\ncc', 4, ['V']);
     expect(sel.state.visualKind).toBe('line');
-    expect([sel.anchor, sel.head]).toEqual([3, 5]);
+    expect([sel.anchor, sel.head]).toEqual([4, 4]); // cursor stays (the editor highlights the line)
     const r = play('aa\nbb\ncc', 4, ['V', 'd']);
     expect(r.text).toBe('aa\ncc');
     expect(r.state.register).toEqual({ text: 'bb', linewise: true });
@@ -395,11 +415,13 @@ describe('visual mode (linewise, V)', () => {
     expect(r.state.register).toEqual({ text: 'aa\nbb', linewise: true });
   });
 
-  it('V then v narrows to charwise; v then V widens to lines', () => {
+  it('V then v narrows to charwise; v then V widens to linewise (keeping anchor/head)', () => {
     expect(play('aa\nbb', 0, ['V', 'v']).state.visualKind).toBe('char');
     const widened = play('aa\nbb', 1, ['v', 'w', 'V']);
     expect(widened.state.visualKind).toBe('line');
-    expect([widened.anchor, widened.head]).toEqual([0, 5]);
+    // The char selection's anchor/head are kept; the editor expands the
+    // highlight to whole lines (it does not move them).
+    expect([widened.anchor, widened.head]).toEqual([1, 3]);
   });
 
   it('c on a linewise selection keeps one empty line and enters insert', () => {

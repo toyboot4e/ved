@@ -1033,6 +1033,9 @@ export const VedEditor = (props: VedEditorProps): React.JSX.Element => {
   // plugin like policyClassRef), the extension-owned content classes, and the
   // attach/detach entry point the extensions-prop effect calls.
   const caretShapeRef = useRef<CaretShape>('bar');
+  // When set (an extension's linewise visual mode), the selection highlight
+  // covers the WHOLE model lines the selection spans (see selectedGlyphRects).
+  const linewiseSelectionRef = useRef(false);
   const extClassesRef = useRef<Set<string>>(new Set());
   const syncExtensionsRef = useRef<((exts: readonly EditorExtension[]) => void) | null>(null);
   const lastTextRef = useRef(props.initialText);
@@ -1561,6 +1564,13 @@ export const VedEditor = (props: VedEditorProps): React.JSX.Element => {
         else extClassesRef.current.delete(cls);
         view.dom.classList.toggle(cls, on);
       },
+      setLinewiseSelection: (on) => {
+        if (linewiseSelectionRef.current === on) return;
+        linewiseSelectionRef.current = on;
+        // Repaint the base-only selection highlight from the (now line-expanded)
+        // model selection.
+        lineNumbersRef.current?.refreshCaret();
+      },
       breakUndoGroup: () => live.current.history.breakBatch(),
       isComposing: () => view.composing,
     };
@@ -1882,10 +1892,20 @@ export const VedEditor = (props: VedEditorProps): React.JSX.Element => {
     // large docs); a select-all still spans everything, necessarily.
     const selectedGlyphRects = (): DOMRect[] => {
       const sel = view.state.selection;
-      if (sel.empty) return [];
-      const from = posToOffset(view.state.doc, sel.from);
-      const to = posToOffset(view.state.doc, sel.to);
+      const linewise = linewiseSelectionRef.current;
+      if (sel.empty && !linewise) return [];
       const text = serialize(view.state.doc);
+      let from = posToOffset(view.state.doc, sel.from);
+      let to = posToOffset(view.state.doc, sel.to);
+      // LINEWISE selection (extension flag): expand to the whole model lines
+      // (paragraphs) the selection spans — the caret is unaffected (it stays at
+      // selection.head). A collapsed selection still highlights its own line.
+      if (linewise) {
+        from = from === 0 ? 0 : text.lastIndexOf('\n', from - 1) + 1;
+        const nl = text.indexOf('\n', to);
+        to = nl < 0 ? text.length : nl;
+        if (from >= to) return [];
+      }
       const cs = getComputedStyle(view.dom);
       const vertical = cs.writingMode.startsWith('vertical');
       // Cap a span's BLOCK extent at one cell (the glyph advance), centered:

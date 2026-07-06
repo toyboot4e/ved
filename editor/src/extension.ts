@@ -84,6 +84,11 @@ export type EditorExtensionContext = {
   /** Toggle a class on the editor's content element (survives writing-mode /
    *  policy class swaps). For extension-specific CSS. */
   readonly setContentClass: (cls: string, on: boolean) => void;
+  /** Render the current selection as LINEWISE — the highlight covers the whole
+   *  model lines (paragraphs) the selection spans, even when it is collapsed,
+   *  while the caret stays at its actual position. For a modal editor's
+   *  line-wise visual mode. Off by default. */
+  readonly setLinewiseSelection: (on: boolean) => void;
   /** End the current undo batch: the next edit starts a fresh history entry
    *  regardless of the debounce window. */
   readonly breakUndoGroup: () => void;

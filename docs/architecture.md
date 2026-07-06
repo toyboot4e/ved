@@ -420,6 +420,9 @@ never ProseMirror values — so extensions cannot violate the identity model:
   (`vedBlockCaretBox`, the boundary caret's box recipe), replacing the
   boundary bar. Native bar suppressed via `.vedNativeCaretOff` either way.
   `setContentClass` survives the policy/mode class swap.
+  `setLinewiseSelection(on)` renders the selection over the WHOLE model lines
+  it spans (even collapsed) while the caret stays put — a modal editor's
+  line-wise visual mode.
 
 Dispatch order on keydown: **IME guard → extension `handleKey` chain → chord
 table (command registry) → built-in handlers → PM keymaps.** The guard sits
@@ -456,10 +459,12 @@ incremental, and not IME-aware (raw keydowns). **Dot-repeat** (`.`): a
 `record()` wrapper keeps the last change's KEY sequence — insert-mode text
 included, since the reducer sees every keydown — as `lastChange`; `.` emits a
 `repeat` effect and the ADAPTER replays those keys (the reducer can't step a
-mutating doc within one call). The full key set and its deviations — motions,
-operators + TEXT OBJECTS (`iw`/`a(`/`ip`…), `%`, `~`, etc. — are the `model.ts`
-header; deferred: macros, marks, named registers, ex commands. The whole loop
-is pinned by `test/e2e/vim-mode.ts`.
+mutating doc within one call). `gg`/`G` KEEP the column; `Ctrl+A`/`Ctrl+X`
+increment/decrement the number at the caret; linewise `V` keeps the cursor and
+highlights the paragraph (`setLinewiseSelection`). The full key set and its
+deviations — motions, operators + TEXT OBJECTS (`iw`/`a(`/`ip`…), `%`, `~`,
+etc. — are the `model.ts` header; deferred: macros, marks, named registers, ex
+commands. The whole loop is pinned by `test/e2e/vim-mode.ts`.
 
 ## Layout: writing modes and the page
 

@@ -48,6 +48,16 @@ export const createVimExtension = (options: VimExtensionOptions = {}): EditorExt
       options.onCommandLine?.(line);
     };
 
+    // Linewise visual → the editor highlights whole paragraphs while the caret
+    // stays put (V keeps the cursor).
+    let lastLinewise = false;
+    const syncLinewise = (): void => {
+      const on = state.mode === 'visual' && state.visualKind === 'line';
+      if (on === lastLinewise) return;
+      lastLinewise = on;
+      ctx.setLinewiseSelection(on);
+    };
+
     const docView = (): VimDocView => {
       const sel = ctx.getSelection();
       return { text: ctx.getText(), anchor: sel.anchor, head: sel.head, caretStop: ctx.caretStop };
@@ -120,6 +130,7 @@ export const createVimExtension = (options: VimExtensionOptions = {}): EditorExt
         for (const effect of step.effects) applyEffect(effect);
         if (state.mode !== prevMode) syncMode(state.mode);
         syncCommandLine();
+        syncLinewise();
         return step.handled;
       },
       // Belt over the keydown braces: any plain insertion arriving outside
@@ -143,6 +154,7 @@ export const createVimExtension = (options: VimExtensionOptions = {}): EditorExt
       detach: (): void => {
         ctx.setCaretShape('bar');
         ctx.setContentClass(NORMAL_CLASS, false);
+        ctx.setLinewiseSelection(false);
         options.onCommandLine?.(null);
       },
     };

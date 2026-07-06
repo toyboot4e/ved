@@ -23,10 +23,13 @@
 // Scope and deliberate deviations from Vim:
 //   - modes: normal / insert / visual (character-wise 'v' AND line-wise 'V');
 //   - counts; motions h j k l (spatial) g+hjkl (display-line walk) w b e W B E
-//     0 ^ $ gg G (count gg/G = goto line) f F t T ; , % { };
+//     0 ^ $ gg G (KEEP the column; count gg/G = goto line) f F t T ; , % { };
 //   - operators d c y (dd cc yy, charwise/linewise motions) with TEXT OBJECTS
 //     i/a + w W ( ) [ ] { } < > b B " ' ` p; x X s S r D C J o O i a I A p P
-//     (normal + visual p) ~ u Ctrl+r;
+//     (normal + visual p) ~ Ctrl+A/Ctrl+X (increment/decrement) u Ctrl+r;
+//   - linewise visual `V` KEEPS the cursor (a collapsed selection at the
+//     caret); the editor highlights the whole paragraph via
+//     setLinewiseSelection. Operators still take whole lines (visualRange);
 //   - search: / ? n N * # (literal, case-sensitive; command line built in
 //     state — the shell renders it). NOT incremental, and NOT IME-aware (the
 //     pattern captures raw keydowns; a composed IME pattern is out of scope);
@@ -167,6 +170,14 @@ const firstNonBlank = (text: string, off: number): number => {
   while (i < le && (text[i] === ' ' || text[i] === '\t' || text[i] === '　')) i++;
   return i;
 };
+/** The offset on the line CONTAINING `targetLineStart` that is at the same
+ *  column (offset from line start) as `from`, clamped to that line's end. */
+const atColumn = (text: string, from: number, targetLineStart: number): number => {
+  const col = from - lineStart(text, from);
+  const ls = lineStart(text, targetLineStart);
+  return Math.min(ls + col, lineEnd(text, ls));
+};
+
 /** Start offset of the 0-based line `n`, clamped to the last line. */
 const lineStartOf = (text: string, n: number): number => {
   let off = 0;
@@ -450,6 +461,43 @@ const wordUnder = (text: string, from: number): string | null => {
   return text.slice(a, b + 1);
 };
 
+/** The decimal number at or after the caret on its line: `[start, end)` and
+ *  value, with an optional leading `-`. Null if none before the line end. */
+const findNumber = (text: string, from: number): { start: number; end: number; value: number } | null => {
+  const ls = lineStart(text, from);
+  const le = lineEnd(text, from);
+  const digit = (i: number): boolean => i >= ls && i < le && text[i]! >= '0' && text[i]! <= '9';
+  let i = from;
+  if (!digit(i)) {
+    while (i < le && !digit(i)) i++;
+    if (i >= le) return null;
+  }
+  let start = i;
+  while (digit(start - 1)) start--;
+  let end = i;
+  while (digit(end)) end++;
+  if (start > ls && text[start - 1] === '-') start--; // negative sign
+  const value = Number.parseInt(text.slice(start, end), 10);
+  return Number.isNaN(value) ? null : { start, end, value };
+};
+
+/** Ctrl+A / Ctrl+X: add `delta` to the number at the caret, caret to its last
+ *  digit (Vim). */
+const incrementNumber = (state: VimState, doc: VimDocView, delta: number): VimStep => {
+  const num = findNumber(doc.text, doc.head);
+  if (!num) return swallow(state);
+  const repl = String(num.value + delta);
+  const caret = num.start + repl.length - 1;
+  return {
+    state,
+    effects: [
+      { kind: 'replace', from: num.start, to: num.end, text: repl },
+      { kind: 'select', anchor: caret, head: caret },
+    ],
+    handled: true,
+  };
+};
+
 /** Move the caret to a search result (or swallow if none), recording it for
  *  `n`/`N`. */
 const runSearch = (state: VimState, pattern: string, forward: boolean, doc: VimDocView): VimStep => {
@@ -562,11 +610,17 @@ const motionTarget = (m: string, count: number, hasCount: boolean, doc: VimDocVi
       return { target: firstNonBlank(text, from), inclusive: false, linewise: false };
     case '$':
       return { target: lineEnd(text, from), inclusive: false, linewise: false };
+    // gg/G land on the target line KEEPING the current column (Vim with
+    // `nostartofline`); still linewise so `dgg`/`dG` take whole lines.
     case 'gg':
-      return { target: hasCount ? lineStartOf(text, count - 1) : 0, inclusive: false, linewise: true };
+      return {
+        target: atColumn(text, from, hasCount ? lineStartOf(text, count - 1) : 0),
+        inclusive: false,
+        linewise: true,
+      };
     case 'G':
       return {
-        target: hasCount ? lineStartOf(text, count - 1) : lineStart(text, text.length),
+        target: atColumn(text, from, hasCount ? lineStartOf(text, count - 1) : lineStart(text, text.length)),
         inclusive: false,
         linewise: true,
       };
@@ -712,6 +766,10 @@ const dispatch = (state: VimState, key: VimKey, doc: VimDocView): VimStep => {
     if (state.charPending) return unhandled(clearPending(state));
     if (key.key === 'r') {
       return { state: clearPending(state), effects: [{ kind: 'command', id: 'history.redo' }], handled: true };
+    }
+    // Ctrl+A / Ctrl+X: increment / decrement the number at the caret.
+    if (key.key === 'a' || key.key === 'x') {
+      return incrementNumber(clearPending(state), doc, (key.key === 'a' ? 1 : -1) * (state.count ?? 1));
     }
     // Page scrolling — CONSUMED here so Vim outranks the app bindings on the
     // same chords (Ctrl+F search, Ctrl+B sidebar) while normal mode is on;
@@ -905,20 +963,12 @@ const visualKey = (state: VimState, k: string, _count: number, doc: VimDocView):
       // Charwise v exits; from linewise it narrows to charwise (selection kept).
       if (state.visualKind === 'line') return swallow({ ...state, visualKind: 'char' });
       return { state: normal, effects: [{ kind: 'select', anchor: doc.head, head: doc.head }], handled: true };
-    case 'V': {
-      if (state.visualKind === 'line') {
-        return { state: normal, effects: [{ kind: 'select', anchor: doc.head, head: doc.head }], handled: true };
-      }
-      // Widen to whole lines, keeping the anchor/head orientation.
-      const fwd = doc.anchor <= doc.head;
-      const anchor = fwd ? lineStart(doc.text, doc.anchor) : lineEnd(doc.text, doc.anchor);
-      const head = fwd ? lineEnd(doc.text, doc.head) : lineStart(doc.text, doc.head);
-      return {
-        state: { ...state, visualKind: 'line' },
-        effects: [{ kind: 'select', anchor, head }],
-        handled: true,
-      };
-    }
+    case 'V':
+      // V again exits visual; else widen to linewise WITHOUT moving the cursor
+      // — the editor expands the highlight to whole lines from the flag.
+      return state.visualKind === 'line'
+        ? { state: normal, effects: [{ kind: 'select', anchor: doc.head, head: doc.head }], handled: true }
+        : { state: { ...state, visualKind: 'line' }, effects: [], handled: true };
     case 'o':
       return { state, effects: [{ kind: 'select', anchor: doc.head, head: doc.anchor }], handled: true };
     case 'x':
@@ -1003,15 +1053,12 @@ const normalKey = (state: VimState, k: string, count: number, hasCount: boolean,
     }
     case 'v':
       return { state: { ...state, mode: 'visual', visualKind: 'char' }, effects: [], handled: true };
-    case 'V': {
-      const ls = lineStart(text, head);
-      const le = lineEnd(text, head);
-      return {
-        state: { ...state, mode: 'visual', visualKind: 'line' },
-        effects: [{ kind: 'select', anchor: ls, head: le }],
-        handled: true,
-      };
-    }
+    case 'V':
+      // Linewise visual WITHOUT moving the cursor: the caret stays at its
+      // column (a collapsed selection there), and the editor highlights the
+      // whole paragraph via the linewise-selection flag (adapter). Operators
+      // still take whole lines (visualRange).
+      return { state: { ...state, mode: 'visual', visualKind: 'line' }, effects: [], handled: true };
     case 'r':
       return { state: { ...state, charPending: 'r', count: hasCount ? count : null }, effects: [], handled: true };
     case 'x':

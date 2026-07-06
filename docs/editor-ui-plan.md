@@ -317,11 +317,13 @@ Decisions from the design review (see CONTEXT.md **view config**):
     highlight lagged a row in wrapped paragraphs (overlapping line boxes); now
     it matches on the caret block CENTER (`line-highlight-ruby-wrap.ts`).
     Dot-repeat `.` records the last change's key sequence (insert-mode text
-    included) and the adapter replays it. Smoke: `test/e2e/vim-mode.ts`.
-    Deferred: macros, marks, named registers, ex commands. Owed: real-mozc
-    verification of the normal-mode composition revert
-    (`mozc/vim-normal-composition`). See architecture.md "Extensions" and
-    `docs/extensions.md`.
+    included) and the adapter replays it. `gg`/`G` keep the column;
+    `Ctrl+A`/`Ctrl+X` increment/decrement; linewise `V` keeps the cursor and
+    highlights the paragraph (a new `setLinewiseSelection` editor seam). Smoke:
+    `test/e2e/vim-mode.ts`. Deferred: macros, marks, named registers, ex
+    commands. Owed: real-mozc verification of the normal-mode composition
+    revert (`mozc/vim-normal-composition`). See architecture.md "Extensions"
+    and `docs/extensions.md`.
 
 ### Phase 2 — file browser sidebar
 

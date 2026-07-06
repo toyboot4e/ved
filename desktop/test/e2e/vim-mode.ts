@@ -255,6 +255,57 @@ try {
   assert.equal(await docText(page), 'X X', 'dot-repeat replays ciw + the typed X at the new word');
   step('dot-repeat: . replays the last change including inserted text');
 
+  // --- w/b/e word motions + Ctrl+A/X increment + V (cursor stays, paragraph
+  // highlighted). Fresh doc with Vim off (normal mode blocks typing). ---
+  await toggleVim();
+  await setDoc(page, 'foo bar baz\ncount 41'); // words at 0/4/8; number '41' at 18
+  await toggleVim();
+  await setCaret(page, 0);
+  await press('w');
+  assert.equal(await caretOffset(page), 4, 'w moves to the next word');
+  await press('w');
+  assert.equal(await caretOffset(page), 8, 'w again → third word');
+  await press('b');
+  assert.equal(await caretOffset(page), 4, 'b moves back a word');
+  await press('e');
+  assert.equal(await caretOffset(page), 6, 'e moves to the word end');
+  step('w/b/e are word motions');
+
+  // gg/G keep the column. 'foo bar baz\ncount 41': line 2 'count' at 12; col 2 = 14.
+  await setCaret(page, 14);
+  await press('gg');
+  assert.equal(await caretOffset(page), 2, 'gg goes to the first paragraph at the same column');
+  await press('G');
+  assert.equal(await caretOffset(page), 14, 'G returns to the last paragraph at the same column');
+  step('gg / G keep the column');
+
+  await setCaret(page, 18); // on the '4' of '41'
+  await page.keyboard.press('Control+a');
+  await page.waitForTimeout(60);
+  assert.ok((await docText(page)).includes('count 42'), 'Ctrl+A increments the number');
+  await page.keyboard.press('Control+x');
+  await page.keyboard.press('Control+x');
+  await page.waitForTimeout(60);
+  assert.ok((await docText(page)).includes('count 40'), 'Ctrl+X decrements it');
+  step('Ctrl+A / Ctrl+X increment / decrement');
+
+  // Count VISIBLE selection rects — the overlay pools them (hidden via
+  // display:none), so a raw querySelectorAll would count stale ones.
+  const selRects = () =>
+    page.evaluate(
+      () =>
+        [...document.querySelectorAll('.vedSelectionRect')].filter((e) => (e as HTMLElement).style.display !== 'none')
+          .length,
+    );
+  await setCaret(page, 5); // mid-line ('a' of 'bar')
+  await press('V');
+  assert.equal(await caretOffset(page), 5, 'V does NOT move the cursor');
+  assert.ok((await selRects()) > 0, 'V highlights the paragraph (linewise selection rects appear)');
+  await page.keyboard.press('Escape');
+  await page.waitForTimeout(40);
+  assert.equal(await selRects(), 0, 'Escape clears the linewise highlight');
+  step('V keeps the cursor and highlights the whole paragraph');
+
   // --- Toggle off: everything back to ordinary editing (still in the current
   // doc/mode from the horizontal test — mode-independent). ---
   await toggleVim();
