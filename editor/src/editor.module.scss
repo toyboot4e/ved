@@ -133,8 +133,10 @@ $footer-height: $font-size + $pad-y * 2;
 
   // Horizontal: reserve the line-number gutter BESIDE the text column, so the
   // text area stays the full --line-length (N cells) and a capped line fits
-  // exactly instead of being squeezed by the gutter padding.
-  --editor-width: calc(var(--page-width) + #{$pad-x * 2} + #{$line-gutter});
+  // exactly instead of being squeezed by the gutter padding. The gutter sits
+  // FLUSH inside the border (no pre-gutter pad — any outer margin is the
+  // pane's job), so the width budget is page + gutter + one trailing $pad-x.
+  --editor-width: calc(var(--page-width) + #{$pad-x} + #{$line-gutter});
 
   width: var(--editor-width);
   height: 100%;
@@ -350,7 +352,9 @@ $footer-height: $font-size + $pad-y * 2;
     height: calc(var(--page-height) + #{$pad-y * 2});
     box-sizing: border-box;
     padding: $pad-y $pad-x;
-    padding-inline-start: calc(#{$pad-x} + #{$line-gutter}); // line-number gutter
+    // The line-number gutter sits FLUSH inside the border (no pre-gutter
+    // pad — the pane parent makes any outer margin), matching VerticalRows.
+    padding-inline-start: $line-gutter;
   }
 
   // Horizontal fills the grown scroller (.editor.growMode) rather than one
