@@ -422,11 +422,15 @@ try {
   await setDoc(page, 'abcdef');
   await toggleVim();
   await setCaret(page, 0);
-  await press('qaxq', 150); // record: delete 'a'
+  const macroChip = () => page.evaluate(() => document.getElementById('vim-macro-recording')?.textContent ?? null);
+  await press('qa', 120); // start recording
+  assert.equal(await macroChip(), 'recording @a', 'the toolbar shows the recording register');
+  await press('xq', 150); // delete 'a', stop recording
+  assert.equal(await macroChip(), null, 'the recording chip clears on stop');
   await press('@a', 150); // replay: delete 'b'
   await press('@@', 150); // repeat: delete 'c'
   assert.equal(await docText(page), 'def', 'qa x q / @a / @@ delete three characters');
-  step('macros: q records, @ replays, @@ repeats');
+  step('macros: q records (with a toolbar chip), @ replays, @@ repeats');
 
   // --- Toggle off: everything back to ordinary editing (still in the current
   // doc/mode from the horizontal test — mode-independent). ---

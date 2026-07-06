@@ -578,6 +578,10 @@ commands are NAMED ACTIONS in data tables (key → id → pure function,
 `model.ts` `NORMAL_ACTIONS`/`VISUAL_ACTIONS`); an RHS can bind one directly —
 `{action: 'delete.charForward'}` — validated against `VIM_ACTIONS_BY_MODE`
 at construction (not dot-repeatable, like Vim's `<Plug>` without repeat.vim).
+Users can supply their OWN primitives, `createVimExtension({actions})`: a
+`VimCustomAction` reads the doc view and returns effects — never the modal
+state, so the state shape stays private — and is bindable as `{action}` RHS
+(collisions and unknown ids throw at construction).
 The shell reads `window.__vedVimKeymap` on the first toggle — the smoke seam,
 and the manual override until phase-4 `config.json` hydrates the same shape.
 

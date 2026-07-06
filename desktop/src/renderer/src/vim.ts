@@ -18,6 +18,8 @@ type VimStore = {
   /** The live `/`?`?` search command line (`/foo`), or null when not
    *  searching — rendered by the shell. */
   readonly commandLine: string | null;
+  /** The register a macro is being recorded into (`q{reg}`…), or null. */
+  readonly macroRecording: string | null;
   readonly toggle: () => void;
 };
 
@@ -25,6 +27,7 @@ export const useVimStore = create<VimStore>()((set) => ({
   enabled: false,
   mode: 'normal',
   commandLine: null,
+  macroRecording: null,
   toggle: () => set((s) => ({ enabled: !s.enabled })),
 }));
 
@@ -35,6 +38,7 @@ const VIM_OPTIONS = {
   japaneseWords: true,
   onModeChange: (mode: VimMode) => useVimStore.setState({ mode }),
   onCommandLine: (commandLine: string | null) => useVimStore.setState({ commandLine }),
+  onMacroRecording: (macroRecording: string | null) => useVimStore.setState({ macroRecording }),
 } as const;
 
 let vimExtensionsCache: readonly EditorExtension[] | null = null;

@@ -11,5 +11,15 @@ export { createVimExtension, type VimExtensionOptions } from './extension';
 // config file) early and report errors without constructing the extension.
 export { compileKeymap, type VimKeymapConfig, type VimKeymapRhs, type VimMapMode } from './keymap';
 export { parseKeys, type VimKey } from './keys';
-export { CLASS_WORDS, type VimMode, type WordModel } from './model';
+// VimDocView/VimEffect/VimActionEnv/VimCustomAction: what a user-supplied
+// primitive (`createVimExtension({actions})`) reads and returns.
+export {
+  CLASS_WORDS,
+  type VimActionEnv,
+  type VimCustomAction,
+  type VimDocView,
+  type VimEffect,
+  type VimMode,
+  type WordModel,
+} from './model';
 export { createJapaneseWordModel } from './words-ja';

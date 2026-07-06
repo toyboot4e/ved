@@ -11,6 +11,7 @@ import type { VimKey } from './keys';
 import {
   VIM_ACTIONS_BY_MODE,
   VIM_INITIAL,
+  type VimCustomAction,
   type VimDocView,
   type VimEffect,
   type VimKeydownOpts,
@@ -41,6 +42,11 @@ export type VimExtensionOptions = {
    *  JSON-serializable by design (the future config-file schema); see
    *  docs/vim-keymap-plan.md. */
   readonly keymap?: VimKeymapConfig;
+  /** User-supplied PRIMITIVES, bindable from `keymap` as `{action: id}`
+   *  (normal/visual). Each reads the doc view and returns effects — it never
+   *  sees the modal state. Ids must not collide with the built-in action
+   *  ids (throws at construction). */
+  readonly actions?: Readonly<Record<string, VimCustomAction>>;
 };
 
 /** The content-element class while Vim is in a non-insert mode (block caret
@@ -53,7 +59,21 @@ const NORMAL_CLASS = 'vedVimNormal';
 const FEED_BUDGET = 4096;
 
 export const createVimExtension = (options: VimExtensionOptions = {}): EditorExtension => {
-  const keymap = options.keymap ? compileKeymap(options.keymap, { knownActions: VIM_ACTIONS_BY_MODE }) : undefined;
+  const customActions = options.actions;
+  for (const id of Object.keys(customActions ?? {})) {
+    if (VIM_ACTIONS_BY_MODE.normal.has(id) || VIM_ACTIONS_BY_MODE.visual.has(id)) {
+      throw new Error(`vim actions: "${id}" collides with a built-in action id`);
+    }
+  }
+  // Custom ids extend what {action} RHS may reference (normal/visual).
+  const knownActions = customActions
+    ? {
+        ...VIM_ACTIONS_BY_MODE,
+        normal: new Set([...VIM_ACTIONS_BY_MODE.normal, ...Object.keys(customActions)]),
+        visual: new Set([...VIM_ACTIONS_BY_MODE.visual, ...Object.keys(customActions)]),
+      }
+    : VIM_ACTIONS_BY_MODE;
+  const keymap = options.keymap ? compileKeymap(options.keymap, { knownActions }) : undefined;
   return {
     id: 'vim',
     attach(ctx: EditorExtensionContext) {
@@ -67,7 +87,7 @@ export const createVimExtension = (options: VimExtensionOptions = {}): EditorExt
       // (constructed once), else undefined (the reducer's default CLASS_WORDS).
       const words: WordModel | undefined =
         options.japaneseWords === true ? createJapaneseWordModel() : options.japaneseWords || undefined;
-      const keyOpts: VimKeydownOpts = keymap ? { keymap } : {};
+      const keyOpts: VimKeydownOpts = keymap ? { keymap, ...(customActions ? { customActions } : {}) } : {};
       let feedBudget = 0;
 
       const syncMode = (mode: VimMode): void => {

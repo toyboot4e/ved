@@ -809,6 +809,9 @@ export type VimKeydownOpts = {
   readonly fed?: boolean;
   /** The compiled user keymap. Absent = no user mappings. */
   readonly keymap?: CompiledKeymap;
+  /** User-supplied primitives, resolvable by `{action}` RHS bindings (looked
+   *  up BEFORE the built-in tables; ids validated at construction). */
+  readonly customActions?: Readonly<Record<string, VimCustomAction>>;
 };
 
 /** The public entry, as LAYERS over the core dispatch:
@@ -838,7 +841,7 @@ export const vimKeydown = (state: VimState, key: VimKey, doc: VimDocView, opts?:
 const keydownLayers = (state: VimState, key: VimKey, doc: VimDocView, opts?: VimKeydownOpts): VimStep => {
   let st = state;
   if (opts?.keymap && !opts.noremap && !opts.replay) {
-    const mapped = mappingLayerKey(st, key, opts.keymap, doc);
+    const mapped = mappingLayerKey(st, key, opts.keymap, doc, opts.customActions);
     if (mapped?.kind === 'step') return mapped.step;
     if (mapped?.kind === 'pass') st = mapped.state; // walk advanced/reset; the key proceeds
   }
@@ -864,7 +867,13 @@ type MappingResult =
  *  ARGUMENT (`f`/`r` char, text-object key, a built-in `g` prefix, the search
  *  command line) — those semantics must not be shadowed mid-sequence. Insert
  *  mode has its own walk (insertMappingKey). */
-const mappingLayerKey = (state: VimState, key: VimKey, keymap: CompiledKeymap, doc: VimDocView): MappingResult => {
+const mappingLayerKey = (
+  state: VimState,
+  key: VimKey,
+  keymap: CompiledKeymap,
+  doc: VimDocView,
+  customActions?: Readonly<Record<string, VimCustomAction>>,
+): MappingResult => {
   if (state.commandLine) return null;
   if (isLoneModifier(key)) return null; // fired before the chord's real key; keeps the walk
   if (state.mode === 'insert') return insertMappingKey(state, key, keymap.insert, doc);
@@ -885,7 +894,7 @@ const mappingLayerKey = (state: VimState, key: VimKey, keymap: CompiledKeymap, d
     };
   }
   if (walk.kind === 'match') {
-    return { kind: 'step', step: runBinding(state, walk.binding, mode, doc) };
+    return { kind: 'step', step: runBinding(state, walk.binding, mode, doc, customActions) };
   }
   // Miss. A fresh key that starts no LHS is simply not ours; a dead-ended
   // walk replays everything it swallowed through the built-ins, as if typed
@@ -906,7 +915,13 @@ const mappingLayerKey = (state: VimState, key: VimKey, keymap: CompiledKeymap, d
  *  directly with the pending count. Action bindings are NOT dot-repeatable —
  *  they execute outside the key recording (Vim's `<Plug>` without
  *  repeat.vim has the same limit). */
-const runBinding = (state: VimState, binding: KeymapBinding, mode: VimMapMode, doc: VimDocView): VimStep => {
+const runBinding = (
+  state: VimState,
+  binding: KeymapBinding,
+  mode: VimMapMode,
+  doc: VimDocView,
+  customActions?: Readonly<Record<string, VimCustomAction>>,
+): VimStep => {
   const base = { ...state, mapPending: null };
   if (binding.kind === 'keys') {
     return {
@@ -915,10 +930,12 @@ const runBinding = (state: VimState, binding: KeymapBinding, mode: VimMapMode, d
       handled: true,
     };
   }
+  const env: VimActionEnv = { count: state.count ?? 1, hasCount: state.count !== null };
+  const custom = customActions?.[binding.action];
+  if (custom) return { state: clearPending(base), effects: custom(doc, env), handled: true };
   const table: Readonly<Record<string, VimAction>> = mode === 'visual' ? VISUAL_ACTIONS : NORMAL_ACTIONS;
   const action = table[binding.action];
   if (!action) return swallow(base); // compiled without knownActions and the id is wrong
-  const env: VimActionEnv = { count: state.count ?? 1, hasCount: state.count !== null };
   return action(clearPending(base), env, doc);
 };
 
@@ -1316,8 +1333,14 @@ const visualRange = (state: VimState, doc: VimDocView): { from: number; to: numb
 // ---------------------------------------------------------------------------
 
 /** What an action reads besides the state and doc: the resolved count. */
-type VimActionEnv = { readonly count: number; readonly hasCount: boolean };
+export type VimActionEnv = { readonly count: number; readonly hasCount: boolean };
 type VimAction = (state: VimState, env: VimActionEnv, doc: VimDocView) => VimStep;
+
+/** A USER-SUPPLIED primitive (`createVimExtension({actions})`), bindable as
+ *  an `{action}` RHS: reads the doc view, returns effects. It deliberately
+ *  cannot touch `VimState` — mode changes &c. stay the built-ins' job, so
+ *  the state shape never becomes public API. */
+export type VimCustomAction = (doc: VimDocView, env: VimActionEnv) => readonly VimEffect[];
 
 /** `n`/`N`: jump to the next/reversed match of the last search. */
 const searchStep = (state: VimState, doc: VimDocView, sameDirection: boolean): VimStep => {

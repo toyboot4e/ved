@@ -166,3 +166,27 @@ describe('macros through the adapter (K3)', () => {
     expect(regs).toEqual(['w', null]);
   });
 });
+
+describe('user-supplied primitives (createVimExtension({actions}))', () => {
+  it('a custom action binds via {action} RHS and receives the doc + count', () => {
+    const t = attach('abcdef', {
+      actions: {
+        'user.dropAtCaret': (doc, env) => [
+          { kind: 'replace', from: doc.head, to: Math.min(doc.text.length, doc.head + env.count), text: '' },
+        ],
+      },
+      keymap: { normal: { Q: { action: 'user.dropAtCaret' } } },
+    });
+    t.press('2', 'Q');
+    expect(t.state.text).toBe('cdef');
+  });
+
+  it('rejects id collisions with built-ins and unknown ids in the keymap', () => {
+    expect(() => createVimExtension({ actions: { 'delete.charForward': () => [] } })).toThrow(
+      /collides with a built-in/,
+    );
+    expect(() =>
+      createVimExtension({ actions: { 'user.x': () => [] }, keymap: { normal: { Q: { action: 'user.y' } } } }),
+    ).toThrow(/unknown action/);
+  });
+});

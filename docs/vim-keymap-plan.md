@@ -141,14 +141,18 @@ Until then, the smoke seam doubles as the manual override: the shell reads
   nested feeders). `onMacroRecording` reports the live register for a future
   statusline "recording @q" chip (shell UI not yet built).
 
-Follow-ups (not started):
+Also shipped (2026-07-07):
 
-- **registerPrimitive** — per-instance custom actions (a user-supplied
-  `(state, env, doc) => VimStep` under a namespaced id, usable as `{action}`
-  RHS). Needs instance-scoped action tables threaded through `runBinding`.
-- **Statusline "recording @q" chip** — the `onMacroRecording` option exists;
-  the desktop shell UI does not yet consume it.
-- Feature backlog beyond keymaps (sentence motions, registers, marks/
-  jumplist, ex `:` + IME-safe command line, `gn`, …) and the seams each
-  needs: see architecture.md's vim section; the two keystone seams are
-  `onDocChanged` offset mapping and a shell-owned command-line input.
+- **Custom primitives** — `createVimExtension({actions})`: user-supplied
+  `VimCustomAction`s (`(doc, env) => effects` — deliberately no `VimState`
+  access, so the state shape stays private) under free ids, bindable as
+  `{action}` RHS in normal/visual maps. Ids validate at construction
+  (collisions with built-ins and unknown references both throw); resolution
+  order is custom → built-in tables (`runBinding`).
+- **"recording @q" toolbar chip** — the shell consumes `onMacroRecording`
+  (`vim-toggle.tsx`, `#vim-macro-recording`).
+
+Feature backlog beyond keymaps (sentence motions, registers, marks/jumplist,
+ex `:` + IME-safe command line, `gn`, …) and the seams each needs: see
+architecture.md's vim section; the two keystone seams are `onDocChanged`
+offset mapping and a shell-owned command-line input.
