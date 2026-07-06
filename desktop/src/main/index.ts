@@ -2,6 +2,7 @@ import { join } from 'node:path';
 import { electronApp, is } from '@electron-toolkit/utils';
 import { app, BrowserWindow, Menu, shell } from 'electron';
 import icon from '../../resources/icon.png?asset';
+import { installClipboardPersist } from './clipboard-persist';
 import { installCloseGuard, registerCloseGuard } from './close-guard';
 import { registerFileService } from './file-service';
 import { killAllShells, registerShellService } from './shell-service';
@@ -122,6 +123,7 @@ app.whenReady().then(() => {
   registerFileService();
   registerShellService();
   registerCloseGuard();
+  installClipboardPersist();
 
   createWindow();
 
