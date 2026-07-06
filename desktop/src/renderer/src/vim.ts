@@ -31,6 +31,10 @@ export const useVimStore = create<VimStore>()((set) => ({
 /** The stable `extensions` prop value while Vim is on. */
 export const VIM_EXTENSIONS: readonly EditorExtension[] = [
   createVimExtension({
+    // ved is Japanese-first: w/b/e split kana/kanji runs at real word
+    // boundaries (Intl.Segmenter). A code-level option today; a natural
+    // future UI/config toggle.
+    japaneseWords: true,
     onModeChange: (mode) => useVimStore.setState({ mode }),
     onCommandLine: (commandLine) => useVimStore.setState({ commandLine }),
   }),

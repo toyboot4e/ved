@@ -7,4 +7,5 @@
 // find-chord targets, join spacing) — import these to inspect or retune.
 export { BRACKET_PAIRS, FIND_CHORDS, isFullwidth, joinNeedsSpace } from './config';
 export { createVimExtension, type VimExtensionOptions } from './extension';
-export type { VimMode } from './model';
+export { CLASS_WORDS, type VimMode, type WordModel } from './model';
+export { createJapaneseWordModel } from './words-ja';

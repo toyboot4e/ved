@@ -27,6 +27,12 @@ export type EditorSelectionOffsets = { readonly anchor: number; readonly head: n
  *  mode decides which axis it moves along. */
 export type VisualDirection = 'up' | 'down' | 'left' | 'right';
 
+/** How an extension's visual selection renders. `'none'` = the plain model
+ *  range; `'char'` = INCLUSIVE of both end cells (Vim charwise visual — the
+ *  anchor character stays selected when the head moves before it); `'line'` =
+ *  the whole model lines the selection spans. */
+export type VisualSelectionKind = 'none' | 'char' | 'line';
+
 /** The capabilities handed to an extension at attach time. */
 export type EditorExtensionContext = {
   /** The exact plain text (the document IS this string). */
@@ -90,11 +96,11 @@ export type EditorExtensionContext = {
   /** Toggle a class on the editor's content element (survives writing-mode /
    *  policy class swaps). For extension-specific CSS. */
   readonly setContentClass: (cls: string, on: boolean) => void;
-  /** Render the current selection as LINEWISE — the highlight covers the whole
-   *  model lines (paragraphs) the selection spans, even when it is collapsed,
-   *  while the caret stays at its actual position. For a modal editor's
-   *  line-wise visual mode. Off by default. */
-  readonly setLinewiseSelection: (on: boolean) => void;
+  /** How the current selection RENDERS (a modal editor's visual modes) — see
+   *  `VisualSelectionKind`. `'char'` keeps the anchor character selected as
+   *  the head moves before it; `'line'` highlights whole paragraphs while the
+   *  caret stays put. `'none'` (default) is the plain model range. */
+  readonly setVisualSelection: (kind: VisualSelectionKind) => void;
   /** End the current undo batch: the next edit starts a fresh history entry
    *  regardless of the debounce window. */
   readonly breakUndoGroup: () => void;

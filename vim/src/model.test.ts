@@ -209,6 +209,29 @@ describe('motions', () => {
     expect(play(text, 0, ['d', 't', key('l', { ctrl: true })]).text).toBe('。う');
   });
 
+  it('w/b/e use an injected word model (doc.words) when provided', () => {
+    // A toy model that treats every 2 chars as a word — proves the reducer
+    // consults doc.words instead of the built-in class logic.
+    const words = {
+      next: (_t: string, o: number) => o + 2,
+      prev: (_t: string, o: number) => Math.max(0, o - 2),
+      end: (_t: string, o: number) => o + 1,
+    };
+    const doc: VimDocView = {
+      text: 'abcdef',
+      anchor: 0,
+      head: 0,
+      caretStop: (o, d) => Math.max(0, Math.min(6, o + d)),
+      snapCaret: (o) => Math.max(0, Math.min(6, o)),
+      words,
+    };
+    // w emits a select to the injected next() = 2; b from 4 → prev() = 2.
+    expect(vimKeydown(VIM_INITIAL, key('w'), doc).effects).toEqual([{ kind: 'select', anchor: 2, head: 2 }]);
+    expect(vimKeydown(VIM_INITIAL, key('b'), { ...doc, head: 4 }).effects).toEqual([
+      { kind: 'select', anchor: 2, head: 2 },
+    ]);
+  });
+
   it('W/B/E are WORD (whitespace-delimited) motions', () => {
     const text = 'foo.bar baz';
     expect(play(text, 0, ['w']).head).toBe(3); // word: stops at '.'

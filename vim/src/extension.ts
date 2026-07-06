@@ -6,7 +6,16 @@
 // that the extension API suffices for a third-party modal editing layer.
 
 import type { ChordEvent, EditorExtension, EditorExtensionContext } from '@ved/editor';
-import { VIM_INITIAL, type VimDocView, type VimEffect, type VimMode, type VimState, vimKeydown } from './model';
+import {
+  VIM_INITIAL,
+  type VimDocView,
+  type VimEffect,
+  type VimMode,
+  type VimState,
+  vimKeydown,
+  type WordModel,
+} from './model';
+import { createJapaneseWordModel } from './words-ja';
 
 export type VimExtensionOptions = {
   /** Observes mode changes (drive a mode indicator / statusline from it).
@@ -15,6 +24,10 @@ export type VimExtensionOptions = {
   /** The `/`?`?` search command line as the user types it (e.g. `/foo`), or
    *  null when not searching — for the shell to render a command line. */
   readonly onCommandLine?: (line: string | null) => void;
+  /** Use a Japanese-aware word model for `w`/`b`/`e` (Intl.Segmenter — splits
+   *  kana/kanji runs at real word boundaries). Off by default (CLASS_WORDS).
+   *  A custom `WordModel` may be passed instead of `true`. */
+  readonly japaneseWords?: boolean | WordModel;
 };
 
 /** The content-element class while Vim is in a non-insert mode (block caret
@@ -30,6 +43,10 @@ export const createVimExtension = (options: VimExtensionOptions = {}): EditorExt
     // composition must never be disturbed (IME-safety invariant) — so let it
     // finish and restore this snapshot at compositionend, an ordinary edit.
     let composeUndo: { text: string; anchor: number; head: number } | null = null;
+    // The word model for w/b/e — a Japanese segmenter when the option is on
+    // (constructed once), else undefined (the reducer's default CLASS_WORDS).
+    const words: WordModel | undefined =
+      options.japaneseWords === true ? createJapaneseWordModel() : options.japaneseWords || undefined;
 
     const syncMode = (mode: VimMode): void => {
       ctx.setCaretShape(mode === 'insert' ? 'bar' : 'block');
@@ -48,14 +65,15 @@ export const createVimExtension = (options: VimExtensionOptions = {}): EditorExt
       options.onCommandLine?.(line);
     };
 
-    // Linewise visual → the editor highlights whole paragraphs while the caret
-    // stays put (V keeps the cursor).
-    let lastLinewise = false;
-    const syncLinewise = (): void => {
-      const on = state.mode === 'visual' && state.visualKind === 'line';
-      if (on === lastLinewise) return;
-      lastLinewise = on;
-      ctx.setLinewiseSelection(on);
+    // Visual selection rendering: charwise = inclusive of both ends (the
+    // anchor char stays selected moving backward); linewise = whole paragraphs
+    // (V keeps the cursor). Normal/insert = the plain range.
+    let lastVisual: 'none' | 'char' | 'line' = 'none';
+    const syncVisual = (): void => {
+      const kind = state.mode !== 'visual' ? 'none' : state.visualKind === 'line' ? 'line' : 'char';
+      if (kind === lastVisual) return;
+      lastVisual = kind;
+      ctx.setVisualSelection(kind);
     };
 
     const docView = (): VimDocView => {
@@ -66,6 +84,8 @@ export const createVimExtension = (options: VimExtensionOptions = {}): EditorExt
         head: sel.head,
         caretStop: ctx.caretStop,
         snapCaret: ctx.snapCaret,
+        // exactOptionalPropertyTypes: only set `words` when present.
+        ...(words ? { words } : {}),
       };
     };
 
@@ -136,7 +156,7 @@ export const createVimExtension = (options: VimExtensionOptions = {}): EditorExt
         for (const effect of step.effects) applyEffect(effect);
         if (state.mode !== prevMode) syncMode(state.mode);
         syncCommandLine();
-        syncLinewise();
+        syncVisual();
         return step.handled;
       },
       // Belt over the keydown braces: any plain insertion arriving outside
@@ -160,7 +180,7 @@ export const createVimExtension = (options: VimExtensionOptions = {}): EditorExt
       detach: (): void => {
         ctx.setCaretShape('bar');
         ctx.setContentClass(NORMAL_CLASS, false);
-        ctx.setLinewiseSelection(false);
+        ctx.setVisualSelection('none');
         options.onCommandLine?.(null);
       },
     };

@@ -23,7 +23,9 @@
 // Scope and deliberate deviations from Vim:
 //   - modes: normal / insert / visual (character-wise 'v' AND line-wise 'V');
 //   - counts; motions h j k l (spatial) g+hjkl (display-line walk) w b e W B E
-//     (ruby-aware: a word target snaps out of a collapsed ruby's markup)
+//     (ruby-aware: a word target snaps out of a collapsed ruby's markup; word
+//     granularity is a pluggable WordModel via doc.words — default CLASS_WORDS
+//     is char-class runs, the JP option segments kana/kanji)
 //     0 ^ $ gg G (KEEP the column; count gg/G = goto line) f F t T ; , % { };
 //     f/F/t/T also take a Ctrl-chord shortcut (config.ts FIND_CHORDS: Ctrl+j
 //     → 、, Ctrl+l → 。);
@@ -34,9 +36,11 @@
 //     I A p P (normal + visual p) ~ Ctrl+A/Ctrl+X (increment/decrement)
 //     u Ctrl+r. J inserts a joining space per config.ts joinNeedsSpace (a
 //     space for Latin, NONE between 全角);
-//   - linewise visual `V` KEEPS the cursor (a collapsed selection at the
-//     caret); the editor highlights the whole paragraph via
-//     setLinewiseSelection. Operators still take whole lines (visualRange);
+//   - charwise visual `v` is INCLUSIVE of both ends — the anchor cell stays
+//     selected as the head moves before it; linewise visual `V` KEEPS the
+//     cursor (a collapsed selection at the caret) and highlights the whole
+//     paragraph. Both shape the render via setVisualSelection; operators still
+//     take whole lines for V (visualRange);
 //   - search: / ? n N * # (literal, case-sensitive; command line built in
 //     state — the shell renders it). NOT incremental, and NOT IME-aware (the
 //     pattern captures raw keydowns; a composed IME pattern is out of scope);
@@ -80,6 +84,9 @@ export type VimDocView = {
   /** `offset` if it is a legal caret stop, else the nearest one in `dir` —
    *  snaps a raw-text motion target out of a collapsed ruby's markup. */
   readonly snapCaret: (offset: number, dir: 1 | -1) => number;
+  /** The word model for `w`/`b`/`e`; defaults to `CLASS_WORDS` (the adapter
+   *  injects a Japanese-aware one when that option is on). */
+  readonly words?: WordModel;
 };
 
 /** A spatial (screen) direction — an arrow key. */
@@ -234,6 +241,21 @@ const wordEndForward = (text: string, off: number): number => {
   while (i + 1 < text.length && classOf(text[i + 1]!) === k) i++;
   return i;
 };
+
+/** The word-granularity behind `w`/`b`/`e`, abstracted so it can be swapped
+ *  (a Japanese segmenter, words-ja.ts). Each returns an offset in `text`. */
+export type WordModel = {
+  /** `w`: the start of the next word after `off`. */
+  readonly next: (text: string, off: number) => number;
+  /** `b`: the start of the word at/before `off`. */
+  readonly prev: (text: string, off: number) => number;
+  /** `e`: the last character (offset) of the next word from `off`. */
+  readonly end: (text: string, off: number) => number;
+};
+
+/** The default word model — Vim's `iskeyword` classes (a CJK run is one word,
+ *  as Vim behaves without a segmenter). `words-ja.ts` offers a JP-aware one. */
+export const CLASS_WORDS: WordModel = { next: wordForward, prev: wordBack, end: wordEndForward };
 
 /** WORD class (`W`/`B`/`E`): only whitespace vs non-whitespace (a WORD is a
  *  whitespace-delimited run — punctuation joins its neighbours). */
@@ -569,19 +591,24 @@ const motionTarget = (m: string, count: number, hasCount: boolean, doc: VimDocVi
     // target to a legal caret stop in the motion direction — so a boundary
     // landing inside a collapsed ruby's markup skips out to the ruby's edge
     // rather than stranding the caret there (it used to get stuck at a ruby).
+    // The word GRANULARITY is pluggable (`doc.words` — default CLASS_WORDS, or
+    // the Japanese segmenter).
     case 'w': {
+      const words = doc.words ?? CLASS_WORDS;
       let o = from;
-      for (let i = 0; i < count; i++) o = doc.snapCaret(wordForward(text, o), 1);
+      for (let i = 0; i < count; i++) o = doc.snapCaret(words.next(text, o), 1);
       return { target: o, inclusive: false, linewise: false };
     }
     case 'b': {
+      const words = doc.words ?? CLASS_WORDS;
       let o = from;
-      for (let i = 0; i < count; i++) o = doc.snapCaret(wordBack(text, o), -1);
+      for (let i = 0; i < count; i++) o = doc.snapCaret(words.prev(text, o), -1);
       return { target: o, inclusive: false, linewise: false };
     }
     case 'e': {
+      const words = doc.words ?? CLASS_WORDS;
       let o = from;
-      for (let i = 0; i < count; i++) o = doc.snapCaret(wordEndForward(text, o), 1);
+      for (let i = 0; i < count; i++) o = doc.snapCaret(words.end(text, o), 1);
       return { target: o, inclusive: true, linewise: false };
     }
     case 'W': {

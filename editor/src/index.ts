@@ -35,6 +35,7 @@ export type {
   EditorExtensionContext,
   EditorExtensionHooks,
   EditorSelectionOffsets,
+  VisualSelectionKind,
 } from './extension';
 export type { CursorState } from './history';
 export { PlainTextHistory } from './history';

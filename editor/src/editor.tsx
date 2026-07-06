@@ -16,7 +16,13 @@ import {
   type EditorCommandId,
 } from './commands';
 import styles from './editor.module.scss';
-import type { CaretShape, EditorExtension, EditorExtensionContext, EditorExtensionHooks } from './extension';
+import type {
+  CaretShape,
+  EditorExtension,
+  EditorExtensionContext,
+  EditorExtensionHooks,
+  VisualSelectionKind,
+} from './extension';
 import type { PlainTextHistory } from './history';
 import { type CaretRect, type LineNumbers, mountLineNumbers } from './line-numbers';
 import { caretStops, nextCaretOffset } from './pm/caret-model';
@@ -1036,9 +1042,10 @@ export const VedEditor = (props: VedEditorProps): React.JSX.Element => {
   // plugin like policyClassRef), the extension-owned content classes, and the
   // attach/detach entry point the extensions-prop effect calls.
   const caretShapeRef = useRef<CaretShape>('bar');
-  // When set (an extension's linewise visual mode), the selection highlight
-  // covers the WHOLE model lines the selection spans (see selectedGlyphRects).
-  const linewiseSelectionRef = useRef(false);
+  // How an extension's visual selection renders (see selectedGlyphRects):
+  // 'none' = the plain model range; 'char' = INCLUSIVE of both end cells
+  // (Vim charwise visual); 'line' = the WHOLE model lines it spans.
+  const visualSelectionRef = useRef<VisualSelectionKind>('none');
   const extClassesRef = useRef<Set<string>>(new Set());
   const syncExtensionsRef = useRef<((exts: readonly EditorExtension[]) => void) | null>(null);
   const lastTextRef = useRef(props.initialText);
@@ -1627,11 +1634,10 @@ export const VedEditor = (props: VedEditorProps): React.JSX.Element => {
         else extClassesRef.current.delete(cls);
         view.dom.classList.toggle(cls, on);
       },
-      setLinewiseSelection: (on) => {
-        if (linewiseSelectionRef.current === on) return;
-        linewiseSelectionRef.current = on;
-        // Repaint the base-only selection highlight from the (now line-expanded)
-        // model selection.
+      setVisualSelection: (kind) => {
+        if (visualSelectionRef.current === kind) return;
+        visualSelectionRef.current = kind;
+        // Repaint the base-only selection highlight from the (re-shaped) range.
         lineNumbersRef.current?.refreshCaret();
       },
       breakUndoGroup: () => live.current.history.breakBatch(),
@@ -1955,20 +1961,25 @@ export const VedEditor = (props: VedEditorProps): React.JSX.Element => {
     // large docs); a select-all still spans everything, necessarily.
     const selectedGlyphRects = (): DOMRect[] => {
       const sel = view.state.selection;
-      const linewise = linewiseSelectionRef.current;
-      if (sel.empty && !linewise) return [];
+      const vkind = visualSelectionRef.current;
+      if (sel.empty && vkind === 'none') return [];
       const text = serialize(view.state.doc);
       let from = posToOffset(view.state.doc, sel.from);
       let to = posToOffset(view.state.doc, sel.to);
-      // LINEWISE selection (extension flag): expand to the whole model lines
-      // (paragraphs) the selection spans — the caret is unaffected (it stays at
-      // selection.head). A collapsed selection still highlights its own line.
-      if (linewise) {
+      if (vkind === 'line') {
+        // LINEWISE: expand to the whole model lines (paragraphs) the selection
+        // spans — the caret is unaffected (it stays at selection.head). A
+        // collapsed selection still highlights its own line.
         from = from === 0 ? 0 : text.lastIndexOf('\n', from - 1) + 1;
         const nl = text.indexOf('\n', to);
         to = nl < 0 ? text.length : nl;
-        if (from >= to) return [];
+      } else if (vkind === 'char') {
+        // CHARWISE INCLUSIVE (Vim visual): include the CELL at the max end, so
+        // both the anchor and head characters are highlighted (moving backward
+        // keeps the original char under the cursor). One caret step past `to`.
+        to = nextCaretOffset(text, to, policyClassRef.current, false);
       }
+      if (from >= to) return [];
       const cs = getComputedStyle(view.dom);
       const vertical = cs.writingMode.startsWith('vertical');
       // Cap a span's BLOCK extent at one cell (the glyph advance), centered:

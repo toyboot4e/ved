@@ -423,9 +423,11 @@ never ProseMirror values — so extensions cannot violate the identity model:
   (`vedBlockCaretBox`, the boundary caret's box recipe), replacing the
   boundary bar. Native bar suppressed via `.vedNativeCaretOff` either way.
   `setContentClass` survives the policy/mode class swap.
-  `setLinewiseSelection(on)` renders the selection over the WHOLE model lines
-  it spans (even collapsed) while the caret stays put — a modal editor's
-  line-wise visual mode.
+  `setVisualSelection(kind)` shapes how the selection RENDERS: `'line'` covers
+  the WHOLE model lines it spans (even collapsed) while the caret stays put
+  (line-wise visual); `'char'` is INCLUSIVE of both end cells, so the anchor
+  character stays highlighted when the head moves before it (char-wise visual);
+  `'none'` is the plain range.
 
 Dispatch order on keydown: **IME guard → extension `handleKey` chain → chord
 table (command registry) → built-in handlers → PM keymaps.** The guard sits
@@ -464,7 +466,8 @@ included, since the reducer sees every keydown — as `lastChange`; `.` emits a
 `repeat` effect and the ADAPTER replays those keys (the reducer can't step a
 mutating doc within one call). `gg`/`G` KEEP the column; `Ctrl+A`/`Ctrl+X`
 increment/decrement the number at the caret; linewise `V` keeps the cursor and
-highlights the paragraph (`setLinewiseSelection`). The full key set and its
+highlights the paragraph, charwise `v` is inclusive of the anchor cell
+(`setVisualSelection`). The full key set and its
 deviations — motions, operators + TEXT OBJECTS (`iw`/`a(`/`ip`…), `%`, `~`,
 etc. — are the `model.ts` header; deferred: macros, marks, named registers, ex
 commands. The whole loop is pinned by `test/e2e/vim-mode.ts`.
@@ -476,11 +479,15 @@ the bracket pairs `%` and the bracket text objects match (Japanese `「」（）
 **Word motions are ruby-aware**: `w`/`b`/`e` run over the raw plain text and
 then `snapCaret` their target to a legal stop, so a boundary landing inside a
 collapsed ruby's markup skips out to the ruby edge instead of stranding the
-caret. Proper Japanese *word* granularity (bunsetsu, not
-punctuation-delimited runs) needs a segmenter — the intended path is
-`Intl.Segmenter('ja', {granularity:'word'})` (Chromium ships it) mapped through
-the same `snapCaret`, computed in the editor (which owns the navigable text)
-and exposed as a context motion; sketched as future work, not yet built.
+caret. Word granularity is a pluggable `WordModel` (`{next, prev, end}`) the
+reducer consults via `doc.words` — the default (`CLASS_WORDS`) is char-class
+runs; `createVimExtension({japaneseWords:true})` swaps in a segmenter model
+(`words-ja.ts`, `Intl.Segmenter('ja',{granularity:'word'})`, memoized by text
+identity, falls back to `CLASS_WORDS` off Chromium) so `w`/`b`/`e` split
+kana/kanji runs at real word boundaries instead of jumping a whole run. Its
+targets pass through the same `snapCaret`, so it stays ruby-aware. The desktop
+shell turns it on (ved is Japanese-first); a caller may pass a custom
+`WordModel` instead of `true`.
 
 ## Layout: writing modes and the page
 

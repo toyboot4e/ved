@@ -289,6 +289,23 @@ try {
   assert.ok((await docText(page)).includes('count 40'), 'Ctrl+X decrements it');
   step('Ctrl+A / Ctrl+X increment / decrement');
 
+  // Japanese word model (japaneseWords: true in the shell): w splits a kana/
+  // kanji run at real boundaries. 'これはペンです' → これ|は|ペン|です:
+  // starts at 0,2,3,5. Without the segmenter w would jump the whole run to 7.
+  await toggleVim();
+  await setDoc(page, 'これはペンです');
+  await toggleVim();
+  await setCaret(page, 0);
+  await press('w');
+  assert.equal(await caretOffset(page), 2, 'w lands INSIDE the kana/kanji run (は), not at the run end');
+  await press('w');
+  assert.equal(await caretOffset(page), 3, 'w → ペン');
+  await press('w');
+  assert.equal(await caretOffset(page), 5, 'w → です');
+  await press('b');
+  assert.equal(await caretOffset(page), 3, 'b walks back one Japanese word');
+  step('Japanese word motion splits kana/kanji runs');
+
   // w must move PAST a collapsed ruby (Rich mode), not get stuck inside its
   // markup. 'ab|漢(かん)cd': the ruby boundary is at offset 2, after it at 8.
   await toggleVim();
@@ -338,6 +355,35 @@ try {
   await page.waitForTimeout(40);
   assert.equal(await selRects(), 0, 'Escape clears the linewise highlight');
   step('V keeps the cursor and highlights the whole paragraph');
+
+  // v charwise is INCLUSIVE of both ends: moving BACKWARD keeps the character
+  // under the original cursor selected. Measure the highlight's inline extent
+  // (Horizontal so the selection runs along X): v alone = 1 cell, v then a
+  // backward step = 2 cells (the original char stays in). Without the fix the
+  // original char drops out and it stays 1 cell.
+  const selWidth = () =>
+    page.evaluate(() => {
+      const rs = [...document.querySelectorAll('.vedSelectionRect')].filter(
+        (e) => (e as HTMLElement).style.display !== 'none',
+      );
+      if (rs.length === 0) return 0;
+      const boxes = rs.map((e) => e.getBoundingClientRect());
+      return Math.max(...boxes.map((b) => b.right)) - Math.min(...boxes.map((b) => b.left));
+    });
+  await toggleVim();
+  await clickWritingMode(page, 'Horizontal');
+  await page.click('#editor-content');
+  await setDoc(page, 'abcde');
+  await toggleVim();
+  await setCaret(page, 2); // on 'c'
+  await press('v');
+  const w1 = await selWidth();
+  assert.ok(w1 > 0, 'v selects the character under the cursor');
+  await press('h'); // move backward onto 'b'
+  const w2 = await selWidth();
+  assert.ok(w2 > w1 * 1.5, `v + backward keeps the original char selected (1 cell → 2: ${w1} → ${w2})`);
+  await page.keyboard.press('Escape');
+  step('v charwise selection includes the anchor char moving backward');
 
   // --- Toggle off: everything back to ordinary editing (still in the current
   // doc/mode from the horizontal test — mode-independent). ---
