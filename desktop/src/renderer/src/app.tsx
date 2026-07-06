@@ -33,7 +33,7 @@ import { closeSearch, matchSearchCommand, useSearchStore } from './search';
 import { useShellStore } from './shells';
 import { useThemeStore } from './theme';
 import { useViewConfigStore, viewConfigToCss } from './view-config';
-import { NO_EXTENSIONS, useVimStore, VIM_EXTENSIONS } from './vim';
+import { NO_EXTENSIONS, useVimStore, vimExtensions } from './vim';
 import { useWorkspaceStore } from './workspace';
 
 const INITIAL_TEXT = '|ルビ(ruby)';
@@ -368,7 +368,7 @@ export const App = (): React.JSX.Element => {
               invisibles={invisibles}
               searchHighlights={searchHighlights}
               onSearchOps={handleSearchOps}
-              extensions={vimEnabled ? VIM_EXTENSIONS : NO_EXTENSIONS}
+              extensions={vimEnabled ? vimExtensions() : NO_EXTENSIONS}
             />
             <div className={styles.footer}>
               <p id='counter' className={styles.footerCounter}></p>

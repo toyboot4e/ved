@@ -53,25 +53,26 @@
 //     replays N times. Not recorded: motions, undo/redo, visual-mode changes;
 //     IME-typed insert text is not captured (same caveat as search);
 //   - one unnamed register; NO macros, marks, named registers, or ex commands
-//     (`:`) yet.
+//     (`:`) yet;
+//   - USER MAPPINGS (keymap.ts, docs/vim-keymap-plan.md): a front layer in
+//     vimKeydown walks per-map-mode tries (nmap/xmap/omap) BEFORE this
+//     dispatch; a match feeds its RHS keys back through the adapter
+//     (noremap by default), a dead-ended walk replays what it swallowed.
+//     Inactive during insert mode, the command line, char/text-object
+//     arguments, and a built-in `g` prefix.
 //
 // All configurable, data-driven behavior (bracket pairs, find-chord targets,
-// join spacing) lives in ONE place — config.ts.
+// join spacing) lives in ONE place — config.ts; user KEY mappings ride the
+// keymap option (extension.ts).
 
 import { BRACKET_PAIRS, FIND_CHORDS, joinNeedsSpace } from './config';
+import { type CompiledKeymap, type VimMapMode, walkKeymap } from './keymap';
+import type { VimKey } from './keys';
 
 export type VimMode = 'normal' | 'insert' | 'visual';
 export type VimVisualKind = 'char' | 'line';
 
-/** The keydown fields the reducer reads (structural; the adapter maps a
- *  ChordEvent onto it). */
-export type VimKey = {
-  readonly key: string;
-  readonly ctrl: boolean;
-  readonly meta: boolean;
-  readonly alt: boolean;
-  readonly shift: boolean;
-};
+export type { VimKey } from './keys';
 
 /** The document as the reducer sees it: ved's plain text + plain-offset
  *  selection, and the editor's caret-step rule. */
@@ -113,7 +114,11 @@ export type VimEffect =
   /** Replay the last recorded change `count` times (dot-repeat `.`). Handled
    *  entirely in the adapter — the reducer can't step a mutating doc within
    *  one call. */
-  | { readonly kind: 'repeat'; readonly count: number };
+  | { readonly kind: 'repeat'; readonly count: number }
+  /** Feed keys back through the loop (a user mapping's RHS, or a dead-ended
+   *  mapping walk replaying what it swallowed). Adapter-executed, like
+   *  `repeat`; `noremap` = the fed keys skip the user mapping layer. */
+  | { readonly kind: 'feedKeys'; readonly keys: readonly VimKey[]; readonly noremap: boolean };
 
 export type VimRegister = { readonly text: string; readonly linewise: boolean };
 
@@ -149,6 +154,10 @@ export type VimState = {
   readonly recording: { readonly keys: readonly VimKey[]; readonly changed: boolean } | null;
   /** The completed last change's key sequence — what `.` replays. */
   readonly lastChange: readonly VimKey[] | null;
+  /** Keys swallowed so far by an in-progress USER MAPPING walk (a valid
+   *  strict prefix of some LHS). The walk re-runs from the trie root each
+   *  keydown, so only the keys are stored. */
+  readonly mapPending: readonly VimKey[] | null;
 };
 
 export const VIM_INITIAL: VimState = {
@@ -165,6 +174,7 @@ export const VIM_INITIAL: VimState = {
   register: null,
   recording: null,
   lastChange: null,
+  mapPending: null,
 };
 
 export type VimStep = {
@@ -780,16 +790,68 @@ const record = (incoming: VimState, key: VimKey, raw: VimStep): VimStep => {
   return { ...raw, state: { ...raw.state, recording: rec } };
 };
 
-/** The public entry. `opts.replay` is set by the adapter while replaying a
- *  recorded change (dot-repeat) so the replay is not itself recorded. */
-export const vimKeydown = (
-  state: VimState,
-  key: VimKey,
-  doc: VimDocView,
-  opts?: { readonly replay?: boolean },
-): VimStep => {
+export type VimKeydownOpts = {
+  /** Replaying a recorded change (dot-repeat): not re-recorded, and the user
+   *  mapping layer is skipped — recorded keys are POST-expansion. */
+  readonly replay?: boolean;
+  /** Feeding a noremap RHS (or a dead-ended walk's replay): skip the user
+   *  mapping layer; everything else (recording included) runs normally. */
+  readonly noremap?: boolean;
+  /** The compiled user keymap. Absent = no user mappings. */
+  readonly keymap?: CompiledKeymap;
+};
+
+/** The public entry. The USER MAPPING front layer runs before the built-in
+ *  dispatch: user LHS win over built-ins (that is what remapping means), and
+ *  an unmatched walk replays its swallowed keys through the built-ins via a
+ *  noremap `feedKeys`. Walk steps bypass record() — the EXPANSION records
+ *  (fed keys run without `replay`), so `.` repeats post-expansion keys. */
+export const vimKeydown = (state: VimState, key: VimKey, doc: VimDocView, opts?: VimKeydownOpts): VimStep => {
+  const mapped = opts?.keymap && !opts.noremap && !opts.replay ? mappingLayerKey(state, key, opts.keymap) : null;
+  if (mapped) return mapped;
   const raw = dispatch(state, key, doc);
   return opts?.replay ? raw : record(state, key, raw);
+};
+
+const isLoneModifier = (key: VimKey): boolean =>
+  key.key === 'Control' || key.key === 'Shift' || key.key === 'Alt' || key.key === 'Meta';
+
+/** The mapping front layer for one key, or null when the key is not the
+ *  layer's business (no walk to continue, and the key starts no user LHS).
+ *  Inactive wherever the next key is an ARGUMENT (`f`/`r` char, text-object
+ *  key, a built-in `g` prefix, the search command line) or real typing
+ *  (insert mode) — those semantics must not be shadowed mid-sequence. */
+const mappingLayerKey = (state: VimState, key: VimKey, keymap: CompiledKeymap): VimStep | null => {
+  if (state.mode === 'insert' || state.commandLine) return null;
+  if (state.charPending || state.textObjectPending || state.gPending) return null;
+  if (isLoneModifier(key)) return null; // fired before the chord's real key; keeps the walk
+  const pending = state.mapPending ?? [];
+  if (pending.length > 0 && key.key === 'Escape') {
+    // Cancel the walk, discarding the swallowed keys (as Vim does).
+    return { state: { ...state, mapPending: null }, effects: [], handled: true };
+  }
+  const mode: VimMapMode = state.operator ? 'operatorPending' : state.mode === 'visual' ? 'visual' : 'normal';
+  const keys = [...pending, key];
+  const walk = walkKeymap(keymap[mode], keys);
+  if (walk.kind === 'pending') {
+    return { state: { ...state, mapPending: keys }, effects: [], handled: true };
+  }
+  if (walk.kind === 'match') {
+    return {
+      state: { ...state, mapPending: null },
+      effects: [{ kind: 'feedKeys', keys: walk.binding.keys, noremap: !walk.binding.remap }],
+      handled: true,
+    };
+  }
+  // Miss. A fresh key that starts no LHS is simply not ours; a dead-ended
+  // walk replays everything it swallowed through the built-ins, as if typed
+  // (how `gg` still works when the user maps only `gw`).
+  if (pending.length === 0) return null;
+  return {
+    state: { ...state, mapPending: null },
+    effects: [{ kind: 'feedKeys', keys, noremap: true }],
+    handled: true,
+  };
 };
 
 const dispatch = (state: VimState, key: VimKey, doc: VimDocView): VimStep => {

@@ -36,6 +36,12 @@ const press = async (keys: string, settleMs = 60) => {
 };
 
 try {
+  // User keymap smoke seam: window.__vedVimKeymap is read on the FIRST Vim
+  // toggle (the extension builds lazily) — set it before any toggle. Q is
+  // unbound in the defaults and unused by this driver.
+  await page.evaluate(() => {
+    (window as unknown as { __vedVimKeymap: unknown }).__vedVimKeymap = { normal: { Q: '0' } };
+  });
   await page.click('#editor-content');
   await setDoc(page, TEXT);
   assert.equal(await docText(page), TEXT, 'document set');
@@ -384,6 +390,13 @@ try {
   assert.ok(w2 > w1 * 1.5, `v + backward keeps the original char selected (1 cell → 2: ${w1} → ${w2})`);
   await page.keyboard.press('Escape');
   step('v charwise selection includes the anchor char moving backward');
+
+  // --- User keymap (the __vedVimKeymap seam set before the first toggle):
+  // Q is mapped to 0 (line start) — a key the defaults leave unbound. ---
+  await setCaret(page, 3);
+  await press('Q');
+  assert.equal(await caretOffset(page), 0, 'user-mapped Q runs its RHS (0 = line start)');
+  step('user keymap maps Q → 0 through the window seam');
 
   // --- Toggle off: everything back to ordinary editing (still in the current
   // doc/mode from the horizontal test — mode-independent). ---

@@ -489,6 +489,21 @@ targets pass through the same `snapCaret`, so it stays ruby-aware. The desktop
 shell turns it on (ved is Japanese-first); a caller may pass a custom
 `WordModel` instead of `true`.
 
+**User key mappings** (`createVimExtension({keymap})`, design in
+`docs/vim-keymap-plan.md`): a JSON-serializable `VimKeymapConfig` — per map
+mode (normal/visual/operator-pending), Vim notation (`"gw"`, `"<C-l>"`,
+`"<Leader>w"`), noremap by default — compiles EAGERLY (a broken keymap throws
+at construction; prefix conflicts are compile errors, since a pure reducer
+cannot time out to disambiguate) into per-mode tries. `vimKeydown` walks them
+as a FRONT layer: user LHS win over built-ins, a match emits a `feedKeys`
+effect the adapter re-enters key by key (the dot-repeat loop generalized,
+budget-guarded against mapping cycles), and a dead-ended walk replays its
+swallowed keys through the built-ins as if typed. Fed keys record, so `.`
+repeats the expansion. The layer never runs where a key is an ARGUMENT
+(`f`/`r`, text objects, the search line) or real typing (insert mode). The
+shell reads `window.__vedVimKeymap` on the first toggle — the smoke seam, and
+the manual override until phase-4 `config.json` hydrates the same shape.
+
 ## Layout: writing modes and the page
 
 The text area is a **page**: N cells per line × M lines (a **cell** is one

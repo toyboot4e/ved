@@ -1,9 +1,11 @@
 import { describe, expect, it } from 'vitest';
+import { compileKeymap } from './keymap';
 import {
   VIM_INITIAL,
   type VimDocView,
   type VimEffect,
   type VimKey,
+  type VimKeydownOpts,
   type VimState,
   type VimStep,
   vimKeydown,
@@ -624,5 +626,136 @@ describe('pending-state hygiene', () => {
   it('g followed by anything but g is swallowed', () => {
     const r = play('abc\ndef', 5, ['g', 'x']);
     expect(r.text).toBe('abc\ndef');
+  });
+});
+
+describe('user mapping front layer', () => {
+  // A mini adapter loop for mapped play: executes feedKeys (the adapter's
+  // job) by re-feeding with the effect's noremap flag, tracking replaces.
+  const playMapped = (
+    config: Parameters<typeof compileKeymap>[0],
+    text: string,
+    head: number,
+    keys: (string | VimKey)[],
+  ): { state: VimState; text: string; head: number; handled: boolean[]; fed: VimKey[] } => {
+    const km = compileKeymap(config);
+    let cur = { text, head, anchor: head };
+    let st = VIM_INITIAL;
+    const handled: boolean[] = [];
+    const fed: VimKey[] = [];
+    function feed(k: VimKey, opts: VimKeydownOpts): void {
+      const step = vimKeydown(st, k, docOf(cur.text, cur.head, cur.anchor), opts);
+      st = step.state;
+      if (step.handled) {
+        for (const e of step.effects) apply(e);
+      } else if (st.mode === 'insert' && k.key.length === 1 && !k.ctrl && !k.meta && !k.alt) {
+        cur = {
+          text: cur.text.slice(0, cur.head) + k.key + cur.text.slice(cur.head),
+          head: cur.head + 1,
+          anchor: cur.head + 1,
+        };
+      }
+    }
+    function apply(e: VimEffect): void {
+      if (e.kind === 'replace') {
+        const after = e.from + e.text.length;
+        cur = { text: cur.text.slice(0, e.from) + e.text + cur.text.slice(e.to), head: after, anchor: after };
+      } else if (e.kind === 'select') {
+        cur = { ...cur, anchor: e.anchor, head: e.head };
+      } else if (e.kind === 'moveVisual' && (e.direction === 'left' || e.direction === 'right')) {
+        const d = e.direction === 'right' ? 1 : -1;
+        let h = cur.head;
+        for (let i = 0; i < e.count; i++) h = Math.max(0, Math.min(cur.text.length, h + d));
+        cur = { ...cur, head: h, anchor: e.extend ? cur.anchor : h };
+      } else if (e.kind === 'feedKeys') {
+        for (const k of e.keys) {
+          fed.push(k);
+          feed(k, e.noremap ? { keymap: km, noremap: true } : { keymap: km });
+        }
+      } else if (e.kind === 'repeat') {
+        for (let n = 0; n < e.count; n++) for (const rk of st.lastChange ?? []) feed(rk, { replay: true });
+      }
+    }
+    for (const k of keys) {
+      const vk = typeof k === 'string' ? key(k) : k;
+      const step = vimKeydown(st, vk, docOf(cur.text, cur.head, cur.anchor), { keymap: km });
+      st = step.state;
+      handled.push(step.handled);
+      if (step.handled) {
+        for (const e of step.effects) apply(e);
+      } else if (st.mode === 'insert' && vk.key.length === 1 && !vk.ctrl && !vk.meta && !vk.alt) {
+        cur = {
+          text: cur.text.slice(0, cur.head) + vk.key + cur.text.slice(cur.head),
+          head: cur.head + 1,
+          anchor: cur.head + 1,
+        };
+      }
+    }
+    return { state: st, text: cur.text, head: cur.head, handled, fed };
+  };
+
+  it('a mapped key expands to its RHS (H → 0 = line start)', () => {
+    const r = playMapped({ normal: { H: '0' } }, 'abc def', 4, ['H']);
+    expect(r.head).toBe(0);
+    expect(r.fed).toEqual([key('0')]);
+  });
+
+  it('a multi-key LHS swallows the prefix, then fires', () => {
+    const r = playMapped({ normal: { gw: '$' } }, 'abc', 0, ['g', 'w']);
+    expect(r.state.mapPending).toBeNull();
+    expect(r.head).toBe(3); // $ (onemore: caret rests at line end)
+    expect(r.handled).toEqual([true, true]);
+  });
+
+  it('a dead-ended walk replays its swallowed keys through the built-ins (gg still works)', () => {
+    const r = playMapped({ normal: { gw: '$' } }, 'abc\ndef', 5, ['g', 'g']);
+    expect(r.head).toBe(1); // built-in gg keeps the column
+    expect(r.fed).toEqual([key('g'), key('g')]);
+  });
+
+  it('Escape cancels a walk, discarding the swallowed keys', () => {
+    const r = playMapped({ normal: { gw: '$' } }, 'abc', 0, ['g', key('Escape')]);
+    expect(r.state.mapPending).toBeNull();
+    expect(r.head).toBe(0);
+    expect(r.fed).toEqual([]);
+  });
+
+  it('mappings do not shadow a pending char ARGUMENT (f + mapped char finds it)', () => {
+    const r = playMapped({ normal: { w: '$' } }, 'awa', 0, ['f', 'w']);
+    expect(r.head).toBe(1); // f found the literal 'w'; the mapping stayed out
+    expect(r.state.lastFind).toEqual({ op: 'f', ch: 'w' });
+  });
+
+  it('visual and operator-pending map modes use their own tries', () => {
+    // visual: H mapped only there; in normal it falls through (unbound).
+    const vis = playMapped({ visual: { H: '0' } }, 'abc def', 4, ['v', 'H']);
+    expect(vis.head).toBe(0);
+    expect(vis.state.mode).toBe('visual');
+    // operator-pending: q → w only while an operator waits.
+    const op = playMapped({ operatorPending: { q: 'w' } }, 'foo bar', 0, ['d', 'q']);
+    expect(op.text).toBe('bar');
+  });
+
+  it('the EXPANSION records, so dot-repeat replays post-expansion keys', () => {
+    const r = playMapped({ normal: { X: 'x' } }, 'abc', 0, ['X', '.']);
+    expect(r.text).toBe('c'); // X deleted 'a' via x; . replayed the recorded x
+    expect(r.state.lastChange).toEqual([key('x')]);
+  });
+
+  it('noremap RHS does not re-expand (x mapped to itself is the built-in x)', () => {
+    const r = playMapped({ normal: { x: 'x' } }, 'abc', 0, ['x']);
+    expect(r.text).toBe('bc');
+  });
+
+  it('insert mode and the search command line bypass mappings entirely', () => {
+    const ins = playMapped({ normal: { a: 'x' } }, 'zzz', 0, ['i', 'a', key('Escape')]);
+    expect(ins.text).toBe('azzz'); // typed literally; the normal-mode map stayed out
+    const search = playMapped({ normal: { a: 'x' } }, 'za', 0, ['/', 'a', key('Enter')]);
+    expect(search.head).toBe(1); // /a found the literal a
+  });
+
+  it('a count rides through a mapped motion', () => {
+    const r = playMapped({ normal: { L: 'l' } }, 'abcdef', 0, ['3', 'L']);
+    expect(r.head).toBe(3);
   });
 });

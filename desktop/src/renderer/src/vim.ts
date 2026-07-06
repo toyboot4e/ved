@@ -8,7 +8,7 @@
 // Not persisted yet (Phase-4 config.json will hydrate `enabled`, matching
 // view-config).
 import type { EditorExtension } from '@ved/editor';
-import { createVimExtension, type VimMode } from '@ved/vim';
+import { createVimExtension, type VimKeymapConfig, type VimMode } from '@ved/vim';
 import { create } from 'zustand';
 
 type VimStore = {
@@ -28,17 +28,33 @@ export const useVimStore = create<VimStore>()((set) => ({
   toggle: () => set((s) => ({ enabled: !s.enabled })),
 }));
 
-/** The stable `extensions` prop value while Vim is on. */
-export const VIM_EXTENSIONS: readonly EditorExtension[] = [
-  createVimExtension({
-    // ved is Japanese-first: w/b/e split kana/kanji runs at real word
-    // boundaries (Intl.Segmenter). A code-level option today; a natural
-    // future UI/config toggle.
-    japaneseWords: true,
-    onModeChange: (mode) => useVimStore.setState({ mode }),
-    onCommandLine: (commandLine) => useVimStore.setState({ commandLine }),
-  }),
-];
+const VIM_OPTIONS = {
+  // ved is Japanese-first: w/b/e split kana/kanji runs at real word
+  // boundaries (Intl.Segmenter). A code-level option today; a natural
+  // future UI/config toggle.
+  japaneseWords: true,
+  onModeChange: (mode: VimMode) => useVimStore.setState({ mode }),
+  onCommandLine: (commandLine: string | null) => useVimStore.setState({ commandLine }),
+} as const;
+
+let vimExtensionsCache: readonly EditorExtension[] | null = null;
+
+/** The stable `extensions` prop value while Vim is on — built on the FIRST
+ *  toggle (late enough for the smoke seam below; identity stable after).
+ *  User keymap: `window.__vedVimKeymap` (a `VimKeymapConfig`) is the smoke
+ *  seam AND the manual override until phase-4 config.json hydrates it. A
+ *  rejected keymap falls back to the defaults, loudly. */
+export const vimExtensions = (): readonly EditorExtension[] => {
+  if (vimExtensionsCache) return vimExtensionsCache;
+  const keymap = (globalThis as { __vedVimKeymap?: VimKeymapConfig }).__vedVimKeymap;
+  try {
+    vimExtensionsCache = [createVimExtension({ ...VIM_OPTIONS, ...(keymap ? { keymap } : {}) })];
+  } catch (err) {
+    console.error('vim: user keymap rejected, using defaults —', err);
+    vimExtensionsCache = [createVimExtension(VIM_OPTIONS)];
+  }
+  return vimExtensionsCache;
+};
 
 /** …and while it is off (stable identity; `undefined` is barred by
  *  exactOptionalPropertyTypes). */
