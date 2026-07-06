@@ -307,13 +307,19 @@ Decisions from the design review (see CONTEXT.md **view config**):
     and j/k walk the characters, and in horizontal j/k are a LOGICAL model-line
     move (`moveByLogicalLine`, Vim's j/k). `Ctrl+F/B/D/U` map to a `scrollPage`
     seam, consumed AHEAD of the app's Ctrl+F search / Ctrl+B sidebar in normal
-    mode. A pre-existing overlay bug surfaced en route — `pickLine` matched on
-    the caret block EDGE, so the current-line highlight lagged a row in wrapped
-    paragraphs (overlapping line boxes); now it matches on the caret block
-    CENTER (`line-highlight-ruby-wrap.ts`). Smoke: `test/e2e/vim-mode.ts`.
-    Owed: real-mozc verification of the normal-mode composition revert
-    (`mozc/vim-normal-composition`). See architecture.md "Extensions" and
-    `docs/extensions.md`.
+    mode. In vertical writing h/l are a LOGICAL paragraph walk (a ved line is a
+    paragraph); `g`+hjkl is the DISPLAY (wrapped) walk. A later batch added
+    WORD motions `W B E`, `%`, `{ }`, `~`, TEXT OBJECTS (`iw`/`aw`, bracket &
+    quote pairs, `ip`/`ap`) for operators + visual, and SEARCH `/ ? n N * #`
+    (reducer command-line mode; the shell renders the `/pattern` line — literal,
+    not incremental, not IME-aware). A pre-existing overlay bug surfaced en
+    route — `pickLine` matched on the caret block EDGE, so the current-line
+    highlight lagged a row in wrapped paragraphs (overlapping line boxes); now
+    it matches on the caret block CENTER (`line-highlight-ruby-wrap.ts`). Smoke:
+    `test/e2e/vim-mode.ts`. Deferred: dot-repeat, macros, marks, named
+    registers, ex commands. Owed: real-mozc verification of the normal-mode
+    composition revert (`mozc/vim-normal-composition`). See architecture.md
+    "Extensions" and `docs/extensions.md`.
 
 ### Phase 2 — file browser sidebar
 

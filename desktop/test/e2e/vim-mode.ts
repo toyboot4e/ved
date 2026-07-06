@@ -78,6 +78,18 @@ try {
   assert.equal(await caretOffset(page), 0, '0 returns to the line start');
   step('jk walk characters (spatial: down/up in vertical), respecting ruby stops');
 
+  // h/l are the LINE axis in vertical = a LOGICAL PARAGRAPH walk (actual
+  // paragraphs at the same column, geometry-free/synchronous). TEXT paragraphs
+  // start at offsets 0, 10, 16.
+  await setCaret(page, 0);
+  await press('h');
+  assert.equal(await caretOffset(page), 10, 'h steps to the next paragraph (same column)');
+  await press('h');
+  assert.equal(await caretOffset(page), 16, 'h again → third paragraph');
+  await press('l');
+  assert.equal(await caretOffset(page), 10, 'l steps back to the previous paragraph');
+  step('vertical h/l = logical paragraph walk (between 行)');
+
   // --- x deletes one caret step (the ruby as a unit from its boundary) ---
   await setCaret(page, 1);
   await press('x');
@@ -201,6 +213,30 @@ try {
   await press('l');
   assert.equal(await caretOffset(page), 6, 'l (right) is the character axis in horizontal');
   step('horizontal j/k = logical model-line move; h/l = characters');
+
+  // --- / search: the command line builds up (shown by the shell), Enter jumps
+  // to the match, n repeats. (Set the doc with Vim off — normal mode blocks
+  // typing.) ---
+  const commandLine = () => page.evaluate(() => document.getElementById('vim-command-line')?.textContent ?? null);
+  await toggleVim();
+  await setDoc(page, 'foo bar foo bar'); // matches of 'bar' at 4 and 12
+  await toggleVim();
+  await setCaret(page, 0);
+  await page.keyboard.press('/');
+  await page.keyboard.press('b');
+  await page.keyboard.press('a');
+  await page.keyboard.press('r');
+  await page.waitForTimeout(60);
+  assert.equal(await commandLine(), '/bar', 'the search command line shows the pattern as typed');
+  await page.keyboard.press('Enter');
+  await page.waitForTimeout(80);
+  assert.equal(await caretOffset(page), 4, '/bar jumps to the first match');
+  assert.equal(await commandLine(), null, 'the command line clears on Enter');
+  await press('n');
+  assert.equal(await caretOffset(page), 12, 'n repeats the search to the next match');
+  await press('N');
+  assert.equal(await caretOffset(page), 4, 'N reverses to the previous match');
+  step('/ search + n/N with the command-line indicator');
 
   // --- Toggle off: everything back to ordinary editing (still in the current
   // doc/mode from the horizontal test — mode-independent). ---

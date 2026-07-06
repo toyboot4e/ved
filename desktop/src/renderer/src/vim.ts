@@ -15,18 +15,25 @@ type VimStore = {
   readonly enabled: boolean;
   /** The extension's live mode; meaningful only while `enabled`. */
   readonly mode: VimMode;
+  /** The live `/`?`?` search command line (`/foo`), or null when not
+   *  searching — rendered by the shell. */
+  readonly commandLine: string | null;
   readonly toggle: () => void;
 };
 
 export const useVimStore = create<VimStore>()((set) => ({
   enabled: false,
   mode: 'normal',
+  commandLine: null,
   toggle: () => set((s) => ({ enabled: !s.enabled })),
 }));
 
 /** The stable `extensions` prop value while Vim is on. */
 export const VIM_EXTENSIONS: readonly EditorExtension[] = [
-  createVimExtension({ onModeChange: (mode) => useVimStore.setState({ mode }) }),
+  createVimExtension({
+    onModeChange: (mode) => useVimStore.setState({ mode }),
+    onCommandLine: (commandLine) => useVimStore.setState({ commandLine }),
+  }),
 ];
 
 /** …and while it is off (stable identity; `undefined` is barred by

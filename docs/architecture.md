@@ -441,15 +441,21 @@ semantics unit-test as plain functions; `extension.ts` merely executes effects
 against the context and reports mode changes (the shell's `useVimStore`
 renders the toggle + mode chip, `desktop vim.ts`). Bare h/j/k/l are the ARROW
 KEYS (spatial — `moveCaretVisual`): the editor resolves each screen direction
-to the right axis, so in vertical writing h/l move between COLUMNS and j/k walk
-the characters up/down the column (in horizontal, the classic directions). As
+to the right axis, so in vertical writing h/l move between COLUMNS (a LOGICAL
+paragraph walk — a ved line IS a paragraph) and j/k walk the characters up/down
+the column (in horizontal, the classic directions). `g`+hjkl is the DISPLAY
+(wrapped) line/column walk instead (`moveCaretVisual`'s `visualLine`). As
 operator targets h/l stay pure character motions. Vim's `Ctrl+F/B/D/U` map to
 `scrollPage`, consumed AHEAD of the app's Ctrl+F search / Ctrl+B sidebar in
 normal mode (the editor `stopPropagation`s a consumed key so it never reaches
-the app's window listener) — insert mode leaves those chords to the app. The
-key set and its deviations are the `model.ts` header (linewise `V`, `s`/`S`,
-`r`, `f F t T ; ,`, `J` joins without a space — Japanese prose). The whole loop
-is pinned by `test/e2e/vim-mode.ts`.
+the app's window listener) — insert mode leaves those chords to the app.
+**Search** (`/`?`?`n`N`*`#`) runs in the reducer as a command-line mode — the
+pattern accumulates in state, the extension reports it via `onCommandLine` and
+the shell renders the `/pattern` line; literal + case-sensitive, not
+incremental, and not IME-aware (raw keydowns). The full key set and its
+deviations — motions, operators + TEXT OBJECTS (`iw`/`a(`/`ip`…), `%`, `~`,
+etc. — are the `model.ts` header; deferred: dot-repeat, macros, marks, named
+registers, ex commands. The whole loop is pinned by `test/e2e/vim-mode.ts`.
 
 ## Layout: writing modes and the page
 

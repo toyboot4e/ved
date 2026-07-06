@@ -51,11 +51,14 @@ export type EditorExtensionContext = {
   readonly moveCaret: (axis: 'char' | 'line', dir: 1 | -1, extend?: boolean) => void;
   /** Move the caret one step in a SPATIAL direction — what the matching arrow
    *  key does. The writing mode decides the axis: in vertical-rl, 'left'/'right'
-   *  step between COLUMNS and 'up'/'down' walk the characters. The cross-axis
-   *  (line) step is a VISUAL column move in vertical writing and a LOGICAL
-   *  (model-line) move in horizontal — a modal editor walks the screen by
-   *  mapping its keys here and stays axis-agnostic. */
-  readonly moveCaretVisual: (direction: VisualDirection, extend?: boolean) => void;
+   *  step along the LINE axis and 'up'/'down' walk the characters (in
+   *  horizontal, the reverse). The line-axis step is a LOGICAL PARAGRAPH walk
+   *  (a ved line is a paragraph — actual paragraphs at the same column, not
+   *  wrapped display columns/rows), so a modal editor walks the screen by
+   *  mapping its keys here and stays axis-agnostic. Pass `visualLine` for the
+   *  DISPLAY line/column move instead (the adjacent wrapped column/row — Vim's
+   *  `g`-prefixed motions). */
+  readonly moveCaretVisual: (direction: VisualDirection, extend?: boolean, visualLine?: boolean) => void;
   /** Scroll one viewport (`half` = half of one) along the reading direction
    *  — forward is DOWN in the vertically-scrolling modes and LEFT in the
    *  horizontally-scrolling vertical modes — and bring the caret along to

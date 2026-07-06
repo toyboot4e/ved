@@ -1483,7 +1483,7 @@ export const VedEditor = (props: VedEditorProps): React.JSX.Element => {
           moveCaretByLine(view, extend, dir < 0, goalInlineRef);
         }
       },
-      moveCaretVisual: (direction, extend = false) => {
+      moveCaretVisual: (direction, extend = false, visualLine = false) => {
         if (view.composing) return;
         // Resolve the screen direction to the (axis, reverse) the arrow key
         // uses in this writing mode: vertical rotates the axes (left/right =
@@ -1495,13 +1495,15 @@ export const VedEditor = (props: VedEditorProps): React.JSX.Element => {
         if (act.axis === 'char') {
           goalInlineRef.current = null;
           moveChar(view, policyClassRef.current, act.reverse, extend);
-        } else if (isVert) {
-          // The cross axis in vertical = between COLUMNS: a spatial, VISUAL
-          // move (adjacent column), the same as the arrow keys.
+        } else if (visualLine) {
+          // `visualLine` = the DISPLAY line/column move (Vim's `g`-prefixed
+          // motions): the adjacent wrapped column/row, geometry-measured.
           moveCaretByLine(view, extend, act.reverse, goalInlineRef);
         } else {
-          // The cross axis in horizontal = a LOGICAL model-line move (Vim's
-          // j/k step actual lines, not wrapped display rows).
+          // The cross (line) axis is a LOGICAL PARAGRAPH walk by default: a ved
+          // line IS a paragraph, so this steps actual paragraphs at the same
+          // column, not wrapped display columns/rows (Vim's j/k). In vertical
+          // writing that's h/l (between 行); in horizontal, j/k.
           goalInlineRef.current = null;
           moveByLogicalLine(view, policyClassRef.current, act.reverse, extend);
         }

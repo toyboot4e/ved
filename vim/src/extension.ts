@@ -12,6 +12,9 @@ export type VimExtensionOptions = {
   /** Observes mode changes (drive a mode indicator / statusline from it).
    *  Called once at attach with the initial mode. */
   readonly onModeChange?: (mode: VimMode) => void;
+  /** The `/`?`?` search command line as the user types it (e.g. `/foo`), or
+   *  null when not searching — for the shell to render a command line. */
+  readonly onCommandLine?: (line: string | null) => void;
 };
 
 /** The content-element class while Vim is in a non-insert mode (block caret
@@ -35,6 +38,16 @@ export const createVimExtension = (options: VimExtensionOptions = {}): EditorExt
     };
     syncMode(state.mode);
 
+    const commandLineText = (s: VimState): string | null =>
+      s.commandLine ? `${s.commandLine.forward ? '/' : '?'}${s.commandLine.text}` : null;
+    let lastCommandLine: string | null = null;
+    const syncCommandLine = (): void => {
+      const line = commandLineText(state);
+      if (line === lastCommandLine) return;
+      lastCommandLine = line;
+      options.onCommandLine?.(line);
+    };
+
     const docView = (): VimDocView => {
       const sel = ctx.getSelection();
       return { text: ctx.getText(), anchor: sel.anchor, head: sel.head, caretStop: ctx.caretStop };
@@ -49,7 +62,8 @@ export const createVimExtension = (options: VimExtensionOptions = {}): EditorExt
           ctx.replaceRange(effect.from, effect.to, effect.text);
           break;
         case 'moveVisual':
-          for (let i = 0; i < effect.count; i++) ctx.moveCaretVisual(effect.direction, effect.extend);
+          for (let i = 0; i < effect.count; i++)
+            ctx.moveCaretVisual(effect.direction, effect.extend, effect.visualLine);
           break;
         case 'scrollPage':
           ctx.scrollPage(effect.dir, effect.half);
@@ -80,6 +94,7 @@ export const createVimExtension = (options: VimExtensionOptions = {}): EditorExt
         state = step.state;
         for (const effect of step.effects) applyEffect(effect);
         if (state.mode !== prevMode) syncMode(state.mode);
+        syncCommandLine();
         return step.handled;
       },
       // Belt over the keydown braces: any plain insertion arriving outside
@@ -103,6 +118,7 @@ export const createVimExtension = (options: VimExtensionOptions = {}): EditorExt
       detach: (): void => {
         ctx.setCaretShape('bar');
         ctx.setContentClass(NORMAL_CLASS, false);
+        options.onCommandLine?.(null);
       },
     };
   },

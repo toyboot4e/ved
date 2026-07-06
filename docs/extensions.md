@@ -52,10 +52,11 @@ const EXTS = [myExtension];
 - **Movement is the editor's, not yours.** Two movers, both axis-aware so you
   never compute writing direction. `moveCaret('char'|'line', dir)` is LOGICAL
   — the editor rotates `'line'` to the physical axis (the next/previous column
-  in vertical-rl). `moveCaretVisual('up'|'down'|'left'|'right', extend)` is
-  SPATIAL — the matching arrow key — and is what a screen walk (Vim's hjkl)
-  maps onto; its cross-axis step is a visual column move in vertical and a
-  logical model-line move in horizontal. `caretStop(offset, dir)` answers
+  in vertical-rl). `moveCaretVisual('up'|'down'|'left'|'right', extend,
+  visualLine?)` is SPATIAL — the matching arrow key — and is what a screen walk
+  (Vim's hjkl) maps onto; its line-axis step is a logical paragraph walk by
+  default, or the wrapped display line/column with `visualLine` (Vim's
+  `g`-prefixed motions). `caretStop(offset, dir)` answers
   "where would one step land" without moving; compute word targets over
   `getText()` and land them with `setSelection` — it clamps and snaps for you.
   `scrollPage(dir, half?)` is a viewport turn that carries the caret along.

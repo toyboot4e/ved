@@ -11,23 +11,30 @@
 // MOVEMENT IS SPATIAL. Bare h/j/k/l are the ARROW KEYS — h=left, j=down,
 // k=up, l=right — emitted as `moveVisual` effects; the EDITOR resolves each
 // screen direction to the right axis per writing mode. So in VERTICAL writing
-// (tategaki) h/l step to the next/previous COLUMN (the line axis is
-// horizontal there) and j/k walk the characters up/down the column, while in
-// HORIZONTAL writing h/l walk the characters and j/k move by line. The line
-// axis is a VISUAL column move in vertical and a LOGICAL (model-line) move in
-// horizontal — the editor decides (moveCaretVisual). As OPERATOR TARGETS h/l
-// stay pure character motions (`dh`/`dl` = one caret step); a spatial line
-// step cannot be expressed as an offset, so `dj`/`dk` are not bound.
+// (tategaki) h/l walk the LINE axis (between 行) and j/k the characters up/down
+// the column, while in HORIZONTAL writing h/l walk the characters and j/k the
+// line axis. The line-axis move is a LOGICAL PARAGRAPH walk in both modes (a
+// ved line IS a paragraph — actual paragraphs at the same column, not wrapped
+// display columns/rows), decided by the editor (moveCaretVisual). As OPERATOR
+// TARGETS h/l stay pure character motions (`dh`/`dl` = one caret step); a
+// spatial line step cannot be expressed as an offset, so `dj`/`dk` are not
+// bound.
 //
 // Scope and deliberate deviations from Vim:
 //   - modes: normal / insert / visual (character-wise 'v' AND line-wise 'V');
-//   - counts; motions h l j k w b e 0 ^ $ gg G (count gg/G = goto line)
-//     f F t T ; ,; operators d c y (dd cc yy, charwise motions, linewise
-//     gg/G); x X s S r D C J o O i a I A p P (normal + visual p) u Ctrl+r;
+//   - counts; motions h j k l (spatial) g+hjkl (display-line walk) w b e W B E
+//     0 ^ $ gg G (count gg/G = goto line) f F t T ; , % { };
+//   - operators d c y (dd cc yy, charwise/linewise motions) with TEXT OBJECTS
+//     i/a + w W ( ) [ ] { } < > b B " ' ` p; x X s S r D C J o O i a I A p P
+//     (normal + visual p) ~ u Ctrl+r;
+//   - search: / ? n N * # (literal, case-sensitive; command line built in
+//     state — the shell renders it). NOT incremental, and NOT IME-aware (the
+//     pattern captures raw keydowns; a composed IME pattern is out of scope);
 //   - the caret may rest AT a line end (Vim's virtualedit=onemore) — ved's
 //     caret is a boundary, not a cell;
 //   - J joins WITHOUT inserting a space (Japanese prose has none to add);
-//   - one unnamed register; no dot-repeat, no marks, no ex commands.
+//   - one unnamed register; NO dot-repeat, macros, marks, named registers,
+//     or ex commands (`:`) yet.
 
 export type VimMode = 'normal' | 'insert' | 'visual';
 export type VimVisualKind = 'char' | 'line';
@@ -66,6 +73,9 @@ export type VimEffect =
       readonly direction: VimVisualDirection;
       readonly count: number;
       readonly extend: boolean;
+      /** The `g`-prefixed DISPLAY line/column move (wrapped) rather than the
+       *  default logical paragraph walk on the line axis. */
+      readonly visualLine: boolean;
     }
   | { readonly kind: 'scrollPage'; readonly dir: 1 | -1; readonly half: boolean }
   | { readonly kind: 'command'; readonly id: string }
@@ -88,6 +98,14 @@ export type VimState = {
   readonly gPending: boolean;
   /** A key waiting for its CHARACTER argument (`r`, `f`, `F`, `t`, `T`). */
   readonly charPending: 'r' | FindOp | null;
+  /** A text-object kind (`i`/`a`) waiting for its object key (operator-pending
+   *  or visual mode — `diw`, `ci(`, `vip`). */
+  readonly textObjectPending: 'i' | 'a' | null;
+  /** The `/`(forward) / `?`(backward) search command line being typed, its
+   *  accumulated pattern, or null when not searching. */
+  readonly commandLine: { readonly forward: boolean; readonly text: string } | null;
+  /** The last executed search, for `n`/`N`. */
+  readonly lastSearch: { readonly pattern: string; readonly forward: boolean } | null;
   /** The last f/F/t/T, for `;` (repeat) and `,` (reverse). */
   readonly lastFind: { readonly op: FindOp; readonly ch: string } | null;
   readonly register: VimRegister | null;
@@ -100,6 +118,9 @@ export const VIM_INITIAL: VimState = {
   operator: null,
   gPending: false,
   charPending: null,
+  textObjectPending: null,
+  commandLine: null,
+  lastSearch: null,
   lastFind: null,
   register: null,
 };
@@ -171,6 +192,272 @@ const wordEndForward = (text: string, off: number): number => {
   return i;
 };
 
+/** WORD class (`W`/`B`/`E`): only whitespace vs non-whitespace (a WORD is a
+ *  whitespace-delimited run — punctuation joins its neighbours). */
+const isBlank = (c: string): boolean => /\s/.test(c);
+const bigWordForward = (text: string, off: number): number => {
+  let i = off;
+  while (i < text.length && !isBlank(text[i]!)) i++;
+  while (i < text.length && isBlank(text[i]!)) i++;
+  return i;
+};
+const bigWordBack = (text: string, off: number): number => {
+  let i = off;
+  while (i > 0 && isBlank(text[i - 1]!)) i--;
+  while (i > 0 && !isBlank(text[i - 1]!)) i--;
+  return i;
+};
+const bigWordEndForward = (text: string, off: number): number => {
+  let i = off + 1;
+  while (i < text.length && isBlank(text[i]!)) i++;
+  if (i >= text.length) return Math.max(off, text.length - 1);
+  while (i + 1 < text.length && !isBlank(text[i + 1]!)) i++;
+  return i;
+};
+
+// ---------------------------------------------------------------------------
+// Brackets, paragraphs, text objects
+// ---------------------------------------------------------------------------
+
+const OPENERS = '([{<';
+const CLOSERS = ')]}>';
+const MATCH: Readonly<Record<string, string>> = { '(': ')', '[': ']', '{': '}', '<': '>' };
+
+/** `%`: from the FIRST bracket at/after the caret on its line, the position of
+ *  its match (scanning with nesting). `null` if none / unbalanced. */
+const matchBracket = (text: string, from: number): number | null => {
+  const le = lineEnd(text, from);
+  let i = from;
+  while (i < le && OPENERS.indexOf(text[i]!) < 0 && CLOSERS.indexOf(text[i]!) < 0) i++;
+  if (i >= le) return null;
+  const ch = text[i]!;
+  const openIdx = OPENERS.indexOf(ch);
+  if (openIdx >= 0) {
+    const close = CLOSERS[openIdx]!;
+    let depth = 0;
+    for (let j = i; j < text.length; j++) {
+      if (text[j] === ch) depth++;
+      else if (text[j] === close && --depth === 0) return j;
+    }
+    return null;
+  }
+  const open = OPENERS[CLOSERS.indexOf(ch)]!;
+  let depth = 0;
+  for (let j = i; j >= 0; j--) {
+    if (text[j] === ch) depth++;
+    else if (text[j] === open && --depth === 0) return j;
+  }
+  return null;
+};
+
+/** The bracket pair (open index, close index) ENCLOSING `from` for `open`.
+ *  Scans left for an unmatched opener, then right for its close. */
+const enclosingPair = (text: string, from: number, open: string, close: string): [number, number] | null => {
+  let depth = 0;
+  let openIdx = -1;
+  for (let i = from; i >= 0; i--) {
+    if (text[i] === close && i !== from) depth++;
+    else if (text[i] === open) {
+      if (depth === 0) {
+        openIdx = i;
+        break;
+      }
+      depth--;
+    }
+  }
+  if (openIdx < 0) return null;
+  depth = 0;
+  for (let i = openIdx + 1; i < text.length; i++) {
+    if (text[i] === open) depth++;
+    else if (text[i] === close) {
+      if (depth === 0) return [openIdx, i];
+      depth--;
+    }
+  }
+  return null;
+};
+
+/** The quote pair around `from` on its line for the delimiter `q` (the pair
+ *  whose open is at/before `from` and close after — simple even-count scan
+ *  from the line start). */
+const quotePair = (text: string, from: number, q: string): [number, number] | null => {
+  const ls = lineStart(text, from);
+  const le = lineEnd(text, from);
+  const idxs: number[] = [];
+  for (let i = ls; i < le; i++) if (text[i] === q) idxs.push(i);
+  for (let p = 0; p + 1 < idxs.length; p += 2) {
+    if (idxs[p]! <= from && from <= idxs[p + 1]!) return [idxs[p]!, idxs[p + 1]!];
+    if (from < idxs[p]!) return [idxs[p]!, idxs[p + 1]!]; // caret before the next pair → take it
+  }
+  return null;
+};
+
+/** `}`: the start of the next BLANK line after the caret's line, or the doc
+ *  end. `{`: the previous blank line's start, or 0. (Vim paragraph motions.) */
+const paraForward = (text: string, from: number): number => {
+  let i = lineEnd(text, from);
+  while (i < text.length) {
+    const ls = i + 1;
+    const le = lineEnd(text, ls);
+    if (le === ls) return ls;
+    i = le;
+  }
+  return text.length;
+};
+const paraBack = (text: string, from: number): number => {
+  let ls = lineStart(text, from);
+  while (ls > 0) {
+    const prevStart = lineStart(text, ls - 1);
+    if (prevStart === ls - 1) return prevStart;
+    ls = prevStart;
+  }
+  return 0;
+};
+
+/** A paragraph (Vim `ip`/`ap`): the maximal run of same-blankness lines around
+ *  the caret, as a `[from, to)` offset range. `a` adds the following blank
+ *  run. Delimited by blank (empty) lines. */
+const paragraphRange = (text: string, from: number, around: boolean): { from: number; to: number } => {
+  const lines = text.split('\n');
+  const starts: number[] = [];
+  let off = 0;
+  let cur = 0;
+  for (let n = 0; n < lines.length; n++) {
+    starts.push(off);
+    if (off <= from) cur = n;
+    off += lines[n]!.length + 1;
+  }
+  const blank = (n: number): boolean => lines[n]!.length === 0;
+  const here = blank(cur);
+  let a = cur;
+  let b = cur;
+  while (a > 0 && blank(a - 1) === here) a--;
+  while (b + 1 < lines.length && blank(b + 1) === here) b++;
+  if (around) while (b + 1 < lines.length && blank(b + 1) !== here) b++;
+  const rangeFrom = starts[a]!;
+  const rangeTo = b + 1 < lines.length ? starts[b]! + lines[b]!.length : text.length;
+  return { from: rangeFrom, to: rangeTo };
+};
+
+/** A text object's range for `i`(nner)/`a`(round) + object key. `linewise`
+ *  for `ip`/`ap` (whole lines, like Vim). `null` when not found at the caret. */
+const textObjectRange = (
+  kind: 'i' | 'a',
+  obj: string,
+  text: string,
+  from: number,
+): { from: number; to: number; linewise: boolean } | null => {
+  const around = kind === 'a';
+  // Word / WORD.
+  if (obj === 'w' || obj === 'W') {
+    const big = obj === 'W';
+    const cls = (c: string): number => (big ? (isBlank(c) ? 0 : 1) : classOf(c));
+    if (from >= text.length) return null;
+    const ls = lineStart(text, from);
+    const le = lineEnd(text, from);
+    const k = cls(text[from]!);
+    let a = from;
+    let b = from;
+    while (a > ls && cls(text[a - 1]!) === k) a--;
+    while (b + 1 < le && cls(text[b + 1]!) === k) b++;
+    let to = b + 1;
+    if (around) {
+      // `aw`: add trailing whitespace, else leading.
+      let hadTrail = false;
+      while (to < le && isBlank(text[to]!)) {
+        to++;
+        hadTrail = true;
+      }
+      if (!hadTrail) while (a > ls && isBlank(text[a - 1]!)) a--;
+    }
+    return { from: a, to, linewise: false };
+  }
+  // Bracket pairs (open or close key selects the pair).
+  const openKey = OPENERS.includes(obj)
+    ? obj
+    : obj === 'b'
+      ? '('
+      : obj === 'B'
+        ? '{'
+        : CLOSERS.includes(obj)
+          ? OPENERS[CLOSERS.indexOf(obj)]!
+          : '';
+  if (openKey) {
+    const pair = enclosingPair(text, from, openKey, MATCH[openKey]!);
+    if (!pair) return null;
+    return around
+      ? { from: pair[0], to: pair[1] + 1, linewise: false }
+      : { from: pair[0] + 1, to: pair[1], linewise: false };
+  }
+  // Quote pairs.
+  if (obj === '"' || obj === "'" || obj === '`') {
+    const pair = quotePair(text, from, obj);
+    if (!pair) return null;
+    return around
+      ? { from: pair[0], to: pair[1] + 1, linewise: false }
+      : { from: pair[0] + 1, to: pair[1], linewise: false };
+  }
+  // Paragraph (linewise).
+  if (obj === 'p') return { ...paragraphRange(text, from, around), linewise: true };
+  return null;
+};
+
+// ---------------------------------------------------------------------------
+// Search
+// ---------------------------------------------------------------------------
+
+/** The next literal occurrence of `pattern` from `from` (exclusive) in the
+ *  given direction, wrapping around. `null` if absent. Case-sensitive. */
+const searchNext = (text: string, from: number, pattern: string, forward: boolean): number | null => {
+  if (!pattern) return null;
+  if (forward) {
+    let idx = text.indexOf(pattern, from + 1);
+    if (idx < 0) idx = text.indexOf(pattern, 0); // wrap
+    return idx < 0 ? null : idx;
+  }
+  let idx = from > 0 ? text.lastIndexOf(pattern, from - 1) : -1;
+  if (idx < 0) idx = text.lastIndexOf(pattern); // wrap
+  return idx < 0 ? null : idx;
+};
+
+/** The keyword run under the caret (for `*`/`#`), or null on whitespace/edge. */
+const wordUnder = (text: string, from: number): string | null => {
+  if (from >= text.length) return null;
+  const k = classOf(text[from]!);
+  if (k === 0) return null;
+  let a = from;
+  let b = from;
+  while (a > 0 && classOf(text[a - 1]!) === k) a--;
+  while (b + 1 < text.length && classOf(text[b + 1]!) === k) b++;
+  return text.slice(a, b + 1);
+};
+
+/** Move the caret to a search result (or swallow if none), recording it for
+ *  `n`/`N`. */
+const runSearch = (state: VimState, pattern: string, forward: boolean, doc: VimDocView): VimStep => {
+  const next = { ...state, commandLine: null, lastSearch: { pattern, forward } };
+  const off = searchNext(doc.text, doc.head, pattern, forward);
+  if (off == null) return swallow(next);
+  return { state: next, effects: [{ kind: 'select', anchor: off, head: off }], handled: true };
+};
+
+/** A keystroke while the `/`?`?` command line is open: build the pattern,
+ *  execute on Enter, cancel on Escape / empty Backspace. */
+const commandLineKey = (state: VimState, key: VimKey, doc: VimDocView): VimStep => {
+  // biome-ignore lint/style/noNonNullAssertion: only called while commandLine is set
+  const cl = state.commandLine!;
+  if (key.key === 'Escape') return { state: { ...state, commandLine: null }, effects: [], handled: true };
+  if (key.key === 'Enter') return runSearch(state, cl.text, cl.forward, doc);
+  if (key.key === 'Backspace') {
+    if (cl.text.length === 0) return { state: { ...state, commandLine: null }, effects: [], handled: true };
+    return { state: { ...state, commandLine: { ...cl, text: cl.text.slice(0, -1) } }, effects: [], handled: true };
+  }
+  if (key.key.length === 1 && !key.ctrl && !key.meta && !key.alt) {
+    return { state: { ...state, commandLine: { ...cl, text: cl.text + key.key } }, effects: [], handled: true };
+  }
+  return swallow(state);
+};
+
 // ---------------------------------------------------------------------------
 // Motions
 // ---------------------------------------------------------------------------
@@ -179,7 +466,7 @@ const wordEndForward = (text: string, off: number): number => {
  *  the character AT the target too (`e`, `f`, `t`). */
 type Motion = { readonly target: number; readonly inclusive: boolean; readonly linewise: boolean };
 
-const MOTION_KEYS = new Set(['h', 'l', 'w', 'b', 'e', '0', '^', '$', 'G', 'gg']);
+const MOTION_KEYS = new Set(['h', 'l', 'w', 'b', 'e', 'W', 'B', 'E', '0', '^', '$', 'G', 'gg', '%', '{', '}']);
 
 /** Resolve a charwise/linewise motion (`null` for keys that aren't one). `gg`
  *  arrives as the pseudo-key 'gg'; `hasCount` distinguishes `5G` (goto line)
@@ -221,6 +508,35 @@ const motionTarget = (m: string, count: number, hasCount: boolean, doc: VimDocVi
       let o = from;
       for (let i = 0; i < count; i++) o = wordEndForward(text, o);
       return { target: o, inclusive: true, linewise: false };
+    }
+    case 'W': {
+      let o = from;
+      for (let i = 0; i < count; i++) o = bigWordForward(text, o);
+      return { target: o, inclusive: false, linewise: false };
+    }
+    case 'B': {
+      let o = from;
+      for (let i = 0; i < count; i++) o = bigWordBack(text, o);
+      return { target: o, inclusive: false, linewise: false };
+    }
+    case 'E': {
+      let o = from;
+      for (let i = 0; i < count; i++) o = bigWordEndForward(text, o);
+      return { target: o, inclusive: true, linewise: false };
+    }
+    case '%': {
+      const m = matchBracket(text, from);
+      return m == null ? null : { target: m, inclusive: true, linewise: false };
+    }
+    case '}': {
+      let o = from;
+      for (let i = 0; i < count; i++) o = paraForward(text, o);
+      return { target: o, inclusive: false, linewise: false };
+    }
+    case '{': {
+      let o = from;
+      for (let i = 0; i < count; i++) o = paraBack(text, o);
+      return { target: o, inclusive: false, linewise: false };
     }
     case '0':
       return { target: lineStart(text, from), inclusive: false, linewise: false };
@@ -304,6 +620,7 @@ const clearPending = (state: VimState): VimState => ({
   operator: null,
   gPending: false,
   charPending: null,
+  textObjectPending: null,
 });
 
 /** Keys with names longer than one character, remapped to their one-char vim
@@ -317,6 +634,9 @@ const NAMED_KEYS: Readonly<Record<string, string>> = {
 };
 
 export const vimKeydown = (state: VimState, key: VimKey, doc: VimDocView): VimStep => {
+  // The search command line owns every key while open (before mode/meta gates
+  // — a `/`-pattern may contain any character).
+  if (state.commandLine) return commandLineKey(state, key, doc);
   if (key.meta || key.alt) return unhandled(state);
   if (state.mode === 'insert') return insertKey(state, key, doc);
   if (key.ctrl) {
@@ -347,6 +667,10 @@ export const vimKeydown = (state: VimState, key: VimKey, doc: VimDocView): VimSt
     if (key.key.length !== 1) return swallow(clearPending(state));
     return resolveCharKey(state, key.key, doc);
   }
+  if (state.textObjectPending) {
+    if (key.key.length !== 1) return swallow(clearPending(state));
+    return resolveTextObject(state, key.key, doc);
+  }
   const k = NAMED_KEYS[key.key] ?? key.key;
   if (k.length !== 1) return unhandled(state);
   // Count digits accumulate; '0' is a motion when no count is pending.
@@ -357,7 +681,20 @@ export const vimKeydown = (state: VimState, key: VimKey, doc: VimDocView): VimSt
     return { state: { ...state, count: state.count * 10 }, effects: [], handled: true };
   }
   if (state.gPending) {
-    if (k === 'g') return commandKey({ ...state, gPending: false }, 'gg', doc);
+    const cleared = { ...state, gPending: false };
+    if (k === 'g') return commandKey(cleared, 'gg', doc);
+    // g + h/j/k/l = the DISPLAY (visual) line/column walk — the wrapped
+    // column/row, as opposed to bare hjkl's logical paragraph walk.
+    if (k === 'h' || k === 'j' || k === 'k' || k === 'l') {
+      const count = cleared.count ?? 1;
+      return {
+        state: clearPending(cleared),
+        effects: [
+          { kind: 'moveVisual', direction: WALK[k], count, extend: cleared.mode === 'visual', visualLine: true },
+        ],
+        handled: true,
+      };
+    }
     return swallow(clearPending(state));
   }
   if (k === 'g') return { state: { ...state, gPending: true }, effects: [], handled: true };
@@ -419,6 +756,7 @@ const commandKey = (state: VimState, k: string, doc: VimDocView): VimStep => {
   // = whole lines, or a find prefix). Anything else cancels the operator.
   if (state.operator) {
     if (k === state.operator) return linewiseOperator(cleared, state.operator, count, doc);
+    if (k === 'i' || k === 'a') return { state: { ...state, textObjectPending: k }, effects: [], handled: true };
     if (k === 'f' || k === 'F' || k === 't' || k === 'T') {
       return { state: { ...state, charPending: k }, effects: [], handled: true };
     }
@@ -429,10 +767,37 @@ const commandKey = (state: VimState, k: string, doc: VimDocView): VimStep => {
     return swallow(cleared);
   }
   if (state.mode === 'visual') {
+    // i/a select a text object (viw, ci( started from visual).
+    if (k === 'i' || k === 'a') return { state: { ...state, textObjectPending: k }, effects: [], handled: true };
     const visual = visualKey(cleared, k, count, doc);
     if (visual) return visual;
   }
   return normalKey(cleared, k, count, hasCount, doc);
+};
+
+/** The object key after a pending `i`/`a`: compute the text object's range and
+ *  either apply the pending operator or (in visual mode) set the selection. */
+const resolveTextObject = (state: VimState, objKey: string, doc: VimDocView): VimStep => {
+  const kind = state.textObjectPending === 'a' ? 'a' : 'i';
+  const op = state.operator;
+  const cleared = clearPending(state);
+  const range = textObjectRange(kind, objKey, doc.text, doc.head);
+  if (!range || range.from > range.to) return swallow(cleared);
+  if (op) return applyOperator(cleared, op, range, doc);
+  // Visual mode: select the object. A linewise object switches to linewise
+  // visual; a charwise one is end-inclusive (head sits ON the last char).
+  if (range.linewise) {
+    return {
+      state: { ...cleared, visualKind: 'line' },
+      effects: [{ kind: 'select', anchor: range.from, head: range.to }],
+      handled: true,
+    };
+  }
+  return {
+    state: cleared,
+    effects: [{ kind: 'select', anchor: range.from, head: Math.max(range.from, range.to - 1) }],
+    handled: true,
+  };
 };
 
 /** `;`/`,` — repeat the last find (`,` reversed). Returns null without one. */
@@ -530,7 +895,11 @@ const normalKey = (state: VimState, k: string, count: number, hasCount: boolean,
 
   // The spatial walk (arrow keys; extends the selection in visual mode).
   if (k === 'h' || k === 'j' || k === 'k' || k === 'l') {
-    return { state, effects: [{ kind: 'moveVisual', direction: WALK[k], count, extend: visual }], handled: true };
+    return {
+      state,
+      effects: [{ kind: 'moveVisual', direction: WALK[k], count, extend: visual, visualLine: false }],
+      handled: true,
+    };
   }
   const motion = motionTarget(k, count, hasCount, doc, head);
   if (motion && MOTION_KEYS.has(k)) return motionStep(state, motion, doc);
@@ -601,10 +970,49 @@ const normalKey = (state: VimState, k: string, count: number, hasCount: boolean,
       return paste(state, doc, count, false);
     case 'u':
       return { state, effects: [{ kind: 'command', id: 'history.undo' }], handled: true };
+    case '~':
+      return toggleCase(state, doc, count);
+    case '/':
+      return { state: { ...state, commandLine: { forward: true, text: '' } }, effects: [], handled: true };
+    case '?':
+      return { state: { ...state, commandLine: { forward: false, text: '' } }, effects: [], handled: true };
+    case 'n':
+    case 'N': {
+      const ls = state.lastSearch;
+      if (!ls) return swallow(state);
+      const off = searchNext(text, head, ls.pattern, k === 'n' ? ls.forward : !ls.forward);
+      if (off == null) return swallow(state);
+      return { state, effects: [{ kind: 'select', anchor: off, head: off }], handled: true };
+    }
+    case '*':
+    case '#': {
+      const w = wordUnder(text, head);
+      if (!w) return swallow(state);
+      return runSearch(state, w, k === '*', doc);
+    }
     default:
       // Unbound printable keys are swallowed: normal mode never types.
       return swallow(state);
   }
+};
+
+/** `~`: toggle the case of `count` characters at the caret and advance. Chars
+ *  with no case (CJK) are unchanged but still advanced over. */
+const toggleCase = (state: VimState, doc: VimDocView, count: number): VimStep => {
+  const { text, caretStop, head } = doc;
+  const le = lineEnd(text, head);
+  const effects: VimEffect[] = [];
+  let pos = head;
+  for (let n = 0; n < count && pos < le; n++) {
+    const ch = text[pos]!;
+    const lower = ch.toLowerCase();
+    const flipped = ch === lower ? ch.toUpperCase() : lower;
+    if (flipped !== ch) effects.push({ kind: 'replace', from: pos, to: pos + 1, text: flipped });
+    pos = Math.min(caretStop(pos, 1), le);
+  }
+  if (pos === head) return swallow(state);
+  effects.push({ kind: 'select', anchor: pos, head: pos });
+  return { state, effects, handled: true };
 };
 
 const enterInsert = (state: VimState, caret: number | null, pre: VimEffect[] = []): VimStep => {

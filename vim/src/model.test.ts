@@ -95,13 +95,28 @@ describe('modes', () => {
 describe('spatial walk (hjkl)', () => {
   it('each key is its arrow key — h=left, j=down, k=up, l=right; the editor rotates the axes', () => {
     expect(play('abc', 1, ['l']).effects).toEqual([
-      { kind: 'moveVisual', direction: 'right', count: 1, extend: false },
+      { kind: 'moveVisual', direction: 'right', count: 1, extend: false, visualLine: false },
     ]);
-    expect(play('abc', 1, ['h']).effects).toEqual([{ kind: 'moveVisual', direction: 'left', count: 1, extend: false }]);
+    expect(play('abc', 1, ['h']).effects).toEqual([
+      { kind: 'moveVisual', direction: 'left', count: 1, extend: false, visualLine: false },
+    ]);
     expect(play('abc', 0, ['2', 'j']).effects).toEqual([
-      { kind: 'moveVisual', direction: 'down', count: 2, extend: false },
+      { kind: 'moveVisual', direction: 'down', count: 2, extend: false, visualLine: false },
     ]);
-    expect(play('abc', 0, ['k']).effects).toEqual([{ kind: 'moveVisual', direction: 'up', count: 1, extend: false }]);
+    expect(play('abc', 0, ['k']).effects).toEqual([
+      { kind: 'moveVisual', direction: 'up', count: 1, extend: false, visualLine: false },
+    ]);
+  });
+
+  it('g + hjkl is the DISPLAY (visual) line/column walk (visualLine: true)', () => {
+    expect(play('abc', 0, ['g', 'j']).effects).toEqual([
+      { kind: 'moveVisual', direction: 'down', count: 1, extend: false, visualLine: true },
+    ]);
+    expect(play('abc', 0, ['2', 'g', 'k']).effects).toEqual([
+      { kind: 'moveVisual', direction: 'up', count: 2, extend: false, visualLine: true },
+    ]);
+    expect(play('abc', 0, ['g', 'h']).effects[0]).toMatchObject({ direction: 'left', visualLine: true });
+    expect(play('abc', 0, ['v', 'g', 'l']).effects.at(-1)).toMatchObject({ visualLine: true, extend: true });
   });
 
   it('Enter/Backspace/Space alias j/h/l; visual mode extends', () => {
@@ -159,6 +174,28 @@ describe('motions', () => {
     const r = play(text, 0, ['f', 'x', ';']);
     expect(r.head).toBe(4);
     expect(play(text, 0, ['f', 'x', ';', ',']).head).toBe(2);
+  });
+
+  it('W/B/E are WORD (whitespace-delimited) motions', () => {
+    const text = 'foo.bar baz';
+    expect(play(text, 0, ['w']).head).toBe(3); // word: stops at '.'
+    expect(play(text, 0, ['W']).head).toBe(8); // WORD: skips to 'baz'
+    expect(play(text, 8, ['B']).head).toBe(0);
+    expect(play(text, 0, ['E']).head).toBe(6); // end of 'foo.bar'
+  });
+
+  it('% jumps to the matching bracket', () => {
+    const text = 'a(bc(d)e)f';
+    expect(play(text, 1, ['%']).head).toBe(8); // outer ( → )
+    expect(play(text, 8, ['%']).head).toBe(1); // ) → (
+    expect(play(text, 4, ['%']).head).toBe(6); // inner
+    expect(play(text, 0, ['%']).head).toBe(8); // scans forward to '(' at 1, jumps to its match
+  });
+
+  it('{ } move by paragraph (blank-line delimited)', () => {
+    const text = 'a\nb\n\nc\nd'; // blank line at offset 4
+    expect(play(text, 0, ['}']).head).toBe(4); // to the blank line
+    expect(play(text, 5, ['{']).head).toBe(4);
   });
 });
 
@@ -230,6 +267,13 @@ describe('edits', () => {
     expect(r.head).toBe(2); // the join seam
     expect(play('a\nb\nc', 0, ['3', 'J']).text).toBe('abc');
     expect(play('abc', 1, ['J']).text).toBe('abc'); // nothing to join
+  });
+
+  it('~ toggles case and advances; counts extend it', () => {
+    expect(play('abc', 0, ['~']).text).toBe('Abc');
+    expect(play('abc', 0, ['~']).head).toBe(1);
+    expect(play('abc', 0, ['3', '~']).text).toBe('ABC');
+    expect(play('あ', 0, ['~']).text).toBe('あ'); // no case: unchanged, still advances
   });
 
   it('o opens below, O above, both entering insert', () => {
@@ -346,6 +390,82 @@ describe('visual mode (linewise, V)', () => {
   it('y yanks the lines; p pastes them below', () => {
     const r = play('aa\nbb', 0, ['V', 'y', 'p']);
     expect(r.text).toBe('aa\naa\nbb');
+  });
+});
+
+describe('search (/ ? n N * #)', () => {
+  it('/ searches forward on Enter; the command line builds up in state', () => {
+    const text = 'foo bar foo bar';
+    const typing = play(text, 0, ['/', 'b', 'a']);
+    expect(typing.state.commandLine).toEqual({ forward: true, text: 'ba' });
+    expect(play(text, 0, ['/', 'b', 'a', 'r', key('Enter')]).head).toBe(4);
+  });
+
+  it('Escape / empty-Backspace cancels the command line without moving', () => {
+    const text = 'foo bar';
+    const esc = play(text, 0, ['/', 'b', key('Escape')]);
+    expect(esc.state.commandLine).toBeNull();
+    expect(esc.head).toBe(0);
+    expect(play(text, 0, ['/', key('Backspace')]).state.commandLine).toBeNull();
+  });
+
+  it('n repeats the last search, N reverses it', () => {
+    const text = 'x ab y ab z ab';
+    const first = play(text, 0, ['/', 'a', 'b', key('Enter')]);
+    expect(first.head).toBe(2);
+    expect(play(text, 0, ['/', 'a', 'b', key('Enter'), 'n']).head).toBe(7);
+    expect(play(text, 0, ['/', 'a', 'b', key('Enter'), 'n', 'N']).head).toBe(2);
+  });
+
+  it('? searches backward (wrapping)', () => {
+    const text = 'ab cd ab cd';
+    expect(play(text, 5, ['?', 'a', 'b', key('Enter')]).head).toBe(0);
+  });
+
+  it('* / # search the word under the caret', () => {
+    const text = 'cat dog cat dog';
+    expect(play(text, 0, ['*']).head).toBe(8); // next 'cat'
+    expect(play(text, 8, ['#']).head).toBe(0); // previous 'cat'
+  });
+});
+
+describe('text objects (i/a)', () => {
+  it('diw / daw delete inner / a word', () => {
+    expect(play('foo bar baz', 4, ['d', 'i', 'w']).text).toBe('foo  baz'); // 'bar' only
+    expect(play('foo bar baz', 4, ['d', 'a', 'w']).text).toBe('foo baz'); // 'bar' + trailing space
+  });
+
+  it('ciw changes inner word and enters insert', () => {
+    const r = play('foo bar', 0, ['c', 'i', 'w']);
+    expect(r.text).toBe(' bar');
+    expect(r.state.mode).toBe('insert');
+  });
+
+  it('di( / da( on brackets (open or close key, nested)', () => {
+    expect(play('a(bc)d', 2, ['d', 'i', '(']).text).toBe('a()d');
+    expect(play('a(bc)d', 2, ['d', 'a', ')']).text).toBe('ad');
+    expect(play('a(b(c)d)e', 4, ['d', 'i', '(']).text).toBe('a(b()d)e'); // inner pair
+  });
+
+  it('di" on quotes; da" includes them', () => {
+    expect(play('x "ab" y', 3, ['d', 'i', '"']).text).toBe('x "" y');
+    expect(play('x "ab" y', 3, ['d', 'a', '"']).text).toBe('x  y');
+  });
+
+  it('dip deletes the paragraph lines (linewise); dap adds the trailing blank run', () => {
+    const text = 'a\nb\n\nc';
+    expect(play(text, 0, ['d', 'i', 'p']).text).toBe('\nc'); // lines a,b removed (linewise)
+    expect(play(text, 0, ['d', 'a', 'p']).text).toBe('c'); // + the blank line
+  });
+
+  it('viw selects the word in visual mode', () => {
+    const r = play('foo bar', 4, ['v', 'i', 'w']);
+    expect(r.state.mode).toBe('visual');
+    expect([r.anchor, r.head]).toEqual([4, 6]); // 'bar', head on last char
+  });
+
+  it('an unknown object key cancels', () => {
+    expect(play('foo', 0, ['d', 'i', 'z']).text).toBe('foo');
   });
 });
 

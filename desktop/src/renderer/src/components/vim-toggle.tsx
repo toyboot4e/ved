@@ -8,10 +8,12 @@ const keepEditorFocus: React.MouseEventHandler = (event) => {
 };
 
 /** The Vim-mode toolbar group: an on/off toggle plus — while on — the live
- *  mode chip (NORMAL/INSERT/VISUAL, fed by the extension's onModeChange). */
+ *  mode chip (NORMAL/INSERT/VISUAL, fed by the extension's onModeChange), and
+ *  the `/`?`?` search command line as it is typed. */
 export const VimToggle = (): React.JSX.Element => {
   const enabled = useVimStore((s) => s.enabled);
   const mode = useVimStore((s) => s.mode);
+  const commandLine = useVimStore((s) => s.commandLine);
   const toggle = useVimStore((s) => s.toggle);
   return (
     <fieldset className={styles.toolbarGroup} aria-label='Vim mode' onMouseDown={keepEditorFocus}>
@@ -28,6 +30,11 @@ export const VimToggle = (): React.JSX.Element => {
       {enabled && (
         <span id='vim-mode' className={styles.toolbarGroupLabel} title='Current Vim mode'>
           {mode.toUpperCase()}
+        </span>
+      )}
+      {enabled && commandLine !== null && (
+        <span id='vim-command-line' className={styles.toolbarGroupLabel} title='Vim search'>
+          {commandLine}
         </span>
       )}
     </fieldset>
