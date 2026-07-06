@@ -60,7 +60,13 @@ export const createVimExtension = (options: VimExtensionOptions = {}): EditorExt
 
     const docView = (): VimDocView => {
       const sel = ctx.getSelection();
-      return { text: ctx.getText(), anchor: sel.anchor, head: sel.head, caretStop: ctx.caretStop };
+      return {
+        text: ctx.getText(),
+        anchor: sel.anchor,
+        head: sel.head,
+        caretStop: ctx.caretStop,
+        snapCaret: ctx.snapCaret,
+      };
     };
 
     const applyEffect = (effect: VimEffect): void => {

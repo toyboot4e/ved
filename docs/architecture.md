@@ -93,6 +93,8 @@ vim/                   @ved/vim — Vim-like modal editing, an editor EXTENSION 
                          @ved/editor's public entry (the proof the seam suffices)
   src/model.ts           the Vim MODEL: a pure (state, key, doc view) → (state, effects)
                          reducer — no editor, no DOM (unit-tested as plain functions)
+  src/config.ts          ONE place for the data-driven, tunable behavior: bracket
+                         pairs (%, text objects), find-chord targets, join spacing
   src/extension.ts       the Vim VIEW/adapter: maps reducer effects onto the extension context
 desktop/               @ved/desktop — the Electron product
   src/shared/ipc.ts      typed IPC contract (channels + VedApi); renderer sees window.ved
@@ -466,6 +468,19 @@ highlights the paragraph (`setLinewiseSelection`). The full key set and its
 deviations — motions, operators + TEXT OBJECTS (`iw`/`a(`/`ip`…), `%`, `~`,
 etc. — are the `model.ts` header; deferred: macros, marks, named registers, ex
 commands. The whole loop is pinned by `test/e2e/vim-mode.ts`.
+
+Every **tunable, locale-dependent** value lives in ONE data leaf, `config.ts`:
+the bracket pairs `%` and the bracket text objects match (Japanese `「」（）
+【】…` included), the f/F/t/T Ctrl-chord targets (`Ctrl+j` → `、`, `Ctrl+l` →
+`。`), and the `J` join-spacing policy (a space for Latin, none between 全角).
+**Word motions are ruby-aware**: `w`/`b`/`e` run over the raw plain text and
+then `snapCaret` their target to a legal stop, so a boundary landing inside a
+collapsed ruby's markup skips out to the ruby edge instead of stranding the
+caret. Proper Japanese *word* granularity (bunsetsu, not
+punctuation-delimited runs) needs a segmenter — the intended path is
+`Intl.Segmenter('ja', {granularity:'word'})` (Chromium ships it) mapped through
+the same `snapCaret`, computed in the editor (which owns the navigable text)
+and exposed as a context motion; sketched as future work, not yet built.
 
 ## Layout: writing modes and the page
 

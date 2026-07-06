@@ -1592,6 +1592,18 @@ export const VedEditor = (props: VedEditorProps): React.JSX.Element => {
         );
       },
       caretStop: (offset, dir) => nextCaretOffset(serialize(view.state.doc), offset, policyClassRef.current, dir < 0),
+      snapCaret: (offset, dir) => {
+        const text = serialize(view.state.doc);
+        const c = Math.max(0, Math.min(offset, text.length));
+        const stops = caretStops(text, c, policyClassRef.current);
+        if (stops.includes(c)) return c;
+        if (dir > 0) {
+          for (const s of stops) if (s > c) return s;
+          return stops[stops.length - 1] ?? c;
+        }
+        for (let i = stops.length - 1; i >= 0; i--) if (stops[i]! < c) return stops[i]!;
+        return stops[0] ?? c;
+      },
       deleteStep: (forward) => {
         if (!view.composing) deleteChar(view, forward, policyClassRef.current);
       },

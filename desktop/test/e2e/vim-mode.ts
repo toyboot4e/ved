@@ -289,6 +289,39 @@ try {
   assert.ok((await docText(page)).includes('count 40'), 'Ctrl+X decrements it');
   step('Ctrl+A / Ctrl+X increment / decrement');
 
+  // w must move PAST a collapsed ruby (Rich mode), not get stuck inside its
+  // markup. 'ab|漢(かん)cd': the ruby boundary is at offset 2, after it at 8.
+  await toggleVim();
+  await setDoc(page, 'ab|漢(かん)cd');
+  await toggleVim();
+  await setCaret(page, 2); // just before the ruby
+  await press('w');
+  assert.equal(await caretOffset(page), 8, 'w jumps past the ruby (not stuck in its markup)');
+  step('w moves beyond a collapsed ruby');
+
+  // J: no space between 全角; a space between Latin. f + Ctrl+l → 。
+  await toggleVim();
+  await setDoc(page, '日本\n語\nab\ncd');
+  await toggleVim();
+  await setCaret(page, 0);
+  await press('J');
+  assert.ok((await docText(page)).startsWith('日本語\n'), 'J joins 全角 lines with no space');
+  await page.keyboard.press('Escape');
+  await setCaret(page, (await docText(page)).indexOf('ab'));
+  await press('J');
+  assert.ok((await docText(page)).includes('ab cd'), 'J joins Latin lines with a space');
+  step('J: 全角 no space, Latin a space (data-driven)');
+
+  await toggleVim();
+  await setDoc(page, 'あ、い。う');
+  await toggleVim();
+  await setCaret(page, 0);
+  await page.keyboard.press('f');
+  await page.keyboard.press('Control+l'); // find 。
+  await page.waitForTimeout(60);
+  assert.equal(await caretOffset(page), 3, 'f + Ctrl+l jumps to 。');
+  step('f + Ctrl+l → 。 (find-chord)');
+
   // Count VISIBLE selection rects — the overlay pools them (hidden via
   // display:none), so a raw querySelectorAll would count stale ones.
   const selRects = () =>

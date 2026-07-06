@@ -23,10 +23,17 @@
 // Scope and deliberate deviations from Vim:
 //   - modes: normal / insert / visual (character-wise 'v' AND line-wise 'V');
 //   - counts; motions h j k l (spatial) g+hjkl (display-line walk) w b e W B E
+//     (ruby-aware: a word target snaps out of a collapsed ruby's markup)
 //     0 ^ $ gg G (KEEP the column; count gg/G = goto line) f F t T ; , % { };
+//     f/F/t/T also take a Ctrl-chord shortcut (config.ts FIND_CHORDS: Ctrl+j
+//     → 、, Ctrl+l → 。);
+//   - % and the bracket text objects use config.ts BRACKET_PAIRS (Japanese
+//     「」（）【】… included);
 //   - operators d c y (dd cc yy, charwise/linewise motions) with TEXT OBJECTS
-//     i/a + w W ( ) [ ] { } < > b B " ' ` p; x X s S r D C J o O i a I A p P
-//     (normal + visual p) ~ Ctrl+A/Ctrl+X (increment/decrement) u Ctrl+r;
+//     i/a + w W ( ) [ ] { } < > b B " ' ` p; x X s S r D C Y (y$) J o O i a
+//     I A p P (normal + visual p) ~ Ctrl+A/Ctrl+X (increment/decrement)
+//     u Ctrl+r. J inserts a joining space per config.ts joinNeedsSpace (a
+//     space for Latin, NONE between 全角);
 //   - linewise visual `V` KEEPS the cursor (a collapsed selection at the
 //     caret); the editor highlights the whole paragraph via
 //     setLinewiseSelection. Operators still take whole lines (visualRange);
@@ -35,7 +42,6 @@
 //     pattern captures raw keydowns; a composed IME pattern is out of scope);
 //   - the caret may rest AT a line end (Vim's virtualedit=onemore) — ved's
 //     caret is a boundary, not a cell;
-//   - J joins WITHOUT inserting a space (Japanese prose has none to add);
 //   - dot-repeat `.`: the record() wrapper keeps the last change's KEY
 //     sequence (incl. insert-mode text — the reducer sees every keydown) as
 //     `lastChange`; `.` emits a `repeat` effect and the ADAPTER replays those
@@ -44,6 +50,11 @@
 //     IME-typed insert text is not captured (same caveat as search);
 //   - one unnamed register; NO macros, marks, named registers, or ex commands
 //     (`:`) yet.
+//
+// All configurable, data-driven behavior (bracket pairs, find-chord targets,
+// join spacing) lives in ONE place — config.ts.
+
+import { BRACKET_PAIRS, FIND_CHORDS, joinNeedsSpace } from './config';
 
 export type VimMode = 'normal' | 'insert' | 'visual';
 export type VimVisualKind = 'char' | 'line';
@@ -66,6 +77,9 @@ export type VimDocView = {
   readonly head: number;
   /** Next legal caret stop (ruby-aware). Returns `offset` at a document edge. */
   readonly caretStop: (offset: number, dir: 1 | -1) => number;
+  /** `offset` if it is a legal caret stop, else the nearest one in `dir` —
+   *  snaps a raw-text motion target out of a collapsed ruby's markup. */
+  readonly snapCaret: (offset: number, dir: 1 | -1) => number;
 };
 
 /** A spatial (screen) direction — an arrow key. */
@@ -248,21 +262,20 @@ const bigWordEndForward = (text: string, off: number): number => {
 // Brackets, paragraphs, text objects
 // ---------------------------------------------------------------------------
 
-const OPENERS = '([{<';
-const CLOSERS = ')]}>';
-const MATCH: Readonly<Record<string, string>> = { '(': ')', '[': ']', '{': '}', '<': '>' };
+// Bracket lookups derived from the one data table (config.ts BRACKET_PAIRS).
+const OPEN_TO_CLOSE = new Map(BRACKET_PAIRS.map(([o, c]) => [o, c]));
+const CLOSE_TO_OPEN = new Map(BRACKET_PAIRS.map(([o, c]) => [c, o]));
 
 /** `%`: from the FIRST bracket at/after the caret on its line, the position of
  *  its match (scanning with nesting). `null` if none / unbalanced. */
 const matchBracket = (text: string, from: number): number | null => {
   const le = lineEnd(text, from);
   let i = from;
-  while (i < le && OPENERS.indexOf(text[i]!) < 0 && CLOSERS.indexOf(text[i]!) < 0) i++;
+  while (i < le && !OPEN_TO_CLOSE.has(text[i]!) && !CLOSE_TO_OPEN.has(text[i]!)) i++;
   if (i >= le) return null;
   const ch = text[i]!;
-  const openIdx = OPENERS.indexOf(ch);
-  if (openIdx >= 0) {
-    const close = CLOSERS[openIdx]!;
+  const close = OPEN_TO_CLOSE.get(ch);
+  if (close !== undefined) {
     let depth = 0;
     for (let j = i; j < text.length; j++) {
       if (text[j] === ch) depth++;
@@ -270,7 +283,7 @@ const matchBracket = (text: string, from: number): number | null => {
     }
     return null;
   }
-  const open = OPENERS[CLOSERS.indexOf(ch)]!;
+  const open = CLOSE_TO_OPEN.get(ch)!;
   let depth = 0;
   for (let j = i; j >= 0; j--) {
     if (text[j] === ch) depth++;
@@ -401,18 +414,10 @@ const textObjectRange = (
     }
     return { from: a, to, linewise: false };
   }
-  // Bracket pairs (open or close key selects the pair).
-  const openKey = OPENERS.includes(obj)
-    ? obj
-    : obj === 'b'
-      ? '('
-      : obj === 'B'
-        ? '{'
-        : CLOSERS.includes(obj)
-          ? OPENERS[CLOSERS.indexOf(obj)]!
-          : '';
+  // Bracket pairs (the open OR the close char, or b/B for ()/{}, selects it).
+  const openKey = OPEN_TO_CLOSE.has(obj) ? obj : obj === 'b' ? '(' : obj === 'B' ? '{' : CLOSE_TO_OPEN.get(obj);
   if (openKey) {
-    const pair = enclosingPair(text, from, openKey, MATCH[openKey]!);
+    const pair = enclosingPair(text, from, openKey, OPEN_TO_CLOSE.get(openKey)!);
     if (!pair) return null;
     return around
       ? { from: pair[0], to: pair[1] + 1, linewise: false }
@@ -560,34 +565,38 @@ const motionTarget = (m: string, count: number, hasCount: boolean, doc: VimDocVi
       }
       return { target: o, inclusive: false, linewise: false };
     }
+    // Word motions run over the raw plain text (markup included) then SNAP the
+    // target to a legal caret stop in the motion direction — so a boundary
+    // landing inside a collapsed ruby's markup skips out to the ruby's edge
+    // rather than stranding the caret there (it used to get stuck at a ruby).
     case 'w': {
       let o = from;
-      for (let i = 0; i < count; i++) o = wordForward(text, o);
+      for (let i = 0; i < count; i++) o = doc.snapCaret(wordForward(text, o), 1);
       return { target: o, inclusive: false, linewise: false };
     }
     case 'b': {
       let o = from;
-      for (let i = 0; i < count; i++) o = wordBack(text, o);
+      for (let i = 0; i < count; i++) o = doc.snapCaret(wordBack(text, o), -1);
       return { target: o, inclusive: false, linewise: false };
     }
     case 'e': {
       let o = from;
-      for (let i = 0; i < count; i++) o = wordEndForward(text, o);
+      for (let i = 0; i < count; i++) o = doc.snapCaret(wordEndForward(text, o), 1);
       return { target: o, inclusive: true, linewise: false };
     }
     case 'W': {
       let o = from;
-      for (let i = 0; i < count; i++) o = bigWordForward(text, o);
+      for (let i = 0; i < count; i++) o = doc.snapCaret(bigWordForward(text, o), 1);
       return { target: o, inclusive: false, linewise: false };
     }
     case 'B': {
       let o = from;
-      for (let i = 0; i < count; i++) o = bigWordBack(text, o);
+      for (let i = 0; i < count; i++) o = doc.snapCaret(bigWordBack(text, o), -1);
       return { target: o, inclusive: false, linewise: false };
     }
     case 'E': {
       let o = from;
-      for (let i = 0; i < count; i++) o = bigWordEndForward(text, o);
+      for (let i = 0; i < count; i++) o = doc.snapCaret(bigWordEndForward(text, o), 1);
       return { target: o, inclusive: true, linewise: false };
     }
     case '%': {
@@ -760,10 +769,21 @@ const dispatch = (state: VimState, key: VimKey, doc: VimDocView): VimStep => {
   // The search command line owns every key while open (before mode/meta gates
   // — a `/`-pattern may contain any character).
   if (state.commandLine) return commandLineKey(state, key, doc);
+  // A LONE modifier keydown (the browser fires it before the real key — e.g.
+  // Control before Ctrl+l) must not disturb pending state: ignore it, keeping
+  // any charPending/count/operator intact for the chord that follows.
+  if (key.key === 'Control' || key.key === 'Shift' || key.key === 'Alt' || key.key === 'Meta') {
+    return unhandled(state);
+  }
   if (key.meta || key.alt) return unhandled(state);
   if (state.mode === 'insert') return insertKey(state, key, doc);
   if (key.ctrl) {
-    if (state.charPending) return unhandled(clearPending(state));
+    if (state.charPending) {
+      // A Ctrl-chord shortcut for the pending find/replace's char argument
+      // (FIND_CHORDS — e.g. Ctrl+j → 、, Ctrl+l → 。); anything else cancels.
+      const target = FIND_CHORDS[key.key];
+      return target ? resolveCharKey(state, target, doc) : unhandled(clearPending(state));
+    }
     if (key.key === 'r') {
       return { state: clearPending(state), effects: [{ kind: 'command', id: 'history.redo' }], handled: true };
     }
@@ -1073,6 +1093,10 @@ const normalKey = (state: VimState, k: string, count: number, hasCount: boolean,
       return applyOperator(state, 'd', { from: head, to: lineEnd(text, head), linewise: false }, doc);
     case 'C':
       return applyOperator(state, 'c', { from: head, to: lineEnd(text, head), linewise: false }, doc);
+    case 'Y':
+      // Yank from the caret to the paragraph (line) end — like D/C (Neovim's
+      // default; Vim's own Y is `yy`, but this pairs with D and C).
+      return applyOperator(state, 'y', { from: head, to: lineEnd(text, head), linewise: false }, doc);
     case 'J':
       return joinLines(state, doc, count);
     case 'd':
@@ -1161,22 +1185,31 @@ const deleteSteps = (state: VimState, doc: VimDocView, count: number, forward: b
   return { state: next, effects, handled: true };
 };
 
-/** J: splice the following line(s) onto this one — WITHOUT a joining space
- *  (Japanese prose has none; Vim's space belongs to Latin text). `count`
- *  joins count−1 newlines like Vim (3J makes one line of three). */
+/** J: splice the following line(s) onto this one. Strips the next line's
+ *  leading whitespace and inserts a joining space per the data policy
+ *  (`joinNeedsSpace` — a space between Latin text, NONE between fullwidth/全角
+ *  characters). `count` joins count−1 newlines like Vim (3J = one line of
+ *  three). The caret lands at the (first) join seam. */
 const joinLines = (state: VimState, doc: VimDocView, count: number): VimStep => {
   const joins = Math.max(1, count - 1);
   let virtual = doc.text;
   const effects: VimEffect[] = [];
   let firstSeam = -1;
-  let cursor = doc.head;
+  const cursor = doc.head;
   for (let i = 0; i < joins; i++) {
     const le = lineEnd(virtual, cursor);
-    if (le >= virtual.length) break;
+    if (le >= virtual.length) break; // no next line
+    // Strip the next line's leading whitespace.
+    let nb = le + 1;
+    const nextEnd = lineEnd(virtual, nb);
+    while (nb < nextEnd && isBlank(virtual[nb]!)) nb++;
+    const left = le > 0 && virtual[le - 1] !== '\n' ? virtual[le - 1]! : '';
+    const right = nb < nextEnd ? virtual[nb]! : '';
+    const sep = joinNeedsSpace(left, right) ? ' ' : '';
     if (firstSeam < 0) firstSeam = le;
-    effects.push({ kind: 'replace', from: le, to: le + 1, text: '' });
-    virtual = virtual.slice(0, le) + virtual.slice(le + 1);
-    cursor = le;
+    effects.push({ kind: 'replace', from: le, to: nb, text: sep });
+    virtual = virtual.slice(0, le) + sep + virtual.slice(nb);
+    // Keep joining from the same seam — the next '\n' is now further along.
   }
   if (effects.length === 0) return swallow(state);
   effects.push({ kind: 'select', anchor: firstSeam, head: firstSeam });

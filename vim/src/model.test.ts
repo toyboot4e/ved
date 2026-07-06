@@ -17,6 +17,8 @@ const docOf = (text: string, head: number, anchor: number = head): VimDocView =>
   anchor,
   head,
   caretStop: (off, dir) => Math.max(0, Math.min(text.length, off + dir)),
+  // No rubies in these unit tests — every offset is a legal stop (identity).
+  snapCaret: (off) => Math.max(0, Math.min(text.length, off)),
 });
 
 const key = (k: string, over: Partial<VimKey> = {}): VimKey => ({
@@ -199,6 +201,14 @@ describe('motions', () => {
     expect(play(text, 0, ['f', 'x', ';', ',']).head).toBe(2);
   });
 
+  it('f + Ctrl+j → 、 and f + Ctrl+l → 。 (FIND_CHORDS)', () => {
+    const text = 'あ、い。う';
+    expect(play(text, 0, ['f', key('j', { ctrl: true })]).head).toBe(1); // to 、
+    expect(play(text, 0, ['f', key('l', { ctrl: true })]).head).toBe(3); // to 。
+    // Works as an operator target too: dt<Ctrl+l> deletes up to 。
+    expect(play(text, 0, ['d', 't', key('l', { ctrl: true })]).text).toBe('。う');
+  });
+
   it('W/B/E are WORD (whitespace-delimited) motions', () => {
     const text = 'foo.bar baz';
     expect(play(text, 0, ['w']).head).toBe(3); // word: stops at '.'
@@ -213,6 +223,15 @@ describe('motions', () => {
     expect(play(text, 8, ['%']).head).toBe(1); // ) → (
     expect(play(text, 4, ['%']).head).toBe(6); // inner
     expect(play(text, 0, ['%']).head).toBe(8); // scans forward to '(' at 1, jumps to its match
+  });
+
+  it('% matches Japanese brackets (data-driven pairs)', () => {
+    const text = 'あ「い『う』え」お'; // 「@1 』@5 」@7
+    expect(play(text, 1, ['%']).head).toBe(7); // 「 → 」
+    expect(play(text, 7, ['%']).head).toBe(1); // 」 → 「
+    expect(play(text, 3, ['%']).head).toBe(5); // 『 → 』
+    // di「 uses the same table.
+    expect(play(text, 3, ['d', 'i', '「']).text).toBe('あ「」お');
   });
 
   it('{ } move by paragraph (blank-line delimited)', () => {
@@ -277,6 +296,13 @@ describe('edits', () => {
     expect(play('foo bar', 0, ['d', 't', 'b']).text).toBe('bar');
   });
 
+  it('Y yanks from the caret to the paragraph end (y$); p pastes it', () => {
+    const r = play('hello world', 6, ['Y']); // yank 'world'
+    expect(r.state.register).toEqual({ text: 'world', linewise: false });
+    expect(r.text).toBe('hello world'); // yank does not modify
+    expect(play('hello world', 6, ['Y', '$', 'p']).text).toBe('hello worldworld');
+  });
+
   it('D deletes to the line end; cc keeps one empty line and enters insert', () => {
     expect(play('abc\ndef', 1, ['D']).text).toBe('a\ndef');
     const r = play('aa\nbb\ncc', 4, ['c', 'c']);
@@ -284,11 +310,18 @@ describe('edits', () => {
     expect(r.state.mode).toBe('insert');
   });
 
-  it('J joins without a space (Japanese prose); 3J joins three lines', () => {
-    const r = play('ああ\nいい\nうう', 0, ['J']);
-    expect(r.text).toBe('ああいい\nうう');
-    expect(r.head).toBe(2); // the join seam
-    expect(play('a\nb\nc', 0, ['3', 'J']).text).toBe('abc');
+  it('J joins with a space for Latin, NONE between 全角; strips leading blanks', () => {
+    // Fullwidth (全角): no joining space.
+    const jp = play('ああ\nいい\nうう', 0, ['J']);
+    expect(jp.text).toBe('ああいい\nうう');
+    expect(jp.head).toBe(2); // the join seam
+    // Latin: a joining space (Vim's default), including 3J.
+    expect(play('a\nb\nc', 0, ['3', 'J']).text).toBe('a b c');
+    // Next line's leading whitespace is stripped before the (single) space.
+    expect(play('foo\n   bar', 0, ['J']).text).toBe('foo bar');
+    // Mixed: a fullwidth char on either side → no space.
+    expect(play('あ\nx', 0, ['J']).text).toBe('あx');
+    expect(play('x\nあ', 0, ['J']).text).toBe('xあ');
     expect(play('abc', 1, ['J']).text).toBe('abc'); // nothing to join
   });
 

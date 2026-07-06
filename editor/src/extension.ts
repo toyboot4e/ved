@@ -70,6 +70,12 @@ export type EditorExtensionContext = {
    *  base interiors step char by char). Returns `offset` at a document
    *  edge. */
   readonly caretStop: (offset: number, dir: 1 | -1) => number;
+  /** `offset` if it is a legal caret stop, else the nearest legal stop in
+   *  direction `dir`. Snaps an offset that fell INSIDE non-navigable markup
+   *  (a collapsed ruby's `|`/reading/`)`) out to a real caret position, so a
+   *  motion computed over the raw plain text (e.g. a word jump) can't strand
+   *  the caret inside a ruby. */
+  readonly snapCaret: (offset: number, dir: 1 | -1) => number;
   /** Delete one caret step at the caret (the Backspace/Delete rule: a
    *  collapsed ruby deletes as a unit), or the selection if non-empty. */
   readonly deleteStep: (forward: boolean) => void;

@@ -319,11 +319,16 @@ Decisions from the design review (see CONTEXT.md **view config**):
     Dot-repeat `.` records the last change's key sequence (insert-mode text
     included) and the adapter replays it. `gg`/`G` keep the column;
     `Ctrl+A`/`Ctrl+X` increment/decrement; linewise `V` keeps the cursor and
-    highlights the paragraph (a new `setLinewiseSelection` editor seam). Smoke:
-    `test/e2e/vim-mode.ts`. Deferred: macros, marks, named registers, ex
-    commands. Owed: real-mozc verification of the normal-mode composition
-    revert (`mozc/vim-normal-composition`). See architecture.md "Extensions"
-    and `docs/extensions.md`.
+    highlights the paragraph (a new `setLinewiseSelection` editor seam). All
+    tunable/locale data (bracket pairs incl. Japanese `「」（）…` for `%`,
+    f/F/t/T Ctrl-chord targets `Ctrl+j`→`、`/`Ctrl+l`→`。`, `J` join spacing —
+    a space for Latin, none between 全角) lives in one `vim/src/config.ts`;
+    `w`/`b`/`e` are ruby-aware (a new `snapCaret` editor seam); `Y` = `y$`.
+    Smoke: `test/e2e/vim-mode.ts`. Deferred: macros, marks, named registers,
+    ex commands, and PROPER Japanese word movement (needs `Intl.Segmenter`).
+    Owed: real-mozc verification of the normal-mode composition revert
+    (`mozc/vim-normal-composition`). See architecture.md "Extensions" and
+    `docs/extensions.md`.
 
 ### Phase 2 — file browser sidebar
 
