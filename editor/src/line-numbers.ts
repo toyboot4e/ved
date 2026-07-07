@@ -441,37 +441,22 @@ const bands = (ln: VisualLine, vertical: boolean) =>
     ? { bMin: ln.left, bMax: ln.right, iMin: ln.top, iMax: ln.bottom }
     : { bMin: ln.top, bMax: ln.bottom, iMin: ln.left, iMax: ln.right };
 
-const makeNumber = (overlay: HTMLElement, pool: HTMLElement[]): HTMLElement => {
-  const el = document.createElement('span');
-  el.className = 'vedLineNumber';
-  overlay.appendChild(el);
-  pool.push(el);
-  return el;
-};
+/** One pooled overlay element. `behind` prepends (separators and selection
+ *  rects paint behind the numbers/chips) — all inside the same
+ *  scroll-invariant overlay box. */
+const makePooled =
+  (tag: 'span' | 'div', cls: string, behind = false) =>
+  (overlay: HTMLElement, pool: HTMLElement[]): HTMLElement => {
+    const el = document.createElement(tag);
+    el.className = cls;
+    if (behind) overlay.insertBefore(el, overlay.firstChild);
+    else overlay.appendChild(el);
+    pool.push(el);
+    return el;
+  };
 
-const makePageNumber = (overlay: HTMLElement, pool: HTMLElement[]): HTMLElement => {
-  const el = document.createElement('span');
-  el.className = 'vedPageNumber';
-  overlay.appendChild(el);
-  pool.push(el);
-  return el;
-};
-
-const makePageSeparator = (overlay: HTMLElement, pool: HTMLElement[]): HTMLElement => {
-  const el = document.createElement('div');
-  el.className = 'vedPageSeparator';
-  // Behind the numbers/chips but inside the same scroll-invariant overlay box.
-  overlay.insertBefore(el, overlay.firstChild);
-  pool.push(el);
-  return el;
-};
-
+const makeNumber = makePooled('span', 'vedLineNumber');
+const makePageNumber = makePooled('span', 'vedPageNumber');
+const makePageSeparator = makePooled('div', 'vedPageSeparator', true);
 // A single base-only text-selection rect (overlay-relative, sized in px).
-const makeSelRect = (overlay: HTMLElement, pool: HTMLElement[]): HTMLElement => {
-  const el = document.createElement('div');
-  el.className = 'vedSelectionRect';
-  // Behind the numbers but inside the same scroll-invariant overlay box.
-  overlay.insertBefore(el, overlay.firstChild);
-  pool.push(el);
-  return el;
-};
+const makeSelRect = makePooled('div', 'vedSelectionRect', true);

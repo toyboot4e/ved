@@ -33,3 +33,14 @@ export type {
 } from './extension';
 export type { CursorState } from './history';
 export { PlainTextHistory } from './history';
+// The view-config contract (type, bounds, clamp, CSS custom-property
+// mapping): the values the editor's stylesheet consumes, shared by every
+// shell (each keeps only its own state layer).
+export type { ViewConfig } from './view-config';
+export {
+  clampViewConfig,
+  VIEW_CONFIG_BOUNDS,
+  VIEW_CONFIG_DEFAULTS,
+  viewConfigFromPersisted,
+  viewConfigToCss,
+} from './view-config';

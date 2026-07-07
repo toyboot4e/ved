@@ -40,22 +40,43 @@ export const createJapaneseWordModel = (): WordModel => {
     return stops;
   };
 
+  // Segments are consecutive and non-overlapping, so both `start` and `end`
+  // ascend — binary-searchable. w/b/e are per-keypress caret moves; a linear
+  // scan re-walked every segment of the document per press (the "per-caret-
+  // move work must not scale with the document" rule).
+  const firstIdxWhere = (
+    stops: readonly { start: number; end: number }[],
+    pred: (s: (typeof stops)[number]) => boolean,
+  ): number => {
+    let lo = 0;
+    let hi = stops.length - 1;
+    let best = stops.length;
+    while (lo <= hi) {
+      const mid = (lo + hi) >> 1;
+      if (pred(stops[mid]!)) {
+        best = mid;
+        hi = mid - 1;
+      } else lo = mid + 1;
+    }
+    return best;
+  };
+
   return {
     next: (text, off) => {
-      for (const s of stopsOf(text)) if (s.start > off) return s.start;
-      return text.length;
+      const stops = stopsOf(text);
+      const i = firstIdxWhere(stops, (s) => s.start > off);
+      return i < stops.length ? stops[i]!.start : text.length;
     },
     prev: (text, off) => {
-      let r = 0;
-      for (const s of stopsOf(text)) {
-        if (s.start >= off) break;
-        r = s.start;
-      }
-      return r;
+      const stops = stopsOf(text);
+      // The last stop strictly before `off` = just before the first at/after.
+      const i = firstIdxWhere(stops, (s) => s.start >= off) - 1;
+      return i >= 0 ? stops[i]!.start : 0;
     },
     end: (text, off) => {
-      for (const s of stopsOf(text)) if (s.end - 1 > off) return s.end - 1;
-      return Math.max(off, text.length - 1);
+      const stops = stopsOf(text);
+      const i = firstIdxWhere(stops, (s) => s.end - 1 > off);
+      return i < stops.length ? stops[i]!.end - 1 : Math.max(off, text.length - 1);
     },
   };
 };

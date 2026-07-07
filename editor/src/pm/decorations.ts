@@ -46,26 +46,28 @@ const TCY = /\d{2,}/g; // 縦中横: runs of 2+ digits
  *  `rubyActive` tint reaches the close widget via a sibling CSS rule — so the
  *  widgets are selection-independent and live in the CACHED static set, never
  *  re-rendered by a caret move. */
-const delim = (cls: string, ch: string) => (): HTMLElement => {
-  const s = document.createElement('span');
-  s.className = cls;
-  s.textContent = ch;
-  // Not model text: the glyph walks (editor.tsx paraGlyphs) skip these by
-  // class, and the caret must not enter them.
-  s.setAttribute('contenteditable', 'false');
-  return s;
-};
+// EVERY ved widget is a read-only span: contenteditable=false is the
+// structural half of the IM-context rule (a widget must never be an editable
+// caret anchor); the side >= 0 half lives at each Decoration.widget call.
+const roSpan =
+  (cls: string, text = '') =>
+  (): HTMLElement => {
+    const s = document.createElement('span');
+    s.className = cls;
+    if (text) s.textContent = text;
+    s.setAttribute('contenteditable', 'false');
+    return s;
+  };
+
+// Not model text: the glyph walks (editor.tsx paraGlyphs) skip these by
+// class, and the caret must not enter them.
+const delim = (cls: string, ch: string) => roSpan(cls, ch);
 
 /** A rendered caret for a TEXT-LESS seam — between two collapsed rubies (or a
  *  collapsed ruby against a paragraph edge) the markup is not DOM text, so the
  *  native caret has nothing to sit on (an invisible cursor). This widget draws the
  *  caret (CSS, blinks while focused) at the correct seam offset; see ruby.css. */
-const boundaryCaret = (): HTMLElement => {
-  const s = document.createElement('span');
-  s.className = 'vedBoundaryCaret';
-  s.setAttribute('contenteditable', 'false');
-  return s;
-};
+const boundaryCaret = roSpan('vedBoundaryCaret');
 
 /** The BLOCK caret's widget form — for caret positions with NO visible
  *  character under them (paragraph end, a collapsed ruby's boundary, an empty
@@ -74,12 +76,7 @@ const boundaryCaret = (): HTMLElement => {
  *  net footprint, side 0 so the caret's previous DOM sibling stays real
  *  content — the fcitx5 IM-context rule); the painted cell is an out-of-flow
  *  ::after (ruby.css). */
-const blockCaretBox = (): HTMLElement => {
-  const s = document.createElement('span');
-  s.className = 'vedBlockCaretBox';
-  s.setAttribute('contenteditable', 'false');
-  return s;
-};
+const blockCaretBox = roSpan('vedBlockCaretBox');
 
 /** The newline marker (invisibles): a widget at each paragraph's content end
  *  (except the last paragraph — the plain text has no trailing `\n`). Zero
@@ -89,12 +86,7 @@ const blockCaretBox = (): HTMLElement => {
  *  paragraph exactly fills its visual line. Not DOM text (no text node — the
  *  glyph-walk `SHOW_TEXT` filters skip it automatically) and not model text, so
  *  serialize/copy is unaffected. */
-const newlineMark = (): HTMLElement => {
-  const s = document.createElement('span');
-  s.className = 'vedNewline';
-  s.setAttribute('contenteditable', 'false');
-  return s;
-};
+const newlineMark = roSpan('vedNewline');
 
 /** Which invisibles are shown. A pure view flag threaded from the shell; both
  *  default off. Whitespace markers are inline decoration CLASSES over the real
