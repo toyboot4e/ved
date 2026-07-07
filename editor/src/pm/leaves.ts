@@ -114,6 +114,15 @@ export const lineOf = (doc: string, offset: number): number => {
   return best;
 };
 
+/** The [start, end) span of the line containing `offset` (end excludes the
+ *  `\n`). An offset ON a `\n` belongs to the line it ends — the same
+ *  convention as `lineOf`. */
+export const lineSpanAt = (text: string, offset: number): { start: number; end: number } => {
+  const start = offset === 0 ? 0 : text.lastIndexOf('\n', offset - 1) + 1;
+  const endIdx = text.indexOf('\n', offset);
+  return { start, end: endIdx < 0 ? text.length : endIdx };
+};
+
 /** The ruby id whose span contains `offset` (inclusive of both edges so that,
  *  under the ByCharacter policy, touching a ruby's boundary expands it and lets the
  *  caret walk its now-visible syntax), or -1. */
