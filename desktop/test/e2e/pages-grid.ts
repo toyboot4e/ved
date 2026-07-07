@@ -1,4 +1,4 @@
-// VerticalColumns page grid (ADR 0011): --pages-per-row pages side by side in
+// VerticalColumns page grid (architecture.md "Layout"): --pages-per-row pages side by side in
 // each band (B A / D C …), separated by the physical --page-gap; bands still
 // tile downward via multicol fragmentation. Page numbers folio every page.
 //

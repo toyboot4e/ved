@@ -2,7 +2,7 @@
   "name": "@ved/root",
   "version": "0.1.0",
   "private": true,
-  "description": "ved monorepo — workspace root (no shipped code). See docs/adr/0009.",
+  "description": "ved monorepo — workspace root (no shipped code).",
   "scripts": {
     "check": "biome check",
     "check:fix": "biome check --fix",
@@ -26,7 +26,6 @@
     "@biomejs/biome": "^2.4.16",
     "@types/node": "^25.9.3",
     "@vitest/ui": "^4.1.9",
-    "fast-check": "^4.8.0",
     "typescript": "^6.0.3",
     "vitest": "^4.1.8"
   },

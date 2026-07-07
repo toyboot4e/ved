@@ -3,7 +3,7 @@
 // markup gave e.g. "|ルビ(ruby)" + IME "あいうえお" → "|あルいうえおビ(ruby)", and a
 // caret at a ruby boundary threw the IME box to the viewport corner.
 //
-// The markup-out-of-DOM redesign (ADR-0008) fixes BOTH at the root: a ruby holds
+// The markup-out-of-DOM redesign (architecture.md "verified dead ends") fixes BOTH at the root: a ruby holds
 // editable base/reading text and the delimiters are never DOM text, so an IME
 // always composes into real, full-size text with a real caret rect — there is no
 // zero-sized markup beside the caret to scramble it. Verified against the real

@@ -17,7 +17,7 @@
 // read-only UNTIL the caret is INSIDE it (pm/decorations.ts). So AT the boundary
 // the IME composes OUTSIDE (paragraph start / between the rubies), but the caret
 // still steps THROUGH the base interior char-by-char (pm/caret-model.ts) and, once
-// inside, the base is editable so the IME edits it. No ZWSP anchor (ADR-0008): the
+// inside, the base is editable so the IME edits it. No ZWSP anchor (a verified dead end, architecture.md): the
 // markup stays out of the DOM and identity holds.
 
 /** In appearance mode `mode` (Ctrl+digit), place the caret at plain-offset

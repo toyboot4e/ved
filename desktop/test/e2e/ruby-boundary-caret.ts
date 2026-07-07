@@ -1,6 +1,6 @@
 // Regression: a caret at a TEXT-LESS ruby seam (between two collapsed rubies)
 // must be VISIBLE, at the correct seam offset. The seam has no DOM text node
-// (ADR-0008), so the native caret can't render there — pm/decorations.ts adds a
+// (architecture.md "Caret at ruby boundaries"), so the native caret can't render there — pm/decorations.ts adds a
 // rendered `.vedBoundaryCaret` widget at the head. The model offset is unchanged
 // (the click is NOT snapped to a different position).
 import assert from 'node:assert/strict';

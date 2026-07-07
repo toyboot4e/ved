@@ -1,4 +1,4 @@
-// VerticalRows pages are ARITHMETIC (ADR 0010): one continuous flow, a page
+// VerticalRows pages are ARITHMETIC (architecture.md "Layout"): one continuous flow, a page
 // boundary every --page-lines VISUAL lines. The physical inter-page space
 // comes from the .ved-page-gap widget decorations fattening each page's LAST
 // line; the separator hairlines and page-number chips are drawn by the

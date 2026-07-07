@@ -1,0 +1,266 @@
+# Refactoring ledger
+
+Audit of editor/, vim/, desktop/renderer + the cross-package surface for
+maintainability cleanups. Executed on `refactor/editor-core`, one commit per
+coherent refactor; verification is `just test-all`, plus `pnpm smoke:mozc`
+for anything touching composition/deletion paths.
+
+Statuses: **todo** (will execute), **done** (commit landed), **proposal**
+(left for review — risk or judgment call), **rejected** (investigated, not
+worth it / load-bearing).
+
+## editor/src/editor.tsx (2641 lines — 41% of the core)
+
+### Module split (E0) — todo
+
+The file holds eight separable concerns. Split, in shippable order (each
+step is lift-and-shift, no logic edits; `just test-all` between):
+
+1. `scroll-reveal.ts` — toScrollMode, measureGeom, revealDelta,
+   caretPageSpan, pageSnapDelta, caretCoords, revealCaretInScroller
+   (l.779–815, 848–993); `useKeepScrollPosition` → rides along.
+2. `caret-motion.ts` — arrow tables, moveChar, moveByLogicalLine,
+   closestPara, readingFlowRects, paragraphCols, caretColIndex,
+   moveCaretByLine (l.156–168, 176–219, 430–773). goalRef becomes a plain
+   `{current}` so the module needs no React.
+3. `plain-edits.ts` — plainDeleteTr, plainInsertTr, deleteChar,
+   deleteRangeForIme, deleteSelectionForIme, enterReplacingSelection
+   (l.221–428). IME-critical: move only, then mozc suite.
+4. `test-seams.ts` — installTestSeams (l.1371–1424).
+5. `ime-survival.ts` — the domSelectionRange patch + reseatCompositionCaret
+   as installCompositionSurvival(view) (l.1323–1369). Isolates the one PM
+   internals dependency. mozc suite after.
+6. `glyph-walker.ts` — factory over walkGlyphs/paraGlyphs/offsetAtPoint +
+   caches (l.1918–2206); `__vedGlyphWalks` seam moves verbatim.
+7. `page-gap-measure.ts` — factory over measure/run/schedule
+   (l.2208–2392); `__vedGapLines`/`__vedGapLineEnds` verbatim; mozc
+   gap-compose after.
+8. `extension-context.ts` — createSearchOps + createExtensionContext
+   (l.1425–1645), deduping E4/E5/E6 in passing.
+
+Residual editor.tsx ≈ 700–800 lines: the session closure web
+(imePendingSel, commitHistory, restore, attachedExts, history refs) +
+handleKeyDown + composition handlers + React shell. Splitting THAT needs a
+mutable session object — **proposal**, not this pass.
+
+### Findings
+
+- **E1 todo** — orphaned JSDoc for revealCaretInScroller stranded at
+  l.927–935; move to the function.
+- **E2 todo (bug)** — walkGlyphs (l.1935) doesn't skip delimiter-widget
+  text nodes the way paraGlyphs (l.2091) does; drag started on blank space
+  under an expanded policy maps shifted offsets. Fix by reusing paraGlyphs'
+  filter.
+- **E3 todo** — visual-line rect grouping exists in FOUR copies
+  (paragraphCols, selectedGlyphRects, line-numbers linesOfParagraph,
+  page-gap visualLineEnds) with drift in the page-wrap threshold (2.5 cells
+  vs 1 pitch). Extract one pure `visual-lines.ts` leaf; keep per-site
+  thresholds unless proven unifiable.
+- **E4 todo** — searchOps.replace duplicates extensionCtx.replaceRange
+  byte-for-byte; one replacePlainRange helper.
+- **E5 todo** — reveal-on-rAF block triplicated (l.1200, 1446, 1521); one
+  revealSoon().
+- **E6 todo** — legal-caret-stop snap triplicated (l.213, 1508, 1593) +
+  clamp lambda ×5; one legalStop helper.
+- **E7 todo** — "DOM selection may lead the model" reader duplicated in
+  deleteChar / enterReplacingSelection; one domLedRange.
+- **E8 todo** — __vedSetSelection duplicates searchOps.select minus reveal.
+- **E9 todo** — stale display:none-markup rationale in deleteChar /
+  beforeinput comments (that architecture is a documented dead end; the
+  takeovers stay, reworded to the real reason).
+- **E10 todo (bug, needs repro)** — beforeOffsetRef isn't seeded from
+  initialCursor; first edit after a tab switch-back can record
+  cursorBefore=0 so undo jumps the caret to the doc start. Seed it +
+  e2e case.
+- **E11 todo** — "Caret movement" banner covers plain-edit functions;
+  resolved by the split.
+- **E12 proposal** — pm/page-gap.ts pageBoundaryEnds is production-dead
+  (test oracle only); move into the test or mark @internal.
+- **E13 todo** — `|| 18` / `|| 28` pitch fallbacks ~15 sites across
+  editor.tsx + line-numbers.ts; shared readPitch/readCell helpers. Keep
+  the per-hit-test weights (×3, ×10) as named consts, unmerged.
+- **E14 todo** — redundant effect deps (vert/multiCol/rows/grow are
+  functions of writingMode).
+- **E15 todo** — revealCaretInScroller reads window.getSelection() while
+  every other site uses view.dom.ownerDocument.
+- **E16 proposal** — moveCaretByLine: collapse the duplicated accept/reject
+  narration; optional phase extraction (probe/accept/step) with no control
+  flow change. Do only during the caret-motion.ts move.
+- **E17 todo** — line-span slicing (`lastIndexOf('\n')+1` / `indexOf`)
+  duplicated ×4; add lineSpanAt to pm/leaves.ts. PBT guards the plain-edit
+  sites.
+
+## editor/src (other modules)
+
+- **P1 todo (lying test)** — scroll-keep.ts revealDelta is production-dead
+  AND semantically diverged from the live editor.tsx copy (flush-at-edge vs
+  cushion); the unit test pins the NON-shipping behavior. Consolidate on the
+  live semantics in scroll-keep.ts, retarget the test, import from
+  editor.tsx.
+- **P2 todo** — dead re-exports at caret-model.ts:96–98 (Leaf, activeRuby,
+  docLeaves, lineOf — every consumer imports from leaves directly).
+- **P3 todo** — model.ts unused exports: rubyBaseText, rubyReadingText,
+  RubyDelims (internal-only).
+- **P4 todo** — parse.ts PlainText variant is never produced; every
+  consumer carries a dead `!== 'ruby'` guard. Minimal fix: parse(): Ruby[].
+- **P5 todo** — decorations.ts Parse.leaves member stored, never read.
+- **P6 todo** — dead CSS: .toolbarTextInput, a.vertMode overline.
+- **P7 todo** — PlainTextHistory.entries/.pointer public but externally
+  unread; make private.
+- **P8 todo** — buildMaps vs paraMaps duplicate the per-child ruby walk
+  verbatim (~25 lines). Shared walker variant (keeps the independent-oracle
+  value of the buildPosMap ≡ offsetToPos test).
+- **P9 todo** — half-pitch rect-grouping in FOUR sites (== E3; also B3's
+  rt-skipping TreeWalker collector duplicated). One pm/line-grouping.ts
+  grouper with parameterized backward threshold (the two thresholds encode
+  different physics — do NOT unify values). Highest test burden: full
+  test-all + smoke.
+- **P10 todo** — policy switch written 3×; rubyCollapsed moves to
+  leaves.ts, isHidden delegates; decorations' resolved mirror stays (it is
+  the documented perf shape).
+- **P11 todo** — lineStarts/binary-search triplicated (cursor.ts linear
+  scan per call, leaves.ts cached, model.ts lastAtOrBelow); share leaves'
+  cached one.
+- **P12 todo** — widget/pool element-factory boilerplate ×8 across
+  decorations.ts + line-numbers.ts; roSpan()/makePooled() factories (also
+  structurally enforces "every ved widget is contenteditable=false").
+- **P13 todo** — rubyCache mirrors baseCache's key fields; key on the base
+  SET IDENTITY instead (drift-proof). Perf-seam adjacent: run
+  caret-move-perf/click-perf.
+- **P14 proposal** — buildDecorations 8 positional params → options object;
+  split its ~200 lines into expandedFor/staticLayer/caretDelta. Readability
+  only.
+- **P15 proposal** — line-numbers.ts measure() mixes geometry, number
+  placement, and page marks (~65 lines of folio math); extract
+  placeNumbers/placePageMarks, making the pure helpers exportable/testable.
+  Most e2e-pinned file in the audit — own change, full smoke.
+- **P16 proposal** — AppearPolicy numeric enum vs Appear string union;
+  string-valued enum kills the bridge table. Check nothing persists
+  numerics (future config.json prefers strings anyway).
+- **P17 proposal (perf)** — caretStops materializes EVERY doc offset per
+  caret move (no counter seam guards it; Vim motions multiply it).
+  Neighborhood-local reformulation with caret-model.cases.ts as oracle;
+  keep the whole-doc function as the spec.
+- **P18 todo** — doc drift: architecture.md delimiter class names
+  (openDelim… vs actual rubyDelim…); "mode" used for appear POLICY in two
+  comments (CONTEXT.md bans it).
+
+## vim/
+
+- **V1 todo (test bug)** — model.test.ts:849 asserts `r.text === r.text`
+  (always true); pin the real post-`.` text.
+- **V2 todo** — MOTION_KEYS set duplicates motionTarget's switch — a
+  two-list sync hazard; delete the set.
+- **V3 todo** — plain-printable-char predicate written 5×; one
+  isPlainKey in keys.ts.
+- **V4 todo** — isLoneModifier re-inlined in dispatch.
+- **V5 todo** — builtin layer re-implements keymap.ts's trie; genericize
+  Trie<T>, delete BuiltinTrie/walkBuiltin (~30 LOC).
+- **V6 todo** — word/WORD motion trios are one algorithm × classifier;
+  wordTrio factory.
+- **V7 todo** — to-lineEnd action triplication + visual-toggle collapse
+  duplication; small data-driven folds.
+- **V8 todo** — hoist per-keydown `page` literal + REVERSE to module
+  consts. Full "Ctrl chords as named actions" table: **proposal**
+  (capability change — makes scroll.* bindable from user keymaps).
+- **V9 todo** — play/playMapped test harnesses near-identical (~50 LOC);
+  merge.
+- **V10 todo** — model.ts split: extract pure text geometry
+  (l.203–533: words, brackets, paragraphs, text objects, search) to
+  text.ts; model.ts 1800 → ~1470. No further split (layer code is
+  cohesively entangled).
+- **V11 proposal** — words-ja: binary-search the sorted stops (linear scan
+  per keypress today); paragraph-scoped re-segmentation is a bigger design
+  call.
+- **V12 proposal** — x/X/s re-implement d/c over h/l motions; folding them
+  into applyOperator needs an empty-range guard — behavior-sensitive.
+- **V13 proposal** — VimKey.shift is written but never read; drop or keep
+  as <S-…> headroom.
+- **V14 todo** — vim-keymap-plan.md drift: fed-key budget says ~256, code
+  says 4096.
+- **V15 proposal** — ~17 of 20 index.ts exports have no consumer
+  (documented as phase-4 API-in-waiting); trim the ones with no named
+  plan (isFullwidth, joinNeedsSpace, FIND_CHORDS, BRACKET_PAIRS,
+  CLASS_WORDS, parseKeys).
+
+## desktop/renderer + preload
+
+- **D1 todo (boundary)** — preload exposes the full untyped
+  `window.electron` (raw ipcRenderer) for ONE process.platform read;
+  replace with a typed `platform` on VedApi, drop the exposure.
+- **D2 todo** — dead `api = {}` scaffold in preload.
+- **D3 todo** — stale "Slate" comments (buffers.ts, app.tsx).
+- **D4 todo** — app.tsx comment describes a 'system' theme value that
+  doesn't exist.
+- **D5 todo** — keepInputFocus/keepEditorFocus defined 7×; one shared
+  preserveFocus.
+- **D6 todo** — composing guard copy-pasted ~8×; one isComposingEvent
+  (also THE place the IME invariant is documented).
+- **D7 todo** — closeSearch/closeQuickOpen duplicate + 'editor-content'
+  magic id ×2; shared focusEditor().
+- **D8 todo** — five chord matchers share an identical prelude and the
+  quick-open overlay must enumerate them by hand (a real chord-leak
+  hazard); one declarative chord table + matchChord. This IS the planned
+  keymap registry's data model.
+- **D9 todo** — app.tsx window-keydown dispatcher (60 lines) → app-keymap.ts
+  consuming the D8 table.
+- **D10 proposal** — writingMode/appearPolicy are the last useState
+  "view concerns" (everything else is a store); fold into a store when
+  phase-4 config.json lands (it will force this anyway).
+- **D11 proposal** — buffers on useReducer; the plan's stated migration
+  condition ("a second out-of-tree consumer") has been met (quick-open is
+  a third). Zustand wrap of the same pure reducer. Medium risk around the
+  dirty-tracking refs — needs its own careful step.
+- **D12 proposal** — search wiring + notice toast extraction from app.tsx
+  (hooks/stores); cosmetic god-component trimming.
+- **D13 todo** — scss: iconButton triplicated; quick-open .toggle/.modeButton
+  byte-identical; shared mixin/partial.
+- **D14 todo** — drop dead `var(--ved-*, #light)` fallbacks in desktop
+  modules (the fallback convention is for the editor core only) + stale
+  "Phase-2 follow-up" comment in sidebar.module.scss.
+- **D15 todo** — ShellPanel first-shell effect missing dependency array
+  (runs every render, guard-only protection against a spawn loop).
+- **D16 proposal** — macOS Cmd+` for shell toggle collides with the OS
+  window cycler; needs a darwin carve-out like Ctrl+Tab's. (No mac to
+  verify on.)
+
+## Cross-package / config / deps
+
+- **X1 todo** — dead deps: fast-check (root), electron-updater +
+  dev-app-update.yml (desktop), prosemirror-transform (editor),
+  vitest.shims.d.ts (root, references uninstalled @vitest/browser).
+  Lockfile change → `just bump-hash`.
+- **X2 todo** — export `Invisibles` from @ved/editor and delete desktop's
+  hand-written structural mirror (invisibles.ts).
+- **X3 todo (typing hole)** — tsconfig.base.json lacks noImplicitAny:true
+  while @electron-toolkit/tsconfig sets it FALSE explicitly — and
+  desktop/tsconfig.node.json doesn't extend base at all, so the fs/IPC
+  main-process code is the loosest-typed in the repo. Extend base in
+  tsconfig.node.json, set noImplicitAny in base, fix fallout.
+- **X4 todo** — desktop/tsconfig.web.json re-implements base's 10 strictness
+  flags inline; extend instead.
+- **X5 todo** — dangling ADR citations (ADRs deliberately deleted):
+  vitest.config.ts, biome.jsonc, root package.json description,
+  web/vite.config.ts, 7 e2e driver comments. Rewire to architecture.md
+  section names.
+- **X6 rejected (scripts) / done (Justfile)** — the root
+  check:fix:unsafe/format*/lint*/test:ui scripts stay: they are wanted
+  manual entry points (user call). Done: Justfile fuzz now routes through
+  the desktop `fuzz` script; the commented-out test-ui-open corpse removed.
+- **X7 proposal** — desktop build:win/mac/linux/unpack scripts are
+  unexercised and inconsistent (some typecheck, some don't); normalize
+  when packaging becomes real.
+- **X8 todo** — web/src/view-config.ts is a drifted hand-fork of the
+  desktop one; extract the pure ViewConfig type/clamp/CSS mapping to a
+  shared home (it is editor-adjacent view geometry) or re-sync.
+- **X9 proposal** — docs/vim-keymap-plan.md is a completed plan (a
+  "superseded state" doc by the project's own policy) and untracked;
+  docs/debugging-vertical-layout.md is a retrospective citing the
+  untracked a.png. Fold the surviving content into architecture.md, drop
+  the fossils. Left as proposal: doc-policy calls are the author's.
+- **X10 todo** — gitignore a.png/repro.txt-style scratch or remove;
+  examples/ fate is the author's call (left untracked).
+- **X11 todo** — editor index.ts: retract CoreCommandId/EditorCommand/
+  EditorCommandContext/CORE_COMMANDS/chordOf (no consumer, not part of a
+  named seam; DEFAULT_KEYBINDINGS + Chord types stay — they type the
+  public keybindings prop).

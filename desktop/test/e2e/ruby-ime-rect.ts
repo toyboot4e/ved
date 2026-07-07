@@ -7,7 +7,7 @@
 // against a hidden delimiter had NO box, so the rect collapsed to 0×0 at the
 // viewport origin and the IME flew to the corner.
 //
-// The markup-out-of-DOM redesign (ADR-0007) FIXES this structurally: the ruby
+// The markup-out-of-DOM redesign (architecture.md "verified dead ends") FIXES this structurally: the ruby
 // holds editable base/reading text, the delimiters are never DOM text, so the
 // caret sits on real, full-size glyphs at offset 0 (before the ruby) and offset
 // 1 (the base start, where an IME composition begins). We assert the caret rect

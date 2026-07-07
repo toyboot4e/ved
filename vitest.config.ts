@@ -2,7 +2,7 @@ import { defineConfig } from 'vitest/config';
 
 // One workspace spanning every package's colocated unit tests, so a single
 // `vitest run` (just test) covers the whole monorepo. e2e + mozc are NOT here —
-// they launch Electron and live in @ved/desktop's `smoke` script (ADR-0009).
+// they launch Electron and live in @ved/desktop's `smoke` script (see CLAUDE.md).
 export default defineConfig({
   test: {
     projects: [

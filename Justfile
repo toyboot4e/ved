@@ -87,7 +87,7 @@ alias s := smoke
 # `[seed] [iters|duration]` — duration like 5m/30m/90s for a long soak, e.g.
 # `just fuzz`, `just fuzz 7`, `just fuzz '' 30m`.
 fuzz *args: build
-    pnpm -C desktop exec node test/e2e/fuzz-caret.ts {{args}}
+    pnpm -C desktop run fuzz {{args}}
 
 # runs the unit tests; with NO test-name also runs the full E2E suite, so a bare
 # `just test` covers everything (`just test cursor-map` stays a fast unit filter)
@@ -105,20 +105,6 @@ test-ui *args:
 
 [private]
 alias tu := test-ui
-
-# FIXME: xdg-open does not work as expected due to the polluted LD_LIBRARY_PATH.
-# test-ui-open *args:
-#     #!/usr/bin/env bash
-#     url="http://localhost:51204/__vitest__/"
-#     if command -v xdg-open >/dev/null 2>&1; then
-#         xdg-open "$url"
-#     elif command -v open >/dev/null 2>&1; then
-#         open "$url"
-#     fi
-#     pnpm exec vitest --project unit --ui {{args}}
-
-# [private]
-# alias tuo := test-ui-open
 
 # runs unit tests, typecheck, lint, build, and the smoke test
 test-all:
