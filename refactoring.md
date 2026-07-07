@@ -147,25 +147,25 @@ mutable session object — **proposal**, not this pass.
 
 ## vim/
 
-- **V1 todo (test bug)** — model.test.ts:849 asserts `r.text === r.text`
+- **V1 done (test bug)** — model.test.ts:849 asserts `r.text === r.text`
   (always true); pin the real post-`.` text.
-- **V2 todo** — MOTION_KEYS set duplicates motionTarget's switch — a
+- **V2 done** — MOTION_KEYS set duplicates motionTarget's switch — a
   two-list sync hazard; delete the set.
-- **V3 todo** — plain-printable-char predicate written 5×; one
+- **V3 done** — plain-printable-char predicate written 5×; one
   isPlainKey in keys.ts.
-- **V4 todo** — isLoneModifier re-inlined in dispatch.
-- **V5 todo** — builtin layer re-implements keymap.ts's trie; genericize
+- **V4 done** — isLoneModifier re-inlined in dispatch.
+- **V5 done** — builtin layer re-implements keymap.ts's trie; genericize
   Trie<T>, delete BuiltinTrie/walkBuiltin (~30 LOC).
-- **V6 todo** — word/WORD motion trios are one algorithm × classifier;
+- **V6 done** — word/WORD motion trios are one algorithm × classifier;
   wordTrio factory.
-- **V7 todo** — to-lineEnd action triplication + visual-toggle collapse
+- **V7 done** — to-lineEnd action triplication + visual-toggle collapse
   duplication; small data-driven folds.
-- **V8 todo** — hoist per-keydown `page` literal + REVERSE to module
+- **V8 done** — hoist per-keydown `page` literal + REVERSE to module
   consts. Full "Ctrl chords as named actions" table: **proposal**
   (capability change — makes scroll.* bindable from user keymaps).
-- **V9 todo** — play/playMapped test harnesses near-identical (~50 LOC);
+- **V9 done** — play/playMapped test harnesses near-identical (~50 LOC);
   merge.
-- **V10 todo** — model.ts split: extract pure text geometry
+- **V10 done** — model.ts split: extract pure text geometry
   (l.203–533: words, brackets, paragraphs, text objects, search) to
   text.ts; model.ts 1800 → ~1470. No further split (layer code is
   cohesively entangled).
@@ -176,7 +176,7 @@ mutable session object — **proposal**, not this pass.
   into applyOperator needs an empty-range guard — behavior-sensitive.
 - **V13 proposal** — VimKey.shift is written but never read; drop or keep
   as <S-…> headroom.
-- **V14 todo** — vim-keymap-plan.md drift: fed-key budget says ~256, code
+- **V14 done** — vim-keymap-plan.md drift: fed-key budget says ~256, code
   says 4096.
 - **V15 proposal** — ~17 of 20 index.ts exports have no consumer
   (documented as phase-4 API-in-waiting); trim the ones with no named
