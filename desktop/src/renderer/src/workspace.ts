@@ -10,6 +10,9 @@ import { create } from 'zustand';
 
 export type SidebarSide = 'left' | 'right';
 
+/** What the sidebar pane shows: the workspace-root trees or the open buffers. */
+export type SidebarView = 'files' | 'buffers';
+
 type WorkspaceStore = {
   /** Root directories, in the order the user added them (no duplicates). */
   readonly roots: readonly string[];
@@ -18,11 +21,13 @@ type WorkspaceStore = {
   readonly sidebarSide: SidebarSide;
   /** Pane width in px (drag handle), clamped to sane bounds. */
   readonly sidebarWidth: number;
+  readonly sidebarView: SidebarView;
   readonly addRoot: (path: string) => void;
   readonly removeRoot: (path: string) => void;
   readonly toggleSidebar: () => void;
   readonly flipSidebarSide: () => void;
   readonly setSidebarWidth: (px: number) => void;
+  readonly setSidebarView: (view: SidebarView) => void;
 };
 
 export const SIDEBAR_MIN_WIDTH = 160;
@@ -33,10 +38,12 @@ export const useWorkspaceStore = create<WorkspaceStore>()((set) => ({
   sidebarOpen: false,
   sidebarSide: 'left',
   sidebarWidth: 240,
+  sidebarView: 'files',
   addRoot: (path) => set((s) => (s.roots.includes(path) ? s : { roots: [...s.roots, path] })),
   removeRoot: (path) => set((s) => ({ roots: s.roots.filter((r) => r !== path) })),
   toggleSidebar: () => set((s) => ({ sidebarOpen: !s.sidebarOpen })),
   flipSidebarSide: () => set((s) => ({ sidebarSide: s.sidebarSide === 'left' ? 'right' : 'left' })),
   setSidebarWidth: (px) =>
     set({ sidebarWidth: Math.round(Math.min(SIDEBAR_MAX_WIDTH, Math.max(SIDEBAR_MIN_WIDTH, px))) }),
+  setSidebarView: (view) => set({ sidebarView: view }),
 }));

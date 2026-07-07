@@ -33,11 +33,46 @@
   border-bottom: 1px solid var(--ved-border-faint);
 }
 
-.sidebarTitle {
+// The view switch (root trees | open buffers): a compact segmented pair,
+// same accent-fillable chip idea as quick open's mode switch.
+.views {
   flex: 1 1 auto;
+  min-width: 0;
+  display: flex;
+  gap: 3px;
+  margin: 0;
+  padding: 0;
+  border: none;
+}
+
+.viewToggle {
+  flex: 0 1 auto;
+  min-width: 0;
+  padding: 2px 6px;
   font-size: 11px;
-  letter-spacing: 0.08em;
   color: var(--ved-fg-muted);
+  background: transparent;
+  border: 1px solid transparent;
+  border-radius: 4px;
+  cursor: pointer;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+
+  &:hover {
+    background: var(--ved-hover-bg);
+    color: var(--ved-fg);
+  }
+}
+
+.viewToggleOn {
+  color: var(--ved-accent-fg);
+  background: var(--ved-accent);
+
+  &:hover {
+    background: var(--ved-accent);
+    color: var(--ved-accent-fg);
+  }
 }
 
 .iconButton {
@@ -139,6 +174,43 @@
 .emptyNote {
   padding: 10px 12px;
   color: var(--ved-fg-muted);
+}
+
+// Open-buffers view: one row per tab. The close ✕ is hover-revealed like a
+// root's remove button (opacity, so it stays clickable/focusable).
+.bufferRow {
+  display: flex;
+  align-items: center;
+
+  .entry {
+    flex: 1 1 auto;
+    min-width: 0;
+  }
+
+  .iconButton {
+    opacity: 0;
+    margin-right: 6px;
+  }
+  &:hover .iconButton,
+  .iconButton:focus-visible {
+    opacity: 1;
+  }
+}
+
+.bufferActive {
+  background: var(--ved-hover-bg);
+  color: var(--ved-fg);
+}
+
+.dirtyDot {
+  flex: 0 0 auto;
+  font-size: 9px;
+  color: var(--ved-accent);
+  visibility: hidden;
+
+  &[data-visible='true'] {
+    visibility: visible;
+  }
 }
 
 .resizeHandle {

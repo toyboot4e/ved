@@ -211,7 +211,9 @@ export const App = (): React.JSX.Element => {
   // New shells open in the active file's directory, else the first workspace
   // root, else $HOME (main's fallback).
   const shellCwd = (active.path !== null ? dirName(active.path) : undefined) ?? roots[0];
-  const sidebar = sidebarOpen ? <Sidebar onOpenFile={handleOpenTreeFile} /> : null;
+  const sidebar = sidebarOpen ? (
+    <Sidebar onOpenFile={handleOpenTreeFile} activeDirty={dirty} onCloseBuffer={handleClose} />
+  ) : null;
 
   return (
     // Shell row: sidebar | editor column (editor pane over the shell panel),

@@ -5,7 +5,13 @@ const s = () => useWorkspaceStore.getState();
 
 describe('useWorkspaceStore', () => {
   beforeEach(() => {
-    useWorkspaceStore.setState({ roots: [], sidebarOpen: false, sidebarSide: 'left', sidebarWidth: 240 });
+    useWorkspaceStore.setState({
+      roots: [],
+      sidebarOpen: false,
+      sidebarSide: 'left',
+      sidebarWidth: 240,
+      sidebarView: 'files',
+    });
   });
 
   it('adds roots in order without duplicates', () => {
@@ -29,6 +35,14 @@ describe('useWorkspaceStore', () => {
     expect(s().sidebarWidth).toBe(160);
     s().setSidebarWidth(9000);
     expect(s().sidebarWidth).toBe(480);
+  });
+
+  it('switches the pane view between the trees and the open buffers', () => {
+    expect(s().sidebarView).toBe('files');
+    s().setSidebarView('buffers');
+    expect(s().sidebarView).toBe('buffers');
+    s().setSidebarView('files');
+    expect(s().sidebarView).toBe('files');
   });
 
   it('toggles visibility and flips the docked side', () => {

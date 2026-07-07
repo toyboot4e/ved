@@ -4,19 +4,30 @@
 // listing, so re-expanding re-reads — the tree stays fresh without a watcher.
 // Clicking a file hands the PATH up; the shell reads it CONTENT-SNIFFED
 // (fs-io.ts), refusing non-text files via the app-level notice.
+//
+// A header toggle switches the pane between the root trees (ファイル) and the
+// OPEN BUFFERS (開いているファイル — same labels as quick open's modes): a
+// flat list mirroring the tab strip, with the tab bar's dirty/close semantics.
 import { clsx } from 'clsx';
 import type React from 'react';
 import { useEffect, useState } from 'react';
 import type { DirEntry } from '../../../shared/ipc';
+import { type BufferId, isDirty } from '../buffers';
+import { dispatchBuffers, useBuffersStore } from '../buffers-store';
 import { fileName } from '../file-commands';
 import { preserveFocus } from '../focus';
-import { SIDEBAR_MAX_WIDTH, SIDEBAR_MIN_WIDTH, useWorkspaceStore } from '../workspace';
+import { SIDEBAR_MAX_WIDTH, SIDEBAR_MIN_WIDTH, type SidebarView, useWorkspaceStore } from '../workspace';
 import { ChevronIcon, FileGenericIcon, FileImageIcon, FileTextIcon, FolderIcon } from './icons/FileIcons';
 import styles from './sidebar.module.scss';
 
 export type SidebarProps = {
   /** Opens a file as a buffer (the shell refuses and reports non-text). */
   readonly onOpenFile: (path: string) => void;
+  /** The ACTIVE buffer's live dirtiness — tracked in app.tsx outside the
+   *  store, exactly as the tab bar receives it (tab-bar.tsx). */
+  readonly activeDirty: boolean;
+  /** Closing goes through app.tsx: it owns the dirty-discard confirmation. */
+  readonly onCloseBuffer: (id: BufferId) => void;
 };
 
 // COSMETIC extension → icon mapping (openability is content-sniffed in main)
@@ -146,13 +157,69 @@ const RootSection = ({
   );
 };
 
-export const Sidebar = ({ onOpenFile }: SidebarProps): React.JSX.Element => {
+// The open-buffers list: one row per tab, in tab order. Clicking a row
+// activates its tab; the ✕ (hover-revealed, like a root's) closes it through
+// the shell's dirty-discard guard.
+const BufferList = ({
+  activeDirty,
+  onCloseBuffer,
+}: {
+  readonly activeDirty: SidebarProps['activeDirty'];
+  readonly onCloseBuffer: SidebarProps['onCloseBuffer'];
+}): React.JSX.Element => {
+  const buffers = useBuffersStore((s) => s.buffers);
+  const activeId = useBuffersStore((s) => s.activeId);
+  return (
+    <ul className={styles.entryList} aria-label='Open files'>
+      {buffers.map((b) => (
+        <li key={b.id} className={styles.bufferRow}>
+          <button
+            type='button'
+            aria-current={b.id === activeId}
+            className={clsx(styles.entry, b.id === activeId && styles.bufferActive)}
+            style={{ '--depth': 0 } as React.CSSProperties}
+            title={b.path ?? '無題'}
+            onMouseDown={preserveFocus}
+            onClick={() => {
+              if (b.id !== activeId) dispatchBuffers({ type: 'setActive', id: b.id });
+            }}
+          >
+            <span className={styles.dirtyDot} data-visible={b.id === activeId ? activeDirty : isDirty(b)}>
+              ●
+            </span>
+            <FileTypeIcon name={fileName(b.path)} />
+            <span className={styles.entryName}>{fileName(b.path)}</span>
+          </button>
+          <button
+            type='button'
+            className={styles.iconButton}
+            aria-label={`Close ${fileName(b.path)}`}
+            title='閉じる'
+            onMouseDown={preserveFocus}
+            onClick={() => onCloseBuffer(b.id)}
+          >
+            ✕
+          </button>
+        </li>
+      ))}
+    </ul>
+  );
+};
+
+const VIEWS: readonly { readonly view: SidebarView; readonly label: string }[] = [
+  { view: 'files', label: 'ファイル' },
+  { view: 'buffers', label: '開いているファイル' },
+];
+
+export const Sidebar = ({ onOpenFile, activeDirty, onCloseBuffer }: SidebarProps): React.JSX.Element => {
   const roots = useWorkspaceStore((s) => s.roots);
   const side = useWorkspaceStore((s) => s.sidebarSide);
   const width = useWorkspaceStore((s) => s.sidebarWidth);
+  const view = useWorkspaceStore((s) => s.sidebarView);
   const addRoot = useWorkspaceStore((s) => s.addRoot);
   const removeRoot = useWorkspaceStore((s) => s.removeRoot);
   const flipSide = useWorkspaceStore((s) => s.flipSidebarSide);
+  const setView = useWorkspaceStore((s) => s.setSidebarView);
 
   const handleAddFolder = async (): Promise<void> => {
     const path = await window.ved.openDirDialog();
@@ -186,17 +253,32 @@ export const Sidebar = ({ onOpenFile }: SidebarProps): React.JSX.Element => {
       style={{ '--sidebar-width': `${width}px` } as React.CSSProperties}
     >
       <div className={styles.sidebarHeader}>
-        <span className={styles.sidebarTitle}>ファイル</span>
-        <button
-          type='button'
-          className={styles.iconButton}
-          aria-label='Add folder'
-          title='フォルダを追加'
-          onMouseDown={preserveFocus}
-          onClick={() => void handleAddFolder()}
-        >
-          ＋
-        </button>
+        <fieldset className={styles.views} aria-label='Sidebar view'>
+          {VIEWS.map((v) => (
+            <button
+              key={v.view}
+              type='button'
+              className={clsx(styles.viewToggle, view === v.view && styles.viewToggleOn)}
+              aria-pressed={view === v.view}
+              onMouseDown={preserveFocus}
+              onClick={() => setView(v.view)}
+            >
+              {v.label}
+            </button>
+          ))}
+        </fieldset>
+        {view === 'files' && (
+          <button
+            type='button'
+            className={styles.iconButton}
+            aria-label='Add folder'
+            title='フォルダを追加'
+            onMouseDown={preserveFocus}
+            onClick={() => void handleAddFolder()}
+          >
+            ＋
+          </button>
+        )}
         <button
           type='button'
           className={styles.iconButton}
@@ -209,10 +291,16 @@ export const Sidebar = ({ onOpenFile }: SidebarProps): React.JSX.Element => {
         </button>
       </div>
       <div className={styles.rootList}>
-        {roots.length === 0 && <p className={styles.emptyNote}>フォルダがありません</p>}
-        {roots.map((root) => (
-          <RootSection key={root} root={root} onOpenFile={onOpenFile} onRemove={() => removeRoot(root)} />
-        ))}
+        {view === 'files' ? (
+          <>
+            {roots.length === 0 && <p className={styles.emptyNote}>フォルダがありません</p>}
+            {roots.map((root) => (
+              <RootSection key={root} root={root} onOpenFile={onOpenFile} onRemove={() => removeRoot(root)} />
+            ))}
+          </>
+        ) : (
+          <BufferList activeDirty={activeDirty} onCloseBuffer={onCloseBuffer} />
+        )}
       </div>
       {/* ARIA window-splitter: focusable separator, arrow-key operable */}
       {/* biome-ignore lint/a11y/useSemanticElements: an <hr> cannot be the interactive window-splitter widget */}

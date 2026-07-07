@@ -375,6 +375,16 @@ costs more than the lines it saves.
   Panels use the `--ved-panel-bg` token (near-white in light — quieter
   than the chrome gray, keeping the page as the visual anchor).
 
+- [x] **2e. Open-files view** *(done 2026-07-08)*. User-requested. A
+  segmented toggle in the sidebar header (ファイル | 開いているファイル —
+  quick open's mode labels) switches the pane between the root trees and the
+  OPEN BUFFERS (`sidebarView` in `workspace.ts`). The buffer list mirrors the
+  tab strip: one row per tab in tab order, dirty dot (the active buffer's
+  live dirtiness arrives as a prop, exactly like the tab bar), click
+  activates the tab, hover-revealed ✕ closes through the app's dirty-discard
+  guard. The add-folder button belongs to the files view only. Smoke:
+  `test/e2e/sidebar-open-files.ts`.
+
 Roots/visibility persistence rides Phase 4's `config.json`.
 
 ### Phase 3 — Ctrl+P quick open *(done 2026-07-06)*
