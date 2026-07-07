@@ -33,8 +33,9 @@
   border-bottom: 1px solid var(--ved-border-faint);
 }
 
-// The view switch (root trees | open buffers): a compact segmented pair,
-// same accent-fillable chip idea as quick open's mode switch.
+// The view switch (root trees | open buffers): a segmented pair of icon
+// chips, accent-filled when pressed (quick open's mode-switch idea, icon-sized
+// for the narrow header).
 .views {
   flex: 1 1 auto;
   min-width: 0;
@@ -46,18 +47,18 @@
 }
 
 .viewToggle {
-  flex: 0 1 auto;
-  min-width: 0;
-  padding: 2px 6px;
-  font-size: 11px;
+  flex: 0 0 auto;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 22px;
+  height: 22px;
+  padding: 0;
   color: var(--ved-fg-muted);
   background: transparent;
-  border: 1px solid transparent;
+  border: none;
   border-radius: 4px;
   cursor: pointer;
-  white-space: nowrap;
-  overflow: hidden;
-  text-overflow: ellipsis;
 
   &:hover {
     background: var(--ved-hover-bg);

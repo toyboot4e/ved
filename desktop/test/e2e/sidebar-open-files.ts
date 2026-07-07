@@ -1,5 +1,6 @@
-// Sidebar open-files view (Phase 2): the header toggle switches the pane
-// between the root trees (ファイル) and the open buffers (開いているファイル).
+// Sidebar open-files view (Phase 2): the header's icon toggle switches the
+// pane between the root trees (ファイル) and the open buffers
+// (開いているファイル).
 // The buffer list mirrors the tab strip — clicking a row activates its tab,
 // dirty buffers show the dot (the active one live, inactive ones from their
 // committed snapshot), and the hover ✕ closes through the discard guard.
@@ -52,7 +53,7 @@ try {
   step('setup: a root and two files open in tabs');
 
   // Switch to the open-files view: the tree goes, one row per tab in order
-  await page.click('[aria-label="Sidebar view"] >> text="開いているファイル"');
+  await page.click('[aria-label="Open files view"]');
   await page.waitForSelector(bufferList);
   assert.equal(await page.$('[role=treeitem]'), null);
   assert.deepEqual(await rowNames(), ['無題', 'a.txt', 'b.txt']);
@@ -87,7 +88,7 @@ try {
   step('the row close button closes the buffer');
 
   // Back to the files view: the tree returns
-  await page.click('[aria-label="Sidebar view"] >> text="ファイル"');
+  await page.click('[aria-label="Files view"]');
   await page.waitForSelector('[role=treeitem] >> text=a.txt');
   assert.equal(await page.$(bufferList), null);
   assert.equal(await tabCount(), 2); // the view switch never touches the tabs

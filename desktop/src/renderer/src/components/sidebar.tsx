@@ -17,7 +17,14 @@ import { dispatchBuffers, useBuffersStore } from '../buffers-store';
 import { fileName } from '../file-commands';
 import { preserveFocus } from '../focus';
 import { SIDEBAR_MAX_WIDTH, SIDEBAR_MIN_WIDTH, type SidebarView, useWorkspaceStore } from '../workspace';
-import { ChevronIcon, FileGenericIcon, FileImageIcon, FileTextIcon, FolderIcon } from './icons/FileIcons';
+import {
+  ChevronIcon,
+  FileGenericIcon,
+  FileImageIcon,
+  FileStackIcon,
+  FileTextIcon,
+  FolderIcon,
+} from './icons/FileIcons';
 import styles from './sidebar.module.scss';
 
 export type SidebarProps = {
@@ -206,9 +213,14 @@ const BufferList = ({
   );
 };
 
-const VIEWS: readonly { readonly view: SidebarView; readonly label: string }[] = [
-  { view: 'files', label: 'ファイル' },
-  { view: 'buffers', label: '開いているファイル' },
+const VIEWS: readonly {
+  readonly view: SidebarView;
+  readonly aria: string;
+  readonly title: string;
+  readonly Icon: (props: { readonly className?: string }) => React.JSX.Element;
+}[] = [
+  { view: 'files', aria: 'Files view', title: 'ファイル', Icon: FolderIcon },
+  { view: 'buffers', aria: 'Open files view', title: '開いているファイル', Icon: FileStackIcon },
 ];
 
 export const Sidebar = ({ onOpenFile, activeDirty, onCloseBuffer }: SidebarProps): React.JSX.Element => {
@@ -259,11 +271,13 @@ export const Sidebar = ({ onOpenFile, activeDirty, onCloseBuffer }: SidebarProps
               key={v.view}
               type='button'
               className={clsx(styles.viewToggle, view === v.view && styles.viewToggleOn)}
+              aria-label={v.aria}
               aria-pressed={view === v.view}
+              title={v.title}
               onMouseDown={preserveFocus}
               onClick={() => setView(v.view)}
             >
-              {v.label}
+              <v.Icon />
             </button>
           ))}
         </fieldset>

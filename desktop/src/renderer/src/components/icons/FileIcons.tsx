@@ -94,3 +94,19 @@ export const FileGenericIcon = ({ className }: IconProps): React.JSX.Element => 
     <Page />
   </svg>
 );
+
+/** A stack of pages (front sheet over a peeking back sheet) — the sidebar's
+ *  open-files view toggle. */
+export const FileStackIcon = ({ className }: IconProps): React.JSX.Element => (
+  <svg {...svgProps(className)}>
+    <title>Open files</title>
+    <rect x='3' y='5' width='8.2' height='9' rx='0.8' fill='none' stroke={STROKE} strokeWidth='1.2' />
+    <path
+      d='M5.8 3 h6.4 a0.8 0.8 0 0 1 0.8 0.8 V11.5'
+      fill='none'
+      stroke={STROKE}
+      strokeWidth='1.2'
+      strokeLinecap='round'
+    />
+  </svg>
+);

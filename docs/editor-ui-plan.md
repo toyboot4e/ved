@@ -376,8 +376,9 @@ costs more than the lines it saves.
   than the chrome gray, keeping the page as the visual anchor).
 
 - [x] **2e. Open-files view** *(done 2026-07-08)*. User-requested. A
-  segmented toggle in the sidebar header (ファイル | 開いているファイル —
-  quick open's mode labels) switches the pane between the root trees and the
+  segmented ICON toggle in the sidebar header (folder / page-stack icons,
+  tooltips ファイル | 開いているファイル — quick open's mode labels)
+  switches the pane between the root trees and the
   OPEN BUFFERS (`sidebarView` in `workspace.ts`). The buffer list mirrors the
   tab strip: one row per tab in tab order, dirty dot (the active buffer's
   live dirtiness arrives as a prop, exactly like the tab bar), click
