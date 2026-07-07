@@ -10,3 +10,7 @@ out
 # nix build output symlink
 /result
 /result-*
+
+# local scratch (repro material, screenshots)
+/a.png
+/repro.txt

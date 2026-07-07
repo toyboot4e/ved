@@ -134,7 +134,7 @@ wiring, React shell. Verified by test-all + the full mozc suite.
 - **P11 done** — lineStarts/binary-search triplicated (cursor.ts linear
   scan per call, leaves.ts cached, model.ts lastAtOrBelow); share leaves'
   cached one.
-- **P12 proposal** — widget/pool element-factory boilerplate ×8 across
+- **P12 done** — widget/pool element-factory boilerplate ×8 across
   decorations.ts + line-numbers.ts; roSpan()/makePooled() factories (also
   structurally enforces "every ved widget is contenteditable=false").
 - **P13 done** — rubyCache mirrors baseCache's key fields; key on the base
@@ -191,7 +191,7 @@ wiring, React shell. Verified by test-all + the full mozc suite.
   (l.203–533: words, brackets, paragraphs, text objects, search) to
   text.ts; model.ts 1800 → ~1470. No further split (layer code is
   cohesively entangled).
-- **V11 proposal** — words-ja: binary-search the sorted stops (linear scan
+- **V11 done** — words-ja: binary-search the sorted stops (linear scan
   per keypress today); paragraph-scoped re-segmentation is a bigger design
   call.
 - **V12 proposal** — x/X/s re-implement d/c over h/l motions; folding them
@@ -296,10 +296,10 @@ wiring, React shell. Verified by test-all + the full mozc suite.
   check:fix:unsafe/format*/lint*/test:ui scripts stay: they are wanted
   manual entry points (user call). Done: Justfile fuzz now routes through
   the desktop `fuzz` script; the commented-out test-ui-open corpse removed.
-- **X7 proposal** — desktop build:win/mac/linux/unpack scripts are
+- **X7 done** — desktop build:win/mac/linux/unpack scripts are
   unexercised and inconsistent (some typecheck, some don't); normalize
   when packaging becomes real.
-- **X8 proposal** — web/src/view-config.ts is a drifted hand-fork of the
+- **X8 done** — web/src/view-config.ts is a drifted hand-fork of the
   desktop one; extract the pure ViewConfig type/clamp/CSS mapping to a
   shared home (it is editor-adjacent view geometry) or re-sync.
 - **X9 proposal** — docs/vim-keymap-plan.md is a completed plan (a
