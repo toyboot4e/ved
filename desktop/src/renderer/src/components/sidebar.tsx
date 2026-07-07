@@ -270,7 +270,7 @@ export const Sidebar = ({ onOpenFile, activeDirty, onCloseBuffer }: SidebarProps
             <button
               key={v.view}
               type='button'
-              className={clsx(styles.viewToggle, view === v.view && styles.viewToggleOn)}
+              className={clsx(styles.headerCell, view === v.view && styles.viewToggleOn)}
               aria-label={v.aria}
               aria-pressed={view === v.view}
               title={v.title}
@@ -284,7 +284,7 @@ export const Sidebar = ({ onOpenFile, activeDirty, onCloseBuffer }: SidebarProps
         {view === 'files' && (
           <button
             type='button'
-            className={styles.iconButton}
+            className={styles.headerCell}
             aria-label='Add folder'
             title='フォルダを追加'
             onMouseDown={preserveFocus}
@@ -295,7 +295,7 @@ export const Sidebar = ({ onOpenFile, activeDirty, onCloseBuffer }: SidebarProps
         )}
         <button
           type='button'
-          className={styles.iconButton}
+          className={styles.headerCell}
           aria-label='Move sidebar'
           title={side === 'left' ? 'サイドバーを右側へ' : 'サイドバーを左側へ'}
           onMouseDown={preserveFocus}
