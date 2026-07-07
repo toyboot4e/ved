@@ -1,23 +1,24 @@
 import { clsx } from 'clsx';
 import type React from 'react';
-import type { BufferId } from '../buffers';
+import { type BufferId, isDirty } from '../buffers';
+import { dispatchBuffers, useBuffersStore } from '../buffers-store';
 import { fileName } from '../file-commands';
 import styles from './tab-bar.module.scss';
 
-export type TabDescriptor = {
-  readonly id: BufferId;
-  readonly path: string | null;
-  readonly dirty: boolean;
-};
-
 export type TabBarProps = {
-  readonly tabs: readonly TabDescriptor[];
-  readonly activeId: BufferId;
-  readonly onSelect: (id: BufferId) => void;
+  /** The ACTIVE buffer's live dirtiness — tracked in app.tsx outside the
+   *  store (the store's committed text lags during editing; buffers-store.ts). */
+  readonly activeDirty: boolean;
+  /** Closing goes through app.tsx: it owns the dirty-discard confirmation. */
   readonly onClose: (id: BufferId) => void;
 };
 
-export const TabBar = ({ tabs, activeId, onSelect, onClose }: TabBarProps): React.JSX.Element => {
+export const TabBar = ({ activeDirty, onClose }: TabBarProps): React.JSX.Element => {
+  const tabs = useBuffersStore((s) => s.buffers);
+  const activeId = useBuffersStore((s) => s.activeId);
+  const select = (id: BufferId): void => {
+    if (id !== activeId) dispatchBuffers({ type: 'setActive', id });
+  };
   return (
     <div className={styles.tabBar} role='tablist'>
       {tabs.map((tab) => (
@@ -34,11 +35,11 @@ export const TabBar = ({ tabs, activeId, onSelect, onClose }: TabBarProps): Reac
               e.preventDefault();
               onClose(tab.id);
             } else if (e.button === 0) {
-              onSelect(tab.id);
+              select(tab.id);
             }
           }}
         >
-          <span className={styles.dirtyDot} data-visible={tab.dirty}>
+          <span className={styles.dirtyDot} data-visible={tab.id === activeId ? activeDirty : isDirty(tab)}>
             ●
           </span>
           <span className={styles.tabLabel}>{fileName(tab.path)}</span>

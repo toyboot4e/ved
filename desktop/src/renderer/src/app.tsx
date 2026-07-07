@@ -8,9 +8,10 @@ import {
   WritingMode,
 } from '@ved/editor';
 import { clsx } from 'clsx';
-import { useCallback, useEffect, useMemo, useReducer, useRef, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import appStyles from './app.module.scss';
-import { activeBuffer, type BufferId, buffersReducer, initBuffers, isDirty, someInactiveDirty } from './buffers';
+import { activeBuffer, type BufferId, isDirty, someInactiveDirty } from './buffers';
+import { dispatchBuffers, useBuffersStore } from './buffers-store';
 import { QuickOpen } from './components/quick-open';
 import { SearchBar, type SearchFocusRequest } from './components/search-bar';
 import { ShellPanel } from './components/shell-panel';
@@ -35,8 +36,6 @@ import { useViewConfigStore, viewConfigToCss } from './view-config';
 import { NO_EXTENSIONS, useVimStore, vimExtensions } from './vim';
 import { useWorkspaceStore } from './workspace';
 
-const INITIAL_TEXT = '|ルビ(ruby)';
-
 export const App = (): React.JSX.Element => {
   const [writingMode, setWritingMode] = useState(WritingMode.VerticalColumns);
   const [appearPolicy, setAppearPolicy] = useState(AppearPolicy.Rich);
@@ -52,7 +51,10 @@ export const App = (): React.JSX.Element => {
     document.documentElement.dataset.theme = theme;
   }, [theme]);
 
-  const [state, dispatch] = useReducer(buffersReducer, INITIAL_TEXT, initBuffers);
+  // Committed buffer state (tab strip, per-buffer snapshots) lives in the
+  // Zustand store (buffers-store.ts); the whole-state subscription keeps this
+  // shell re-rendering exactly like the previous useReducer did.
+  const state = useBuffersStore();
   const active = activeBuffer(state);
 
   // Active buffer's live text + dirty: refs/state, not the reducer, so typing
@@ -116,7 +118,7 @@ export const App = (): React.JSX.Element => {
   useEffect(() => {
     let stale = false;
     void window.ved.cliFiles().then((files) => {
-      if (!stale && files.length > 0) dispatch({ type: 'openCliFiles', files });
+      if (!stale && files.length > 0) dispatchBuffers({ type: 'openCliFiles', files });
     });
     return () => {
       stale = true;
@@ -131,15 +133,8 @@ export const App = (): React.JSX.Element => {
   }, [active.path, active.id, dirty, state]);
 
   const handleSnapshot = useCallback(
-    (id: number, snapshot: EditorSnapshot) => dispatch({ type: 'snapshot', id, ...snapshot }),
+    (id: number, snapshot: EditorSnapshot) => dispatchBuffers({ type: 'snapshot', id, ...snapshot }),
     [],
-  );
-
-  const handleSelect = useCallback(
-    (id: BufferId) => {
-      if (id !== active.id) dispatch({ type: 'setActive', id });
-    },
-    [active.id],
   );
 
   const handleClose = useCallback(
@@ -148,7 +143,7 @@ export const App = (): React.JSX.Element => {
       if (!buf) return;
       const bufDirty = id === active.id ? dirty : isDirty(buf);
       if (bufDirty && !(await window.ved.confirmDiscard())) return;
-      dispatch({ type: 'close', id });
+      dispatchBuffers({ type: 'close', id });
     },
     [state, active.id, dirty],
   );
@@ -159,7 +154,7 @@ export const App = (): React.JSX.Element => {
       if (order.length < 2) return;
       const idx = order.findIndex((b) => b.id === active.id);
       const next = order[(idx + delta + order.length) % order.length]!;
-      dispatch({ type: 'setActive', id: next.id });
+      dispatchBuffers({ type: 'setActive', id: next.id });
     },
     [state.buffers, active.id],
   );
@@ -196,7 +191,7 @@ export const App = (): React.JSX.Element => {
       notTextNotice(opened.path);
       return;
     }
-    dispatch({ type: 'openPath', path: opened.path, text: opened.read.text });
+    dispatchBuffers({ type: 'openPath', path: opened.path, text: opened.read.text });
   }, [notTextNotice]);
 
   // Opening from the sidebar tree: the path is known, no dialog. Main sniffs
@@ -210,7 +205,7 @@ export const App = (): React.JSX.Element => {
         notTextNotice(path);
         return;
       }
-      dispatch({ type: 'openPath', path, text: result.text });
+      dispatchBuffers({ type: 'openPath', path, text: result.text });
     },
     [notTextNotice],
   );
@@ -220,7 +215,7 @@ export const App = (): React.JSX.Element => {
       const text = textRef.current;
       const path = saveAs ? await saveViaDialog(window.ved, text) : await saveOrSaveAs(window.ved, active.path, text);
       if (path === null) return; // dialog canceled
-      dispatch({ type: 'markSaved', id: active.id, path, text });
+      dispatchBuffers({ type: 'markSaved', id: active.id, path, text });
       // The user may have typed during the async write
       setDirty(textRef.current !== text);
     },
@@ -237,7 +232,7 @@ export const App = (): React.JSX.Element => {
 
   const runTabCommand = useCallback(
     (command: TabCommand) => {
-      if (command === 'new') dispatch({ type: 'newUntitled' });
+      if (command === 'new') dispatchBuffers({ type: 'newUntitled' });
       else if (command === 'close') void handleClose(active.id);
       else handleCycle(command === 'next' ? 1 : -1);
     },
@@ -314,16 +309,7 @@ export const App = (): React.JSX.Element => {
                 setAppearPolicy={setAppearPolicy}
               />
             </div>
-            <TabBar
-              tabs={state.buffers.map((b) => ({
-                id: b.id,
-                path: b.path,
-                dirty: b.id === active.id ? dirty : isDirty(b),
-              }))}
-              activeId={active.id}
-              onSelect={handleSelect}
-              onClose={handleClose}
-            />
+            <TabBar activeDirty={dirty} onClose={handleClose} />
             <VedEditor
               key={active.id}
               initialText={active.text}
@@ -355,14 +341,7 @@ export const App = (): React.JSX.Element => {
         <ShellPanel defaultCwd={shellCwd} />
       </div>
       {sidebarSide === 'right' && sidebar}
-      {quickOpenOpen && (
-        <QuickOpen
-          roots={roots}
-          buffers={state.buffers.map((b) => ({ id: b.id, path: b.path, label: b.path ?? '無題' }))}
-          onOpenFile={handleOpenTreeFile}
-          onSelectBuffer={handleSelect}
-        />
-      )}
+      {quickOpenOpen && <QuickOpen onOpenFile={handleOpenTreeFile} />}
       {notice !== null && (
         <p className={appStyles.notice} role='status'>
           {notice}

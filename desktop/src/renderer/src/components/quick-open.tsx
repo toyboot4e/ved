@@ -2,36 +2,26 @@
 // workspace files or the open buffers — switched by the two buttons in the
 // input row (or opened directly in a mode via openPalette). Pure UI over the
 // quick-open store: the file index is fetched from main when the overlay
-// mounts (mount == open) and the buffer pool is snapshotted from props;
-// ranking runs in the store. Choosing a row opens the file through the same
-// content-sniffed path as a sidebar click (`onOpenFile`, which refuses
+// mounts (mount == open) and the buffer pool is snapshotted from the buffers
+// store; ranking runs in the store. Choosing a row opens the file through the
+// same content-sniffed path as a sidebar click (`onOpenFile`, which refuses
 // non-text files with the app notice) or, in buffers mode, activates that tab
-// (`onSelectBuffer`). A preview of the selected entry fills the right pane
-// (read on demand, cached per path). The overlay input OWNS focus while open;
-// closing hands focus back to the editor (closeQuickOpen).
+// (a `setActive` dispatch). A preview of the selected entry fills the right
+// pane (read on demand, cached per path). The overlay input OWNS focus while
+// open; closing hands focus back to the editor (closeQuickOpen).
 import { clsx } from 'clsx';
 import type React from 'react';
 import { useEffect, useRef, useState } from 'react';
+import { dispatchBuffers, useBuffersStore } from '../buffers-store';
 import { preserveFocus } from '../focus';
 import { isComposingEvent } from '../ime';
-import {
-  type BufferEntry,
-  closeQuickOpen,
-  type QuickOpenItem,
-  type QuickOpenMode,
-  useQuickOpenStore,
-} from '../quick-open';
+import { closeQuickOpen, type QuickOpenItem, type QuickOpenMode, useQuickOpenStore } from '../quick-open';
+import { useWorkspaceStore } from '../workspace';
 import styles from './quick-open.module.scss';
 
 export type QuickOpenProps = {
-  /** Workspace roots to index (fetched fresh on open). */
-  readonly roots: readonly string[];
-  /** The open buffers (the tab strip) — the buffers-mode pool. */
-  readonly buffers: readonly BufferEntry[];
   /** Opens a file as a buffer (content-sniffed in main; non-text is refused). */
   readonly onOpenFile: (path: string) => void;
-  /** Activates an already-open buffer (a tab switch). */
-  readonly onSelectBuffer: (id: number) => void;
 };
 
 /** How much of a file to show in the preview pane (plain slice — a preview,
@@ -148,7 +138,7 @@ const MODES: readonly { readonly mode: QuickOpenMode; readonly label: string; re
   { mode: 'buffers', label: '開いているファイル', aria: 'Open file search' },
 ];
 
-export const QuickOpen = ({ roots, buffers, onOpenFile, onSelectBuffer }: QuickOpenProps): React.JSX.Element => {
+export const QuickOpen = ({ onOpenFile }: QuickOpenProps): React.JSX.Element => {
   const query = useQuickOpenStore((s) => s.query);
   const mode = useQuickOpenStore((s) => s.mode);
   const items = useQuickOpenStore((s) => s.items);
@@ -159,13 +149,15 @@ export const QuickOpen = ({ roots, buffers, onOpenFile, onSelectBuffer }: QuickO
   const inputRef = useRef<HTMLInputElement>(null);
   const listRef = useRef<HTMLDivElement>(null);
 
-  // Mount == open: snapshot the buffer pool, fetch the index, focus the input.
-  // biome-ignore lint/correctness/useExhaustiveDependencies: pools are snapshotted ON OPEN — a mid-open tab change must not reshuffle the list
+  // Mount == open: snapshot the buffer pool (the tab strip) and the workspace
+  // roots, fetch the index, focus the input. `getState()` reads, not
+  // subscriptions — a mid-open tab or root change must not reshuffle the list.
   useEffect(() => {
     let stale = false;
     inputRef.current?.focus();
-    useQuickOpenStore.getState().setBuffers(buffers);
-    void window.ved.listWorkspaceFiles(roots).then((files) => {
+    const { buffers } = useBuffersStore.getState();
+    useQuickOpenStore.getState().setBuffers(buffers.map((b) => ({ id: b.id, path: b.path, label: b.path ?? '無題' })));
+    void window.ved.listWorkspaceFiles(useWorkspaceStore.getState().roots).then((files) => {
       if (!stale) useQuickOpenStore.getState().setFiles(files);
     });
     return () => {
@@ -181,7 +173,7 @@ export const QuickOpen = ({ roots, buffers, onOpenFile, onSelectBuffer }: QuickO
 
   const choose = (item: QuickOpenItem): void => {
     closeQuickOpen();
-    if (item.bufferId !== null) onSelectBuffer(item.bufferId);
+    if (item.bufferId !== null) dispatchBuffers({ type: 'setActive', id: item.bufferId });
     else if (item.path !== null) onOpenFile(item.path);
   };
 
