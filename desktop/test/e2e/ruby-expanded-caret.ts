@@ -12,14 +12,13 @@
 //
 // Usage: node test/e2e/ruby-expanded-caret.ts (after pnpm run build).
 import assert from 'node:assert/strict';
+import type { ModelSeams, Rect } from './harness.ts';
 import { fail, finish, launchVed, pressMod, step } from './harness.ts';
 
 const ved = await launchVed({ env: () => ({ VED_SMOKE_CLOSE_RESPONSE: 'discard' }) });
 const { page } = ved;
 
-type R = { top: number; bottom: number; left: number; right: number };
-const caretRect = () =>
-  page.evaluate(() => (window as unknown as { __vedCaretRect(): R | null }).__vedCaretRect()) as Promise<R | null>;
+const caretRect = () => page.evaluate(() => (window as unknown as ModelSeams).__vedCaretRect()) as Promise<Rect | null>;
 const caretOff = () => page.evaluate(() => (window as unknown as { __vedCaret(): number }).__vedCaret());
 const text = () => page.evaluate(() => (window as unknown as { __vedText(): string }).__vedText());
 const setCaret = async (off: number) => {
@@ -35,8 +34,8 @@ const setDoc = async (t: string) => {
 };
 // A vertical-rl caret is a horizontal bar (≈0 height); the larger axis is its
 // length. The OLD bug rect was 0×0 at the viewport origin.
-const extent = (r: R) => Math.max(r.bottom - r.top, r.right - r.left);
-const degenerateAtOrigin = (r: R) => extent(r) < 2 && Math.abs(r.top) < 2 && Math.abs(r.left) < 2;
+const extent = (r: Rect) => Math.max(r.bottom - r.top, r.right - r.left);
+const degenerateAtOrigin = (r: Rect) => extent(r) < 2 && Math.abs(r.top) < 2 && Math.abs(r.left) < 2;
 
 try {
   await page.click('#editor-content');

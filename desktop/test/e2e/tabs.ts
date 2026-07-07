@@ -4,6 +4,7 @@
 import assert from 'node:assert/strict';
 import { writeFile } from 'node:fs/promises';
 import { join } from 'node:path';
+import type { ModelSeams } from './harness.ts';
 import { caretToStart, fail, finish, launchVed, pressMod, step } from './harness.ts';
 
 const ved = await launchVed({
@@ -60,15 +61,14 @@ try {
 
   // A RANGE selection survives a tab round-trip: select [1,3) in b, switch
   // away and back, and both ends (anchor AND head) must be restored.
-  type W = { __vedSetSelection(a: number, h: number): void; __vedAnchor(): number; __vedCaret(): number };
-  await page.evaluate(() => (window as unknown as W).__vedSetSelection(1, 3));
+  await page.evaluate(() => (window as unknown as ModelSeams).__vedSetSelection(1, 3));
   await page.waitForTimeout(150);
   await page.click('[role=tab]:has-text("a.txt")');
   await page.waitForTimeout(200);
   await page.click('[role=tab]:has-text("b.txt")');
   await page.waitForTimeout(200);
   const sel = await page.evaluate(() => {
-    const w = window as unknown as W;
+    const w = window as unknown as ModelSeams;
     return { anchor: w.__vedAnchor(), head: w.__vedCaret() };
   });
   assert.deepEqual(sel, { anchor: 1, head: 3 });

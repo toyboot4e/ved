@@ -15,22 +15,21 @@
 //
 // Usage: node test/e2e/ruby-ime-rect.ts (after pnpm run build).
 import assert from 'node:assert/strict';
+import type { ModelSeams, Rect } from './harness.ts';
 import { fail, finish, launchVed, pressMod, step } from './harness.ts';
 
 const ved = await launchVed({ env: () => ({ VED_SMOKE_CLOSE_RESPONSE: 'discard' }) });
 const { page } = ved;
-
-type R = { top: number; bottom: number; left: number; right: number };
 
 // Caret rect (coordsAtPos — what drives the native caret + IME box) and the
 // ruby's own rect, measured TOGETHER (the scroll shifts between caret moves, so
 // the ruby must be re-measured at each step).
 const measure = () =>
   page.evaluate(() => {
-    const caret = (window as unknown as { __vedCaretRect(): R | null }).__vedCaretRect();
+    const caret = (window as unknown as ModelSeams).__vedCaretRect();
     const b = (document.querySelector('ruby.rubyWrap') as HTMLElement).getBoundingClientRect();
     return { caret, ruby: { top: b.top, bottom: b.bottom, left: b.left, right: b.right } };
-  }) as Promise<{ caret: R | null; ruby: R }>;
+  }) as Promise<{ caret: Rect | null; ruby: Rect }>;
 
 const setDoc = async (text: string) => {
   await page.evaluate(() => getSelection()!.selectAllChildren(document.getElementById('editor-content')!));
@@ -57,8 +56,8 @@ try {
   // A caret is a 1-D line: tall in horizontal text, a horizontal bar (zero
   // height) at a vertical-rl line end. Either is visible — measure the LARGER
   // axis. The OLD bug was a 0×0 box at the viewport ORIGIN.
-  const extent = (r: R) => Math.max(r.bottom - r.top, r.right - r.left);
-  const atRuby = (c: R, ruby: R) => Math.abs(c.left - ruby.left) < 30 && Math.abs(c.top - ruby.top) < 24;
+  const extent = (r: Rect) => Math.max(r.bottom - r.top, r.right - r.left);
+  const atRuby = (c: Rect, ruby: Rect) => Math.abs(c.left - ruby.left) < 30 && Math.abs(c.top - ruby.top) < 24;
 
   // --- offset 0: before the ruby (doc start) ------------------------------
   let { caret, ruby } = await measure();

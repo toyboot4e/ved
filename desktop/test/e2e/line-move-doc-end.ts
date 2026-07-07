@@ -18,13 +18,13 @@
 //
 // VISIBLE window: moveCaretByLine defers via RAF (hidden windows throttle it).
 import assert from 'node:assert/strict';
+import type { ModelSeams } from './harness.ts';
 import { clickWritingMode, fail, finish, launchVed, step } from './harness.ts';
 
 const ved = await launchVed({ env: () => ({ VED_SMOKE_CLOSE_RESPONSE: 'discard', VED_SMOKE_HIDDEN: '' }) });
 const { page } = ved;
-type W = { __vedCaret(): number; __vedSetCaret(o: number): void; __vedText(): string };
-const car = () => page.evaluate(() => (window as unknown as W).__vedCaret());
-const setCaret = (o: number) => page.evaluate((off) => (window as unknown as W).__vedSetCaret(off), o);
+const car = () => page.evaluate(() => (window as unknown as ModelSeams).__vedCaret());
+const setCaret = (o: number) => page.evaluate((off) => (window as unknown as ModelSeams).__vedSetCaret(off), o);
 const lineMove = async (key: string): Promise<number> => {
   const before = await car();
   await page.keyboard.press(key);
@@ -48,7 +48,7 @@ try {
   await page.keyboard.insertText('い'.repeat(50));
   await page.waitForTimeout(300);
 
-  const docEnd = await page.evaluate(() => (window as unknown as W).__vedText().length);
+  const docEnd = await page.evaluate(() => (window as unknown as ModelSeams).__vedText().length);
   assert.equal(docEnd, 131, `setup: doc length should be 131 (got ${docEnd})`);
 
   // Bug A: deep in para2 col0, ArrowLeft must reach the short last column's end

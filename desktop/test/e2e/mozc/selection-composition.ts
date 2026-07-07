@@ -15,6 +15,7 @@
 // Linux + fcitx5 + mozc + xdotool only; SKIPS elsewhere. STEALS X focus while it
 // runs — don't type. Run: `node test/e2e/mozc/selection-composition.ts`.
 import assert from 'node:assert/strict';
+import type { ModelSeams } from '../harness.ts';
 import { fail, finish, step } from '../harness.ts';
 import { mozcAvailable, openMozc, sh } from './harness.ts';
 
@@ -26,7 +27,6 @@ if (!mozcAvailable()) {
 
 const m = await openMozc();
 const { page } = m;
-type W = { __vedText(): string; __vedSetSelection(anchor: number, head: number): void };
 const setMode = async (digit: string) => {
   await page.keyboard.down('Control');
   await page.keyboard.press(`Digit${digit}`);
@@ -39,7 +39,7 @@ const setup = async (base: string, anchor: number, head: number) => {
   await page.waitForTimeout(80);
   if (base) await page.keyboard.insertText(base);
   await page.waitForTimeout(200);
-  await page.evaluate(({ anchor, head }) => (window as unknown as W).__vedSetSelection(anchor, head), {
+  await page.evaluate(({ anchor, head }) => (window as unknown as ModelSeams).__vedSetSelection(anchor, head), {
     anchor,
     head,
   });

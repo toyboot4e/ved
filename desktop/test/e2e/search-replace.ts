@@ -6,14 +6,13 @@
 // undoable. The model text never changes from highlighting alone.
 // Usage: node test/e2e/search-replace.ts  (after a build; window stays hidden)
 import assert from 'node:assert/strict';
+import type { ModelSeams } from './harness.ts';
 import { docText, fail, finish, launchVed, setDoc, step } from './harness.ts';
 
 const ved = await launchVed({ env: () => ({ VED_SMOKE_CLOSE_RESPONSE: 'discard' }) });
 const { page } = ved;
-
-type W = { __vedCaret(): number; __vedAnchor(): number };
-const caret = () => page.evaluate(() => (window as unknown as W).__vedCaret());
-const anchor = () => page.evaluate(() => (window as unknown as W).__vedAnchor());
+const caret = () => page.evaluate(() => (window as unknown as ModelSeams).__vedCaret());
+const anchor = () => page.evaluate(() => (window as unknown as ModelSeams).__vedAnchor());
 const count = (sel: string) => page.evaluate((s) => document.querySelectorAll(s).length, sel);
 const activeElemId = () => page.evaluate(() => document.activeElement?.id ?? '');
 const counterText = () => page.textContent('#search-count');

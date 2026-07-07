@@ -13,12 +13,12 @@
 //
 // VISIBLE window: the overlay schedules via RAF (hidden windows throttle it).
 import assert from 'node:assert/strict';
+import type { ModelSeams } from './harness.ts';
 import { clickWritingMode, fail, finish, launchVed, step } from './harness.ts';
 
 const ved = await launchVed({ env: () => ({ VED_SMOKE_CLOSE_RESPONSE: 'discard', VED_SMOKE_HIDDEN: '' }) });
 const { page } = ved;
-type W = { __vedSetCaret(o: number): void };
-const setCaret = (o: number) => page.evaluate((off) => (window as unknown as W).__vedSetCaret(off), o);
+const setCaret = (o: number) => page.evaluate((off) => (window as unknown as ModelSeams).__vedSetCaret(off), o);
 
 type Band = { domLeft: number | null; left: number; right: number } | null;
 // Place the caret, then poll until the highlight band settles (RAF), reading

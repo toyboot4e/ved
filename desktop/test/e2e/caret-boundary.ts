@@ -14,12 +14,11 @@
 //
 // Usage: node test/e2e/caret-boundary.ts (after `pnpm run build`).
 import assert from 'node:assert/strict';
+import type { ModelSeams, Rect } from './harness.ts';
 import { fail, finish, launchVed, pressMod, step } from './harness.ts';
 
 const ved = await launchVed({ env: () => ({ VED_SMOKE_CLOSE_RESPONSE: 'discard' }) });
 const { page } = ved;
-
-type R = { top: number; bottom: number; left: number; right: number };
 
 const setCaret = async (off: number) => {
   await page.evaluate((o) => (window as unknown as { __vedSetCaret(o: number): void }).__vedSetCaret(o), off);
@@ -35,14 +34,14 @@ const setCaret = async (off: number) => {
  *  one is real. */
 const measure = () =>
   page.evaluate(() => {
-    const model = (window as unknown as { __vedCaretRect(): R | null }).__vedCaretRect();
+    const model = (window as unknown as ModelSeams).__vedCaretRect();
     const sel = getSelection();
-    let dom: R | null = null;
+    let dom: Rect | null = null;
     if (sel && sel.rangeCount > 0) {
       const d = sel.getRangeAt(0).getClientRects()[0] ?? sel.getRangeAt(0).getBoundingClientRect();
       dom = { top: d.top, bottom: d.bottom, left: d.left, right: d.right };
     }
-    const ext = (r: R | null) => (r ? Math.max(r.bottom - r.top, r.right - r.left) : -1);
+    const ext = (r: Rect | null) => (r ? Math.max(r.bottom - r.top, r.right - r.left) : -1);
     const caret = ext(model) >= ext(dom) ? model : dom;
     const r = document.querySelector('ruby.rubyWrap') as HTMLElement;
     const b = r.getBoundingClientRect();
@@ -52,7 +51,7 @@ const measure = () =>
       active: r.classList.contains('rubyActive'),
       classes: r.className,
     };
-  }) as Promise<{ caret: R | null; ruby: R; active: boolean; classes: string }>;
+  }) as Promise<{ caret: Rect | null; ruby: Rect; active: boolean; classes: string }>;
 
 const setDoc = async (text: string) => {
   await page.evaluate(() => getSelection()!.selectAllChildren(document.getElementById('editor-content')!));
@@ -66,10 +65,10 @@ const setDoc = async (text: string) => {
 // and thin (height), in vertical-rl it is a horizontal bar at a line end (width,
 // zero height). Either is a valid, visible caret — the OLD bug was a 0×0 box at
 // the viewport ORIGIN. So measure the LARGER axis.
-const extent = (r: R) => Math.max(r.bottom - r.top, r.right - r.left);
+const extent = (r: Rect) => Math.max(r.bottom - r.top, r.right - r.left);
 // The caret rect lies within the ruby's box (a small margin for the caret's own
 // extent past the glyph and the boundary being just outside the node).
-const nearRuby = (c: R, ruby: R) =>
+const nearRuby = (c: Rect, ruby: Rect) =>
   c.left >= ruby.left - 30 && c.right <= ruby.right + 30 && c.top >= ruby.top - 30 && c.bottom <= ruby.bottom + 30;
 
 try {
@@ -94,7 +93,7 @@ try {
     { off: 9, inside: false, label: 'after the ruby (before あ)' },
   ];
 
-  const rects: R[] = [];
+  const rects: Rect[] = [];
   for (const c of cases) {
     await setCaret(c.off);
     const m = await measure();

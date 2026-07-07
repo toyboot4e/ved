@@ -9,12 +9,12 @@
 //
 // Plain caret only; hidden window. Usage: node test/e2e/select-all-arrow.ts.
 import assert from 'node:assert/strict';
+import type { ModelSeams } from './harness.ts';
 import { clickWritingMode, fail, finish, launchVed, step } from './harness.ts';
 
 const ved = await launchVed({ env: () => ({ VED_SMOKE_CLOSE_RESPONSE: 'discard' }) });
 const { page } = ved;
-type W = { __vedCaret(): number; __vedText(): string; __vedSetCaret(o: number): void };
-const caret = () => page.evaluate(() => (window as unknown as W).__vedCaret());
+const caret = () => page.evaluate(() => (window as unknown as ModelSeams).__vedCaret());
 
 const ctrlA = async () => {
   await page.keyboard.down('Control');
@@ -23,7 +23,7 @@ const ctrlA = async () => {
   await page.waitForTimeout(80);
 };
 const selAllThen = async (key: string): Promise<number> => {
-  await page.evaluate(() => (window as unknown as W).__vedSetCaret(5)); // park the caret mid-doc
+  await page.evaluate(() => (window as unknown as ModelSeams).__vedSetCaret(5)); // park the caret mid-doc
   await page.waitForTimeout(50);
   await ctrlA();
   await page.keyboard.press(key);
@@ -40,7 +40,7 @@ try {
   await page.waitForTimeout(50);
   await page.keyboard.insertText('あいう\nかきく\nさしす');
   await page.waitForTimeout(200);
-  const len = await page.evaluate(() => (window as unknown as W).__vedText().length);
+  const len = await page.evaluate(() => (window as unknown as ModelSeams).__vedText().length);
   assert.equal(len, 11, `setup: doc length 11 (got ${len})`);
 
   // Vertical mode: char axis = ArrowUp(back)/ArrowDown(fwd); line axis =

@@ -16,6 +16,7 @@
 // Linux + fcitx5 + mozc + xdotool only; SKIPS elsewhere. STEALS X focus while
 // it runs — don't type. Run: node test/e2e/mozc/page-boundary-composition.ts
 import assert from 'node:assert/strict';
+import type { ModelSeams } from '../harness.ts';
 import { fail, finish, step } from '../harness.ts';
 import { mozcAvailable, openMozc } from './harness.ts';
 
@@ -32,7 +33,6 @@ const LINE = text.indexOf('\n') + 1;
 
 const m = await openMozc();
 const { page } = m;
-type W = { __vedText(): string; __vedSetSelection(a: number, h: number): void };
 
 await page.fill('#view-config-fontSize', '18');
 await page.fill('#view-config-lineSpaceRatio', '0.55');
@@ -67,7 +67,7 @@ try {
     await page.waitForTimeout(80);
     await page.keyboard.insertText(text);
     await page.waitForTimeout(400);
-    await page.evaluate((o) => (window as unknown as W).__vedSetSelection(o, o), off);
+    await page.evaluate((o) => (window as unknown as ModelSeams).__vedSetSelection(o, o), off);
     await page.waitForTimeout(200);
     await m.escape();
     await m.type('nekoda');
@@ -98,7 +98,7 @@ try {
       return { widgetInP20: paras[19]?.querySelectorAll('.ved-page-gap').length ?? 0 };
     });
     assert.equal(setup.widgetInP20, 1, 'setup: paragraph 20 carries the intra-band boundary widget');
-    await page.evaluate((o) => (window as unknown as W).__vedSetSelection(o, o), off);
+    await page.evaluate((o) => (window as unknown as ModelSeams).__vedSetSelection(o, o), off);
     await page.waitForTimeout(200);
     await m.escape();
     await m.type('nekoda');

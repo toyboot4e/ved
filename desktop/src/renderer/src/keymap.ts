@@ -13,6 +13,7 @@
 //
 // Command ids are plan-style names (`file.save`, `view.quickOpen`, …) — the
 // future command palette's catalog and the config file's keybinding keys.
+import type { ChordEvent } from '@ved/editor';
 import type { FileCommand, TabCommand } from './file-commands';
 import { isComposingEvent } from './ime';
 import { closeQuickOpen, useQuickOpenStore } from './quick-open';
@@ -21,16 +22,8 @@ import { useShellStore } from './shells';
 import { useWorkspaceStore } from './workspace';
 
 /** The keydown fields the chord matcher reads (structural, for testability;
- *  a native `KeyboardEvent` satisfies it). */
-export type ChordEvent = {
-  readonly key: string;
-  readonly ctrlKey: boolean;
-  readonly metaKey: boolean;
-  readonly shiftKey: boolean;
-  readonly altKey: boolean;
-  readonly isComposing: boolean;
-  readonly keyCode: number;
-};
+ *  a native `KeyboardEvent` satisfies it) — the editor core's `ChordEvent`. */
+export type { ChordEvent } from '@ved/editor';
 
 /**
  * One chord. `mod: 'mod'` is the platform modifier — Cmd on macOS, Ctrl

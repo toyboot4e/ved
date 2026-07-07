@@ -6,13 +6,12 @@
 // space, so it can't force a line to wrap.
 // Usage: node test/e2e/invisibles.ts  (after a build; window stays hidden)
 import assert from 'node:assert/strict';
+import type { ModelSeams } from './harness.ts';
 import { clickWritingMode, fail, finish, launchVed, step } from './harness.ts';
 
 const ved = await launchVed({ env: () => ({ VED_SMOKE_CLOSE_RESPONSE: 'discard' }) });
 const { page } = ved;
-
-type W = { __vedText(): string };
-const text = () => page.evaluate(() => (window as unknown as W).__vedText());
+const text = () => page.evaluate(() => (window as unknown as ModelSeams).__vedText());
 
 // Two half-width spaces, one tab, one full-width space, across three paragraphs
 // (→ two line breaks). Typed line-by-line with Enter so the paragraph splits go

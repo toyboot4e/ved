@@ -4,14 +4,15 @@
 //  - ArrowRight from the start reaches the document END, monotonically forward;
 //  - ArrowLeft from the end reaches offset 0, monotonically backward.
 // Docs mix plain text and ruby tokens to stress the hidden-markup caret stops.
+
+import type { ModelSeams } from './harness.ts';
 import { clickWritingMode, fail, finish, launchVed, step } from './harness.ts';
 
 const ved = await launchVed({ env: () => ({ VED_SMOKE_CLOSE_RESPONSE: 'discard', VED_SMOKE_HIDDEN: '1' }) });
 const { page } = ved;
-type W = { __vedText(): string; __vedSetCaret(o: number): void; __vedCaret(): number };
-const car = () => page.evaluate(() => (window as unknown as W).__vedCaret());
-const len = () => page.evaluate(() => (window as unknown as W).__vedText().length);
-const setCaret = (o: number) => page.evaluate((off) => (window as unknown as W).__vedSetCaret(off), o);
+const car = () => page.evaluate(() => (window as unknown as ModelSeams).__vedCaret());
+const len = () => page.evaluate(() => (window as unknown as ModelSeams).__vedText().length);
+const setCaret = (o: number) => page.evaluate((off) => (window as unknown as ModelSeams).__vedSetCaret(off), o);
 const setDoc = async (t: string) => {
   await page.evaluate(() => getSelection()!.selectAllChildren(document.getElementById('editor-content')!));
   await page.keyboard.press('Backspace');

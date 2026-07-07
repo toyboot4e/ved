@@ -10,6 +10,7 @@
 //
 // Usage: node test/e2e/line-movement.ts (after `pnpm run build`).
 import assert from 'node:assert/strict';
+import type { ModelSeams } from './harness.ts';
 import { fail, finish, launchVed, step } from './harness.ts';
 
 // VISIBLE window (not the default hidden one): moveCaretByLine defers via
@@ -36,9 +37,8 @@ const setDoc = async (lines: string[]) => {
 // at the ELEMENT level (after the widget) — focusOffset is then a child index,
 // not a text offset, and the collapsed range rect is degenerate. The model
 // offset and PM rect are exact either way.
-type W = { __vedCaret(): number; __vedCaretRect(): { top: number } | null };
-const caretY = () => page.evaluate(() => (window as unknown as W).__vedCaretRect()?.top ?? Number.NaN);
-const caretDocOff = () => page.evaluate(() => (window as unknown as W).__vedCaret());
+const caretY = () => page.evaluate(() => (window as unknown as ModelSeams).__vedCaretRect()?.top ?? Number.NaN);
+const caretDocOff = () => page.evaluate(() => (window as unknown as ModelSeams).__vedCaret());
 // The {line, column} of a plain doc offset, given the fixture's lines.
 const lineCol = (docOff: number, lines: string[]): { line: number; col: number } => {
   let start = 0;

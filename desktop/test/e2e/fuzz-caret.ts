@@ -21,6 +21,7 @@
 // "stuck" (a legitimate no-op at the first/last line vs a real stuck caret) is
 // LOGGED, not failed.
 import type { Page } from 'playwright';
+import type { ModelSeams } from './harness.ts';
 import { clickWritingMode, fail, finish, launchVed, step } from './harness.ts';
 import { type MozcSession, mozcAvailable, openMozc } from './mozc/harness.ts';
 
@@ -47,11 +48,10 @@ if (useMozc) {
   page = ved.page;
   closeApp = ved.close;
 }
-type W = { __vedText(): string; __vedSetCaret(o: number): void; __vedCaret(): number };
-const car = () => page.evaluate(() => (window as unknown as W).__vedCaret());
-const text = () => page.evaluate(() => (window as unknown as W).__vedText());
-const len = () => page.evaluate(() => (window as unknown as W).__vedText().length);
-const setCaret = (o: number) => page.evaluate((off) => (window as unknown as W).__vedSetCaret(off), o);
+const car = () => page.evaluate(() => (window as unknown as ModelSeams).__vedCaret());
+const text = () => page.evaluate(() => (window as unknown as ModelSeams).__vedText());
+const len = () => page.evaluate(() => (window as unknown as ModelSeams).__vedText().length);
+const setCaret = (o: number) => page.evaluate((off) => (window as unknown as ModelSeams).__vedSetCaret(off), o);
 const setDoc = async (t: string) => {
   await page.evaluate(() => getSelection()!.selectAllChildren(document.getElementById('editor-content')!));
   await page.keyboard.press('Backspace');

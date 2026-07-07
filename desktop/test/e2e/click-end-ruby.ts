@@ -13,12 +13,12 @@
 // VISIBLE window: needs real layout to compute the click coordinates.
 // Usage: node test/e2e/click-end-ruby.ts (after pnpm run build).
 import assert from 'node:assert/strict';
+import type { ModelSeams } from './harness.ts';
 import { clickWritingMode, fail, finish, launchVed, pressMod, step } from './harness.ts';
 
 const ved = await launchVed({ env: () => ({ VED_SMOKE_CLOSE_RESPONSE: 'discard', VED_SMOKE_HIDDEN: '' }) });
 const { page } = ved;
-type W = { __vedCaret(): number };
-const caret = () => page.evaluate(() => (window as unknown as W).__vedCaret());
+const caret = () => page.evaluate(() => (window as unknown as ModelSeams).__vedCaret());
 const rubyActive = () => page.evaluate(() => document.querySelectorAll('.rubyActive').length);
 
 // Each: a paragraph that ENDS in a ruby + its end offset. A FAR-DOWN click (well

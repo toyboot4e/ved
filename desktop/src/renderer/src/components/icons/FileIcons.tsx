@@ -4,13 +4,10 @@
 // a file may be OPENED is decided by content sniffing in main (fs-io.ts),
 // never by the extension.
 import type React from 'react';
+import type { IconProps } from './icon-props';
 
 const VIEW = 16;
 const STROKE = 'currentColor';
-
-type IconProps = {
-  readonly className?: string | undefined;
-};
 
 const svgProps = (className?: string) => ({
   width: 14,

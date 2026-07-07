@@ -101,6 +101,7 @@ import {
   paraForward,
   searchNext,
   textObjectRange,
+  type VimRange,
   type WordModel,
   wordUnder,
 } from './text';
@@ -417,11 +418,7 @@ const findTarget = (text: string, from: number, op: FindOp, ch: string, count: n
 // ---------------------------------------------------------------------------
 
 /** The plain-offset range an operator consumes for a motion from `from`. */
-const operatorRange = (
-  motion: Motion,
-  doc: VimDocView,
-  from: number,
-): { from: number; to: number; linewise: boolean } => {
+const operatorRange = (motion: Motion, doc: VimDocView, from: number): VimRange => {
   if (motion.linewise) {
     const a = Math.min(from, motion.target);
     const b = Math.max(from, motion.target);
@@ -977,7 +974,7 @@ const repeatFind = (state: VimState, k: ';' | ',', count: number, doc: VimDocVie
 /** The selection a visual-mode operator consumes: end-INCLUSIVE charwise (the
  *  character under the far end is part of it, one ruby-aware step past), or
  *  whole lines in linewise visual. */
-const visualRange = (state: VimState, doc: VimDocView): { from: number; to: number; linewise: boolean } => {
+const visualRange = (state: VimState, doc: VimDocView): VimRange => {
   const a = Math.min(doc.anchor, doc.head);
   const b = Math.max(doc.anchor, doc.head);
   if (state.visualKind === 'line') {
@@ -1397,12 +1394,7 @@ const linewiseOperator = (state: VimState, op: Operator, count: number, doc: Vim
   return applyOperator(state, op, { from, to, linewise: true }, doc);
 };
 
-const applyOperator = (
-  state: VimState,
-  op: Operator,
-  range: { from: number; to: number; linewise: boolean },
-  doc: VimDocView,
-): VimStep => {
+const applyOperator = (state: VimState, op: Operator, range: VimRange, doc: VimDocView): VimStep => {
   const register: VimRegister = { text: doc.text.slice(range.from, range.to), linewise: range.linewise };
   const next = { ...state, register };
   switch (op) {

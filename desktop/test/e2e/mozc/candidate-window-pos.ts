@@ -11,6 +11,7 @@
 // Linux + fcitx5 + mozc + xdotool only; SKIPS elsewhere. STEALS X focus while
 // it runs — don't type. Run: node test/e2e/mozc/candidate-window-pos.ts
 import assert from 'node:assert/strict';
+import type { ModelSeams } from '../harness.ts';
 import { fail, finish, pressMod, step } from '../harness.ts';
 import { mozcAvailable, openMozc, sh } from './harness.ts';
 
@@ -22,7 +23,6 @@ if (!mozcAvailable()) {
 
 const m = await openMozc();
 const { page, app } = m;
-type W = { __vedText(): string; __vedCaret(): number; __vedSetSelection(a: number, h: number): void };
 
 // 字20 (20 cells = 360px lines at 18px), 行10, one page per row: page 1's
 // last line is line 10; line 11 opens page 2 in the next band below.
@@ -82,7 +82,7 @@ try {
   await page.waitForTimeout(80);
   await page.keyboard.insertText(text);
   await page.waitForTimeout(400);
-  await page.evaluate((o) => (window as unknown as W).__vedSetSelection(o, o), text.length);
+  await page.evaluate((o) => (window as unknown as ModelSeams).__vedSetSelection(o, o), text.length);
   await page.waitForTimeout(250);
   await m.escape();
   const anchorRect = await domCaretRect();
@@ -122,12 +122,12 @@ try {
   await m.escape();
   const got = await m.commit();
   assert.equal(got, `${text}ねこだいすき`, 'commit: the composed word lands in place');
-  const caretOff = await page.evaluate(() => (window as unknown as W).__vedCaret());
+  const caretOff = await page.evaluate(() => (window as unknown as ModelSeams).__vedCaret());
   assert.equal(caretOff, text.length + 6, 'commit: the caret lands after the committed word');
   step('mozc composed, converted, and committed through the pinned caret');
 
   // --- Control: a composition that never wraps keeps native behavior. ---
-  await page.evaluate((o) => (window as unknown as W).__vedSetSelection(o, o), 100); // line 6 start
+  await page.evaluate((o) => (window as unknown as ModelSeams).__vedSetSelection(o, o), 100); // line 6 start
   await page.waitForTimeout(250);
   await m.escape();
   await m.type('nekoda');
@@ -196,7 +196,7 @@ try {
     await page.waitForTimeout(80);
     await page.keyboard.insertText(long);
     await page.waitForTimeout(500);
-    await page.evaluate((o) => (window as unknown as W).__vedSetSelection(o, o), off);
+    await page.evaluate((o) => (window as unknown as ModelSeams).__vedSetSelection(o, o), off);
     await page.waitForTimeout(250);
     await m.escape();
     const anchor2 = await domCaretRect();
@@ -253,7 +253,7 @@ try {
     await page.waitForTimeout(80);
     await page.keyboard.insertText(rubyDoc);
     await page.waitForTimeout(600);
-    await page.evaluate((o) => (window as unknown as W).__vedSetSelection(o, o), inBase);
+    await page.evaluate((o) => (window as unknown as ModelSeams).__vedSetSelection(o, o), inBase);
     await page.waitForTimeout(250);
     await m.escape();
     const sepsBefore = await page.evaluate(() =>
@@ -299,7 +299,7 @@ try {
     await page.waitForTimeout(80);
     await page.keyboard.insertText(RUBY2.repeat(300));
     await page.waitForTimeout(600);
-    await page.evaluate((o) => (window as unknown as W).__vedSetSelection(o, o), seam);
+    await page.evaluate((o) => (window as unknown as ModelSeams).__vedSetSelection(o, o), seam);
     await page.waitForTimeout(250);
     await m.escape();
     const downstreamTop = () =>
@@ -322,7 +322,7 @@ try {
     await m.escape();
     await page.waitForTimeout(200);
     assert.equal(
-      await page.evaluate(() => (window as unknown as W).__vedText()),
+      await page.evaluate(() => (window as unknown as ModelSeams).__vedText()),
       RUBY2.repeat(300),
       'escape restores the doc',
     );
@@ -353,7 +353,7 @@ try {
     assert.ok(heads.length > 21, `setup: ${heads.length} lines of mixed rubies`);
     const head21 = heads[20]!;
     const seamOff = (k: number) => Math.floor(k / 3) * MTRIPLE.length + [0, 7, 17][k % 3]!;
-    await page.evaluate((o) => (window as unknown as W).__vedSetSelection(o, o), seamOff(head21 - 1));
+    await page.evaluate((o) => (window as unknown as ModelSeams).__vedSetSelection(o, o), seamOff(head21 - 1));
     await page.waitForTimeout(250);
     await m.escape();
     const sentinelTop = () =>
@@ -415,7 +415,7 @@ try {
     await m.escape();
     await page.waitForTimeout(200);
     assert.equal(
-      await page.evaluate(() => (window as unknown as W).__vedText()),
+      await page.evaluate(() => (window as unknown as ModelSeams).__vedText()),
       MTRIPLE.repeat(80),
       'escape restores the mixed doc',
     );
@@ -435,16 +435,20 @@ try {
     await page.waitForTimeout(80);
     await page.keyboard.insertText(uDoc);
     await page.waitForTimeout(600);
-    await page.evaluate((o) => (window as unknown as W).__vedSetSelection(o, o), uSeam);
+    await page.evaluate((o) => (window as unknown as ModelSeams).__vedSetSelection(o, o), uSeam);
     await page.waitForTimeout(250);
     await m.escape();
     const uGot = await m.type('nekodaisuki').then(() => m.commit());
     assert.equal(uGot, `${uDoc.slice(0, uSeam)}ねこだいすき${uDoc.slice(uSeam)}`, 'undo case: committed in place');
     await pressMod(page, 'z'); // undo
     await page.waitForTimeout(400);
-    assert.equal(await page.evaluate(() => (window as unknown as W).__vedText()), uDoc, 'undo restores the text');
     assert.equal(
-      await page.evaluate(() => (window as unknown as W).__vedCaret()),
+      await page.evaluate(() => (window as unknown as ModelSeams).__vedText()),
+      uDoc,
+      'undo restores the text',
+    );
+    assert.equal(
+      await page.evaluate(() => (window as unknown as ModelSeams).__vedCaret()),
       uSeam,
       'undo returns the caret to where typing began',
     );

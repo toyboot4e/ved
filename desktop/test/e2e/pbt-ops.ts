@@ -3,13 +3,14 @@
 // the plain edits. After every op, serialize(doc) must equal the same op applied
 // to a plain-string model. Deterministic seeds; widen with
 // `node test/e2e/pbt-ops.ts <seed> <trials>`.
+
+import type { ModelSeams } from './harness.ts';
 import { fail, finish, launchVed, step } from './harness.ts';
 
 const ved = await launchVed({ env: () => ({ VED_SMOKE_CLOSE_RESPONSE: 'discard', VED_SMOKE_HIDDEN: '1' }) });
 const { page } = ved;
-type W = { __vedText(): string; __vedSetCaret(o: number): void };
-const text = () => page.evaluate(() => (window as unknown as W).__vedText());
-const setCaret = (o: number) => page.evaluate((off) => (window as unknown as W).__vedSetCaret(off), o);
+const text = () => page.evaluate(() => (window as unknown as ModelSeams).__vedText());
+const setCaret = (o: number) => page.evaluate((off) => (window as unknown as ModelSeams).__vedSetCaret(off), o);
 const setDoc = async (t: string) => {
   await page.evaluate(() => getSelection()!.selectAllChildren(document.getElementById('editor-content')!));
   await page.keyboard.press('Backspace');

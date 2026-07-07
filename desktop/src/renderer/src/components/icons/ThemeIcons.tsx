@@ -2,11 +2,10 @@
 // Same conventions as WritingModeIcons — a 24×24 viewBox, `currentColor` so the
 // glyph inherits the button's themed color.
 import type React from 'react';
+import type { IconProps } from './icon-props';
 
 const VIEW = 24;
 const C = 'currentColor';
-
-type IconProps = { readonly className?: string };
 
 const svg = (children: React.ReactNode, className?: string): React.JSX.Element => (
   <svg

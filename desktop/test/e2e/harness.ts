@@ -222,10 +222,18 @@ export const clickWritingMode = async (
 
 // --- model seams (window.__ved*, exposed by editor.tsx) ---
 
-type ModelSeams = {
+/** A rect as the seams report it (viewport CSS pixels). */
+export type Rect = { top: number; bottom: number; left: number; right: number };
+
+/** The window seams `editor/src/test-seams.ts` installs — model-truth
+ *  readbacks and plain-offset selection setters, shared by every driver. */
+export type ModelSeams = {
   __vedText(): string;
   __vedCaret(): number;
+  __vedAnchor(): number;
+  __vedCaretRect(): Rect | null;
   __vedSetCaret(o: number): void;
+  __vedSetSelection(anchor: number, head: number): void;
 };
 
 /** The document's serialized plain text (the identity model). */

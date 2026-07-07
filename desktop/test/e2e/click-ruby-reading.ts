@@ -10,12 +10,12 @@
 // VISIBLE window: needs real layout to compute the rt click coordinates.
 // Usage: node test/e2e/click-ruby-reading.ts (after pnpm run build).
 import assert from 'node:assert/strict';
+import type { ModelSeams } from './harness.ts';
 import { clickWritingMode, fail, finish, launchVed, pressMod, step } from './harness.ts';
 
 const ved = await launchVed({ env: () => ({ VED_SMOKE_CLOSE_RESPONSE: 'discard', VED_SMOKE_HIDDEN: '' }) });
 const { page } = ved;
-type W = { __vedCaret(): number; __vedSetCaret(o: number): void };
-const caret = () => page.evaluate(() => (window as unknown as W).__vedCaret());
+const caret = () => page.evaluate(() => (window as unknown as ModelSeams).__vedCaret());
 const rubyActive = () => page.evaluate(() => document.querySelectorAll('.rubyActive').length);
 
 // Each: a paragraph, the index of the ruby whose reading is clicked, and the
@@ -40,7 +40,7 @@ try {
     await page.keyboard.insertText(c.text);
     await page.waitForTimeout(250);
     // Park the caret at 0 so the click is a real move.
-    await page.evaluate(() => (window as unknown as W).__vedSetCaret(0));
+    await page.evaluate(() => (window as unknown as ModelSeams).__vedSetCaret(0));
     await page.waitForTimeout(80);
     const at = await page.evaluate((i) => {
       const rt = document.querySelectorAll('#editor-content rt')[i]!;

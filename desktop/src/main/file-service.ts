@@ -1,4 +1,4 @@
-import { app, BrowserWindow, dialog, ipcMain, type WebContents } from 'electron';
+import { app, BrowserWindow, dialog, ipcMain, type OpenDialogOptions, type WebContents } from 'electron';
 import {
   type CliFile,
   type DirEntry,
@@ -19,41 +19,34 @@ import { listWorkspaceFiles } from './workspace-index';
 const SMOKE_OPEN_PATH = 'VED_SMOKE_OPEN_PATH';
 const SMOKE_SAVE_PATH = 'VED_SMOKE_SAVE_PATH';
 const SMOKE_OPEN_DIR_PATH = 'VED_SMOKE_OPEN_DIR_PATH';
-let openStubCall = 0;
-let openDirStubCall = 0;
 
-const pickOpenPath = async (sender: WebContents): Promise<string | null> => {
-  const stub = process.env[SMOKE_OPEN_PATH];
-  if (stub) {
-    const paths = stub.split(',');
-    const path = paths[Math.min(openStubCall, paths.length - 1)] ?? null;
-    openStubCall++;
-    return path;
-  }
+const makeOpenPicker = (
+  stubEnvVar: string,
+  properties: NonNullable<OpenDialogOptions['properties']>,
+): ((sender: WebContents) => Promise<string | null>) => {
+  let stubCall = 0;
+  return async (sender) => {
+    const stub = process.env[stubEnvVar];
+    if (stub) {
+      const paths = stub.split(',');
+      const path = paths[Math.min(stubCall, paths.length - 1)] ?? null;
+      stubCall++;
+      return path;
+    }
 
-  const win = BrowserWindow.fromWebContents(sender);
-  if (!win) return null;
-  // Allow a FILE or a DIRECTORY: a chosen folder is added as a workspace root.
-  // (macOS shows a unified picker; on Windows/Linux the two properties fold to
-  // one selector — the handler branches on the resolved path's kind either way.)
-  const result = await dialog.showOpenDialog(win, { properties: ['openFile', 'openDirectory'] });
-  return result.canceled ? null : (result.filePaths[0] ?? null);
+    const win = BrowserWindow.fromWebContents(sender);
+    if (!win) return null;
+    const result = await dialog.showOpenDialog(win, { properties });
+    return result.canceled ? null : (result.filePaths[0] ?? null);
+  };
 };
 
-const pickDirPath = async (sender: WebContents): Promise<string | null> => {
-  const stub = process.env[SMOKE_OPEN_DIR_PATH];
-  if (stub) {
-    const paths = stub.split(',');
-    const path = paths[Math.min(openDirStubCall, paths.length - 1)] ?? null;
-    openDirStubCall++;
-    return path;
-  }
+// Allow a FILE or a DIRECTORY: a chosen folder is added as a workspace root.
+// (macOS shows a unified picker; on Windows/Linux the two properties fold to
+// one selector — the handler branches on the resolved path's kind either way.)
+const pickOpenPath = makeOpenPicker(SMOKE_OPEN_PATH, ['openFile', 'openDirectory']);
 
-  const win = BrowserWindow.fromWebContents(sender);
-  if (!win) return null;
-  const result = await dialog.showOpenDialog(win, { properties: ['openDirectory'] });
-  return result.canceled ? null : (result.filePaths[0] ?? null);
-};
+const pickDirPath = makeOpenPicker(SMOKE_OPEN_DIR_PATH, ['openDirectory']);
 
 const pickSavePath = async (sender: WebContents, defaultPath?: string): Promise<string | null> => {
   const stub = process.env[SMOKE_SAVE_PATH];

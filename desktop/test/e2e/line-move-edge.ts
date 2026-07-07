@@ -10,13 +10,13 @@
 //
 // VISIBLE window: moveCaretByLine defers via RAF (hidden windows throttle it).
 import assert from 'node:assert/strict';
+import type { ModelSeams } from './harness.ts';
 import { clickWritingMode, fail, finish, launchVed, step } from './harness.ts';
 
 const ved = await launchVed({ env: () => ({ VED_SMOKE_CLOSE_RESPONSE: 'discard', VED_SMOKE_HIDDEN: '' }) });
 const { page } = ved;
-type W = { __vedCaret(): number; __vedSetCaret(o: number): void };
-const car = () => page.evaluate(() => (window as unknown as W).__vedCaret());
-const setCaret = (o: number) => page.evaluate((off) => (window as unknown as W).__vedSetCaret(off), o);
+const car = () => page.evaluate(() => (window as unknown as ModelSeams).__vedCaret());
+const setCaret = (o: number) => page.evaluate((off) => (window as unknown as ModelSeams).__vedSetCaret(off), o);
 // Press a line-move key; poll until it registers (RAF) or a generous cap. A
 // no-op move never changes the offset, so cap-out IS the "stayed" outcome.
 const lineMove = async (key: string): Promise<number> => {

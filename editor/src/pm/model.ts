@@ -353,11 +353,9 @@ const buildMaps = (doc: PMNode): Maps => {
 // answers are identical (model.test asserts equivalence via buildPosMap).
 // ---------------------------------------------------------------------------
 
-type ParaMaps = { offToPos: number[]; posToOff: (number | undefined)[] };
+const paraMapsCache = new WeakMap<PMNode, Maps>();
 
-const paraMapsCache = new WeakMap<PMNode, ParaMaps>();
-
-const paraMaps = (para: PMNode): ParaMaps => {
+const paraMaps = (para: PMNode): Maps => {
   const hit = paraMapsCache.get(para);
   if (hit) return hit;
   // Local coordinates: position 0 = BEFORE the paragraph node (content starts

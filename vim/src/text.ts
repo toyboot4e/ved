@@ -53,6 +53,10 @@ const classOf = (c: string): number => (/\s/.test(c) ? 0 : /[\p{L}\p{N}_]/u.test
 
 export const isBlank = (c: string): boolean => /\s/.test(c);
 
+/** A `[from, to)` offset range plus Vim's linewise flag — what an operator
+ *  (`d`/`c`/`y`) consumes. */
+export type VimRange = { from: number; to: number; linewise: boolean };
+
 /** The word-granularity behind `w`/`b`/`e`, abstracted so it can be swapped
  *  (a Japanese segmenter, words-ja.ts). Each returns an offset in `text`. */
 export type WordModel = {
@@ -227,12 +231,7 @@ const paragraphRange = (text: string, from: number, around: boolean): { from: nu
 
 /** A text object's range for `i`(nner)/`a`(round) + object key. `linewise`
  *  for `ip`/`ap` (whole lines, like Vim). `null` when not found at the caret. */
-export const textObjectRange = (
-  kind: 'i' | 'a',
-  obj: string,
-  text: string,
-  from: number,
-): { from: number; to: number; linewise: boolean } | null => {
+export const textObjectRange = (kind: 'i' | 'a', obj: string, text: string, from: number): VimRange | null => {
   const around = kind === 'a';
   // Word / WORD.
   if (obj === 'w' || obj === 'W') {

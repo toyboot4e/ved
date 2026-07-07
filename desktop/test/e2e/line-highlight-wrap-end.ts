@@ -8,11 +8,11 @@
 // VISIBLE window: the overlay places on a rAF, which stalls hidden.
 // Usage: node test/e2e/line-highlight-wrap-end.ts  (after a build)
 import assert from 'node:assert/strict';
+import type { ModelSeams } from './harness.ts';
 import { fail, finish, launchVed, step } from './harness.ts';
 
 const ved = await launchVed({ env: () => ({ VED_SMOKE_CLOSE_RESPONSE: 'discard', VED_SMOKE_HIDDEN: '' }) });
 const { page } = ved;
-type W = { __vedSetSelection(a: number, h: number): void };
 
 try {
   await page.fill('#view-config-fontSize', '18');
@@ -28,7 +28,7 @@ try {
   await page.waitForTimeout(500);
 
   const measure = async (off: number) => {
-    await page.evaluate((o) => (window as unknown as W).__vedSetSelection(o, o), off);
+    await page.evaluate((o) => (window as unknown as ModelSeams).__vedSetSelection(o, o), off);
     await page.waitForTimeout(300);
     return page.evaluate(() => {
       const sel = getSelection();
@@ -66,7 +66,7 @@ try {
   await page.keyboard.insertText('|ルビ(ruby)'.repeat(50)); // 10 rubies per 20-cell line
   await page.waitForTimeout(800);
   const rubySeam = async (off: number) => {
-    await page.evaluate((o) => (window as unknown as W).__vedSetSelection(o, o), off);
+    await page.evaluate((o) => (window as unknown as ModelSeams).__vedSetSelection(o, o), off);
     await page.waitForTimeout(400);
     return page.evaluate(() => {
       const w = document.querySelector('.vedBoundaryCaret')?.getBoundingClientRect();
@@ -101,7 +101,7 @@ try {
   await page.click('button:has-text("Vim")');
   await page.waitForTimeout(400);
   const blockAt = async (off: number) => {
-    await page.evaluate((o) => (window as unknown as W).__vedSetSelection(o, o), off);
+    await page.evaluate((o) => (window as unknown as ModelSeams).__vedSetSelection(o, o), off);
     await page.waitForTimeout(300);
     return page.evaluate(() => {
       const el = document.querySelector('.vedBlockCaret, .vedBlockCaretBox');

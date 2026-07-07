@@ -6,13 +6,10 @@
 // perpendicular to the scroll axis — horizontal divider for VerticalColumns
 // (vertical scroll), vertical divider for VerticalRows (horizontal scroll).
 import type React from 'react';
+import type { IconProps } from './icon-props';
 
 const VIEW = 24;
 const STROKE = 'currentColor';
-
-type IconProps = {
-  readonly className?: string;
-};
 
 const Frame = (): React.JSX.Element => (
   <rect x='2' y='2' width={VIEW - 4} height={VIEW - 4} rx='2' fill='none' stroke={STROKE} strokeWidth='1.4' />
