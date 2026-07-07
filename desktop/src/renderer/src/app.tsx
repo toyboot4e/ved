@@ -1,37 +1,24 @@
-import {
-  type EditorSearchOps,
-  type EditorSnapshot,
-  type SearchHighlights,
-  editorStyles as styles,
-  VedEditor,
-  WritingMode,
-} from '@ved/editor';
+import { type EditorSnapshot, editorStyles as styles, VedEditor, WritingMode } from '@ved/editor';
 import { clsx } from 'clsx';
-import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { useCallback, useEffect, useRef, useState } from 'react';
 import appStyles from './app.module.scss';
 import { useAppearPolicyStore } from './appear-policy';
 import { activeBuffer, type BufferId, isDirty, someInactiveDirty } from './buffers';
 import { dispatchBuffers, useBuffersStore } from './buffers-store';
 import { QuickOpen } from './components/quick-open';
-import { SearchBar, type SearchFocusRequest } from './components/search-bar';
+import { SearchBar } from './components/search-bar';
 import { ShellPanel } from './components/shell-panel';
 import { Sidebar } from './components/sidebar';
 import { TabBar } from './components/tab-bar';
 import { Toolbar } from './components/toolbar';
-import {
-  dirName,
-  type FileCommand,
-  fileName,
-  saveOrSaveAs,
-  saveViaDialog,
-  type TabCommand,
-  windowTitle,
-} from './file-commands';
+import { dirName, type FileCommand, saveOrSaveAs, saveViaDialog, type TabCommand, windowTitle } from './file-commands';
 import { useInvisiblesStore } from './invisibles';
 import { handleAppKeydown } from './keymap';
+import { showNotTextNotice, useNoticeStore } from './notice';
 import { useQuickOpenStore } from './quick-open';
 import { useSearchStore } from './search';
 import { useThemeStore } from './theme';
+import { useSearchWiring } from './use-search-wiring';
 import { useViewConfigStore, viewConfigToCss } from './view-config';
 import { NO_EXTENSIONS, useVimStore, vimExtensions } from './vim';
 import { useWorkspaceStore } from './workspace';
@@ -87,35 +74,13 @@ export const App = (): React.JSX.Element => {
     setDirty(active.text !== active.savedText);
   }
 
-  // Search & replace: the ops arrive from the mounted editor (select/replace by
-  // plain offsets); the highlights flow back down as a pure view prop. A ref,
-  // not state — the ops identity has no render consequence.
-  const searchOpsRef = useRef<EditorSearchOps | null>(null);
-  const handleSearchOps = useCallback((ops: EditorSearchOps | null) => {
-    searchOpsRef.current = ops;
-  }, []);
-  const [searchFocus, setSearchFocus] = useState<SearchFocusRequest>({ field: 'find', epoch: 0 });
-  const searchOpen = useSearchStore((s) => s.open);
-  const searchMatches = useSearchStore((s) => s.matches);
-  const searchActive = useSearchStore((s) => s.active);
-  const highlightAll = useSearchStore((s) => s.highlightAll);
-  // What the editor should highlight: all matches, or — with highlight-all
-  // off — just the active one. Memoized so caret moves (which re-render
-  // nothing here) keep a stable identity and the editor's decoration cache
-  // holds (@ved/editor pm/decorations.ts).
-  const searchHighlights = useMemo<SearchHighlights | null>(() => {
-    if (!searchOpen || searchMatches.length === 0) return null;
-    if (highlightAll) return { ranges: searchMatches, active: searchActive };
-    const m = searchActive >= 0 ? searchMatches[searchActive] : undefined;
-    return m ? { ranges: [m], active: 0 } : null;
-  }, [searchOpen, searchMatches, searchActive, highlightAll]);
-
-  // A tab switch swaps the document under an open search — recompute the
-  // matches against the new buffer's text (no-op while the bar is closed).
-  // biome-ignore lint/correctness/useExhaustiveDependencies: re-runs per tab switch; the text is read via textRef
-  useEffect(() => {
-    useSearchStore.getState().docChanged(textRef.current);
-  }, [active.id]);
+  // Search & replace wiring (ops/highlights/focus/tab-switch resync) —
+  // use-search-wiring.ts.
+  const getText = useCallback(() => textRef.current, []);
+  const { searchOpen, searchFocus, searchHighlights, handleSearchOps, getOps, openSearch } = useSearchWiring(
+    active.id,
+    getText,
+  );
 
   // Files named on the command line: fetched once at startup, a tab per file
   // (the reducer drops the pristine untitled startup buffer).
@@ -163,22 +128,9 @@ export const App = (): React.JSX.Element => {
     [state.buffers, active.id],
   );
 
-  // Transient app notice (bottom-left toast) — every open path that REFUSES
-  // a non-text file (content sniff in main: sidebar click, Ctrl+O dialog)
-  // reports through here.
-  const [notice, setNotice] = useState<string | null>(null);
-  const noticeTimer = useRef<ReturnType<typeof setTimeout> | undefined>(undefined);
-  const showNotice = useCallback((message: string) => {
-    clearTimeout(noticeTimer.current);
-    setNotice(message);
-    noticeTimer.current = setTimeout(() => setNotice(null), 4000);
-  }, []);
-  useEffect(() => () => clearTimeout(noticeTimer.current), []);
-
-  const notTextNotice = useCallback(
-    (path: string) => showNotice(`テキストファイルではありません: ${fileName(path)}`),
-    [showNotice],
-  );
+  // Transient app notice (bottom-left toast) — notice.ts; the refusal paths
+  // below report through showNotTextNotice.
+  const notice = useNoticeStore((s) => s.notice);
 
   const handleOpen = useCallback(async () => {
     const opened = await window.ved.openFile();
@@ -192,27 +144,24 @@ export const App = (): React.JSX.Element => {
       return;
     }
     if (opened.read.kind !== 'text') {
-      notTextNotice(opened.path);
+      showNotTextNotice(opened.path);
       return;
     }
     dispatchBuffers({ type: 'openPath', path: opened.path, text: opened.read.text });
-  }, [notTextNotice]);
+  }, []);
 
   // Opening from the sidebar tree: the path is known, no dialog. Main sniffs
   // the CONTENT and refuses non-text files, reported via the shared notice.
   // `openPath` focuses the existing tab when the path is already open (the
   // fresh read is discarded — the open buffer, possibly dirty, wins).
-  const handleOpenTreeFile = useCallback(
-    async (path: string): Promise<void> => {
-      const result = await window.ved.readFile(path);
-      if (result.kind !== 'text') {
-        notTextNotice(path);
-        return;
-      }
-      dispatchBuffers({ type: 'openPath', path, text: result.text });
-    },
-    [notTextNotice],
-  );
+  const handleOpenTreeFile = useCallback(async (path: string): Promise<void> => {
+    const result = await window.ved.readFile(path);
+    if (result.kind !== 'text') {
+      showNotTextNotice(path);
+      return;
+    }
+    dispatchBuffers({ type: 'openPath', path, text: result.text });
+  }, []);
 
   const handleSave = useCallback(
     async (saveAs: boolean) => {
@@ -242,12 +191,6 @@ export const App = (): React.JSX.Element => {
     },
     [handleClose, handleCycle, active.id],
   );
-
-  const openSearch = useCallback((field: 'find' | 'replace') => {
-    useSearchStore.getState().openBar(textRef.current);
-    // Bump the epoch so a repeat while already open re-focuses the field.
-    setSearchFocus((f) => ({ field, epoch: f.epoch + 1 }));
-  }, []);
 
   // App shortcuts work wherever the focus is, so they live on `window`; the
   // chord table and the scoped dispatch (quick-open overlay first) are
@@ -334,9 +277,7 @@ export const App = (): React.JSX.Element => {
         </div>
         {/* Search & replace: a full-width bar docked at the bottom of the
             editor area (above the shell panel), not a row inside the page column. */}
-        {searchOpen && (
-          <SearchBar getText={() => textRef.current} getOps={() => searchOpsRef.current} focusRequest={searchFocus} />
-        )}
+        {searchOpen && <SearchBar getText={getText} getOps={getOps} focusRequest={searchFocus} />}
         <ShellPanel defaultCwd={shellCwd} />
       </div>
       {sidebarSide === 'right' && sidebar}

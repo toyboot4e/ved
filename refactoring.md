@@ -207,15 +207,20 @@ mutable session object — **proposal**, not this pass.
   keymap registry's data model.
 - **D9 done** — app.tsx window-keydown dispatcher (60 lines) → app-keymap.ts
   consuming the D8 table.
-- **D10 proposal** — writingMode/appearPolicy are the last useState
-  "view concerns" (everything else is a store); fold into a store when
-  phase-4 config.json lands (it will force this anyway).
-- **D11 proposal** — buffers on useReducer; the plan's stated migration
-  condition ("a second out-of-tree consumer") has been met (quick-open is
-  a third). Zustand wrap of the same pure reducer. Medium risk around the
-  dirty-tracking refs — needs its own careful step.
-- **D12 proposal** — search wiring + notice toast extraction from app.tsx
-  (hooks/stores); cosmetic god-component trimming.
+- **D10 done** — writingMode/appearPolicy were the last useState
+  "view concerns"; now per-concern stores (writing-mode.ts,
+  appear-policy.ts) the toolbar self-selects from, ready for phase-4
+  config.json hydration. VedEditor's setAppearPolicy stays
+  identity-stable (a store setter).
+- **D11 done** — buffers moved from useReducer to a Zustand store
+  (buffers-store.ts) wrapping the SAME pure buffersReducer (tests
+  unchanged); the plan's migration condition ("a second out-of-tree
+  consumer") was met. TabBar/QuickOpen self-select the tab strip; the
+  dirty-tracking refs and the render-time baseline adoption stay in
+  app.tsx untouched.
+- **D12 done** — search wiring extracted to use-search-wiring.ts, the
+  notice toast to a notice.ts store (pure code motion; the toast still
+  renders in app.tsx).
 - **D13 done** — scss: iconButton triplicated; quick-open .toggle/.modeButton
   byte-identical; shared mixin/partial.
 - **D14 done** — drop dead `var(--ved-*, #light)` fallbacks in desktop
