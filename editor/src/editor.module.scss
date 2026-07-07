@@ -241,9 +241,9 @@ $footer-height: $font-size + $pad-y * 2;
   }
 }
 
-.toolbarNumberInput,
-.toolbarTextInput {
+.toolbarNumberInput {
   font-size: 12px;
+  width: 3.6em;
   padding: 1px 2px;
   border: 1px solid var(--ved-input-border, #c0c0c0);
   border-radius: 2px;
@@ -251,14 +251,6 @@ $footer-height: $font-size + $pad-y * 2;
   // Inputs don't inherit `color` either — set it so the typed value stays legible
   // on the dark field.
   color: var(--ved-fg, #222);
-}
-
-.toolbarNumberInput {
-  width: 3.6em;
-}
-
-.toolbarTextInput {
-  width: 9em;
 }
 
 // Dropdown cell (the font picker): the input look on a native select.
@@ -593,11 +585,6 @@ $footer-height: $font-size + $pad-y * 2;
       box-sizing: border-box;
     }
   }
-}
-
-// Formats
-a.vertMode {
-  text-decoration: overline;
 }
 
 // Ruby styles live in pm/ruby.css (GLOBAL, not this module): decorations and

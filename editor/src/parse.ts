@@ -1,15 +1,6 @@
-export type Format = PlainText | Ruby;
-
 /**
- * Slice of plain text without any markup.
- */
-export type PlainText = {
-  type: 'plainText';
-  text: [number, number];
-};
-
-/**
- * Slice of plain text that makes up a ruby.
+ * Slice of plain text that makes up a ruby. The plain runs BETWEEN rubies are
+ * implied by the gaps; consumers walk them with their own cursor.
  */
 export type Ruby = {
   type: 'ruby';
@@ -77,8 +68,8 @@ const closeFor = (open: string): string => RUBY_PAIRS.find(([o]) => o === open)!
  * close, the scan advances past this front and keeps looking, so a later valid
  * ruby on the same line still parses.
  */
-export const parse = (text: string): Format[] => {
-  const formats: Format[] = [];
+export const parse = (text: string): Ruby[] => {
+  const formats: Ruby[] = [];
 
   let offset = 0;
   while (offset < text.length) {

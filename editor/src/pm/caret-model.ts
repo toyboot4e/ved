@@ -92,7 +92,3 @@ export const nextCaretOffset = (doc: string, offset: number, policy: Appear, rev
   }
   return offset;
 };
-
-/** Exposed for the appearance/decoration layer: the leaves of the document. */
-export type { Leaf };
-export { activeRuby, docLeaves, lineOf };

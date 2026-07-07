@@ -175,7 +175,7 @@ module stays a leaf.
   ("Caret at ruby boundaries").
 - **Expanded**: a node decoration adds `rubyExpanded`; the reading becomes
   editable inline, and the delimiters render as gray read-only widget
-  `<span>`s (`openDelim`/`parenDelim`/`closeDelim`). Real elements, not CSS
+  `<span>`s (`rubyDelimOpen`/`rubyDelimParen`/`rubyDelimClose`). Real elements, not CSS
   pseudo-elements — generated content has no DOM positions, so the caret
   would paint at the same spot on both sides of a delimiter. `|` and `(` sit
   inside the `<ruby>`, `)` directly after it.

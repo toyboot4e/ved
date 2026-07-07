@@ -140,7 +140,6 @@ type RubyInfo = {
 type Parse = {
   doc: PMNode;
   text: string;
-  leaves: Leaf[];
   /** Leaves grouped by line index — the per-caret-move scans (active ruby,
    *  expanded set, boundary-caret neighbours) touch ONE line's leaves, not the
    *  whole document's (which scales with ruby count). */
@@ -195,7 +194,7 @@ const parseDoc = (doc: PMNode): Parse => {
     line.push(l);
     if (l.ruby >= 0) allRubies.add(l.ruby);
   }
-  return { doc, text, leaves, leavesByLine, allRubies, posMap, span, rubies };
+  return { doc, text, leavesByLine, allRubies, posMap, span, rubies };
 };
 
 /** The BULK, caret- and policy-independent decorations: the inline formats

@@ -9,7 +9,7 @@
 // `rubyReading` (the reading); `serialize` RECONSTRUCTS `|base(reading)`. So the
 // hidden delimiters never exist as zero-sized DOM text — which is what broke the
 // IME (no caret position among zero-size spans, IME box at the viewport corner).
-// Rich mode renders just the base + a read-only <rt>; the caret and IME live in
+// The Rich policy renders just the base + a read-only <rt>; the caret and IME live in
 // normal full-size text.
 import { type Node as PMNode, type ResolvedPos, Schema, type Slice } from 'prosemirror-model';
 import { parse, RUBY_PAIRS } from '../parse';
@@ -67,8 +67,8 @@ export const schema = new Schema({
 });
 
 /** The base (child 0) and reading (child 1) text of a ruby node. */
-export const rubyBaseText = (ruby: PMNode): string => ruby.child(0).textContent;
-export const rubyReadingText = (ruby: PMNode): string => ruby.child(1).textContent;
+const rubyBaseText = (ruby: PMNode): string => ruby.child(0).textContent;
+const rubyReadingText = (ruby: PMNode): string => ruby.child(1).textContent;
 
 /** Reconstruct a ruby node's literal markup, using its OWN delimiters
  *  (`|base(reading)` or `｜base《reading》`) so serialization is lossless. */
@@ -76,7 +76,7 @@ const rubyMarkup = (ruby: PMNode): string =>
   ruby.attrs.front + rubyBaseText(ruby) + ruby.attrs.open + rubyReadingText(ruby) + ruby.attrs.close;
 
 /** The literal delimiters a ruby was written with. */
-export type RubyDelims = { front: string; open: string; close: string };
+type RubyDelims = { front: string; open: string; close: string };
 
 /** Build a ruby node from base + reading strings and its delimiters. */
 const rubyNode = (base: string, reading: string, delims: RubyDelims): PMNode =>
@@ -92,7 +92,6 @@ export const inlineNodesFor = (line: string): PMNode[] => {
   const inline: PMNode[] = [];
   let cursor = 0;
   for (const fmt of parse(line)) {
-    if (fmt.type !== 'ruby') continue;
     if (fmt.delimFront[0] > cursor) inline.push(schema.text(line.slice(cursor, fmt.delimFront[0])));
     inline.push(
       rubyNode(line.slice(fmt.text[0], fmt.text[1]), line.slice(fmt.ruby[0], fmt.ruby[1]), {

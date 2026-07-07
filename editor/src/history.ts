@@ -16,8 +16,8 @@ export type HistoryEntry = {
 };
 
 export class PlainTextHistory {
-  entries: HistoryEntry[];
-  pointer: number;
+  private entries: HistoryEntry[];
+  private pointer: number;
   private lastPushTime: number = 0;
   private debounceMs: number = 500;
 

@@ -46,7 +46,6 @@ export const docLeaves = (doc: string): Leaf[] => {
     const line = lines[li]!;
     let cursor = 0;
     for (const fmt of parse(line)) {
-      if (fmt.type !== 'ruby') continue;
       if (fmt.delimFront[0] > cursor) {
         out.push({ kind: 'plain', from: base + cursor, to: base + fmt.delimFront[0], line: li, ruby: -1, edge: null });
       }
@@ -116,7 +115,7 @@ export const lineOf = (doc: string, offset: number): number => {
 };
 
 /** The ruby id whose span contains `offset` (inclusive of both edges so that,
- *  in ByCharacter mode, touching a ruby's boundary expands it and lets the
+ *  under the ByCharacter policy, touching a ruby's boundary expands it and lets the
  *  caret walk its now-visible syntax), or -1. */
 export const activeRuby = (leaves: Leaf[], offset: number): number => {
   let found = -1;
