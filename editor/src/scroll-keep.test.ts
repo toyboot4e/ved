@@ -61,9 +61,11 @@ describe('lineToScroll', () => {
 
 describe('revealDelta', () => {
   // viewport [100, 500]
-  it('is zero when the span is visible', () => {
+  it('is zero when the span is inside the cushioned viewport', () => {
     expect(revealDelta(200, 220, 100, 500)).toBe(0);
-    expect(revealDelta(100, 120, 100, 500, 8)).toBe(0); // flush at the edge still counts
+    expect(revealDelta(100, 120, 100, 500)).toBe(0); // flush at the edge, no cushion
+    // Within the cushion of an edge: nudged fully inside it.
+    expect(revealDelta(100, 120, 100, 500, 8)).toBe(-8);
   });
 
   it('reveals at the nearest edge with a cushion', () => {

@@ -43,14 +43,14 @@ export const scrollToLine = (mode: ScrollMode, geom: ScrollGeom, scrollTop: numb
 };
 
 /**
- * Minimal scroll delta that reveals the span [lo, hi] inside the viewport
- * [viewLo, viewHi]: zero when already (partly) visible, otherwise to the
- * nearest edge, landing `cushion` px inside it. Add the result to the
- * scroll offset.
+ * Minimal scroll delta that reveals the span [lo, hi] inside the CUSHIONED
+ * viewport [viewLo + cushion, viewHi - cushion]: zero when already inside,
+ * otherwise to the nearest cushioned edge. A span within `cushion` px of an
+ * edge is nudged fully inside it. Add the result to the scroll offset.
  */
 export const revealDelta = (lo: number, hi: number, viewLo: number, viewHi: number, cushion = 0): number => {
-  if (lo < viewLo) return lo - viewLo - cushion;
-  if (hi > viewHi) return hi - viewHi + cushion;
+  if (lo < viewLo + cushion) return lo - (viewLo + cushion);
+  if (hi > viewHi - cushion) return hi - (viewHi - cushion);
   return 0;
 };
 
