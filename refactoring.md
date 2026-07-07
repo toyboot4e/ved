@@ -144,10 +144,12 @@ mutable session object — **proposal**, not this pass.
   Appear union exactly; the APPEAR_CLASS bridge table is gone. The one
   numeric persister found (web's localStorage) now validates and falls
   back — a stale numeric entry resets that debug knob once.
-- **P17 proposal (perf)** — caretStops materializes EVERY doc offset per
-  caret move (no counter seam guards it; Vim motions multiply it).
-  Neighborhood-local reformulation with caret-model.cases.ts as oracle;
-  keep the whole-doc function as the spec.
+- **P17 done (perf)** — the movers (nextCaretOffset, isCaretStop,
+  legalStop, snapCaret) answer from the caret's leaf NEIGHBORHOOD via one
+  shared leafStopRange emission rule; caretStops stays as THE SPEC.
+  Pinned by a seeded equivalence PBT over every offset × policy ×
+  direction plus a __caretLeafVisits locality guard (<64 leaf visits for
+  a mid-document query on an 800-ruby doc).
 - **P18 done** — doc drift: architecture.md delimiter class names
   (openDelim… vs actual rubyDelim…); "mode" used for appear POLICY in two
   comments (CONTEXT.md bans it).

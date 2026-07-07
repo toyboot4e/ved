@@ -36,3 +36,89 @@ for (const group of [...new Set(cases.map((c) => c.group))]) {
     }
   });
 }
+
+// ---------------------------------------------------------------------------
+// Local-query ≡ whole-doc-spec equivalence. `caretStops` is THE SPEC; the
+// shipping movers answer from the caret's leaf neighborhood. Deterministic
+// pseudo-random docs (seeded LCG, like the e2e PBT) sweep every offset ×
+// policy × direction.
+// ---------------------------------------------------------------------------
+import { __caretLeafVisits, isCaretStop } from './caret-model';
+
+const POLICIES = ['rich', 'plain', 'paragraph', 'char'] as const;
+
+const lcg = (seed: number) => {
+  let s = seed >>> 0;
+  return () => {
+    s = (s * 1664525 + 1013904223) >>> 0;
+    return s / 2 ** 32;
+  };
+};
+
+/** A random ruby-ish document: plain runs, rubies (incl. adjacent and
+ *  paragraph-edge ones), empty readings/bases, newlines. */
+const genDoc = (seed: number): string => {
+  const rnd = lcg(seed);
+  const pick = <T>(xs: readonly T[]): T => xs[Math.floor(rnd() * xs.length)]!;
+  let out = '';
+  const pieces = 3 + Math.floor(rnd() * 10);
+  for (let i = 0; i < pieces; i++) {
+    const kind = rnd();
+    if (kind < 0.35) out += 'あいu字'.slice(0, 1 + Math.floor(rnd() * 4));
+    else if (kind < 0.85)
+      out += `${pick(['|', '｜'])}${'漢字体'.slice(0, Math.floor(rnd() * 3))}(${'かんじ'.slice(0, Math.floor(rnd() * 4))})`;
+    else out += '\n';
+  }
+  return out;
+};
+
+/** The ORIGINAL whole-list algorithm, as the oracle. */
+const specNext = (doc: string, offset: number, policy: (typeof POLICIES)[number], reverse: boolean): number => {
+  const stops = caretStops(doc, offset, policy);
+  if (stops.length === 0) return offset;
+  const idx = stops.indexOf(offset);
+  if (idx !== -1) {
+    const t = idx + (reverse ? -1 : 1);
+    if (t < 0 || t >= stops.length) return offset;
+    return stops[t]!;
+  }
+  if (reverse) {
+    for (let i = stops.length - 1; i >= 0; i--) if (stops[i]! < offset) return stops[i]!;
+  } else {
+    for (let i = 0; i < stops.length; i++) if (stops[i]! > offset) return stops[i]!;
+  }
+  return offset;
+};
+
+describe('local queries ≡ the caretStops spec', () => {
+  it('nextCaretOffset and isCaretStop match the spec on random docs', () => {
+    for (let seed = 1; seed <= 60; seed++) {
+      const doc = genDoc(seed);
+      for (const policy of POLICIES) {
+        for (let off = 0; off <= doc.length; off++) {
+          const stops = caretStops(doc, off, policy);
+          expect(isCaretStop(doc, off, policy), `member ${JSON.stringify(doc)} @${off} ${policy}`).toBe(
+            stops.includes(off),
+          );
+          for (const reverse of [false, true]) {
+            expect(
+              nextCaretOffset(doc, off, policy, reverse),
+              `next ${JSON.stringify(doc)} @${off} ${policy} rev=${reverse}`,
+            ).toBe(specNext(doc, off, policy, reverse));
+          }
+        }
+      }
+    }
+  });
+
+  it('a mid-document query touches a NEIGHBORHOOD of leaves, not the document', () => {
+    const doc = Array.from({ length: 400 }, () => '|漢(かん)字と|字(じ)').join('\n');
+    const mid = Math.floor(doc.length / 2);
+    nextCaretOffset(doc, mid, 'rich', false); // warm the leaves cache
+    __caretLeafVisits.count = 0;
+    nextCaretOffset(doc, mid, 'rich', false);
+    nextCaretOffset(doc, mid, 'rich', true);
+    expect(isCaretStop(doc, mid, 'rich')).toBeTypeOf('boolean');
+    expect(__caretLeafVisits.count).toBeLessThan(64);
+  });
+});
