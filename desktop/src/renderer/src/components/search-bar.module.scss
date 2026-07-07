@@ -6,6 +6,8 @@
   flex: none;
   display: flex;
   align-items: center;
+  // The bar spans the window; center its controls in that width.
+  justify-content: center;
   gap: 6px;
   padding: 4px 8px;
   background: var(--ved-chrome-bg);
