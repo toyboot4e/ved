@@ -377,53 +377,53 @@ let rubyCache: {
   atomBase: Map<number, Decoration>;
 } | null = null;
 
-/** Build the decoration set for the document under `policy` and caret `head`
- *  (a ProseMirror position, which fixes the active paragraph/ruby for
- *  ByParagraph / ByCharacter). `selFrom`/`selTo` are the selection range (PM
- *  positions); a ruby fully inside it gets its delimiters tinted as selected. */
-export const buildDecorations = (
-  doc: PMNode,
-  policy: Appear,
-  head: number,
-  selFrom: number = head,
-  selTo: number = head,
-  invisibles: Invisibles = NO_INVISIBLES,
-  search: SearchHighlights | null = null,
-  caretShape: CaretShape = 'bar',
-): DecorationSet => {
-  if (!parseCache || parseCache.doc !== doc) parseCache = parseDoc(doc);
-  const { text, leavesByLine, allRubies } = parseCache;
+/** The caret's resolved neighbourhood, computed once per build and shared by
+ *  the expanded-set resolution and the per-move delta. The caret's neighbours
+ *  all live on its own line (no leaf crosses a `\n`), so every per-move scan
+ *  reads ONE line's leaves — the whole-doc list scales with the ruby count and
+ *  stalled ruby-dense docs. */
+type CaretContext = {
+  readonly headOffset: number;
+  readonly activeLine: number;
+  /** The caret line's leaves. */
+  readonly lineLeaves: Leaf[];
+  /** The ruby at the caret (edge-inclusive, `activeRuby`); -1 = none. */
+  readonly active: number;
+};
 
+const caretContext = (parse: Parse, doc: PMNode, head: number): CaretContext => {
   const headOffset = posToOffset(doc, head);
-  const activeLine = lineOf(text, headOffset);
-  // The caret's neighbours all live on its own line (no leaf crosses a `\n`),
-  // so every per-move scan below reads ONE line's leaves — the whole-doc list
-  // scales with the ruby count and stalled ruby-dense docs.
-  const lineLeaves = leavesByLine[activeLine] ?? [];
-  const active = activeRuby(lineLeaves, headOffset);
-  // A ruby is "expanded" (markup shown) when its delimiter is NOT hidden under
-  // the policy — this switch MIRRORS `isHidden` (pm/leaves.ts) case for case,
-  // resolved per policy so the common policies are O(1)/O(line), not a scan of
-  // every delimiter in the document. Keep the two in sync.
-  const expanded = ((): Set<number> => {
-    switch (policy) {
-      case 'plain':
-        return allRubies; // every delimiter shown — the one shared instance
-      case 'rich':
-        return EMPTY_EXPANDED; // every delimiter hidden
-      case 'paragraph': {
-        const set = new Set<number>();
-        for (const l of lineLeaves) if (l.ruby >= 0) set.add(l.ruby);
-        return set;
-      }
-      case 'char':
-        return active >= 0 ? new Set([active]) : EMPTY_EXPANDED;
-    }
-  })();
+  const activeLine = lineOf(parse.text, headOffset);
+  const lineLeaves = parse.leavesByLine[activeLine] ?? [];
+  return { headOffset, activeLine, lineLeaves, active: activeRuby(lineLeaves, headOffset) };
+};
 
-  // The bold/italic/縦中横 + invisibles + search base set depends only on
-  // (doc, invisibles, search) — reuse it across every caret move and policy
-  // change.
+/** The rubies whose markup is shown under `policy`. A ruby is "expanded" when
+ *  its delimiter is NOT hidden under the policy — this switch MIRRORS
+ *  `isHidden` (pm/leaves.ts) case for case, resolved per policy so the common
+ *  policies are O(1)/O(line), not a scan of every delimiter in the document.
+ *  Keep the two in sync. */
+const expandedFor = (parse: Parse, policy: Appear, ctx: CaretContext): Set<number> => {
+  switch (policy) {
+    case 'plain':
+      return parse.allRubies; // every delimiter shown — the one shared instance
+    case 'rich':
+      return EMPTY_EXPANDED; // every delimiter hidden
+    case 'paragraph': {
+      const set = new Set<number>();
+      for (const l of ctx.lineLeaves) if (l.ruby >= 0) set.add(l.ruby);
+      return set;
+    }
+    case 'char':
+      return ctx.active >= 0 ? new Set([ctx.active]) : EMPTY_EXPANDED;
+  }
+};
+
+/** The base layer through `baseCache`: the bold/italic/縦中横 + invisibles +
+ *  search set depends only on (doc, invisibles, search) — reuse it across
+ *  every caret move and policy change. */
+const cachedBase = (parse: Parse, invisibles: Invisibles, search: SearchHighlights | null): DecorationSet => {
+  const doc = parse.doc;
   if (
     !baseCache ||
     baseCache.doc !== doc ||
@@ -436,34 +436,40 @@ export const buildDecorations = (
       newline: invisibles.newline,
       whitespace: invisibles.whitespace,
       search,
-      set: buildBase(parseCache, invisibles, search),
+      set: buildBase(parse, invisibles, search),
     };
     // Test seam: count O(document) base rebuilds. A caret move must reuse the
     // cache (no increment). caret-move-perf asserts this.
     const w = globalThis as unknown as { __vedBaseRebuilds?: number };
     w.__vedBaseRebuilds = (w.__vedBaseRebuilds ?? 0) + 1;
   }
+  return baseCache.set;
+};
 
-  // The current-line highlight is NOT a decoration: it tracks the caret's VISUAL
-  // line (one wrapped column/row), which a node decoration on the <p> can't
-  // express. editor/line-numbers.ts measures and draws it in the overlay.
-
-  // The static layer (base formats + caret-independent ruby decorations) —
-  // rebuilt only when the doc/policy/expanded-set actually changed.
+/** The static layer (base formats + caret-independent ruby decorations)
+ *  through `rubyCache` — rebuilt only when the doc/policy/expanded-set
+ *  actually changed. */
+const cachedStatic = (
+  parse: Parse,
+  policy: Appear,
+  expanded: Set<number>,
+  base: DecorationSet,
+): { readonly set: DecorationSet; readonly atomBase: Map<number, Decoration> } => {
+  const doc = parse.doc;
   if (
     !rubyCache ||
     rubyCache.doc !== doc ||
     rubyCache.policy !== policy ||
-    rubyCache.base !== baseCache.set ||
+    rubyCache.base !== base ||
     !setsEq(rubyCache.expanded, expanded)
   ) {
-    const { nodes, atomBase } = buildRubyStatic(parseCache, expanded);
+    const { nodes, atomBase } = buildRubyStatic(parse, expanded);
     rubyCache = {
       doc,
       policy,
       expanded,
-      base: baseCache.set,
-      set: baseCache.set.add(doc, nodes),
+      base,
+      set: base.add(doc, nodes),
       atomBase,
     };
     // Test seam: count O(rubies) static rebuilds. A caret move under a fixed
@@ -471,19 +477,81 @@ export const buildDecorations = (
     const w = globalThis as unknown as { __vedRubyRebuilds?: number };
     w.__vedRubyRebuilds = (w.__vedRubyRebuilds ?? 0) + 1;
   }
-  let set = rubyCache.set;
+  return rubyCache;
+};
 
-  // The per-caret DELTA — O(active ruby + selection), not O(rubies).
+/** Optional inputs of `buildDecorations` beyond the caret head. */
+export type DecorationOptions = {
+  /** The selection range (PM positions); a ruby fully inside it gets its
+   *  delimiters tinted as selected. Both default to `head` — a collapsed
+   *  caret. */
+  readonly selFrom?: number;
+  readonly selTo?: number;
+  readonly invisibles?: Invisibles;
+  readonly search?: SearchHighlights | null;
+  readonly caretShape?: CaretShape;
+};
+
+/** Build the decoration set for the document under `policy` and caret `head`
+ *  (a ProseMirror position, which fixes the active paragraph/ruby for
+ *  ByParagraph / ByCharacter). */
+export const buildDecorations = (
+  doc: PMNode,
+  policy: Appear,
+  head: number,
+  opts: DecorationOptions = {},
+): DecorationSet => {
+  const selFrom = opts.selFrom ?? head;
+  const selTo = opts.selTo ?? head;
+  const invisibles = opts.invisibles ?? NO_INVISIBLES;
+  const search = opts.search ?? null;
+  const caretShape = opts.caretShape ?? 'bar';
+
+  if (!parseCache || parseCache.doc !== doc) parseCache = parseDoc(doc);
+  const parse = parseCache;
+  const ctx = caretContext(parse, doc, head);
+  const expanded = expandedFor(parse, policy, ctx);
+  const base = cachedBase(parse, invisibles, search);
+
+  // The current-line highlight is NOT a decoration: it tracks the caret's VISUAL
+  // line (one wrapped column/row), which a node decoration on the <p> can't
+  // express. editor/line-numbers.ts measures and draws it in the overlay.
+
+  const { set: staticSet, atomBase } = cachedStatic(parse, policy, expanded, base);
+  const { add, remove } = caretDelta(parse, doc, policy, head, selFrom, selTo, caretShape, ctx, atomBase);
+  let set = staticSet;
+  if (remove.length) set = set.remove(remove);
+  return add.length ? set.add(doc, add) : set;
+};
+
+/** The per-caret-move DELTA — O(active ruby + selection), not O(rubies): the
+ *  `rubyActive` tint, the active atom-base unlock (returned in `remove` — the
+ *  cached read-only decorations to drop from the static set), and the
+ *  boundary/block caret. */
+const caretDelta = (
+  parse: Parse,
+  doc: PMNode,
+  policy: Appear,
+  head: number,
+  selFrom: number,
+  selTo: number,
+  caretShape: CaretShape,
+  ctx: CaretContext,
+  atomBase: ReadonlyMap<number, Decoration>,
+): { readonly add: Decoration[]; readonly remove: Decoration[] } => {
+  const { text, leavesByLine } = parse;
+  const { headOffset, activeLine, lineLeaves, active } = ctx;
   const delta: Decoration[] = [];
+  const remove: Decoration[] = [];
   // "Strictly inside" — the caret offset is between the markup edges, not on
   // them (the boundary offsets map OUTSIDE the node in pm/model.ts; the
   // highlight, the read-only-base toggle, and the insertion mapping share this
   // rule so they can't drift). At most ONE ruby can contain the offset strictly,
   // and `activeRuby` (edge-inclusive) finds it if it exists.
-  const sp = active >= 0 ? parseCache.span.get(active) : undefined;
+  const sp = active >= 0 ? parse.span.get(active) : undefined;
   const caretInside = !!sp && headOffset > sp[0] && headOffset < sp[1];
   if (caretInside) {
-    const r = parseCache.rubies[active];
+    const r = parse.rubies[active];
     if (r) {
       // The `rubyActive` tint marks the ruby the EDITING caret sits in. Suppress
       // it while a non-empty selection is active (`selFrom !== selTo`): there is
@@ -492,8 +560,8 @@ export const buildDecorations = (
       if (selFrom === selTo) delta.push(Decoration.node(r.pos, r.pos + r.size, { class: 'rubyActive' }));
       // An atom ruby's base un-locks while the caret is strictly inside it (the
       // IME then edits the base char-by-char) — drop its cached read-only deco.
-      const ab = rubyCache.atomBase.get(active);
-      if (ab) set = set.remove([ab]);
+      const ab = atomBase.get(active);
+      if (ab) remove.push(ab);
     }
   }
   // The unlock honors the selection's OTHER endpoint too: a drag/extend can
@@ -506,10 +574,10 @@ export const buildDecorations = (
     const anchor = head === selFrom ? selTo : selFrom;
     const aOff = posToOffset(doc, anchor);
     const aRuby = activeRuby(leavesByLine[lineOf(text, aOff)] ?? [], aOff);
-    const asp = aRuby >= 0 && aRuby !== active ? parseCache.span.get(aRuby) : undefined;
+    const asp = aRuby >= 0 && aRuby !== active ? parse.span.get(aRuby) : undefined;
     if (asp && aOff > asp[0] && aOff < asp[1]) {
-      const ab = rubyCache.atomBase.get(aRuby);
-      if (ab) set = set.remove([ab]);
+      const ab = atomBase.get(aRuby);
+      if (ab) remove.push(ab);
     }
   }
   // (Selected shown markup needs NO decoration: the selection overlay
@@ -580,5 +648,5 @@ export const buildDecorations = (
     }
   }
 
-  return delta.length ? set.add(doc, delta) : set;
+  return { add: delta, remove };
 };

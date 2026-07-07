@@ -237,16 +237,13 @@ export const VedEditor = (props: VedEditorProps): React.JSX.Element => {
     const decoPlugin = new Plugin({
       props: {
         decorations: (state) =>
-          buildDecorations(
-            state.doc,
-            policyClassRef.current,
-            state.selection.head,
-            state.selection.from,
-            state.selection.to,
-            invisiblesRef.current,
-            searchRef.current,
-            caretShapeRef.current,
-          ),
+          buildDecorations(state.doc, policyClassRef.current, state.selection.head, {
+            selFrom: state.selection.from,
+            selTo: state.selection.to,
+            invisibles: invisiblesRef.current,
+            search: searchRef.current,
+            caretShape: caretShapeRef.current,
+          }),
       },
     });
 
