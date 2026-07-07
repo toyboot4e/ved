@@ -76,8 +76,9 @@ mutable session object — **proposal**, not this pass.
   undo-cursor-restore.ts now pins the switch-back behavior end to end.
 - **E11 done** — "Caret movement" banner covers plain-edit functions;
   resolved by the split.
-- **E12 proposal** — pm/page-gap.ts pageBoundaryEnds is production-dead
-  (test oracle only); move into the test or mark @internal.
+- **E12 done** — pm/page-gap.ts pageBoundaryEnds was production-dead (the
+  suffix≡full test oracle only); moved into page-gap.test.ts as a local
+  helper next to the tests that compare against it.
 - **E13 done** — `|| 18` / `|| 28` pitch fallbacks ~15 sites across
   editor.tsx + line-numbers.ts; shared readPitch/readCell helpers. Keep
   the per-hit-test weights (×3, ×10) as named consts, unmerged.
@@ -130,13 +131,15 @@ mutable session object — **proposal**, not this pass.
 - **P13 done** — rubyCache mirrors baseCache's key fields; key on the base
   SET IDENTITY instead (drift-proof). Perf-seam adjacent: run
   caret-move-perf/click-perf.
-- **P14 proposal** — buildDecorations 8 positional params → options object;
-  split its ~200 lines into expandedFor/staticLayer/caretDelta. Readability
-  only.
-- **P15 proposal** — line-numbers.ts measure() mixes geometry, number
-  placement, and page marks (~65 lines of folio math); extract
-  placeNumbers/placePageMarks, making the pure helpers exportable/testable.
-  Most e2e-pinned file in the audit — own change, full smoke.
+- **P14 done** — buildDecorations 8 positional params → head + a
+  DecorationOptions tail; body split into caretContext/expandedFor/
+  cachedBase/cachedStatic/caretDelta. The module-level caches and the
+  __vedBaseRebuilds/__vedRubyRebuilds seams stayed at their rebuild sites.
+- **P15 done** — line-numbers.ts measure() mixed geometry, number placement,
+  and page marks (~65 lines of folio math); placeNumbers/placePageMarks are
+  module-level functions over measured inputs (BandGrid/PageMarkMetrics),
+  measure() is orchestration, and every getComputedStyle read now precedes
+  the first placement write. Full test-all + smoke green.
 - **P16 proposal** — AppearPolicy numeric enum vs Appear string union;
   string-valued enum kills the bridge table. Check nothing persists
   numerics (future config.json prefers strings anyway).
@@ -164,8 +167,12 @@ mutable session object — **proposal**, not this pass.
 - **V7 done** — to-lineEnd action triplication + visual-toggle collapse
   duplication; small data-driven folds.
 - **V8 done** — hoist per-keydown `page` literal + REVERSE to module
-  consts. Full "Ctrl chords as named actions" table: **proposal**
-  (capability change — makes scroll.* bindable from user keymaps).
+  consts. Full form also done: the Ctrl chords (Ctrl+R redo, Ctrl+A/X
+  increment, Ctrl+F/B/D/U scrolls — the old PAGE_SCROLLS) are named actions
+  in NORMAL_ACTIONS, bound in NORMAL_BINDINGS under keyToken chord tokens
+  ('C-r') and dispatched through the same lookup path — so user keymaps can
+  now bind history.redo/increment.*/scroll.* as {action} RHS (the audited
+  capability change).
 - **V9 done** — play/playMapped test harnesses near-identical (~50 LOC);
   merge.
 - **V10 done** — model.ts split: extract pure text geometry
@@ -177,14 +184,21 @@ mutable session object — **proposal**, not this pass.
   call.
 - **V12 proposal** — x/X/s re-implement d/c over h/l motions; folding them
   into applyOperator needs an empty-range guard — behavior-sensitive.
-- **V13 proposal** — VimKey.shift is written but never read; drop or keep
-  as <S-…> headroom.
+- **V13 done** — VimKey.shift was written but never read (keyToken excludes
+  it); the field and its writers are removed — the adapter drops
+  event.shiftKey, and the keyToken test asserts the same shifted/unshifted
+  collision without the field. `<S-…>` headroom, if ever wanted, re-adds the
+  field alongside a keyToken/parseKeys change anyway.
 - **V14 done** — vim-keymap-plan.md drift: fed-key budget says ~256, code
   says 4096.
-- **V15 proposal** — ~17 of 20 index.ts exports have no consumer
-  (documented as phase-4 API-in-waiting); trim the ones with no named
-  plan (isFullwidth, joinNeedsSpace, FIND_CHORDS, BRACKET_PAIRS,
-  CLASS_WORDS, parseKeys).
+- **V15 done** — retracted the six index.ts exports with no consumer and no
+  named plan (isFullwidth, joinNeedsSpace, FIND_CHORDS, BRACKET_PAIRS,
+  CLASS_WORDS, parseKeys — verified unconsumed outside vim/); the config.ts
+  tuning tables are internal now. Kept the documented phase-4/config seam:
+  compileKeymap + VimKeymap*/VimMapMode, the custom-action surface
+  (VimCustomAction/VimActionEnv/VimEffect/VimDocView/WordModel), VimKey
+  (rides the feedKeys effect), VimMode, VimExtensionOptions,
+  createJapaneseWordModel.
 
 ## desktop/renderer + preload
 

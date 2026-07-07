@@ -3,26 +3,26 @@
 // compiler and the reducer can share VimKey without a cycle.
 
 /** The keydown fields the reducer reads (structural; the adapter maps a
- *  ChordEvent onto it). */
+ *  ChordEvent onto it). Shift is deliberately ABSENT: a printable character
+ *  carries its own case (`H`), and `<S-…>` specials are unsupported (v1) —
+ *  the adapter drops `event.shiftKey`, so a shifted and unshifted arrival of
+ *  the same character are the same key on purpose. */
 export type VimKey = {
   readonly key: string;
   readonly ctrl: boolean;
   readonly meta: boolean;
   readonly alt: boolean;
-  readonly shift: boolean;
 };
 
-export const plainKey = (key: string): VimKey => ({ key, ctrl: false, meta: false, alt: false, shift: false });
+export const plainKey = (key: string): VimKey => ({ key, ctrl: false, meta: false, alt: false });
 
 /** A plain printable character key: one character, no ctrl/meta/alt (shift is
  *  fine — a printable carries its own case). What insert mode types, what a
  *  search pattern accepts, and what an insert-map LHS may contain. */
 export const isPlainKey = (k: VimKey): boolean => k.key.length === 1 && !k.ctrl && !k.meta && !k.alt;
 
-/** The trie token for a key. Shift is NOT part of the token — a printable
- *  character carries its own case (`H`), and `<S-…>` specials are unsupported
- *  (v1) — so a shifted and unshifted arrival of the same character collide on
- *  purpose. */
+/** The trie token for a key. Shift never appears (VimKey has no shift — see
+ *  the type above). */
 export const keyToken = (k: VimKey): string => `${k.ctrl ? 'C-' : ''}${k.alt ? 'A-' : ''}${k.meta ? 'M-' : ''}${k.key}`;
 
 /** `<…>` special names → the DOM `key` value the reducer sees. Names are
@@ -78,7 +78,7 @@ export const parseKeys = (notation: string, leader = '\\'): readonly VimKey[] =>
     const named = SPECIAL_KEYS[rest.toLowerCase()];
     const key = named ?? (rest.length === 1 ? rest : null);
     if (key === null) throw new Error(`vim keymap: unknown key <${inner}> in "${notation}"`);
-    keys.push({ key, ctrl, alt, meta, shift: false });
+    keys.push({ key, ctrl, alt, meta });
   }
   return keys;
 };

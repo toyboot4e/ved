@@ -30,7 +30,6 @@ const key = (k: string, over: Partial<VimKey> = {}): VimKey => ({
   ctrl: false,
   meta: false,
   alt: false,
-  shift: false,
   ...over,
 });
 

@@ -233,12 +233,13 @@ export const createVimExtension = (options: VimExtensionOptions = {}): EditorExt
           feedBudget = FEED_BUDGET;
           const step = vimKeydown(
             state,
+            // event.shiftKey is dropped on purpose: VimKey carries no shift —
+            // a printable character carries its own case (keys.ts).
             {
               key: event.key,
               ctrl: event.ctrlKey,
               meta: event.metaKey,
               alt: event.altKey,
-              shift: event.shiftKey,
             },
             docView(),
             keyOpts,
