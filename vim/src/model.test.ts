@@ -791,6 +791,25 @@ describe('{action} RHS (named primitives as mapping targets)', () => {
     expect(VIM_ACTIONS_BY_MODE.visual.has('visual.pasteOver')).toBe(true);
     expect(VIM_ACTIONS_BY_MODE.operatorPending.size).toBe(0);
   });
+
+  it('the Ctrl-chord commands are named actions (bindable as {action} RHS)', () => {
+    for (const id of [
+      'history.redo',
+      'increment.add',
+      'increment.sub',
+      'scroll.pageDown',
+      'scroll.pageUp',
+      'scroll.halfDown',
+      'scroll.halfUp',
+    ]) {
+      expect(VIM_ACTIONS_BY_MODE.normal.has(id)).toBe(true);
+    }
+  });
+
+  it('a normal-mode {action} binding can invoke a scroll primitive', () => {
+    const r = playMapped({ normal: { '<Leader>d': { action: 'scroll.halfDown' } } }, 'abc', 0, ['\\', 'd']);
+    expect(r.effects).toEqual([{ kind: 'scrollPage', dir: 1, half: true }]);
+  });
 });
 
 describe('builtin sequence layer (K2 — gg / text objects via the trie)', () => {

@@ -83,7 +83,7 @@ import {
   walkKeymap,
   walkTrie,
 } from './keymap';
-import { isPlainKey, type VimKey } from './keys';
+import { isPlainKey, keyToken, type VimKey } from './keys';
 // Pure text geometry (lines, words, brackets, text objects, search) lives in
 // text.ts — everything (text, offset) → offset/range with no VimState.
 import {
@@ -790,14 +790,6 @@ const builtinLayerKey = (state: VimState, key: VimKey, doc: VimDocView): Mapping
   return { kind: 'step', step: swallow({ ...clearPending(state), mapPending: null }) };
 };
 
-/** Ctrl+f/b/d/u in normal mode: full/half page scrolls. */
-const PAGE_SCROLLS: Readonly<Record<string, { readonly dir: 1 | -1; readonly half: boolean }>> = {
-  f: { dir: 1, half: false },
-  b: { dir: -1, half: false },
-  d: { dir: 1, half: true },
-  u: { dir: -1, half: true },
-};
-
 const dispatch = (state: VimState, key: VimKey, doc: VimDocView): VimStep => {
   // The search command line owns every key while open (before mode/meta gates
   // — a `/`-pattern may contain any character).
@@ -815,19 +807,17 @@ const dispatch = (state: VimState, key: VimKey, doc: VimDocView): VimStep => {
       const target = FIND_CHORDS[key.key];
       return target ? resolveCharKey(state, target, doc) : unhandled(clearPending(state));
     }
-    if (key.key === 'r') {
-      return { state: clearPending(state), effects: [{ kind: 'command', id: 'history.redo' }], handled: true };
-    }
-    // Ctrl+A / Ctrl+X: increment / decrement the number at the caret.
-    if (key.key === 'a' || key.key === 'x') {
-      return incrementNumber(clearPending(state), doc, (key.key === 'a' ? 1 : -1) * (state.count ?? 1));
-    }
-    // Page scrolling — CONSUMED here so Vim outranks the app bindings on the
-    // same chords (Ctrl+F search, Ctrl+B sidebar) while normal mode is on;
-    // insert mode returned above, so the app keeps them there.
-    const scroll = PAGE_SCROLLS[key.key];
-    if (scroll) {
-      return { state: clearPending(state), effects: [{ kind: 'scrollPage', ...scroll }], handled: true };
+    // Ctrl chords resolve through the SAME bindings→actions tables as plain
+    // keys, keyed by their chord token (keys.ts keyToken: `C-r`) — so redo,
+    // increment, and the page scrolls are named actions, remappable and
+    // bindable as `{action}` RHS like everything else. CONSUMED here so Vim
+    // outranks the app bindings on the same chords (Ctrl+F search, Ctrl+B
+    // sidebar) while normal mode is on; insert mode returned above, so the
+    // app keeps them there.
+    const id = NORMAL_BINDINGS[keyToken(key)];
+    if (id) {
+      const env: VimActionEnv = { count: state.count ?? 1, hasCount: state.count !== null };
+      return NORMAL_ACTIONS[id](clearPending(state), env, doc);
     }
     return unhandled(clearPending(state));
   }
@@ -1053,6 +1043,11 @@ const toLineEnd =
   (state, _env, doc) =>
     applyOperator(state, op, { from: doc.head, to: lineEnd(doc.text, doc.head), linewise: false }, doc);
 
+/** A full/half page scroll (the editor executes `scrollPage`). */
+const pageScroll =
+  (dir: 1 | -1, half: boolean): VimAction =>
+  (state) => ({ state, effects: [{ kind: 'scrollPage', dir, half }], handled: true });
+
 /** Visual-mode commands (operators over the selection, kind switches,
  *  end-swap, paste-over). Motions are NOT here — they fall through to the
  *  normal tables and extend from the visual anchor. */
@@ -1207,6 +1202,19 @@ const NORMAL_ACTIONS = {
     effects: [{ kind: 'command' as const, id: 'history.undo' }],
     handled: true,
   }),
+  'history.redo': (state) => ({
+    state,
+    effects: [{ kind: 'command' as const, id: 'history.redo' }],
+    handled: true,
+  }),
+  // Ctrl+A / Ctrl+X: add/subtract `count` on the number at the caret.
+  'increment.add': (state, env, doc) => incrementNumber(state, doc, env.count),
+  'increment.sub': (state, env, doc) => incrementNumber(state, doc, -env.count),
+  // Ctrl+f/b/d/u: full/half page scrolls.
+  'scroll.pageDown': pageScroll(1, false),
+  'scroll.pageUp': pageScroll(-1, false),
+  'scroll.halfDown': pageScroll(1, true),
+  'scroll.halfUp': pageScroll(-1, true),
   // Dot-repeat: replay the last change (the adapter steps the doc). `N.`
   // replays N times.
   'repeat.dot': (state, env) =>
@@ -1283,6 +1291,16 @@ const NORMAL_BINDINGS: Readonly<Record<string, keyof typeof NORMAL_ACTIONS>> = {
   '#': 'search.wordBackward',
   q: 'macro.record',
   '@': 'macro.play',
+  // Ctrl chords, keyed by their chord token (keys.ts keyToken) — the ctrl
+  // branch of `dispatch` looks these up, so a chord binding lives in the same
+  // table as the plain keys and its action validates like any other.
+  'C-r': 'history.redo',
+  'C-a': 'increment.add',
+  'C-x': 'increment.sub',
+  'C-f': 'scroll.pageDown',
+  'C-b': 'scroll.pageUp',
+  'C-d': 'scroll.halfDown',
+  'C-u': 'scroll.halfUp',
 };
 
 /** The action ids a user `{action}` RHS may reference, per map mode (handed
