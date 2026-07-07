@@ -68,10 +68,12 @@ mutable session object — **proposal**, not this pass.
 - **E9 rejected** — the audit called the display:none rationale stale, but
   bold/italic markers ARE still display:none editable DOM text (.syn in
   ruby.css); only the RUBY markup left the DOM. Comments stand.
-- **E10 done (bug)** — beforeOffsetRef wasn't seeded from initialCursor;
-  the first edit after a tab switch-back recorded cursorBefore=0 so undo
-  jumped the caret to the doc start. Seeded at the restore point; a
-  dedicated switch-back case in undo-cursor-restore.ts is still owed.
+- **E10 done (defensive)** — beforeOffsetRef wasn't seeded from
+  initialCursor (the snapshot restore bypasses dispatchTransaction). In
+  practice the focus-time PM selection sync re-anchors it before a real
+  keystroke can land — the guard passes with the seed reverted — so the
+  seed is correct-by-construction hardening, not a user-reachable bug fix.
+  undo-cursor-restore.ts now pins the switch-back behavior end to end.
 - **E11 done** — "Caret movement" banner covers plain-edit functions;
   resolved by the split.
 - **E12 proposal** — pm/page-gap.ts pageBoundaryEnds is production-dead

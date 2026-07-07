@@ -10,10 +10,19 @@
 // and undo restores that. Unit-covered in editor/src/history.test.ts; this guards
 // the end-to-end caret tracking.
 import assert from 'node:assert/strict';
-import { clickWritingMode, fail, finish, launchVed, step } from './harness.ts';
+import { writeFile } from 'node:fs/promises';
+import { join } from 'node:path';
+import { clickWritingMode, fail, finish, launchVed, pressMod, step } from './harness.ts';
 
-const ved = await launchVed({ env: () => ({ VED_SMOKE_CLOSE_RESPONSE: 'discard', VED_SMOKE_HIDDEN: '' }) });
-const { page } = ved;
+const ved = await launchVed({
+  env: (tmp) => ({
+    VED_SMOKE_CLOSE_RESPONSE: 'discard',
+    VED_SMOKE_HIDDEN: '',
+    VED_SMOKE_OPEN_PATH: join(tmp, 'other.txt'),
+  }),
+});
+const { page, tmp } = ved;
+await writeFile(join(tmp, 'other.txt'), 'OTHER', 'utf-8');
 const caret = () => page.evaluate(() => (window as unknown as { __vedCaret(): number }).__vedCaret());
 const text = () => page.evaluate(() => (window as unknown as { __vedText(): string }).__vedText());
 const set = (o: number) =>
@@ -64,6 +73,40 @@ try {
     fail(`undo landed the caret at ${restored}, expected the delete site (~82)`);
   } else {
     step(`undo returns the caret to the delete site (${restored}), not the paragraph end`);
+  }
+
+  // --- The FIRST edit after a tab switch-back must anchor undo at the
+  // RESTORED caret. The remount applies the snapshot selection via
+  // state.apply (bypassing dispatchTransaction), so the undo anchor must be
+  // seeded explicitly — unseeded, the first edit records cursorBefore = 0
+  // and its undo teleports the caret to the document start.
+  await set(50);
+  await page.waitForTimeout(80);
+  await pressMod(page, 'o'); // open a second buffer (stubbed dialog)
+  await page.waitForFunction(() => document.querySelectorAll('[role=tab]').length === 2);
+  await page.click('[role=tab]:has-text("無題")'); // switch back; the editor remounts + refocuses
+  await page.waitForTimeout(300);
+  assert.equal(await caret(), 50, 'precondition: switch-back restored the mid-doc caret');
+  const lenBefore = (await text()).length;
+
+  await page.keyboard.insertText('X'); // the FIRST edit after the remount
+  await page.waitForTimeout(150);
+  await page.keyboard.down('Control');
+  await page.keyboard.press('z');
+  await page.keyboard.up('Control');
+  await page.waitForTimeout(200);
+
+  const restored2 = await caret();
+  const len2 = (await text()).length;
+  console.log(`switch-back undo: caret ${restored2} (want ~50, NOT 0); len ${len2} (want ${lenBefore})`);
+  if (len2 !== lenBefore) {
+    fail(`switch-back undo did not restore the text (len ${len2}, expected ${lenBefore})`);
+  } else if (restored2 <= 2) {
+    fail(`switch-back undo teleported the caret to the document start (${restored2}), expected ~50`);
+  } else if (Math.abs(restored2 - 50) > 2) {
+    fail(`switch-back undo landed the caret at ${restored2}, expected ~50`);
+  } else {
+    step(`first-edit-after-switch-back undo returns the caret to the restored spot (${restored2})`);
   }
 } catch (e) {
   fail(e instanceof Error ? e.message : String(e));
