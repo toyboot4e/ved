@@ -140,9 +140,10 @@ mutable session object — **proposal**, not this pass.
   module-level functions over measured inputs (BandGrid/PageMarkMetrics),
   measure() is orchestration, and every getComputedStyle read now precedes
   the first placement write. Full test-all + smoke green.
-- **P16 proposal** — AppearPolicy numeric enum vs Appear string union;
-  string-valued enum kills the bridge table. Check nothing persists
-  numerics (future config.json prefers strings anyway).
+- **P16 done** — AppearPolicy is a string-valued const object matching the
+  Appear union exactly; the APPEAR_CLASS bridge table is gone. The one
+  numeric persister found (web's localStorage) now validates and falls
+  back — a stale numeric entry resets that debug knob once.
 - **P17 proposal (perf)** — caretStops materializes EVERY doc offset per
   caret move (no counter seam guards it; Vim motions multiply it).
   Neighborhood-local reformulation with caret-model.cases.ts as oracle;

@@ -7,7 +7,7 @@ import type React from 'react';
 import { useEffect, useRef } from 'react';
 import { HORIZ_ARROWS, moveCaretByLine, moveChar, VERT_ARROWS } from './caret-motion';
 import {
-  AppearPolicy,
+  type AppearPolicy,
   type Chord,
   CORE_COMMANDS,
   chordOf,
@@ -61,13 +61,6 @@ import './pm/ruby.css';
 const IS_MAC = typeof navigator !== 'undefined' && /mac/i.test(navigator.platform || navigator.userAgent);
 
 export { WritingMode } from './writing-mode';
-
-const APPEAR_CLASS: Record<AppearPolicy, Appear> = {
-  [AppearPolicy.Plain]: 'plain',
-  [AppearPolicy.ByParagraph]: 'paragraph',
-  [AppearPolicy.ByCharacter]: 'char',
-  [AppearPolicy.Rich]: 'rich',
-};
 
 /** A buffer's editor state captured on unmount, to restore on switch-back. */
 export type EditorSnapshot = {
@@ -173,7 +166,7 @@ export const VedEditor = (props: VedEditorProps): React.JSX.Element => {
   const viewRef = useRef<EditorView | null>(null);
   const live = useRef(props);
   live.current = props;
-  const policyClassRef = useRef<Appear>(APPEAR_CLASS[appearPolicy]);
+  const policyClassRef = useRef<Appear>(appearPolicy);
   // Which invisibles to render (newline / whitespace). A ref like policyClassRef
   // so the decoration plugin reads the live value; the effect below re-decorates
   // on a toggle. Frozen defaults are one shared object (a stable identity when
@@ -946,7 +939,7 @@ export const VedEditor = (props: VedEditorProps): React.JSX.Element => {
   // went off-screen — e.g. a mode switch that moved its line out of view).
   const prevRevealRef = useRef({ policy: appearPolicy, mode: writingMode });
   useEffect(() => {
-    policyClassRef.current = APPEAR_CLASS[appearPolicy];
+    policyClassRef.current = appearPolicy;
     const view = viewRef.current;
     if (!view) return;
     // Keep PM's own `ProseMirror-*` classes (base styles + ved's `.ProseMirror`

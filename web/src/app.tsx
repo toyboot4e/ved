@@ -51,7 +51,11 @@ const loadPersisted = (): Persisted => {
     return {
       text: typeof parsed.text === 'string' ? parsed.text : fallback.text,
       writingMode: parsed.writingMode ?? fallback.writingMode,
-      appearPolicy: parsed.appearPolicy ?? fallback.appearPolicy,
+      // Validated: AppearPolicy became string-valued; a stale numeric from an
+      // older localStorage entry falls back (a one-time reset of a debug knob).
+      appearPolicy: (Object.values(AppearPolicy) as unknown[]).includes(parsed.appearPolicy)
+        ? (parsed.appearPolicy as AppearPolicy)
+        : fallback.appearPolicy,
       viewConfig: viewConfigFromPersisted(parsed.viewConfig),
     };
   } catch {
@@ -92,7 +96,7 @@ export const App = (): React.JSX.Element => {
         </label>
         <label>
           Appear policy
-          <select value={appearPolicy} onChange={(e) => setAppearPolicy(Number(e.target.value) as AppearPolicy)}>
+          <select value={appearPolicy} onChange={(e) => setAppearPolicy(e.target.value as AppearPolicy)}>
             {APPEAR_POLICIES.map(([policy, label]) => (
               <option key={policy} value={policy}>
                 {label}

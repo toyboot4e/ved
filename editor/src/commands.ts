@@ -11,12 +11,16 @@
 // This module is a deliberate LEAF (no imports): commands close over nothing;
 // the editor supplies the context at dispatch time.
 
-export enum AppearPolicy {
-  Plain,
-  ByParagraph,
-  ByCharacter,
-  Rich,
-}
+// String-valued (matching pm/leaves' Appear union exactly, checked where the
+// editor assigns one to the other) so shells can persist/serialize a policy
+// directly — a phase-4 config.json stores 'rich', never a brittle ordinal.
+export const AppearPolicy = {
+  Plain: 'plain',
+  ByParagraph: 'paragraph',
+  ByCharacter: 'char',
+  Rich: 'rich',
+} as const;
+export type AppearPolicy = (typeof AppearPolicy)[keyof typeof AppearPolicy];
 
 /** A user-invokable editor command id. An OPEN vocabulary: the core ids are
  *  `CoreCommandId`; extensions register their own under their namespace
