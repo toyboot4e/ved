@@ -3,23 +3,10 @@ dist
 out
 .DS_Store
 
-# generated spike bundles (regenerate with esbuild; see the spike's header)
-docs/spikes/*.bundle.js
-docs/spikes/*.bundle.css
-.eslintcache
 *.log*
 
 .direnv
-.envrc
-
-*storybook.log
-/.storybook
-storybook-static
 
 # nix build output symlink
 /result
 /result-*
-
-# local scratch (repro material, screenshots)
-/a.png
-/repro.txt
