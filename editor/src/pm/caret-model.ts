@@ -13,7 +13,7 @@
 //
 // Line movement stays visual (the browser, over the editor's contentDOM);
 // only character movement is here, and it is a pure function of the document.
-import { type Appear, activeRuby, docLeaves, isHidden, type Leaf, lineOf } from './leaves';
+import { type Appear, activeRuby, docLeaves, isHidden, type Leaf, lineOf, snapToGlyph } from './leaves';
 
 /** Is this ruby COLLAPSED (its markup `|`,`(`,`)` hidden) under the policy? Mirrors
  *  `isHidden`'s decision for the ruby's delimiters, but answers it for the BASE. */
@@ -91,4 +91,15 @@ export const nextCaretOffset = (doc: string, offset: number, policy: Appear, rev
     for (let i = 0; i < stops.length; i++) if (stops[i]! > offset) return stops[i]!;
   }
   return offset;
+};
+
+/** Clamp `offset` to the text and keep any LEGAL caret stop as-is — a ruby's
+ *  outer boundary is one, and snapToGlyph alone would drag it into the base.
+ *  Only an offset with NO caret home (inside hidden markup / a read-only
+ *  reading) snaps onto the ruby's last base glyph (the line-move commit's
+ *  rule). */
+export const legalStop = (text: string, offset: number, policy: Appear): number => {
+  const c = Math.max(0, Math.min(offset, text.length));
+  if (caretStops(text, c, policy).includes(c)) return c;
+  return snapToGlyph(docLeaves(text), c);
 };

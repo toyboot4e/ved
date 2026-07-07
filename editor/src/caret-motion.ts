@@ -4,7 +4,7 @@
 // layouts (architecture.md "Caret movement").
 import { TextSelection } from 'prosemirror-state';
 import type { EditorView } from 'prosemirror-view';
-import { caretStops, nextCaretOffset } from './pm/caret-model';
+import { legalStop, nextCaretOffset } from './pm/caret-model';
 import type { Appear } from './pm/leaves';
 import { docLeaves, snapToGlyph } from './pm/leaves';
 import { offsetToPos, posToOffset, serialize } from './pm/model';
@@ -68,10 +68,7 @@ export const moveByLogicalLine = (view: EditorView, policy: Appear, reverse: boo
     targetOff = nextStart + Math.min(col, nextLen);
   }
   // The target column may land on ruby markup (not a caret stop) — snap it.
-  const legal = caretStops(text, targetOff, policy).includes(targetOff)
-    ? targetOff
-    : snapToGlyph(docLeaves(text), targetOff);
-  const pos = offsetToPos(doc, legal);
+  const pos = offsetToPos(doc, legalStop(text, targetOff, policy));
   const sel = extend ? TextSelection.create(doc, selection.anchor, pos) : TextSelection.create(doc, pos);
   view.dispatch(view.state.tr.setSelection(sel).scrollIntoView());
 };

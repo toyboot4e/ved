@@ -2,9 +2,9 @@
 // Installed on window at mount — e2e drivers read the caret through THESE,
 // never the raw DOM selection (the newline widget makes focusOffset an
 // element-level child index at a paragraph end).
-import { TextSelection } from 'prosemirror-state';
 import type { EditorView } from 'prosemirror-view';
-import { offsetToPos, posToOffset, serialize } from './pm/model';
+import { setPlainSelection } from './extension-context';
+import { posToOffset, serialize } from './pm/model';
 import { caretCoords } from './scroll-reveal';
 
 /** Install the window seams:
@@ -38,28 +38,8 @@ export const installTestSeams = (view: EditorView, goalInlineRef: { current: num
     }
   };
   w.__vedText = () => serialize(view.state.doc);
-  w.__vedSetCaret = (off: number) => {
-    const clamped = Math.max(0, Math.min(off, serialize(view.state.doc).length));
-    // Placing the caret ends any line-move run, exactly as a click or a
-    // char-axis move does — otherwise a stale goal-inline depth would steer
-    // the next line move (a test-only artifact of the programmatic seam).
-    goalInlineRef.current = null;
-    view.dispatch(
-      view.state.tr.setSelection(TextSelection.create(view.state.doc, offsetToPos(view.state.doc, clamped))),
-    );
-  };
-  w.__vedSetSelection = (anchor: number, head: number) => {
-    const len = serialize(view.state.doc).length;
-    const clamp = (o: number) => Math.max(0, Math.min(o, len));
-    goalInlineRef.current = null;
-    view.dispatch(
-      view.state.tr.setSelection(
-        TextSelection.create(
-          view.state.doc,
-          offsetToPos(view.state.doc, clamp(anchor)),
-          offsetToPos(view.state.doc, clamp(head)),
-        ),
-      ),
-    );
-  };
+  // Both setters route through setPlainSelection: clamped offsets, and the
+  // line-move run ends exactly as a click or a char-axis move ends it.
+  w.__vedSetCaret = (off: number) => setPlainSelection(view, goalInlineRef, off, off);
+  w.__vedSetSelection = (anchor: number, head: number) => setPlainSelection(view, goalInlineRef, anchor, head);
 };
