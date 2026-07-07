@@ -22,6 +22,10 @@ export type VedApp = {
 export type LaunchOptions = {
   /** Extra env (e.g. dialog stubs); receives the temp dir for fixture paths. */
   readonly env?: (tmp: string) => Record<string, string>;
+  /** Extra CLI arguments after the app entry — equals-form flags
+   *  (`--config-dir=…`); a positional would be opened as a file. Receives
+   *  the temp dir for fixture paths. */
+  readonly args?: (tmp: string) => readonly string[];
 };
 
 /** A VISIBLE window normally appears on the user's desktop. When Xvfb is
@@ -60,7 +64,7 @@ const xvfbDisplay = (): Promise<string | null> => {
   return xvfb;
 };
 
-export const launchVed = async ({ env }: LaunchOptions = {}): Promise<VedApp> => {
+export const launchVed = async ({ env, args }: LaunchOptions = {}): Promise<VedApp> => {
   const root = new URL('../../', import.meta.url).pathname;
   const tmp = await mkdtemp(join(tmpdir(), 'ved-e2e-'));
   const merged: Record<string, string> = {
@@ -89,7 +93,7 @@ export const launchVed = async ({ env }: LaunchOptions = {}): Promise<VedApp> =>
   }
   const app = await _electron.launch({
     executablePath: electronPath as unknown as string,
-    args: [`${root}out/main/index.js`],
+    args: [`${root}out/main/index.js`, ...(args?.(tmp) ?? [])],
     env: merged,
   });
   const page = await app.firstWindow();
