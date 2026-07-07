@@ -18,6 +18,7 @@ import type { ResolvedPos } from 'prosemirror-model';
 import type { EditorState, Transaction } from 'prosemirror-state';
 import { Plugin, PluginKey } from 'prosemirror-state';
 import { Decoration, DecorationSet } from 'prosemirror-view';
+import { makeLineGrouper } from './line-grouping';
 
 export const pageGapKey = new PluginKey<DecorationSet>('vedPageGap');
 
@@ -105,18 +106,14 @@ export type LineItem = { readonly endOff: number; readonly b: number };
 export const visualLineEnds = (items: readonly LineItem[], linePitch: number): number[] => {
   if (items.length === 0) return [];
   const ends: number[] = [];
-  let lineB = items[0]!.b;
-  let lastEnd = items[0]!.endOff;
+  // The shared grouping rule (pm/line-grouping.ts); backwardTol = one pitch.
+  const grouper = makeLineGrouper(true, linePitch / 2, linePitch);
+  let lastEnd: number | null = null;
   for (const it of items) {
-    if (lineB - it.b > linePitch / 2 || it.b - lineB > linePitch) {
-      ends.push(lastEnd);
-      lineB = it.b;
-    } else {
-      lineB = Math.min(lineB, it.b); // track the line's most-forward coordinate
-    }
+    if (grouper.step(it.b) && lastEnd !== null) ends.push(lastEnd);
     lastEnd = it.endOff;
   }
-  ends.push(lastEnd);
+  if (lastEnd !== null) ends.push(lastEnd);
   return ends;
 };
 

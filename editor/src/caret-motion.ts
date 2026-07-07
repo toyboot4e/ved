@@ -7,6 +7,7 @@ import type { EditorView } from 'prosemirror-view';
 import { legalStop, nextCaretOffset } from './pm/caret-model';
 import type { Appear } from './pm/leaves';
 import { docLeaves, snapToGlyph } from './pm/leaves';
+import { makeLineGrouper, readCell, readingFlowRects, readPitch } from './pm/line-grouping';
 import { offsetToPos, posToOffset, serialize } from './pm/model';
 import { revealDelta } from './scroll-keep';
 import { caretCoords } from './scroll-reveal';
@@ -84,25 +85,6 @@ const closestPara = (root: HTMLElement, n: Node | null): HTMLElement | null => {
  *  inline-axis span, in viewport px. */
 type VisualCol = { block: number; iStart: number; iEnd: number };
 
-/** The client rects of a paragraph's READING FLOW, in document order, EXCLUDING
- *  ruby `<rt>` annotations. A ruby reading is a real superscript node now (NOT a
- *  hidden zero-size dup), so its rects sit in their own block band BETWEEN the
- *  reading columns — `range.selectNodeContents(p)` would include them and the
- *  column grouping would read each annotation as a phantom column, desyncing
- *  line movement. We walk the text nodes and skip any inside an `<rt>`. */
-const readingFlowRects = (p: HTMLElement): DOMRect[] => {
-  const walker = document.createTreeWalker(p, NodeFilter.SHOW_TEXT, {
-    acceptNode: (n) => (n.parentElement?.closest('rt') ? NodeFilter.FILTER_REJECT : NodeFilter.FILTER_ACCEPT),
-  });
-  const rects: DOMRect[] = [];
-  for (let n = walker.nextNode(); n; n = walker.nextNode()) {
-    const r = document.createRange();
-    r.selectNodeContents(n);
-    rects.push(...Array.from(r.getClientRects()));
-  }
-  return rects;
-};
-
 /** A paragraph's visual lines in READING order, grouping `getClientRects` the
  *  same way the line-number overlay does — including the multicol page wrap (a
  *  large block jump the OTHER way). So movement follows reading order even
@@ -110,34 +92,23 @@ const readingFlowRects = (p: HTMLElement): DOMRect[] => {
  *  paragraph's bounding rect alone can't locate a column. */
 const paragraphCols = (p: HTMLElement, vertical: boolean): VisualCol[] => {
   const pcs = getComputedStyle(p);
-  const colJump = (Number.parseFloat(pcs.fontSize) || 18) * 2.5;
-  // Within-line jitter tolerance: half the line pitch, matching the
-  // line-number overlay and pm/page-gap.ts. A fixed few-px value split a line
-  // mixing upright CJK and sideways runs under big-metric fonts (Noto Sans
-  // CJK) at fractional device scale into phantom columns — see
-  // line-numbers.ts `groupTol` for the derivation.
-  const TOL = (Number.parseFloat(pcs.lineHeight) || 28) / 2;
+  // The shared grouping rule (pm/line-grouping.ts): forwardTol = half pitch;
+  // backwardTol = ~2.5 cells (the rect sites' multicol page-wrap threshold).
+  const grouper = makeLineGrouper(vertical, readPitch(pcs) / 2, readCell(pcs) * 2.5);
   const cols: VisualCol[] = [];
   let cur: VisualCol | null = null;
-  let coord = 0;
   for (const r of readingFlowRects(p)) {
     if (r.width === 0 || r.height === 0) continue; // skip degenerate rects (see line-numbers.ts)
     const block = vertical ? r.left : r.top;
     const blockEnd = vertical ? r.right : r.bottom;
     const iStart = vertical ? r.top : r.left;
     const iEnd = vertical ? r.bottom : r.right;
-    if (
-      !cur ||
-      (vertical ? block < coord - TOL : block > coord + TOL) ||
-      (vertical ? block > coord + colJump : block < coord - colJump)
-    ) {
+    if (grouper.step(block) || !cur) {
       cur = { block: (block + blockEnd) / 2, iStart, iEnd };
       cols.push(cur);
-      coord = block;
     } else {
       cur.iStart = Math.min(cur.iStart, iStart);
       cur.iEnd = Math.max(cur.iEnd, iEnd);
-      coord = vertical ? Math.min(coord, block) : Math.max(coord, block);
     }
   }
   return cols;
@@ -332,7 +303,7 @@ export const moveCaretByLine = (
       }
     })();
     if (goalRef.current != null && bcols.length && afterRect) {
-      const pitch = Number.parseFloat(getComputedStyle(content).fontSize) || 18;
+      const pitch = readCell(getComputedStyle(content));
       const ab = blockOf(afterRect);
       if (Math.abs(ab - blockOf(cr)) > pitch && bcols.some((c) => Math.abs(c.block - ab) < pitch)) cr = afterRect;
     }

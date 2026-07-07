@@ -28,6 +28,7 @@
 // Synchronous so the highlight lands in the same frame as the caret.
 
 import styles from './editor.module.scss';
+import { makeLineGrouper, readCell, readingFlowRects, readPitch } from './pm/line-grouping';
 
 export type LineNumbers = {
   schedule: (full?: boolean) => void;
@@ -100,7 +101,7 @@ export const mountLineNumbers = (
     // is a multicol PAGE WRAP (pages stack, so the next page's first column
     // jumps back across the whole page), not a ruby annotation's small shift.
     // One cell can't hold a jump this large; a page is always ≥ a few cells.
-    const colJump = (Number.parseFloat(cs.fontSize) || 18) * 2.5;
+    const colJump = readCell(cs) * 2.5;
     // Within-line jitter tolerance: HALF the line pitch (the same bound
     // pm/page-gap.ts visualLineEnds uses). Rects of ONE line can disagree on
     // their block coordinate by up to ~half the em-box difference between an
@@ -112,7 +113,7 @@ export const mountLineNumbers = (
     // apart and the jitter is bounded by ~0.5em < pitch/2 (the line-space
     // ratio floor is 0.5), so half a pitch separates the two cleanly for
     // every font.
-    const groupTol = (Number.parseFloat(cs.lineHeight) || 28) / 2;
+    const groupTol = readPitch(cs) / 2;
     // The line band length (= `--line-length`) is identical for every paragraph
     // (`inline-size` is pinned to it), so read it ONCE, not per paragraph.
     const firstP = content.querySelector('p');
@@ -364,17 +365,10 @@ const linesOfParagraph = (
   // grid anchor, line numbers, folios, and the highlight all leaned toward
   // the reading by ~rt/2 in ruby-dense documents. Walk the paragraph's text
   // nodes skipping rt subtrees (like the editor's glyph walk).
-  const rects: DOMRect[] = [];
-  const walker = document.createTreeWalker(p, NodeFilter.SHOW_TEXT, {
-    acceptNode: (n) => (n.parentElement?.closest('rt') ? NodeFilter.FILTER_REJECT : NodeFilter.FILTER_ACCEPT),
-  });
-  for (let n = walker.nextNode(); n; n = walker.nextNode()) {
-    range.selectNodeContents(n);
-    rects.push(...range.getClientRects());
-  }
+  const rects = readingFlowRects(p, range);
   const lines: VisualLine[] = [];
+  const grouper = makeLineGrouper(vertical, groupTol, colJump);
   let cur: VisualLine | null = null;
-  let colCoord = 0;
   for (const r of rects) {
     // Skip DEGENERATE rects (zero width OR height) — not just 0×0. Chromium
     // emits a stray zero-HEIGHT rect on the previous page for a paragraph whose
@@ -386,17 +380,14 @@ const linesOfParagraph = (
     const top = r.top - o.top;
     const right = r.right - o.left;
     const bottom = r.bottom - o.top;
-    const block = vertical ? left : top;
-    if (!cur || startsNewLine(block, colCoord, vertical, colJump, groupTol)) {
+    if (grouper.step(vertical ? left : top) || !cur) {
       cur = { left, top, right, bottom, bandLen };
       lines.push(cur);
-      colCoord = block;
     } else {
       cur.left = Math.min(cur.left, left);
       cur.top = Math.min(cur.top, top);
       cur.right = Math.max(cur.right, right);
       cur.bottom = Math.max(cur.bottom, bottom);
-      colCoord = vertical ? Math.min(colCoord, block) : Math.max(colCoord, block);
     }
   }
   // An EMPTY paragraph (just a <br>) yields no text rects — its only client rects
@@ -416,22 +407,6 @@ const linesOfParagraph = (
   }
   return lines;
 };
-
-/** Whether `block` (a rect's block-axis coord) leaves the current line at
- *  `colCoord`: a jump in the reading direction (the next column/row, past the
- *  within-line jitter tolerance `groupTol` = half the line pitch — see its
- *  derivation at the measure site) or the other way by more than `colJump` (a
- *  multicol page wrap). */
-const startsNewLine = (
-  block: number,
-  colCoord: number,
-  vertical: boolean,
-  colJump: number,
-  groupTol: number,
-): boolean =>
-  vertical
-    ? block < colCoord - groupTol || block > colCoord + colJump
-    : block > colCoord + groupTol || block < colCoord - colJump;
 
 /** The visual line the caret sits in: of the lines whose block-axis band holds
  *  the caret, the one whose inline span is nearest (picks the right page when a
