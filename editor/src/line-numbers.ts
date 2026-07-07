@@ -68,6 +68,14 @@ export const mountLineNumbers = (
   content: HTMLElement,
   getCaret: () => CaretRect | null,
   getSelectionRects: () => DOMRect[],
+  /** While true (an IME composition is running), the highlight HOLDS its
+   *  painted geometry as long as the picked line stays in the same column:
+   *  the composing line's measured block-start breathes per keystroke (its
+   *  first glyph is the preedit's tail char, hopping across the wrap as raw
+   *  romaji converts to kana), and repainting each breath made the band
+   *  visibly pulse. A different column still repaints — crossing a boundary
+   *  moves the highlight exactly once. */
+  isSteady?: () => boolean,
 ): LineNumbers => {
   const overlay = document.createElement('div');
   overlay.className = 'vedLineNumbers';
@@ -90,6 +98,7 @@ export const mountLineNumbers = (
   let lines: VisualLine[] = []; // cached geometry from the last full measure
   let vertical = false; // cached from the last full measure (mode changes re-measure)
   let lastHit: VisualLine | null = null; // the line the highlight last painted
+  let steadyTol = 14; // half the line pitch, cached by the full measure
 
   // FULL measure: re-collect every visual line and re-place the numbers.
   // O(doc). Orchestration only — (1) collect the geometry, (2) read EVERY
@@ -117,6 +126,7 @@ export const mountLineNumbers = (
     // ratio floor is 0.5), so half a pitch separates the two cleanly for
     // every font.
     const groupTol = readPitch(cs) / 2;
+    steadyTol = groupTol;
     // The line band length (= `--line-length`) is identical for every paragraph
     // (`inline-size` is pinned to it), so read it ONCE, not per paragraph.
     const firstP = content.querySelector('p');
@@ -174,6 +184,12 @@ export const mountLineNumbers = (
     // Same visual line as the last paint (the cached objects are stable between
     // full measures, so identity suffices) → the styles are already right.
     if (hit === lastHit) return;
+    // Steady hold (see the isSteady param): same COLUMN as the last paint →
+    // keep the painted geometry (half a pitch is the shared same-line bound).
+    if (hit && lastHit && isSteady?.()) {
+      const mid = (a: VisualLine): number => (vertical ? (a.left + a.right) / 2 : (a.top + a.bottom) / 2);
+      if (Math.abs(mid(hit) - mid(lastHit)) <= steadyTol) return;
+    }
     lastHit = hit;
     if (hit) {
       // Anchor at the line's start corner (its top-left character) — for a

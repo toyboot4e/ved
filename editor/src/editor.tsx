@@ -19,6 +19,8 @@ import type { CaretShape, EditorExtension, VisualSelectionKind } from './extensi
 import { createEditorOps } from './extension-context';
 import { createGlyphWalker } from './glyph-walker';
 import type { PlainTextHistory } from './history';
+import { installImeCaretPin } from './ime-caret-pin';
+import { createImeCellPad, type ImeCellPad } from './ime-cell-pad';
 import { installCompositionSurvival } from './ime-survival';
 import { createKeyHandler } from './key-handler';
 import { type CaretRect, type LineNumbers, mountLineNumbers } from './line-numbers';
@@ -26,12 +28,13 @@ import { createPageGapMeasure } from './page-gap-measure';
 import { enterReplacingSelection, plainInsertTr } from './plain-edits';
 import { type CursorState, cursorToOffset, offsetToCursor } from './pm/cursor';
 import { buildDecorations, type Invisibles, type SearchHighlights, type SearchRange } from './pm/decorations';
+import { imePadPlugin } from './pm/ime-pad';
 import type { Appear } from './pm/leaves';
-import { docFromText, offsetToPos, posToOffset, rubyClickOutsidePos, serializeSlice } from './pm/model';
+import { docFromText, offsetToPos, posToOffset, rubyClickOutsidePos, serialize, serializeSlice } from './pm/model';
 import { pageGapPlugin } from './pm/page-gap';
 import { RubyView } from './pm/ruby-view';
 import { repair } from './pm/structure';
-import { revealCaretInScroller, toScrollMode, useKeepScrollPosition } from './scroll-reveal';
+import { caretCoords, revealCaretInScroller, toScrollMode, useKeepScrollPosition } from './scroll-reveal';
 import { createEditorSession, createRestore, createSyncExtensions } from './session';
 import { installTestSeams } from './test-seams';
 import { WritingMode } from './writing-mode';
@@ -183,6 +186,9 @@ export const VedEditor = (props: VedEditorProps): React.JSX.Element => {
   // default) drops the suffix cache — pass false ONLY for a doc edit, whose
   // layout change is bounded to its own lines (see measurePageGaps).
   const pageGapsRef = useRef<{ schedule: (full?: boolean) => void } | null>(null);
+  // The composition cell pad (ime-cell-pad.ts): dispatchTransaction calls its
+  // update per composing edit, BEFORE the page-gap measure in the same flush.
+  const imeCellPadRef = useRef<ImeCellPad | null>(null);
   // Mouse drag-selection is DRIVEN BY US (see the pointer handlers): the native
   // selection can't extend across a collapsed ruby's READ-ONLY base
   // (`contenteditable=false`, the atom-ruby IME-safety rule), so a native drag
@@ -246,7 +252,13 @@ export const VedEditor = (props: VedEditorProps): React.JSX.Element => {
     // below (which runs first); baseKeymap doesn't bind arrows, so no conflict.
     let state = EditorState.create({
       doc: docFromText(initialText),
-      plugins: [keymap({ Enter: enterReplacingSelection }), keymap(baseKeymap), decoPlugin, pageGapPlugin()],
+      plugins: [
+        keymap({ Enter: enterReplacingSelection }),
+        keymap(baseKeymap),
+        decoPlugin,
+        pageGapPlugin(),
+        imePadPlugin(),
+      ],
     });
     // Always set the caret EXPLICITLY (via offsetToPos, our boundary-aware map).
     // PM's default selection lands on the first text leaf, which for a document
@@ -300,6 +312,11 @@ export const VedEditor = (props: VedEditorProps): React.JSX.Element => {
         // O(doc) re-measure, and no rAF wait — the highlight lands in the same
         // frame as the caret instead of one frame behind it).
         if (tr.docChanged) lineNumbersRef.current?.schedule();
+        // A composing edit first pads the preedit to whole cells (the raw
+        // romaji letter is a HALF cell and the wrap point would flip per
+        // key — ime-cell-pad.ts), THEN measures the page gaps against the
+        // padded layout. Both run in this same flush.
+        if (tr.docChanged && view.composing) imeCellPadRef.current?.update();
         // An edit's layout change starts at its own line — suffix re-measure.
         if (tr.docChanged) pageGapsRef.current?.schedule(false);
         else if (tr.selectionSet) lineNumbersRef.current?.refreshCaret();
@@ -398,6 +415,18 @@ export const VedEditor = (props: VedEditorProps): React.JSX.Element => {
     session.restore = createRestore(view, { rebuildingRef, lastTextRef, live });
 
     const teardownCompositionSurvival = installCompositionSurvival(view);
+    // AFTER the survival repair — both hook the composition `input` events;
+    // the null-selection repair runs first, the pin is the last writer.
+    const teardownImeCaretPin = installImeCaretPin(view, {
+      beforeOffsetRef,
+      isVertical: () => live.current.writingMode !== WritingMode.Horizontal,
+    });
+    const imeCellPad = createImeCellPad(view, {
+      beforeOffsetRef,
+      lastTextRef,
+      isVertical: () => live.current.writingMode !== WritingMode.Horizontal,
+    });
+    imeCellPadRef.current = imeCellPad;
     installTestSeams(view, goalInlineRef);
 
     const { searchOps, extensionCtx } = createEditorOps({
@@ -431,10 +460,58 @@ export const VedEditor = (props: VedEditorProps): React.JSX.Element => {
     // changes); doc/selection/mode/policy changes schedule it from their own
     // handlers. The highlight follows the caret, so it needs the caret's
     // viewport rect — coordsAtPos can throw mid-update, hence the guard.
+    // The last composing highlight anchor — a sticky hold, reset per
+    // composition (see the composing branch below).
+    let composingHl: CaretRect | null = null;
     const caretRect = (): CaretRect | null => {
       try {
+        // WHILE COMPOSING (vertical modes), anchor the highlight to the
+        // COMPOSITION'S TAIL computed from the MODEL — the composition start
+        // plus the preedit's length — never the live selection head: the
+        // head flips per keystroke between the tail and the pinned caret
+        // (Blink re-tails it, ime-caret-pin re-seats it) and a frame paints
+        // between the two, so the current-line highlight visibly flickered
+        // across the page boundary on every key. The model tail is stable
+        // per key and follows the typing point. On top of that, HOLD the
+        // previous line on a backward line flip: the tail's LAST character
+        // wraps back and forth while the raw fullwidth romaji converts to
+        // kana at a line's end, which would flip the picked line per key —
+        // the hold lets the highlight cross a boundary exactly once,
+        // forward. (Mozc-verified: candidate-window-pos.ts.)
+        if (view.composing && live.current.writingMode !== WritingMode.Horizontal) {
+          const doc = view.state.doc;
+          const preedit = Math.max(0, serialize(doc).length - lastTextRef.current.length);
+          const r = caretCoords(view, offsetToPos(doc, beforeOffsetRef.current + preedit));
+          if (composingHl) {
+            const pitch = Number.parseFloat(getComputedStyle(view.dom).lineHeight) || 28;
+            const mid = (a: CaretRect): number => (a.left + a.right) / 2;
+            const sameLine = Math.abs(mid(r) - mid(composingHl)) <= pitch / 2;
+            // Forward = the next column (leftward in vertical-rl) or a band
+            // wrap (a jump far down the block axis).
+            const forward = composingHl.left - r.left > pitch / 2 || r.top > composingHl.top + pitch * 2;
+            if (!sameLine && !forward) return composingHl;
+          }
+          composingHl = r;
+          return r;
+        }
+        composingHl = null;
         const sel = view.state.selection;
         const head = sel.head;
+        // The boundary-caret WIDGET is the visible caret wherever the head
+        // has no text-node home — the seam between two collapsed rubies,
+        // i.e. EVERY position of an all-ruby line, its end included. Its box
+        // is the cursor the user sees: at a seam ENDING a line it paints at
+        // that line's end, while the model anchors below (head+2, into the
+        // next ruby's base) name the NEXT line — the highlight sat one line
+        // off the visible caret (`line-highlight-wrap-end.ts`). Bar shape
+        // only: the block caret covers the character AFTER the caret and
+        // keeps that character's line.
+        if (sel.empty && caretShapeRef.current === 'bar') {
+          const b = view.dom.querySelector('.vedBoundaryCaret')?.getBoundingClientRect();
+          if (b && (b.width > 1 || b.height > 1)) {
+            return { top: b.top, bottom: b.bottom, left: b.left, right: b.right };
+          }
+        }
         // At the END of a non-empty paragraph whose last visual line is FULL,
         // `coordsAtPos(head)` (both sides) returns the START of the empty next
         // column/page — the PREVIOUS reading column from where the native caret
@@ -467,12 +544,38 @@ export const VedEditor = (props: VedEditorProps): React.JSX.Element => {
               : atParaEnd
                 ? head - 1
                 : head;
+        // A caret at a mid-paragraph SOFT-WRAP seam is one model position on
+        // two lines: `coordsAtPos` (side 1) reports the NEXT line's start,
+        // while the native BAR paints at the previous line's end — the
+        // highlight sat one line off the visible cursor. When the two sides
+        // disagree across lines, follow the caret's real paint: the DOM
+        // selection rect for the bar (its non-degenerate rect IS the bar).
+        // The BLOCK cursor covers the character AFTER the caret — the next
+        // line's first character — so it keeps the side-1 line.
+        if (anchor === head && sel.empty && !atParaEnd && caretShapeRef.current === 'bar') {
+          const r1 = view.coordsAtPos(head);
+          const r0 = view.coordsAtPos(head, -1);
+          const pitch = Number.parseFloat(getComputedStyle(view.dom).lineHeight) || 28;
+          if (Math.abs(r1.left - r0.left) > pitch / 2 || Math.abs(r1.top - r0.top) > pitch / 2) {
+            const ds = view.dom.ownerDocument.getSelection();
+            const dr = ds?.rangeCount && ds.isCollapsed ? ds.getRangeAt(0).getBoundingClientRect() : null;
+            return dr && (dr.width > 0 || dr.height > 0 || dr.top !== 0 || dr.left !== 0)
+              ? { top: dr.top, bottom: dr.bottom, left: dr.left, right: dr.right }
+              : r0;
+          }
+        }
         return view.coordsAtPos(anchor);
       } catch {
         return null;
       }
     };
-    const lineNumbers = mountLineNumbers(mount, view.dom, caretRect, () => selectedGlyphRectsRef.current?.() ?? []);
+    const lineNumbers = mountLineNumbers(
+      mount,
+      view.dom,
+      caretRect,
+      () => selectedGlyphRectsRef.current?.() ?? [],
+      () => view.composing,
+    );
     lineNumbersRef.current = lineNumbers;
     lineNumbers.schedule();
     document.fonts?.ready.then(() => {
@@ -647,6 +750,9 @@ export const VedEditor = (props: VedEditorProps): React.JSX.Element => {
       view.dom.removeEventListener('compositionstart', onCompositionStart);
       view.dom.removeEventListener('compositionend', onCompositionEnd);
       teardownCompositionSurvival();
+      teardownImeCaretPin();
+      imeCellPad.teardown();
+      imeCellPadRef.current = null;
       resizeObserver.disconnect();
       contentObserver.disconnect();
       lineNumbers.destroy();

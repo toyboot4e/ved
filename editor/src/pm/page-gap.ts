@@ -154,12 +154,27 @@ export const pageEndsFromLines = (
   return out;
 };
 
-/** The position itself, or — when it landed inside a ruby (a page's last glyph
- *  can be a base's last character, whose end offset maps into the hidden
- *  markup) — the position right AFTER the enclosing ruby node. */
-export const posAfterEnclosingRuby = ($pos: ResolvedPos): number => {
+/** The widget placement for a measured page-boundary position. Outside a ruby
+ *  the widget sits at the boundary itself. Inside a ruby it can only render
+ *  AFTER the enclosing node (a widget inside the ruby's content would split
+ *  it), and the flavor depends on where the boundary fell:
+ *  - at the END of the base/reading content (the page's last glyph is the
+ *    node's last character; only hidden markup follows): the after-ruby spot
+ *    is visually AT the boundary — a normal widget.
+ *  - STRICTLY INSIDE the content: the ruby itself STRADDLES the line break,
+ *    so the after-ruby spot is glyphs INTO the next page's first line — the
+ *    widget must open its gap BEFORE its line (`ved-page-gap-before`) so the
+ *    space still falls between the two pages' lines. A normal widget there
+ *    opened the gap mid-line and the next page's first line (the ruby's
+ *    tail) jammed against the previous page. */
+export const pageGapPlacement = ($pos: ResolvedPos): PageGapPos => {
   for (let d = $pos.depth; d > 0; d--) {
-    if ($pos.node(d).type.name === 'ruby') return $pos.after(d);
+    if ($pos.node(d).type.name !== 'ruby') continue;
+    // $pos.parent is the base/reading when the boundary is inside one; the
+    // seam BETWEEN them (parent = the ruby itself) has no glyphs following
+    // on the next line, like a content end.
+    const straddles = $pos.depth > d && $pos.parentOffset < $pos.parent.content.size;
+    return straddles ? { pos: $pos.after(d), before: true } : { pos: $pos.after(d) };
   }
-  return $pos.pos;
+  return { pos: $pos.pos };
 };

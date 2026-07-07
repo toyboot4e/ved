@@ -8,15 +8,15 @@ import styles from './editor.module.scss';
 import type { Glyph, GlyphWalker } from './glyph-walker';
 import type { Appear } from './pm/leaves';
 import { lineOf } from './pm/leaves';
-import { offsetToPos, serialize } from './pm/model';
+import { offsetToPos, posToOffset, serialize } from './pm/model';
 import {
   type LineItem,
   type PageGapPos,
   pageEndsFromLines,
   pageGapDecoKey,
   pageGapKey,
+  pageGapPlacement,
   pageGapTr,
-  posAfterEnclosingRuby,
   visualLineEnds,
 } from './pm/page-gap';
 
@@ -66,7 +66,11 @@ export const createPageGapMeasure = (
     pagesPerBand: number;
     lineEnds: number[];
   } | null = null;
-  const measurePageGaps = (pagesPerBand: number): number[] => {
+  // Each measured boundary: its placement plus the neighboring visual-line
+  // end offsets (the composing relocation keeps a trapped gap on the right
+  // line with them).
+  type MeasuredGap = { g: PageGapPos; prevLineEnd: number; nextLineEnd: number | undefined };
+  const measurePageGaps = (pagesPerBand: number): MeasuredGap[] => {
     const linesPerPage = Number.parseFloat(getComputedStyle(mount).getPropertyValue('--page-lines')) || 20;
     const pitch = Number.parseFloat(getComputedStyle(view.dom).lineHeight) || 28;
     const text = serialize(view.state.doc);
@@ -126,9 +130,16 @@ export const createPageGapMeasure = (
     w.__vedGapLineEnds = lineEnds;
     gapCache = { text, pitch, linesPerPage, pagesPerBand, lineEnds };
     measuredLineCount = lineEnds.length;
-    return pageEndsFromLines(lineEnds, linesPerPage, pagesPerBand).map((end) =>
-      posAfterEnclosingRuby(view.state.doc.resolve(offsetToPos(view.state.doc, end))),
-    );
+    return pageEndsFromLines(lineEnds, linesPerPage, pagesPerBand).map((end) => {
+      // The boundary's neighboring line-end offsets — the composing
+      // relocation below needs them to keep a trapped gap on the right line.
+      const i = lineEnds.indexOf(end);
+      return {
+        g: pageGapPlacement(view.state.doc.resolve(offsetToPos(view.state.doc, end))),
+        prevLineEnd: lineEnds[i - 1] ?? 0,
+        nextLineEnd: lineEnds[i + 1],
+      };
+    });
   };
   let pageGapTimer: ReturnType<typeof setTimeout> | 0 = 0;
   const runPageGaps = (): void => {
@@ -142,11 +153,12 @@ export const createPageGapMeasure = (
     const rowsHere = view.dom.classList.contains(styles.rowsMode ?? '');
     const multiColHere = view.dom.classList.contains(styles.multiColMode ?? '');
     const pagesPerRow = Number.parseFloat(getComputedStyle(mount).getPropertyValue('--pages-per-row')) || 1;
-    const positions = rowsHere
+    const measured = rowsHere
       ? measurePageGaps(Number.POSITIVE_INFINITY)
       : multiColHere && pagesPerRow > 1
         ? measurePageGaps(pagesPerRow)
         : [];
+    const positions = measured.map((m) => m.g);
     // COMPOSING is measured too: the preedit re-wraps the page's last line,
     // and a stale widget (riding the edit's mapping) drifts onto the NEXT
     // page's first line — that line then jams against this page's last for
@@ -162,14 +174,40 @@ export const createPageGapMeasure = (
     // lines. If the preedit can't be located (no DOM selection during a
     // conversion transient), skip this round; the next update retries.
     // Verified end to end against real mozc (mozc/gap-compose.ts).
-    let gaps: PageGapPos[] = positions.map((pos) => ({ pos }));
+    let gaps: PageGapPos[] = positions;
     if (view.composing) {
-      const focus = view.dom.ownerDocument.getSelection()?.focusNode;
+      const sel = view.dom.ownerDocument.getSelection();
+      let focus = sel?.focusNode && sel.focusNode.nodeType === 3 ? sel.focusNode : null;
+      // Mid-composition the DOM selection can sit at the ELEMENT level (a
+      // seam between rubies); the observer's last-changed text node is the
+      // composition node then — the same PM internal ime-survival.ts leans
+      // on (mozc/space-convert.ts guards that contract). Skipping the round
+      // here instead left the STALE mapped widget in place, and one inside
+      // the composition node cannot render — the page gap vanished and the
+      // next page's first line jammed against the previous page.
+      focus ??= (view as unknown as { domObserver: { lastChangedTextNode: Text | null } }).domObserver
+        .lastChangedTextNode;
       if (!(focus && focus.nodeType === 3 && view.dom.contains(focus))) return;
       try {
         const from = view.posAtDOM(focus, 0);
         const to = from + (focus.nodeValue?.length ?? 0);
-        gaps = positions.map((pos) => (pos > from && pos < to ? { pos: to, before: true } : { pos }));
+        const fromOff = posToOffset(view.state.doc, from);
+        const toOff = posToOffset(view.state.doc, to);
+        gaps = measured.map(({ g, prevLineEnd, nextLineEnd }) => {
+          if (!(g.pos > from && g.pos < to)) return g;
+          // Trapped inside the composition node. The node's END is the right
+          // home only while it sits on the boundary's NEXT line (the
+          // gap-before opens back across the boundary); a long composition
+          // running further would drag the gap lines away and the next
+          // page's first line jammed against the previous page. Then prefer
+          // the node's START — when it sits on the boundary's OWN line, a
+          // normal widget there fattens exactly that line. A node engulfing
+          // both lines keeps the (late) end fallback: renderable and stable
+          // beats absent.
+          if (nextLineEnd === undefined || toOff <= nextLineEnd) return { pos: to, before: true };
+          if (fromOff > prevLineEnd) return { pos: from };
+          return { pos: to, before: true };
+        });
       } catch {
         return;
       }
@@ -212,6 +250,19 @@ export const createPageGapMeasure = (
       if (full) gapCache = null;
       cancelAnimationFrame(pageGapRaf);
       clearTimeout(pageGapTimer);
+      // A COMPOSING edit runs in the same flush instead. Deferred, the frame
+      // paints with the stale MAPPED widget set first and the corrected one
+      // lands a frame later — the page border visibly flashes on every
+      // preedit keystroke that moves a boundary. And the deferred dispatch
+      // redraws around the composition AFTER the `input`-event caret repairs
+      // (ime-survival, ime-caret-pin) already ran, orphaning the DOM caret
+      // the IME positions its candidate window by. Synchronous, the widgets
+      // paint with the edit and the `input` repairs run last, on the settled
+      // DOM. (Bounded work: a composing edit reuses the suffix cache.)
+      if (!full && view.composing) {
+        runPageGaps();
+        return;
+      }
       pageGapRaf = requestAnimationFrame(runPageGaps);
       pageGapTimer = setTimeout(runPageGaps, 60);
     },

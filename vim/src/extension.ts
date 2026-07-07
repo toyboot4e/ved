@@ -139,6 +139,27 @@ export const createVimExtension = (options: VimExtensionOptions = {}): EditorExt
         };
       };
 
+      // Vim never RESTS the cursor past a line's last character in normal or
+      // visual mode — that column exists only in insert mode. The reducer's
+      // own targets respect this, but bare h/j/k/l resolve as `moveVisual`
+      // in the EDITOR (which happily stops at a paragraph end), so the rule
+      // is enforced here, after each handled step: a head at a non-empty
+      // line's end steps back one caret stop. An EMPTY line keeps its one
+      // position (Vim's column 0).
+      const clampLineEnd = (): void => {
+        if (state.mode !== 'normal' && state.mode !== 'visual') return;
+        const text = ctx.getText();
+        const sel = ctx.getSelection();
+        const atEnd = sel.head >= text.length || text[sel.head] === '\n';
+        if (!atEnd) return;
+        const ls = text.lastIndexOf('\n', sel.head - 1) + 1;
+        if (sel.head <= ls) return; // empty line
+        const back = ctx.caretStop(sel.head, -1);
+        if (back >= ls && back !== sel.head) {
+          ctx.setSelection(state.mode === 'visual' ? sel.anchor : back, back);
+        }
+      };
+
       const applyEffect = (effect: VimEffect): void => {
         switch (effect.kind) {
           case 'select':
@@ -184,6 +205,7 @@ export const createVimExtension = (options: VimExtensionOptions = {}): EditorExt
             if (callOpts.replay && (e.kind === 'repeat' || e.kind === 'feedKeys')) continue;
             applyEffect(e);
           }
+          clampLineEnd();
         } else if (state.mode === 'insert' && isPlainKey(k)) {
           const sel = ctx.getSelection();
           ctx.replaceRange(sel.head, sel.head, k.key);
@@ -246,6 +268,7 @@ export const createVimExtension = (options: VimExtensionOptions = {}): EditorExt
           );
           state = step.state;
           for (const effect of step.effects) applyEffect(effect);
+          if (step.handled) clampLineEnd();
           if (state.mode !== prevMode) syncMode(state.mode);
           syncCommandLine();
           syncVisual();

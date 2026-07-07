@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'vitest';
-import { type LineItem, pageEndsFromLines, visualLineEnds } from './page-gap';
+import { docFromText, offsetToPos } from './model';
+import { type LineItem, pageEndsFromLines, pageGapPlacement, visualLineEnds } from './page-gap';
 
 // vertical-rl: lines advance leftward (decreasing b), pitch 28
 const line = (b: number, offs: number[]): LineItem[] => offs.map((endOff) => ({ endOff, b }));
@@ -130,6 +131,34 @@ describe('visualLineEnds', () => {
 
   it('is empty for no items', () => {
     expect(visualLineEnds([], 28)).toEqual([]);
+  });
+});
+
+describe('pageGapPlacement', () => {
+  // "あ|ルビ(ruby)い" — offsets: あ0 |1 ル2 ビ3 (4 r5 u6 b7 y8 )9 い10
+  const doc = docFromText('あ|ルビ(ruby)い');
+  const placed = (end: number) => pageGapPlacement(doc.resolve(offsetToPos(doc, end)));
+
+  it('outside a ruby: the boundary position itself, normal flavor', () => {
+    const g = placed(1); // page's last glyph あ; the | markup offset maps outside
+    expect(g.before).toBeFalsy();
+    expect(g.pos).toBe(offsetToPos(doc, 1));
+  });
+
+  it("at the base's last character: after the ruby, normal flavor", () => {
+    // Page's last glyph ビ (the base's last char): only hidden markup follows,
+    // so the after-ruby spot is visually AT the boundary.
+    const g = placed(4);
+    expect(g.before).toBeFalsy();
+    expect(g.pos).toBeGreaterThan(offsetToPos(doc, 4));
+  });
+
+  it('strictly inside the base (a straddling ruby): after the ruby, gap-BEFORE', () => {
+    // Page's last glyph ル: the base's tail wraps onto the next page's first
+    // line, so the widget after the ruby must open its gap BEFORE its line.
+    const g = placed(3);
+    expect(g.before).toBe(true);
+    expect(g.pos).toBe(placed(4).pos); // same renderable spot, different flavor
   });
 });
 

@@ -422,6 +422,19 @@ ruby.rubyActive + .rubyDelimClose {
   vertical-align: bottom;
 }
 
+/* The composition cell pad (pm/ime-pad.ts): pads the preedit's inline extent
+ * up to a whole cell while composing, so the raw HALFWIDTH romaji letter
+ * (half a cell until the next key converts it to kana) can't flip the wrap
+ * point back and forth per keystroke. The per-instance inline-size comes
+ * from the widget's style attribute. */
+.ved-ime-pad {
+  display: inline-block;
+  block-size: 0;
+  pointer-events: none;
+  user-select: none;
+  -webkit-user-select: none;
+}
+
 /* Page-number folio (paged modes only — VerticalColumns / VerticalRows),
  * drawn by the line-number overlay at the bottom of each page, centered on
  * the page's measured span; plain text, no box (it sits in clear space —

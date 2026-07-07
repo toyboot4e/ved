@@ -50,6 +50,8 @@ defends one of four invariants (binding statements in `CLAUDE.md`):
 | 3 | **Line numbers + highlight are a measured overlay** | a CSS counter on `<p>` | a wrapped paragraph needs one number + highlight per *visual* line; only measurement gives that | `line-numbers.ts` |
 | 4 | **Custom plain-text history (`PlainTextHistory`)** | `prosemirror-history` | operation-level undo is meaningless across structure repair; tabs snapshot strings | `history.ts` |
 | 2 | **The composition survives a caret-clearing conversion** | Blink leaves the selection null | an IME conversion that replaces an ISOLATED preedit text node (composing right after a ruby at a paragraph end) with a shorter candidate invalidates the DOM caret offset and Blink clears the selection FOR GOOD. Two-layer repair, either alone stays broken: (a) `domSelectionRange` answers a null selection, while composing, with the observer's last-changed text node — PM's `findCompositionNode` runs at flush BEFORE the `input` event, and with no node it redraws the preedit (killing it); (b) an `input` listener re-seats the real caret at that node's end, or the next IME query hits a caret-less context and fcitx5 confirms the preedit (Space "completes" instead of converting, no `compositionend`, the view stuck composing). Uses PM internals (`domSelectionRange`, `domObserver.lastChangedTextNode`); `mozc/space-convert.ts` guards the contract across upgrades | `ime-survival.ts` |
+| 2,3 | **The IME caret is pinned to the composition's starting line (vertical writing)** | Blink re-seats the DOM caret to the preedit's END on every composition update | the system IME places its candidate window from the reported caret rect; a WRAPPED preedit's end sits at the top of the NEXT line — another page when the wrap crosses a page boundary — so the candidate list jumped a page up out of the reading flow. While composing, the caret re-seats (within the preedit) to the last position still on the starting line; at compositionend it re-seats to the committed word's end, where a native commit leaves it (Blink commits around whatever caret stands), and restores the composition's START as the undo anchor — the re-seat is a non-composing selection transaction dispatched before the history commit, and it re-anchored `beforeOffsetRef` to the word's end, so undo restored the text but stranded the caret there. mozc composes, converts, and commits through the pinned caret (mozc-verified: `mozc/candidate-window-pos.ts`) | `ime-caret-pin.ts` |
+| 2,3 | **The composition's inline extent is padded to 2-cell quanta (vertical writing)** | the preedit occupies exactly its rendered width | mozc's preedit shows FULLWIDTH romaji until conversion (`ｓｈ` = 2 cells → `し` = 1), so the extent wobbles backward per key and the text after the composition — 2-cell collapsed rubies especially — bounced across every line/page wrap it straddled. A read-only widget right after the composition pads the extent up to the next 2-cell quantum (one 全角 pair, the collapsed-ruby atom) — and the padded total is a RATCHET that never shrinks within one composition (letter widths are proportional and ruby boxes fractional, so quantization alone still stepped backward) — so the following text only ever moves FORWARD while typing; updated synchronously per composing edit BEFORE the page-gap measure in the same flush, cleared at compositionend (one honest reflow). Skipped inside a ruby's base (a pad there would sit inside the annotation pair) | `ime-cell-pad.ts`, `pm/ime-pad.ts` |
 | 2 | **IME composition is sacrosanct** | — | repairing, focusing, or remounting mid-composition cancels it and drops text | throughout |
 
 Everything else — bold/italic/縦中横, the ruby annotation, the page columns —
@@ -484,10 +486,14 @@ never ProseMirror values — so extensions cannot violate the identity model:
 - **Commands**: `runCommand`/`registerCommand` against the open registry.
 - **Appearance**: `setCaretShape('bar'|'block')` — the block caret covers
   EVERY position, in the per-move DELTA layer: an inline decoration tints the
-  character under the caret; where none sits under it (paragraph end, ruby
-  boundary/seam, empty line) a widget paints an empty cell
-  (`vedBlockCaretBox`, the boundary caret's box recipe), replacing the
-  boundary bar. Native bar suppressed via `.vedNativeCaretOff` either way.
+  character under the caret; at a collapsed ruby's leading boundary or a
+  two-ruby seam the character under a Vim cursor is the next VISIBLE glyph —
+  the ruby's first BASE character behind the hidden markup — and the tint
+  covers IT (at a line-end seam that is the NEXT line's first character; the
+  highlight follows the block's line). Only where no next glyph exists on
+  the line (paragraph end, empty line, visible markup) a widget paints an
+  empty cell (`vedBlockCaretBox`, the boundary caret's box recipe),
+  replacing the boundary bar. Native bar suppressed via `.vedNativeCaretOff` either way.
   `setContentClass` survives the policy/mode class swap.
   `setVisualSelection(kind)` shapes how the selection RENDERS: `'line'` covers
   the WHOLE model lines it spans (even collapsed) while the caret stays put
@@ -519,7 +525,15 @@ to the right axis, so in vertical writing h/l move between COLUMNS (a LOGICAL
 paragraph walk — a ved line IS a paragraph) and j/k walk the characters up/down
 the column (in horizontal, the classic directions). `g`+hjkl is the DISPLAY
 (wrapped) line/column walk instead (`moveCaretVisual`'s `visualLine`). As
-operator targets h/l stay pure character motions. Vim's `Ctrl+F/B/D/U` map to
+operator targets h/l stay pure character motions. **Normal/visual mode never
+RESTS the cursor past a line's last character** — Vim's past-end column
+exists only in insert mode. The reducer's own targets respect this, but the
+editor-resolved motions (`moveVisual`) can stop at a paragraph end, so the
+adapter clamps each handled step's head back one caret stop
+(`clampLineEnd`); an empty line keeps its one position, and Esc from insert
+already steps back in the reducer. (Deviation: the clamp resets the goal
+column, so a line move that clamps at a short paragraph forgets the wider
+column Vim's `curswant` would keep.) Vim's `Ctrl+F/B/D/U` map to
 `scrollPage`, consumed AHEAD of the app's Ctrl+F search / Ctrl+B sidebar in
 normal mode (the editor `stopPropagation`s a consumed key so it never reaches
 the app's window listener) — insert mode leaves those chords to the app.
@@ -646,11 +660,29 @@ and they are structurally different:
   page's first line and jams it against the previous page). A boundary
   trapped inside the composition TEXT NODE cannot render there (PM's
   composition protection re-covers the node whole, dropping the widget), so
-  it is placed at the node's end — one line late — as a `ved-page-gap-before`
-  widget whose extra width opens toward the PREVIOUS line: the gap stays
-  between the right lines. The changed-set check compares against the LIVE
+  it is placed at a node EDGE, picked by line: the node's end — one line
+  late — as a `ved-page-gap-before` widget whose extra width opens toward
+  the PREVIOUS line while that end sits on the boundary's next line; the
+  node's START (a normal widget fattening the boundary's own line) when a
+  long composition runs further; the (late) end again when the node engulfs
+  both lines — renderable and stable beats absent, which jammed the next
+  page's first line against the previous page. A boundary landing INSIDE a ruby renders after
+  the enclosing node likewise (`pageGapPlacement`): gap-BEFORE flavored when
+  the boundary falls STRICTLY INSIDE the base/reading content — the ruby
+  itself straddles the line break and the after-ruby spot is glyphs into the
+  next page's first line (a normal widget there opened the gap MID-line and
+  the next page's first line jammed against the previous page); normal at
+  the content's end, where only hidden markup follows and the after-ruby
+  spot is visually at the boundary. The changed-set check compares against the LIVE
   (mapped) widget identities, never a cached copy of the last dispatch.
-  Verified against real mozc (`mozc/gap-compose.ts`).
+  A COMPOSING edit's pass runs SYNCHRONOUSLY in the same flush, not on the
+  rAF: deferred, the stale mapped set paints one frame first (the page
+  border visibly flashes on each boundary-shifting preedit keystroke), and
+  the late dispatch redraws around the composition AFTER the `input`-event
+  caret repairs (`ime-survival.ts`, `ime-caret-pin.ts`) already ran,
+  orphaning the DOM caret the IME positions its candidate window by.
+  Verified against real mozc (`mozc/gap-compose.ts`,
+  `mozc/candidate-window-pos.ts`).
 
 The page-gap knobs are the page's margins around the border (view config
 `gap A`/`gap B` → `--page-gap-top`/`--page-gap-bottom`, default 1 cell): A =
@@ -695,7 +727,23 @@ At the end of a paragraph whose last line is full, `coordsAtPos` reports the
 empty next column, which would snap the highlight one column back; `caretRect`
 anchors to `head - 1` instead — or into the trailing ruby's *base* when the
 paragraph ends in a ruby, since `head - 1` is the reading
-(`line-highlight-para-end.ts`). A caret at a ruby's *leading* boundary anchors
+(`line-highlight-para-end.ts`). A caret at a mid-paragraph SOFT-WRAP seam is
+one model position on two lines — `coordsAtPos` (side 1) reports the next
+line's start while the native bar paints at the previous line's end — so when
+the seam's two sides disagree, the bar-shaped caret follows the DOM
+selection's rect (the bar's real paint); and wherever the boundary-caret
+WIDGET owns the caret (the seam between collapsed rubies — every position of
+an all-ruby line, its end included) the highlight anchors to the WIDGET's
+box, the cursor the user actually sees. The BLOCK caret keeps the side-1
+line, matching the character it covers (the next line's first)
+(`line-highlight-wrap-end.ts`). WHILE COMPOSING (vertical modes), the anchor
+is the composition's TAIL computed from the model — never the live head,
+which flips per key between the tail and the pinned caret with a paint in
+between — with a sticky-forward hold on line flips, and the overlay
+additionally HOLDS the painted band while the picked line's column is
+unchanged (the composing line's measured block-start breathes per key as raw
+romaji converts to kana). The highlight crosses a boundary exactly once,
+forward (`mozc/candidate-window-pos.ts`). A caret at a ruby's *leading* boundary anchors
 into that ruby's base too (`head + 2`): at a soft wrap the boundary is
 ambiguous and `coordsAtPos` reports the previous row's end, so a ruby starting
 a wrapped row would highlight the line above (`line-highlight-ruby-wrap.ts`).

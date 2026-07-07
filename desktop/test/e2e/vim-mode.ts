@@ -83,7 +83,10 @@ try {
   await press('k');
   assert.equal(await caretOffset(page), 2, 'k (up) jumps back over the ruby');
   await press('$');
-  assert.equal(await caretOffset(page), 9, '$ goes to the line end');
+  // ON the last character (字 at 8), never past it: normal mode's cursor
+  // stops at the line's last character like Vim's — the past-end column
+  // exists only in insert mode (the adapter's clampLineEnd).
+  assert.equal(await caretOffset(page), 8, '$ rests ON the line’s last character');
   await press('0');
   assert.equal(await caretOffset(page), 0, '0 returns to the line start');
   step('jk walk characters (spatial: down/up in vertical), respecting ruby stops');
@@ -123,25 +126,37 @@ try {
     assert.ok(!cls.blockCaret, 'no character to tint at the line end');
     assert.ok(cls.blockCaretBox, 'the block-caret WIDGET renders at the line end');
   }
-  await setCaret(page, 2); // ruby boundary — the hidden | is not tintable
-  assert.ok((await vimClasses()).blockCaretBox, 'the widget also covers a ruby boundary');
-  step('block caret renders at every position (widget at EOL / ruby boundary)');
+  await setCaret(page, 2); // ruby boundary — the cursor sits ON the next glyph
+  {
+    // Vim's cursor covers the character AFTER the caret: at a collapsed
+    // ruby's leading boundary that is the ruby's first BASE character behind
+    // the hidden markup (pm/decorations.ts tints it; the empty box would sit
+    // at the seam, one glyph behind the cursor's true home — at a line-end
+    // seam a whole LINE behind it).
+    const cls = await vimClasses();
+    assert.ok(cls.blockCaret, 'the block tints the ruby’s first base character');
+    assert.ok(!cls.blockCaretBox, 'no empty box at a tintable boundary');
+    const text = await page.evaluate(() => document.querySelector('.vedBlockCaret')?.textContent);
+    assert.equal(text, '漢', 'the tinted glyph is the base’s first character');
+  }
+  step('block caret renders at every position (widget at EOL, next base at a ruby boundary)');
 
   // --- …including the SEAM between two adjacent rubies (no text-node home;
-  // the bar-caret's hardest spot — the block widget must own it too) ---
+  // the bar-caret's hardest spot — the block covers the NEXT ruby's base) ---
   await toggleVim(); // off: setDoc types, which normal mode blocks
   await setDoc(page, '|語(ご)|句(く)');
   await toggleVim();
   await setCaret(page, 5); // between `)` of 語 and `|` of 句
   {
     const cls = await vimClasses();
-    assert.ok(cls.blockCaretBox, 'the block widget renders at the seam between two rubies');
-    assert.ok(!cls.blockCaret, 'no character to tint at the seam');
+    assert.ok(cls.blockCaret, 'the block tints the NEXT ruby’s first base character at the seam');
+    const text = await page.evaluate(() => document.querySelector('.vedBlockCaret')?.textContent);
+    assert.equal(text, '句', 'the tinted glyph is 句’s base');
   }
   await toggleVim();
   await setDoc(page, TEXT);
   await toggleVim();
-  step('block caret owns the two-ruby seam');
+  step('block caret owns the two-ruby seam (on the next base character)');
 
   // --- V selects the whole line; d cuts it linewise ---
   await setCaret(page, TEXT.indexOf('二'));
@@ -221,8 +236,12 @@ try {
   await press('k');
   assert.equal(await caretOffset(page), 5, 'k moves to the previous model line');
   await press('l');
-  assert.equal(await caretOffset(page), 6, 'l (right) is the character axis in horizontal');
-  step('horizontal j/k = logical model-line move; h/l = characters');
+  // ON き (5) — the line's last character: Vim's l stops there (the past-end
+  // column is insert-only; the adapter's clampLineEnd).
+  assert.equal(await caretOffset(page), 5, 'l at the line’s last character stays put (Vim)');
+  await press('h');
+  assert.equal(await caretOffset(page), 4, 'h (left) is the character axis in horizontal');
+  step('horizontal j/k = logical model-line move; h/l = characters, clamped to the line');
 
   // --- / search: the command line builds up (shown by the shell), Enter jumps
   // to the match, n repeats. (Set the doc with Vim off — normal mode blocks
@@ -357,9 +376,9 @@ try {
         [...document.querySelectorAll('.vedSelectionRect')].filter((e) => (e as HTMLElement).style.display !== 'none')
           .length,
     );
-  await setCaret(page, 5); // mid-line ('a' of 'bar')
+  await setCaret(page, 2); // mid-line (on い)
   await press('V');
-  assert.equal(await caretOffset(page), 5, 'V does NOT move the cursor');
+  assert.equal(await caretOffset(page), 2, 'V does NOT move the cursor');
   assert.ok((await selRects()) > 0, 'V highlights the paragraph (linewise selection rects appear)');
   await page.keyboard.press('Escape');
   await page.waitForTimeout(40);

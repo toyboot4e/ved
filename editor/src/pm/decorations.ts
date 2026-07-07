@@ -622,7 +622,27 @@ const caretDelta = (
         // the character under `headOffset` spans exactly [head, head+1).
         delta.push(Decoration.inline(head, head + 1, { class: 'vedBlockCaret' }));
       } else {
-        delta.push(Decoration.widget(head, blockCaretBox, { key: `blkcaret-${head}`, side: 0, ignoreSelection: true }));
+        // A collapsed ruby's LEADING seam (every position of an all-ruby
+        // line): the character under a Vim block cursor is the next VISIBLE
+        // glyph — the ruby's first base character, behind hidden markup.
+        // Tint IT, like `under` (Vim's cursor sits ON the next character; at
+        // a line end that is the NEXT line's first character, matching the
+        // highlight's head+2 anchor). The base-start OFFSET maps outside the
+        // node, so address the base content through the ruby node instead.
+        // No next glyph on the line (paragraph end, empty line) — or visible
+        // markup (a widget, not tintable text) — keeps the empty-cell box.
+        let off = headOffset;
+        let leaf = lineLeaves.find((l) => l.from === off);
+        while (leaf && leaf.kind === 'delim' && isHidden(leaf, policy, activeLine, active)) {
+          off = leaf.to;
+          leaf = lineLeaves.find((l) => l.from === off);
+        }
+        const r = leaf && leaf.kind === 'body' && leaf.from === off ? parse.rubies[leaf.ruby] : undefined;
+        if (r) delta.push(Decoration.inline(r.pos + 2, r.pos + 3, { class: 'vedBlockCaret' }));
+        else
+          delta.push(
+            Decoration.widget(head, blockCaretBox, { key: `blkcaret-${head}`, side: 0, ignoreSelection: true }),
+          );
       }
       suppressNativeCaret();
     } else {
