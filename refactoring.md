@@ -51,7 +51,7 @@ mutable session object — **proposal**, not this pass.
   text nodes the way paraGlyphs (l.2091) does; drag started on blank space
   under an expanded policy maps shifted offsets. Fix by reusing paraGlyphs'
   filter.
-- **E3 todo** — visual-line rect grouping exists in FOUR copies
+- **E3 done** — visual-line rect grouping exists in FOUR copies
   (paragraphCols, selectedGlyphRects, line-numbers linesOfParagraph,
   page-gap visualLineEnds) with drift in the page-wrap threshold (2.5 cells
   vs 1 pitch). Extract one pure `visual-lines.ts` leaf; keep per-site
@@ -68,15 +68,15 @@ mutable session object — **proposal**, not this pass.
 - **E9 rejected** — the audit called the display:none rationale stale, but
   bold/italic markers ARE still display:none editable DOM text (.syn in
   ruby.css); only the RUBY markup left the DOM. Comments stand.
-- **E10 todo (bug, needs repro)** — beforeOffsetRef isn't seeded from
-  initialCursor; first edit after a tab switch-back can record
-  cursorBefore=0 so undo jumps the caret to the doc start. Seed it +
-  e2e case.
+- **E10 done (bug)** — beforeOffsetRef wasn't seeded from initialCursor;
+  the first edit after a tab switch-back recorded cursorBefore=0 so undo
+  jumped the caret to the doc start. Seeded at the restore point; a
+  dedicated switch-back case in undo-cursor-restore.ts is still owed.
 - **E11 done** — "Caret movement" banner covers plain-edit functions;
   resolved by the split.
 - **E12 proposal** — pm/page-gap.ts pageBoundaryEnds is production-dead
   (test oracle only); move into the test or mark @internal.
-- **E13 todo** — `|| 18` / `|| 28` pitch fallbacks ~15 sites across
+- **E13 done** — `|| 18` / `|| 28` pitch fallbacks ~15 sites across
   editor.tsx + line-numbers.ts; shared readPitch/readCell helpers. Keep
   the per-hit-test weights (×3, ×10) as named consts, unmerged.
 - **E14 rejected** — biome's useExhaustiveDependencies (error level)
@@ -108,24 +108,24 @@ mutable session object — **proposal**, not this pass.
 - **P6 done** — dead CSS: .toolbarTextInput, a.vertMode overline.
 - **P7 done** — PlainTextHistory.entries/.pointer public but externally
   unread; make private.
-- **P8 todo** — buildMaps vs paraMaps duplicate the per-child ruby walk
+- **P8 done** — buildMaps vs paraMaps duplicate the per-child ruby walk
   verbatim (~25 lines). Shared walker variant (keeps the independent-oracle
   value of the buildPosMap ≡ offsetToPos test).
-- **P9 todo** — half-pitch rect-grouping in FOUR sites (== E3; also B3's
+- **P9 done** — half-pitch rect-grouping in FOUR sites (== E3; also B3's
   rt-skipping TreeWalker collector duplicated). One pm/line-grouping.ts
   grouper with parameterized backward threshold (the two thresholds encode
   different physics — do NOT unify values). Highest test burden: full
   test-all + smoke.
-- **P10 todo** — policy switch written 3×; rubyCollapsed moves to
+- **P10 done** — policy switch written 3×; rubyCollapsed moves to
   leaves.ts, isHidden delegates; decorations' resolved mirror stays (it is
   the documented perf shape).
-- **P11 todo** — lineStarts/binary-search triplicated (cursor.ts linear
+- **P11 done** — lineStarts/binary-search triplicated (cursor.ts linear
   scan per call, leaves.ts cached, model.ts lastAtOrBelow); share leaves'
   cached one.
-- **P12 todo** — widget/pool element-factory boilerplate ×8 across
+- **P12 proposal** — widget/pool element-factory boilerplate ×8 across
   decorations.ts + line-numbers.ts; roSpan()/makePooled() factories (also
   structurally enforces "every ved widget is contenteditable=false").
-- **P13 todo** — rubyCache mirrors baseCache's key fields; key on the base
+- **P13 done** — rubyCache mirrors baseCache's key fields; key on the base
   SET IDENTITY instead (drift-proof). Perf-seam adjacent: run
   caret-move-perf/click-perf.
 - **P14 proposal** — buildDecorations 8 positional params → options object;
@@ -227,7 +227,7 @@ mutable session object — **proposal**, not this pass.
 
 ## Bugs found during the effort (user-reported, pre-existing)
 
-- **B1 todo (bug, pre-existing)** — VerticalColumns 段=2: a paragraph ending
+- **B1 done (bug, pre-existing)** — VerticalColumns 段=2: a paragraph ending
   exactly on a page's last line (an intra-band boundary) gets the page-gap
   widget at `side: -1` (pm/page-gap.ts, since 9d6d887 2026-07-02) — the
   read-only widget becomes the caret's PREVIOUS DOM sibling, which (a) kills
@@ -244,7 +244,7 @@ mutable session object — **proposal**, not this pass.
   dev-app-update.yml (desktop), prosemirror-transform (editor),
   vitest.shims.d.ts (root, references uninstalled @vitest/browser).
   Lockfile change → `just bump-hash`.
-- **X2 todo** — export `Invisibles` from @ved/editor and delete desktop's
+- **X2 done** — export `Invisibles` from @ved/editor and delete desktop's
   hand-written structural mirror (invisibles.ts).
 - **X3 done (typing hole)** — tsconfig.base.json lacks noImplicitAny:true
   while @electron-toolkit/tsconfig sets it FALSE explicitly — and
@@ -264,7 +264,7 @@ mutable session object — **proposal**, not this pass.
 - **X7 proposal** — desktop build:win/mac/linux/unpack scripts are
   unexercised and inconsistent (some typecheck, some don't); normalize
   when packaging becomes real.
-- **X8 todo** — web/src/view-config.ts is a drifted hand-fork of the
+- **X8 proposal** — web/src/view-config.ts is a drifted hand-fork of the
   desktop one; extract the pure ViewConfig type/clamp/CSS mapping to a
   shared home (it is editor-adjacent view geometry) or re-sync.
 - **X9 proposal** — docs/vim-keymap-plan.md is a completed plan (a
@@ -274,7 +274,7 @@ mutable session object — **proposal**, not this pass.
   the fossils. Left as proposal: doc-policy calls are the author's.
 - **X10 done** — gitignore a.png/repro.txt-style scratch or remove;
   examples/ fate is the author's call (left untracked).
-- **X11 todo** — editor index.ts: retract CoreCommandId/EditorCommand/
+- **X11 done** — editor index.ts: retract CoreCommandId/EditorCommand/
   EditorCommandContext/CORE_COMMANDS/chordOf (no consumer, not part of a
   named seam; DEFAULT_KEYBINDINGS + Chord types stay — they type the
   public keybindings prop).
