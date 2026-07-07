@@ -21,7 +21,23 @@ export const IpcChannel = {
   ShellKill: 'ved:shell:kill',
   ShellData: 'ved:shell:data',
   ShellExit: 'ved:shell:exit',
+  ExtensionSources: 'ved:extension:sources',
+  ExtensionUpdated: 'ved:extension:updated',
+  ExtensionStorageRead: 'ved:extension:storage-read',
+  ExtensionStorageWrite: 'ved:extension:storage-write',
 } as const;
+
+/** One user extension, compiled in main (extension-host.ts) and imported as
+ * a blob module by the renderer (extension-host.ts there). `js` is the
+ * type-stripped source; a load failure carries `error` instead — the
+ * renderer reports it as a notice and skips the extension. */
+export type ExtensionSource = {
+  /** The extension's id — its file base name; namespaces its commands. */
+  readonly id: string;
+  readonly fileName: string;
+  readonly js: string | null;
+  readonly error: string | null;
+};
 
 /** A file named on the command line, read at startup. A path that does not
  * exist yet arrives with empty text (a "new file" buffer; save creates it). */
@@ -132,4 +148,13 @@ export type VedApi = VedFileApi &
     readonly setDirty: (dirty: boolean) => void;
     /** Native "discard unsaved changes?" confirm; `true` = discard, `false` = keep. */
     readonly confirmDiscard: () => Promise<boolean>;
+    /** The user extensions, compiled to JS in main (read once per launch). */
+    readonly extensionSources: () => Promise<readonly ExtensionSource[]>;
+    /** An extension source was recompiled (the dev watch) — the renderer
+     * hot-swaps that one extension. */
+    readonly onExtensionUpdated: (cb: (source: ExtensionSource) => void) => Unsubscribe;
+    /** Per-extension storage (`<configDir>/storage/<id>/<file>`); `null` =
+     * no such file. Ids/names are single path segments — main validates. */
+    readonly extensionStorageRead: (id: string, file: string) => Promise<string | null>;
+    readonly extensionStorageWrite: (id: string, file: string, data: string) => Promise<void>;
   };

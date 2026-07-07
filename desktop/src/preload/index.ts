@@ -29,6 +29,10 @@ const ved: VedApi = {
   killShell: (id) => ipcRenderer.send(IpcChannel.ShellKill, id),
   onShellData: (cb) => on(IpcChannel.ShellData, cb),
   onShellExit: (cb) => on(IpcChannel.ShellExit, cb),
+  extensionSources: () => ipcRenderer.invoke(IpcChannel.ExtensionSources),
+  onExtensionUpdated: (cb) => on(IpcChannel.ExtensionUpdated, cb),
+  extensionStorageRead: (id, file) => ipcRenderer.invoke(IpcChannel.ExtensionStorageRead, id, file),
+  extensionStorageWrite: (id, file, data) => ipcRenderer.invoke(IpcChannel.ExtensionStorageWrite, id, file, data),
 };
 
 // Expose via `contextBridge` when context isolation is enabled, otherwise

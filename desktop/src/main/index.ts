@@ -1,9 +1,12 @@
+import { homedir } from 'node:os';
 import { join } from 'node:path';
 import { electronApp, is } from '@electron-toolkit/utils';
 import { app, BrowserWindow, Menu, shell } from 'electron';
 import icon from '../../resources/icon.png?asset';
 import { installClipboardPersist } from './clipboard-persist';
 import { installCloseGuard, registerCloseGuard } from './close-guard';
+import { devExtensionFlags, resolveConfigDir } from './config-dir';
+import { registerExtensionService } from './extension-service';
 import { registerFileService } from './file-service';
 import { killAllShells, registerShellService } from './shell-service';
 
@@ -124,6 +127,13 @@ app.whenReady().then(() => {
   registerShellService();
   registerCloseGuard();
   installClipboardPersist();
+  // User config lives under the config dir (docs/extensions-plan.md) —
+  // `--config-dir=<path>` overrides the platform default; the flag is also
+  // the e2e isolation seam, like VED_SMOKE_USER_DATA above.
+  registerExtensionService(
+    resolveConfigDir(process.argv, process.platform, process.env, homedir(), process.cwd()),
+    devExtensionFlags(process.argv, process.cwd()),
+  );
 
   createWindow();
 

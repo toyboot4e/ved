@@ -1,0 +1,200 @@
+import { mkdir, mkdtemp, readFile, rm, stat, writeFile } from 'node:fs/promises';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
+import { afterEach, beforeEach, describe, expect, it } from 'vitest';
+import {
+  extensionIdOf,
+  loadExtensionSources,
+  orderExtensionFiles,
+  readExtensionStorage,
+  scanExtensions,
+  versionAtLeast,
+  writeExtensionStorage,
+} from './extension-host';
+
+describe('orderExtensionFiles', () => {
+  it('keeps only .ts sources, name-sorted, init.ts last', () => {
+    expect(orderExtensionFiles(['zebra.ts', 'init.ts', 'alpha.ts', 'ved.d.ts', 'tsconfig.json', 'note.md'])).toEqual([
+      'alpha.ts',
+      'zebra.ts',
+      'init.ts',
+    ]);
+  });
+
+  it('extensionIdOf strips the extension', () => {
+    expect(extensionIdOf('reflow.ts')).toBe('reflow');
+  });
+});
+
+describe('loadExtensionSources', () => {
+  let configDir: string;
+  const extDir = () => join(configDir, 'extensions');
+  beforeEach(async () => {
+    configDir = await mkdtemp(join(tmpdir(), 'ved-ext-'));
+  });
+  afterEach(async () => {
+    await rm(configDir, { recursive: true, force: true });
+  });
+
+  it('creates the extensions dir and the generated typing files on first run', async () => {
+    expect(await loadExtensionSources(configDir)).toEqual([]);
+    const dts = await readFile(join(extDir(), 'ved.d.ts'), 'utf-8');
+    expect(dts).toContain('export type VedContext');
+    const tsconfig = JSON.parse(await readFile(join(extDir(), 'tsconfig.json'), 'utf-8'));
+    expect(tsconfig.compilerOptions.paths).toEqual({ ved: ['./ved.d.ts'] });
+    expect(tsconfig.compilerOptions.verbatimModuleSyntax).toBe(true);
+  });
+
+  it('rewrites a generated file only when it changed', async () => {
+    await loadExtensionSources(configDir);
+    const path = join(extDir(), 'ved.d.ts');
+    const first = (await stat(path)).mtimeMs;
+    await new Promise((r) => setTimeout(r, 20));
+    await loadExtensionSources(configDir);
+    expect((await stat(path)).mtimeMs).toBe(first);
+    await writeFile(path, 'edited', 'utf-8');
+    await loadExtensionSources(configDir);
+    expect(await readFile(path, 'utf-8')).not.toBe('edited');
+  });
+
+  it('strips types and drops type-only imports', async () => {
+    await mkdir(extDir(), { recursive: true });
+    await writeFile(
+      join(extDir(), 'greet.ts'),
+      `import type { VedContext } from 'ved';
+export function activate(ctx: VedContext): void {
+  const n: number = 1;
+  ctx.ui.notice(\`hi \${n}\`);
+}
+`,
+      'utf-8',
+    );
+    const [greet] = await loadExtensionSources(configDir);
+    expect(greet?.error).toBeNull();
+    expect(greet?.id).toBe('greet');
+    expect(greet?.js).not.toContain('VedContext');
+    expect(greet?.js).not.toContain(': number');
+    expect(greet?.js).toContain('activate');
+  });
+
+  it('orders init.ts last and refuses reserved ids, per file', async () => {
+    await mkdir(extDir(), { recursive: true });
+    await writeFile(join(extDir(), 'init.ts'), 'export function activate() {}', 'utf-8');
+    await writeFile(join(extDir(), 'aaa.ts'), 'export function activate() {}', 'utf-8');
+    await writeFile(join(extDir(), 'history.ts'), 'export function activate() {}', 'utf-8');
+    const sources = await loadExtensionSources(configDir);
+    expect(sources.map((s) => s.id)).toEqual(['aaa', 'history', 'init']);
+    expect(sources.find((s) => s.id === 'history')?.error).toContain('reserved');
+    expect(sources.find((s) => s.id === 'aaa')?.error).toBeNull();
+  });
+
+  it('turns non-erasable syntax (enum) into a per-file error, not a crash', async () => {
+    await mkdir(extDir(), { recursive: true });
+    await writeFile(join(extDir(), 'bad.ts'), 'export enum Mode { A }', 'utf-8');
+    await writeFile(join(extDir(), 'good.ts'), 'export const activate = () => {};', 'utf-8');
+    const sources = await loadExtensionSources(configDir);
+    expect(sources.find((s) => s.id === 'bad')?.js).toBeNull();
+    expect(sources.find((s) => s.id === 'bad')?.error).toBeTruthy();
+    expect(sources.find((s) => s.id === 'good')?.error).toBeNull();
+  });
+
+  const writeProject = async (dir: string, manifest: object, files: Record<string, string>): Promise<void> => {
+    await mkdir(dir, { recursive: true });
+    await writeFile(join(dir, 'package.json'), JSON.stringify(manifest), 'utf-8');
+    for (const [name, content] of Object.entries(files)) {
+      await mkdir(join(dir, name, '..'), { recursive: true });
+      await writeFile(join(dir, name), content, 'utf-8');
+    }
+  };
+
+  it('bundles a project extension: relative imports, ved type import erased', async () => {
+    await writeProject(
+      join(extDir(), 'counter'),
+      { name: 'counter', ved: { id: 'counter', entry: 'src/main.ts' } },
+      {
+        'src/util.ts': 'export const double = (n: number): number => n * 2;',
+        'src/main.ts': `import type { VedContext } from 'ved';
+import { double } from './util.ts';
+export function activate(ctx: VedContext): void { ctx.ui.notice(String(double(21))); }
+`,
+      },
+    );
+    const sources = await loadExtensionSources(configDir);
+    const counter = sources.find((s) => s.id === 'counter');
+    expect(counter?.error).toBeNull();
+    expect(counter?.js).toContain('* 2');
+    expect(counter?.js).not.toContain("from 'ved'");
+  });
+
+  it('a VALUE import of ved (or a Node built-in) is a clear bundle error', async () => {
+    await writeProject(
+      join(extDir(), 'oops'),
+      { ved: { id: 'oops', entry: 'main.ts' } },
+      { 'main.ts': "import { commands } from 'ved';\nexport const activate = () => commands;" },
+    );
+    const sources = await loadExtensionSources(configDir);
+    expect(sources.find((s) => s.id === 'oops')?.error).toMatch(/ved/);
+  });
+
+  it('refuses a project needing a newer ved (minAppVersion)', async () => {
+    await writeProject(
+      join(extDir(), 'future'),
+      { ved: { id: 'future', entry: 'main.ts', minAppVersion: '9.9' } },
+      { 'main.ts': 'export const activate = () => {};' },
+    );
+    const sources = await loadExtensionSources(configDir, { appVersion: '0.1.0' });
+    expect(sources.find((s) => s.id === 'future')?.error).toContain('9.9');
+  });
+
+  it('scan order: regular sorted, dev extensions, init.ts last; duplicates invalid', async () => {
+    await mkdir(extDir(), { recursive: true });
+    await writeFile(join(extDir(), 'init.ts'), 'export const activate = () => {};', 'utf-8');
+    await writeFile(join(extDir(), 'zz.ts'), 'export const activate = () => {};', 'utf-8');
+    await writeProject(
+      join(extDir(), 'alpha'),
+      { ved: { id: 'alpha', entry: 'main.ts' } },
+      { 'main.ts': 'export const activate = () => {};' },
+    );
+    const dev = join(configDir, 'devext');
+    await writeProject(
+      dev,
+      { ved: { id: 'zz', entry: 'main.ts' } },
+      { 'main.ts': 'export const activate = () => {};' },
+    );
+    const scanned = await scanExtensions(configDir, [dev]);
+    expect(scanned.map((s) => s.id)).toEqual(['alpha', 'zz', 'zz', 'init']);
+    expect(scanned[2]?.kind).toBe('invalid'); // the dev duplicate of zz.ts
+  });
+});
+
+describe('extension storage', () => {
+  let configDir: string;
+  beforeEach(async () => {
+    configDir = await mkdtemp(join(tmpdir(), 'ved-store-'));
+  });
+  afterEach(async () => {
+    await rm(configDir, { recursive: true, force: true });
+  });
+
+  it('round-trips text per extension id; a missing file reads null', async () => {
+    expect(await readExtensionStorage(configDir, 'counter', 'state.json')).toBeNull();
+    await writeExtensionStorage(configDir, 'counter', 'state.json', '{"n":7}');
+    expect(await readExtensionStorage(configDir, 'counter', 'state.json')).toBe('{"n":7}');
+    expect(await readFile(join(configDir, 'storage', 'counter', 'state.json'), 'utf-8')).toBe('{"n":7}');
+  });
+
+  it('rejects path traversal in ids and names', async () => {
+    await expect(writeExtensionStorage(configDir, '..', 'x', 'boom')).rejects.toThrow(/invalid/);
+    await expect(writeExtensionStorage(configDir, 'ok', '../x', 'boom')).rejects.toThrow(/invalid/);
+    await expect(readExtensionStorage(configDir, 'a/b', 'x')).rejects.toThrow(/invalid/);
+  });
+});
+
+describe('versionAtLeast', () => {
+  it('compares dotted numerics with missing segments as 0', () => {
+    expect(versionAtLeast('0.2.0', '0.2')).toBe(true);
+    expect(versionAtLeast('0.2', '0.2.1')).toBe(false);
+    expect(versionAtLeast('1.0.0', '0.9.9')).toBe(true);
+    expect(versionAtLeast('0.1.0', '9.9')).toBe(false);
+  });
+});
