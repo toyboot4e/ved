@@ -2,6 +2,7 @@
 // Pure logic over the `VedFileApi` contract — the api is passed in (the app
 // hands over `window.ved`) so this module stays unit-testable.
 import type { VedFileApi } from '../../shared/ipc';
+import { isComposingEvent } from './ime';
 
 /**
  * Saves to the known path, or via the save dialog when untitled.
@@ -40,7 +41,7 @@ export type ChordEvent = {
  * composition.
  */
 export const matchFileCommand = (event: ChordEvent, isDarwin: boolean): FileCommand | null => {
-  if (event.isComposing || event.keyCode === 229) return null;
+  if (isComposingEvent(event)) return null;
   const mod = isDarwin ? event.metaKey : event.ctrlKey;
   if (!mod || event.altKey) return null;
 
@@ -58,7 +59,7 @@ export type TabCommand = 'new' | 'close' | 'next' | 'prev';
  * application switcher. `null` when the event is not ours.
  */
 export const matchTabCommand = (event: ChordEvent, isDarwin: boolean): TabCommand | null => {
-  if (event.isComposing || event.keyCode === 229 || event.altKey) return null;
+  if (isComposingEvent(event) || event.altKey) return null;
 
   // Ctrl+Tab / Ctrl+Shift+Tab cycle (Ctrl, never Cmd)
   if (event.ctrlKey && !event.metaKey && event.key === 'Tab') {
@@ -80,7 +81,7 @@ export type ViewCommand = 'toggleSidebar' | 'toggleShell';
  * Cmd on macOS). `null` when the event is not ours.
  */
 export const matchViewCommand = (event: ChordEvent, isDarwin: boolean): ViewCommand | null => {
-  if (event.isComposing || event.keyCode === 229) return null;
+  if (isComposingEvent(event)) return null;
   const mod = isDarwin ? event.metaKey : event.ctrlKey;
   if (!mod || event.altKey || event.shiftKey) return null;
   const key = event.key.toLowerCase();

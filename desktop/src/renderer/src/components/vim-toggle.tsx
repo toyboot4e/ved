@@ -1,11 +1,7 @@
 import { editorStyles as styles } from '@ved/editor';
 import type React from 'react';
+import { preserveFocus } from '../focus';
 import { useVimStore } from '../vim';
-
-/** Prevent the click from stealing focus (and the selection) from the editor. */
-const keepEditorFocus: React.MouseEventHandler = (event) => {
-  event.preventDefault();
-};
 
 /** The Vim-mode toolbar group: an on/off toggle plus — while on — the live
  *  mode chip (NORMAL/INSERT/VISUAL, fed by the extension's onModeChange), the
@@ -17,7 +13,7 @@ export const VimToggle = (): React.JSX.Element => {
   const macroRecording = useVimStore((s) => s.macroRecording);
   const toggle = useVimStore((s) => s.toggle);
   return (
-    <fieldset className={styles.toolbarGroup} aria-label='Vim mode' onMouseDown={keepEditorFocus}>
+    <fieldset className={styles.toolbarGroup} aria-label='Vim mode' onMouseDown={preserveFocus}>
       <button
         type='button'
         className={styles.toolbarButton}

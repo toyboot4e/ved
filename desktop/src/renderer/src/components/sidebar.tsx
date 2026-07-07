@@ -9,6 +9,7 @@ import type React from 'react';
 import { useEffect, useState } from 'react';
 import type { DirEntry } from '../../../shared/ipc';
 import { fileName } from '../file-commands';
+import { preserveFocus } from '../focus';
 import { SIDEBAR_MAX_WIDTH, SIDEBAR_MIN_WIDTH, useWorkspaceStore } from '../workspace';
 import { ChevronIcon, FileGenericIcon, FileImageIcon, FileTextIcon, FolderIcon } from './icons/FileIcons';
 import styles from './sidebar.module.scss';
@@ -16,11 +17,6 @@ import styles from './sidebar.module.scss';
 export type SidebarProps = {
   /** Opens a file as a buffer (the shell refuses and reports non-text). */
   readonly onOpenFile: (path: string) => void;
-};
-
-/** Keep the editor's focus (and selection) when clicking around the tree. */
-const keepEditorFocus: React.MouseEventHandler = (event) => {
-  event.preventDefault();
 };
 
 // COSMETIC extension → icon mapping (openability is content-sniffed in main)
@@ -88,7 +84,7 @@ const EntryRow = ({
         className={styles.entry}
         style={{ '--depth': depth } as React.CSSProperties}
         title={entry.path}
-        onMouseDown={keepEditorFocus}
+        onMouseDown={preserveFocus}
         onClick={() => (isDir ? setOpen((o) => !o) : onOpenFile(entry.path))}
       >
         <span className={clsx(styles.twisty, open && styles.twistyOpen)}>{isDir && <ChevronIcon />}</span>
@@ -123,7 +119,7 @@ const RootSection = ({
               className={clsx(styles.entry, styles.rootEntry)}
               style={{ '--depth': 0 } as React.CSSProperties}
               title={root}
-              onMouseDown={keepEditorFocus}
+              onMouseDown={preserveFocus}
               onClick={() => setOpen((o) => !o)}
             >
               <span className={clsx(styles.twisty, open && styles.twistyOpen)}>
@@ -137,7 +133,7 @@ const RootSection = ({
               className={styles.iconButton}
               aria-label={`Remove ${fileName(root)}`}
               title='フォルダを閉じる'
-              onMouseDown={keepEditorFocus}
+              onMouseDown={preserveFocus}
               onClick={onRemove}
             >
               ✕
@@ -196,7 +192,7 @@ export const Sidebar = ({ onOpenFile }: SidebarProps): React.JSX.Element => {
           className={styles.iconButton}
           aria-label='Add folder'
           title='フォルダを追加'
-          onMouseDown={keepEditorFocus}
+          onMouseDown={preserveFocus}
           onClick={() => void handleAddFolder()}
         >
           ＋
@@ -206,7 +202,7 @@ export const Sidebar = ({ onOpenFile }: SidebarProps): React.JSX.Element => {
           className={styles.iconButton}
           aria-label='Move sidebar'
           title={side === 'left' ? 'サイドバーを右側へ' : 'サイドバーを左側へ'}
-          onMouseDown={keepEditorFocus}
+          onMouseDown={preserveFocus}
           onClick={flipSide}
         >
           ⇄

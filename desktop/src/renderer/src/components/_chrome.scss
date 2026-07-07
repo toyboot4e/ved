@@ -1,0 +1,24 @@
+// Shared chrome primitives for the desktop shell's SCSS modules.
+// Colors are bare `--ved-*` tokens — the shell always runs under a themed
+// `:root`, so no light-value fallbacks here (that convention is for the
+// editor core only; see architecture.md "Theming").
+
+// A square hover-ghost icon button (sidebar header, shell tabs, tab close).
+@mixin icon-button($size, $font-size: 10px, $radius: 3px) {
+  flex: 0 0 auto;
+  width: $size;
+  height: $size;
+  line-height: 1;
+  padding: 0;
+  font-size: $font-size;
+  border: none;
+  border-radius: $radius;
+  background: transparent;
+  color: var(--ved-fg-muted);
+  cursor: pointer;
+
+  &:hover {
+    background: var(--ved-hover-bg);
+    color: var(--ved-fg);
+  }
+}

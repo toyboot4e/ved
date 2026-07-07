@@ -8,6 +8,8 @@
 import type { SearchRange } from '@ved/editor';
 import { create } from 'zustand';
 import type { ChordEvent } from './file-commands';
+import { focusEditor } from './focus';
+import { isComposingEvent } from './ime';
 
 /** Every non-overlapping match of `query` in `text`, left to right, as plain
  *  offset ranges. Literal matching (no regex), case-insensitive when
@@ -39,7 +41,7 @@ export type SearchCommand = 'find' | 'replace';
  * see src/main/index.ts.)
  */
 export const matchSearchCommand = (event: ChordEvent, isDarwin: boolean): SearchCommand | null => {
-  if (event.isComposing || event.keyCode === 229) return null;
+  if (isComposingEvent(event)) return null;
   const mod = isDarwin ? event.metaKey : event.ctrlKey;
   if (!mod || event.altKey || event.shiftKey) return null;
   const key = event.key.toLowerCase();
@@ -96,5 +98,5 @@ export const useSearchStore = create<SearchStore>()((set) => ({
  *  focus while the bar is open). */
 export const closeSearch = (): void => {
   useSearchStore.getState().close();
-  document.getElementById('editor-content')?.focus();
+  focusEditor();
 };

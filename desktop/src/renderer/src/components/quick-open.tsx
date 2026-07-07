@@ -12,6 +12,8 @@
 import { clsx } from 'clsx';
 import type React from 'react';
 import { useEffect, useRef, useState } from 'react';
+import { preserveFocus } from '../focus';
+import { isComposingEvent } from '../ime';
 import {
   type BufferEntry,
   closeQuickOpen,
@@ -42,9 +44,6 @@ type Preview =
   | { readonly state: 'empty' }
   | { readonly state: 'error' }
   | { readonly state: 'text'; readonly text: string; readonly truncated: boolean };
-
-/** Keep the input's focus when a toolbar button is clicked. */
-const keepInputFocus: React.MouseEventHandler = (event) => event.preventDefault();
 
 /** Render a label with its matched characters emphasized. */
 const Label = ({
@@ -188,7 +187,7 @@ export const QuickOpen = ({ roots, buffers, onOpenFile, onSelectBuffer }: QuickO
 
   const onKeyDown = (event: React.KeyboardEvent): void => {
     // Arrows/Enter mid-IME belong to the composition, not the list.
-    if (event.nativeEvent.isComposing || event.nativeEvent.keyCode === 229) return;
+    if (isComposingEvent(event.nativeEvent)) return;
     if (event.key === 'ArrowDown') {
       event.preventDefault();
       useQuickOpenStore.getState().move(1);
@@ -238,10 +237,10 @@ export const QuickOpen = ({ roots, buffers, onOpenFile, onSelectBuffer }: QuickO
               <button
                 key={m.mode}
                 type='button'
-                className={clsx(styles.modeButton, mode === m.mode && styles.modeOn)}
+                className={clsx(styles.toggle, mode === m.mode && styles.toggleOn)}
                 aria-pressed={mode === m.mode}
                 aria-label={m.aria}
-                onMouseDown={keepInputFocus}
+                onMouseDown={preserveFocus}
                 onClick={() => useQuickOpenStore.getState().setMode(m.mode)}
               >
                 {m.label}
@@ -266,7 +265,7 @@ export const QuickOpen = ({ roots, buffers, onOpenFile, onSelectBuffer }: QuickO
               aria-pressed={textOnly}
               aria-label='Text files only'
               title='テキストファイルのみ表示'
-              onMouseDown={keepInputFocus}
+              onMouseDown={preserveFocus}
               onClick={() => useQuickOpenStore.getState().toggleTextOnly()}
             >
               テキストのみ

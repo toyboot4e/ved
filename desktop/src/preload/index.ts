@@ -1,4 +1,3 @@
-import { electronAPI } from '@electron-toolkit/preload';
 import { contextBridge, ipcRenderer } from 'electron';
 import { IpcChannel, type Unsubscribe, type VedApi } from '../shared/ipc';
 
@@ -9,12 +8,10 @@ const on = <Args extends unknown[]>(channel: string, cb: (...args: Args) => void
   return () => ipcRenderer.off(channel, listener);
 };
 
-// Custom APIs for renderer
-const api = {};
-
 // The ved API: contract in src/shared/ipc.ts, handlers in
 // src/main/file-service.ts and close-guard.ts.
 const ved: VedApi = {
+  platform: process.platform,
   cliFiles: () => ipcRenderer.invoke(IpcChannel.CliFiles),
   openFile: () => ipcRenderer.invoke(IpcChannel.OpenFile),
   saveFile: (path, text) => ipcRenderer.invoke(IpcChannel.SaveFile, path, text),
@@ -34,19 +31,15 @@ const ved: VedApi = {
   onShellExit: (cb) => on(IpcChannel.ShellExit, cb),
 };
 
-// Use `contextBridge` APIs to expose Electron APIs to
-// renderer only if context isolation is enabled, otherwise
-// just add to the DOM global.
+// Expose via `contextBridge` when context isolation is enabled, otherwise
+// just add to the DOM global. `window.ved` is the renderer's ONLY bridge —
+// no raw ipcRenderer or Node globals cross the boundary.
 if (process.contextIsolated) {
   try {
-    contextBridge.exposeInMainWorld('electron', electronAPI);
-    contextBridge.exposeInMainWorld('api', api);
     contextBridge.exposeInMainWorld('ved', ved);
   } catch (error) {
     console.error(error);
   }
 } else {
-  window.electron = electronAPI;
-  window.api = api;
   window.ved = ved;
 }

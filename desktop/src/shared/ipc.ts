@@ -106,9 +106,28 @@ export type VedShellApi = {
   readonly onShellExit: (cb: (id: number, exitCode: number) => void) => Unsubscribe;
 };
 
+/** `process.platform` values (mirrors `NodeJS.Platform`; spelled out because
+ * this shared contract also compiles for the renderer, which has no node
+ * ambient types). */
+export type Platform =
+  | 'aix'
+  | 'android'
+  | 'cygwin'
+  | 'darwin'
+  | 'freebsd'
+  | 'haiku'
+  | 'linux'
+  | 'netbsd'
+  | 'openbsd'
+  | 'sunos'
+  | 'win32';
+
 /** The full renderer-facing API, exposed as `window.ved` by the preload. */
 export type VedApi = VedFileApi &
   VedShellApi & {
+    /** `process.platform`, read once in the preload — the renderer keys its
+     * macOS carve-outs (Cmd-vs-Ctrl chords) off it. */
+    readonly platform: Platform;
     /** Reports the aggregate dirty state; main consults it in the close guard. */
     readonly setDirty: (dirty: boolean) => void;
     /** Native "discard unsaved changes?" confirm; `true` = discard, `false` = keep. */

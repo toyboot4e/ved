@@ -31,9 +31,9 @@
   margin: 0;
   padding: 7px 14px;
   font-size: 12px;
-  border: 1px solid var(--ved-border-faint, #d0d0d0);
+  border: 1px solid var(--ved-border-faint);
   border-radius: 6px;
-  background: var(--ved-chrome-bg, #ececec);
-  color: var(--ved-fg, #222);
+  background: var(--ved-chrome-bg);
+  color: var(--ved-fg);
   box-shadow: 0 2px 10px rgba(0, 0, 0, 0.15);
 }

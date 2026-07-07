@@ -98,7 +98,7 @@ export const ViewConfigControls = ({ writingMode }: { readonly writingMode: Writ
   };
 
   return (
-    // No keepEditorFocus here (unlike the button groups): the inputs need the
+    // No preserveFocus here (unlike the button groups): the inputs need the
     // real focus to be typed into.
     <fieldset className={styles.toolbarGroup} aria-label='View config'>
       <span className={styles.toolbarGroupLabel} aria-hidden='true' title='Debug view config (not persisted)'>

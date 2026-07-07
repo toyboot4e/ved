@@ -79,8 +79,9 @@ mutable session object — **proposal**, not this pass.
 - **E13 todo** — `|| 18` / `|| 28` pitch fallbacks ~15 sites across
   editor.tsx + line-numbers.ts; shared readPitch/readCell helpers. Keep
   the per-hit-test weights (×3, ×10) as named consts, unmerged.
-- **E14 todo** — redundant effect deps (vert/multiCol/rows/grow are
-  functions of writingMode).
+- **E14 rejected** — biome's useExhaustiveDependencies (error level)
+  requires the derived vert/multiCol/rows/grow in the deps list because the
+  effect body reads them; the redundancy is lint-enforced.
 - **E15 done** — revealCaretInScroller reads window.getSelection() while
   every other site uses view.dom.ownerDocument.
 - **E16 proposal** — moveCaretByLine: collapse the duplicated accept/reject
@@ -185,18 +186,18 @@ mutable session object — **proposal**, not this pass.
 
 ## desktop/renderer + preload
 
-- **D1 todo (boundary)** — preload exposes the full untyped
+- **D1 done (boundary)** — preload exposes the full untyped
   `window.electron` (raw ipcRenderer) for ONE process.platform read;
   replace with a typed `platform` on VedApi, drop the exposure.
-- **D2 todo** — dead `api = {}` scaffold in preload.
-- **D3 todo** — stale "Slate" comments (buffers.ts, app.tsx).
-- **D4 todo** — app.tsx comment describes a 'system' theme value that
+- **D2 done** — dead `api = {}` scaffold in preload.
+- **D3 done** — stale "Slate" comments (buffers.ts, app.tsx).
+- **D4 done** — app.tsx comment describes a 'system' theme value that
   doesn't exist.
-- **D5 todo** — keepInputFocus/keepEditorFocus defined 7×; one shared
+- **D5 done** — keepInputFocus/keepEditorFocus defined 7×; one shared
   preserveFocus.
-- **D6 todo** — composing guard copy-pasted ~8×; one isComposingEvent
+- **D6 done** — composing guard copy-pasted ~8×; one isComposingEvent
   (also THE place the IME invariant is documented).
-- **D7 todo** — closeSearch/closeQuickOpen duplicate + 'editor-content'
+- **D7 done** — closeSearch/closeQuickOpen duplicate + 'editor-content'
   magic id ×2; shared focusEditor().
 - **D8 todo** — five chord matchers share an identical prelude and the
   quick-open overlay must enumerate them by hand (a real chord-leak
@@ -213,12 +214,12 @@ mutable session object — **proposal**, not this pass.
   dirty-tracking refs — needs its own careful step.
 - **D12 proposal** — search wiring + notice toast extraction from app.tsx
   (hooks/stores); cosmetic god-component trimming.
-- **D13 todo** — scss: iconButton triplicated; quick-open .toggle/.modeButton
+- **D13 done** — scss: iconButton triplicated; quick-open .toggle/.modeButton
   byte-identical; shared mixin/partial.
-- **D14 todo** — drop dead `var(--ved-*, #light)` fallbacks in desktop
+- **D14 done** — drop dead `var(--ved-*, #light)` fallbacks in desktop
   modules (the fallback convention is for the editor core only) + stale
   "Phase-2 follow-up" comment in sidebar.module.scss.
-- **D15 todo** — ShellPanel first-shell effect missing dependency array
+- **D15 done** — ShellPanel first-shell effect missing dependency array
   (runs every render, guard-only protection against a spawn loop).
 - **D16 proposal** — macOS Cmd+` for shell toggle collides with the OS
   window cycler; needs a darwin carve-out like Ctrl+Tab's. (No mac to

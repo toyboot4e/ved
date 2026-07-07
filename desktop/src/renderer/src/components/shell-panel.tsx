@@ -8,7 +8,7 @@ import { FitAddon } from '@xterm/addon-fit';
 import { Terminal } from '@xterm/xterm';
 import { clsx } from 'clsx';
 import type React from 'react';
-import { useEffect, useRef } from 'react';
+import { useCallback, useEffect, useRef } from 'react';
 import { type ShellTab, useShellStore } from '../shells';
 import styles from './shell-panel.module.scss';
 
@@ -88,12 +88,14 @@ export const ShellPanel = ({ defaultCwd }: ShellPanelProps): React.JSX.Element |
   const tabs = useShellStore((s) => s.tabs);
   const activePtyId = useShellStore((s) => s.activePtyId);
 
-  const handleNewShell = async (): Promise<void> => {
+  const handleNewShell = useCallback(async (): Promise<void> => {
     const ptyId = await window.ved.createShell(defaultCwd);
     useShellStore.getState().addTab({ ptyId, title: 'shell' });
-  };
+  }, [defaultCwd]);
 
-  // Opening the panel with no tabs spawns the first shell
+  // Opening the panel with no tabs spawns the first shell (also when the last
+  // tab dies while open); `creating` guards the async gap between the spawn
+  // starting and its tab landing in the store.
   const creating = useRef(false);
   useEffect(() => {
     if (!open || tabs.length > 0 || creating.current) return;
@@ -101,7 +103,7 @@ export const ShellPanel = ({ defaultCwd }: ShellPanelProps): React.JSX.Element |
     void handleNewShell().finally(() => {
       creating.current = false;
     });
-  });
+  }, [open, tabs.length, handleNewShell]);
 
   // A PTY exit (user typed `exit`, shell crashed) drops its tab
   useEffect(() => window.ved.onShellExit((id) => useShellStore.getState().removeTab(id)), []);

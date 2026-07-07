@@ -1,7 +1,9 @@
+@use './chrome';
+
 .sidebar {
   // Fixed-width pane docked to either window edge; the editor column takes
-  // the rest (app.module.scss). Resizing is a Phase-2 follow-up
-  // (pointer-drag handle writing this var).
+  // the rest (app.module.scss). The drag handle below resizes it by writing
+  // this var (via the workspace store).
   flex: 0 0 auto;
   width: var(--sidebar-width, 240px);
   height: 100%;
@@ -9,17 +11,17 @@
   flex-direction: column;
   overflow: hidden;
   position: relative; // anchors the resize handle
-  background: var(--ved-panel-bg, #faf9f7);
-  color: var(--ved-fg, #222);
+  background: var(--ved-panel-bg);
+  color: var(--ved-fg);
   font-size: 12px;
   user-select: none;
   -webkit-user-select: none;
 
   &[data-side='left'] {
-    border-right: 1px solid var(--ved-border, #808080);
+    border-right: 1px solid var(--ved-border);
   }
   &[data-side='right'] {
-    border-left: 1px solid var(--ved-border, #808080);
+    border-left: 1px solid var(--ved-border);
   }
 }
 
@@ -28,33 +30,18 @@
   align-items: center;
   gap: 2px;
   padding: 6px 8px 6px 12px;
-  border-bottom: 1px solid var(--ved-border-faint, #d0d0d0);
+  border-bottom: 1px solid var(--ved-border-faint);
 }
 
 .sidebarTitle {
   flex: 1 1 auto;
   font-size: 11px;
   letter-spacing: 0.08em;
-  color: var(--ved-fg-muted, #555);
+  color: var(--ved-fg-muted);
 }
 
 .iconButton {
-  flex: 0 0 auto;
-  width: 20px;
-  height: 20px;
-  line-height: 1;
-  padding: 0;
-  font-size: 11px;
-  border: none;
-  border-radius: 4px;
-  background: transparent;
-  color: var(--ved-fg-muted, #888);
-  cursor: pointer;
-
-  &:hover {
-    background: var(--ved-hover-bg, #d8d8d8);
-    color: var(--ved-fg, #222);
-  }
+  @include chrome.icon-button(20px, 11px, 4px);
 }
 
 .rootList {
@@ -99,7 +86,7 @@
   height: 24px;
   border: none;
   background: transparent;
-  color: var(--ved-fg, #222);
+  color: var(--ved-fg);
   font-size: 12px;
   text-align: left;
   cursor: pointer;
@@ -107,7 +94,7 @@
   padding: 0 4px 0 calc(8px + var(--depth, 0) * 14px);
 
   &:hover {
-    background: var(--ved-hover-bg, #d8d8d8);
+    background: var(--ved-hover-bg);
   }
 }
 
@@ -122,7 +109,7 @@
   display: inline-flex;
   width: 14px;
   justify-content: center;
-  color: var(--ved-fg-muted, #888);
+  color: var(--ved-fg-muted);
 
   svg {
     transition: transform 80ms ease-out;
@@ -135,11 +122,11 @@
 
 .typeIcon {
   flex: 0 0 auto;
-  color: var(--ved-fg-muted, #888);
+  color: var(--ved-fg-muted);
 }
 
 .rootIcon {
-  color: var(--ved-accent, #c0b18b);
+  color: var(--ved-accent);
 }
 
 .entryName {
@@ -151,7 +138,7 @@
 
 .emptyNote {
   padding: 10px 12px;
-  color: var(--ved-fg-muted, #888);
+  color: var(--ved-fg-muted);
 }
 
 .resizeHandle {
@@ -172,7 +159,7 @@
   }
 
   &:hover {
-    background: var(--ved-accent, #c0b18b);
+    background: var(--ved-accent);
     opacity: 0.4;
   }
 }

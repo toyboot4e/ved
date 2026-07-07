@@ -147,7 +147,7 @@ export const finish = (name: string): void => {
 export const pressMod = async (page: Page, key: string, { shift = false } = {}): Promise<void> => {
   await page.evaluate(
     (args) => {
-      const darwin = window.electron.process.platform === 'darwin';
+      const darwin = window.ved.platform === 'darwin';
       document.getElementById('editor-content').dispatchEvent(
         new KeyboardEvent('keydown', {
           key: args.key,

@@ -13,6 +13,8 @@ import fuzzysort from 'fuzzysort';
 import { create } from 'zustand';
 import type { WorkspaceFile } from '../../shared/ipc';
 import { type ChordEvent, matchFileCommand, matchTabCommand, matchViewCommand } from './file-commands';
+import { focusEditor } from './focus';
+import { isComposingEvent } from './ime';
 import { matchSearchCommand } from './search';
 
 /** Which pool the palette searches: workspace files, or the open buffers. */
@@ -104,7 +106,7 @@ export const rankBuffers = (buffers: readonly BufferEntry[], query: string): Ran
  * (the future command palette) is deliberately NOT matched here yet.
  */
 export const matchQuickOpenCommand = (event: ChordEvent, isDarwin: boolean): 'file' | null => {
-  if (event.isComposing || event.keyCode === 229) return null;
+  if (isComposingEvent(event)) return null;
   const mod = isDarwin ? event.metaKey : event.ctrlKey;
   if (!mod || event.altKey || event.shiftKey) return null;
   return event.key.toLowerCase() === 'p' ? 'file' : null;
@@ -186,7 +188,7 @@ export const useQuickOpenStore = create<QuickOpenStore>()((set) => ({
  *  focus while open — mirrors `closeSearch`). */
 export const closeQuickOpen = (): void => {
   useQuickOpenStore.getState().close();
-  document.getElementById('editor-content')?.focus();
+  focusEditor();
 };
 
 /**
@@ -200,7 +202,7 @@ export const closeQuickOpen = (): void => {
  */
 export const handleQuickOpenKey = (event: KeyboardEvent, isDarwin: boolean): boolean => {
   if (!useQuickOpenStore.getState().open) return false;
-  if (event.key === 'Escape' && !event.isComposing && event.keyCode !== 229) {
+  if (event.key === 'Escape' && !isComposingEvent(event)) {
     event.preventDefault();
     closeQuickOpen();
     return true;

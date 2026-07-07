@@ -29,6 +29,7 @@ import {
   type TabCommand,
   windowTitle,
 } from './file-commands';
+import { isComposingEvent } from './ime';
 import { useInvisiblesStore } from './invisibles';
 import { handleQuickOpenKey, matchQuickOpenCommand, useQuickOpenStore } from './quick-open';
 import { closeSearch, matchSearchCommand, useSearchStore } from './search';
@@ -49,7 +50,8 @@ export const App = (): React.JSX.Element => {
   const vimEnabled = useVimStore((s) => s.enabled);
 
   // Apply the theme by setting `data-theme` on <html>; main.scss resolves the
-  // `--ved-*` token palette from it ('system' follows the OS via a media query).
+  // `--ved-*` token palette from it. (Before JS sets the attribute,
+  // `:root:not([data-theme])` follows the OS preference — no light flash.)
   useEffect(() => {
     document.documentElement.dataset.theme = theme;
   }, [theme]);
@@ -248,9 +250,9 @@ export const App = (): React.JSX.Element => {
 
   // File and tab shortcuts work wherever the focus is, so they live on
   // `window`. View-mode and caret shortcuts stay inside the editor (they
-  // need Slate context).
+  // need the editor view).
   useEffect(() => {
-    const isDarwin = window.electron.process.platform === 'darwin';
+    const isDarwin = window.ved.platform === 'darwin';
     const onKeyDown = (event: KeyboardEvent): void => {
       // While the quick-open overlay is open its input owns the keyboard —
       // it handles navigation/close, and this swallows app chords so they
@@ -303,7 +305,7 @@ export const App = (): React.JSX.Element => {
       // Esc closes an open search bar from anywhere (the bar's inputs handle
       // their own Esc; this covers focus back in the editor). Never mid-IME —
       // Esc there cancels the composition.
-      if (event.key === 'Escape' && !event.isComposing && event.keyCode !== 229 && useSearchStore.getState().open) {
+      if (event.key === 'Escape' && !isComposingEvent(event) && useSearchStore.getState().open) {
         event.preventDefault();
         closeSearch();
       }

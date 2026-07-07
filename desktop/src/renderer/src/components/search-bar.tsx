@@ -1,6 +1,8 @@
 import { type EditorSearchOps, editorStyles } from '@ved/editor';
 import type React from 'react';
 import { useEffect, useRef } from 'react';
+import { preserveFocus } from '../focus';
+import { isComposingEvent } from '../ime';
 import { closeSearch, useSearchStore } from '../search';
 import styles from './search-bar.module.scss';
 
@@ -23,16 +25,6 @@ export type SearchBarProps = {
   readonly getOps: () => EditorSearchOps | null;
   readonly focusRequest: SearchFocusRequest;
 };
-
-/** Keep the inputs' focus when a bar button is clicked. */
-const keepInputFocus: React.MouseEventHandler = (event) => {
-  event.preventDefault();
-};
-
-/** An Enter/Escape mid-IME-composition belongs to the IME (it confirms or
- *  cancels the composed text), never to the bar. */
-const composing = (event: React.KeyboardEvent): boolean =>
-  event.nativeEvent.isComposing || event.nativeEvent.keyCode === 229;
 
 export const SearchBar = ({ getText, getOps, focusRequest }: SearchBarProps): React.JSX.Element => {
   const query = useSearchStore((s) => s.query);
@@ -76,7 +68,7 @@ export const SearchBar = ({ getText, getOps, focusRequest }: SearchBarProps): Re
   };
 
   const onFindKeyDown = (event: React.KeyboardEvent): void => {
-    if (composing(event)) return;
+    if (isComposingEvent(event.nativeEvent)) return;
     if (event.key === 'Enter') {
       event.preventDefault();
       stepAndGo(event.shiftKey ? -1 : 1);
@@ -87,7 +79,7 @@ export const SearchBar = ({ getText, getOps, focusRequest }: SearchBarProps): Re
   };
 
   const onReplaceKeyDown = (event: React.KeyboardEvent): void => {
-    if (composing(event)) return;
+    if (isComposingEvent(event.nativeEvent)) return;
     if (event.key === 'Enter') {
       event.preventDefault();
       replaceOne();
@@ -119,7 +111,7 @@ export const SearchBar = ({ getText, getOps, focusRequest }: SearchBarProps): Re
         type='button'
         className={editorStyles.toolbarButton}
         title='Previous match (Shift+Enter)'
-        onMouseDown={keepInputFocus}
+        onMouseDown={preserveFocus}
         onClick={() => stepAndGo(-1)}
       >
         ▲
@@ -128,7 +120,7 @@ export const SearchBar = ({ getText, getOps, focusRequest }: SearchBarProps): Re
         type='button'
         className={editorStyles.toolbarButton}
         title='Next match (Enter)'
-        onMouseDown={keepInputFocus}
+        onMouseDown={preserveFocus}
         onClick={() => stepAndGo(1)}
       >
         ▼
@@ -138,7 +130,7 @@ export const SearchBar = ({ getText, getOps, focusRequest }: SearchBarProps): Re
         className={editorStyles.toolbarButton}
         aria-pressed={highlightAll}
         title='Highlight all matches'
-        onMouseDown={keepInputFocus}
+        onMouseDown={preserveFocus}
         onClick={() => useSearchStore.getState().toggleHighlightAll()}
       >
         強調
@@ -157,7 +149,7 @@ export const SearchBar = ({ getText, getOps, focusRequest }: SearchBarProps): Re
         type='button'
         className={editorStyles.toolbarButton}
         title='Replace the current match (Enter in the replace field)'
-        onMouseDown={keepInputFocus}
+        onMouseDown={preserveFocus}
         onClick={replaceOne}
       >
         置換
@@ -166,7 +158,7 @@ export const SearchBar = ({ getText, getOps, focusRequest }: SearchBarProps): Re
         type='button'
         className={editorStyles.toolbarButton}
         title='Replace all matches'
-        onMouseDown={keepInputFocus}
+        onMouseDown={preserveFocus}
         onClick={replaceAll}
       >
         全置換

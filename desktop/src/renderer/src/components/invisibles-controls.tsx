@@ -1,5 +1,6 @@
 import { editorStyles as styles } from '@ved/editor';
 import type React from 'react';
+import { preserveFocus } from '../focus';
 import { type Invisibles, useInvisiblesStore } from '../invisibles';
 
 // Invisibles toggles: a toolbar group of press-to-toggle buttons, styled like
@@ -12,16 +13,11 @@ const items: { key: keyof Invisibles; label: string; title: string }[] = [
   { key: 'whitespace', label: '空白', title: 'Show markers for spaces (·), full-width spaces (□) and tabs (→)' },
 ];
 
-/** Prevent toolbar clicks from stealing focus (and the selection) from the editor. */
-const keepEditorFocus: React.MouseEventHandler = (event) => {
-  event.preventDefault();
-};
-
 export const InvisiblesControls = (): React.JSX.Element => {
   const invisibles = useInvisiblesStore((s) => s.invisibles);
   const toggle = useInvisiblesStore((s) => s.toggle);
   return (
-    <fieldset className={styles.toolbarGroup} aria-label='Invisibles' onMouseDown={keepEditorFocus}>
+    <fieldset className={styles.toolbarGroup} aria-label='Invisibles' onMouseDown={preserveFocus}>
       <span className={styles.toolbarGroupLabel} aria-hidden='true' title='Show newline / whitespace markers'>
         Marks
       </span>

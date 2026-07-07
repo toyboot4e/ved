@@ -1,5 +1,6 @@
 import { AppearPolicy, editorStyles as styles, WritingMode } from '@ved/editor';
 import type React from 'react';
+import { preserveFocus } from '../focus';
 import { useWorkspaceStore } from '../workspace';
 import { HorizontalIcon, VerticalColumnsIcon, VerticalIcon, VerticalRowsIcon } from './icons/WritingModeIcons';
 import { InvisiblesControls } from './invisibles-controls';
@@ -57,11 +58,6 @@ const appearPolicyItems: { policy: AppearPolicy; label: string; title: string }[
   { policy: AppearPolicy.Rich, label: 'Rich', title: 'Always render ruby (Ctrl+4, Ctrl+/)' },
 ];
 
-/** Prevent toolbar clicks from stealing focus (and the selection) from the editor. */
-const keepEditorFocus: React.MouseEventHandler = (event) => {
-  event.preventDefault();
-};
-
 export const Toolbar = ({
   writingMode,
   setWritingMode,
@@ -72,7 +68,7 @@ export const Toolbar = ({
   const toggleSidebar = useWorkspaceStore((s) => s.toggleSidebar);
   return (
     <div className={styles.toolbar}>
-      <fieldset className={styles.toolbarGroup} aria-label='Sidebar' onMouseDown={keepEditorFocus}>
+      <fieldset className={styles.toolbarGroup} aria-label='Sidebar' onMouseDown={preserveFocus}>
         <button
           type='button'
           className={styles.toolbarButton}
@@ -84,7 +80,7 @@ export const Toolbar = ({
           ☰
         </button>
       </fieldset>
-      <fieldset className={styles.toolbarGroup} aria-label='Writing mode' onMouseDown={keepEditorFocus}>
+      <fieldset className={styles.toolbarGroup} aria-label='Writing mode' onMouseDown={preserveFocus}>
         <span className={styles.toolbarGroupLabel} aria-hidden='true' title='Text direction and layout'>
           Writing
         </span>
@@ -102,7 +98,7 @@ export const Toolbar = ({
           </button>
         ))}
       </fieldset>
-      <fieldset className={styles.toolbarGroup} aria-label='Ruby display' onMouseDown={keepEditorFocus}>
+      <fieldset className={styles.toolbarGroup} aria-label='Ruby display' onMouseDown={preserveFocus}>
         <span
           className={styles.toolbarGroupLabel}
           aria-hidden='true'
