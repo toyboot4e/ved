@@ -1,64 +1,44 @@
 import { clsx } from 'clsx';
 import { baseKeymap } from 'prosemirror-commands';
 import { keymap } from 'prosemirror-keymap';
-import { AllSelection, EditorState, Plugin, TextSelection } from 'prosemirror-state';
+import { EditorState, Plugin, TextSelection } from 'prosemirror-state';
 import { EditorView } from 'prosemirror-view';
 import type React from 'react';
 import { useEffect, useRef } from 'react';
-import { HORIZ_ARROWS, moveCaretByLine, moveChar, VERT_ARROWS } from './caret-motion';
 import {
   type AppearPolicy,
   type Chord,
   CORE_COMMANDS,
-  chordOf,
-  DEFAULT_KEYBINDINGS,
   type EditorCommand,
   type EditorCommandContext,
   type EditorCommandId,
 } from './commands';
+import { createBeforeInputHandler, createCompositionHandlers } from './composition';
 import styles from './editor.module.scss';
-import type { CaretShape, EditorExtension, EditorExtensionHooks, VisualSelectionKind } from './extension';
+import type { CaretShape, EditorExtension, VisualSelectionKind } from './extension';
 import { createEditorOps } from './extension-context';
 import { createGlyphWalker } from './glyph-walker';
 import type { PlainTextHistory } from './history';
 import { installCompositionSurvival } from './ime-survival';
+import { createKeyHandler } from './key-handler';
 import { type CaretRect, type LineNumbers, mountLineNumbers } from './line-numbers';
 import { createPageGapMeasure } from './page-gap-measure';
-import {
-  deleteChar,
-  deleteRangeForIme,
-  deleteSelectionForIme,
-  enterReplacingSelection,
-  plainInsertTr,
-} from './plain-edits';
+import { enterReplacingSelection, plainInsertTr } from './plain-edits';
 import { type CursorState, cursorToOffset, offsetToCursor } from './pm/cursor';
 import { buildDecorations, type Invisibles, type SearchHighlights, type SearchRange } from './pm/decorations';
 import type { Appear } from './pm/leaves';
-import { docLeaves } from './pm/leaves';
-import {
-  docFromText,
-  offsetToPos,
-  posToOffset,
-  rubyClickOutsidePos,
-  rubyEdgeOutsidePos,
-  serialize,
-  serializeSlice,
-} from './pm/model';
+import { docFromText, offsetToPos, posToOffset, rubyClickOutsidePos, serializeSlice } from './pm/model';
 import { pageGapPlugin } from './pm/page-gap';
 import { RubyView } from './pm/ruby-view';
 import { repair } from './pm/structure';
 import { revealCaretInScroller, toScrollMode, useKeepScrollPosition } from './scroll-reveal';
+import { createEditorSession, createRestore, createSyncExtensions } from './session';
 import { installTestSeams } from './test-seams';
 import { WritingMode } from './writing-mode';
 // ProseMirror's required base styles, then ved's GLOBAL ruby/syntax styles
 // (decorations + the node view emit literal class names a CSS module can't match).
 import 'prosemirror-view/style/prosemirror.css';
 import './pm/ruby.css';
-
-// macOS uses Cmd as the editing modifier; everywhere else Ctrl. Detected from
-// the browser so it works in both Electron and the web preview — the editor
-// core must not reach for Electron globals (e.g. `window.electron`).
-const IS_MAC = typeof navigator !== 'undefined' && /mac/i.test(navigator.platform || navigator.userAgent);
 
 export { WritingMode } from './writing-mode';
 
@@ -245,18 +225,21 @@ export const VedEditor = (props: VedEditorProps): React.JSX.Element => {
     // ------------------------------------------------------------------
     // The command registry: the built-ins plus extension-registered ids.
     const commands = new Map<EditorCommandId, EditorCommand>(Object.entries(CORE_COMMANDS));
-    // What a command may touch. `restore` is defined below in this scope;
-    // commands only run at dispatch time, after mount completes.
+    // The mutable per-mount session (session.ts): the cells the key/beforeinput/
+    // composition handlers share, plus commitHistory. `restore` and
+    // `syncExtensions` are late-bound below, once the view exists.
+    const session = createEditorSession({ lastTextRef, beforeOffsetRef, live });
+    // What a command may touch. `session.restore` is late-bound right after the
+    // view is constructed; commands only run at dispatch time, after mount
+    // completes.
     const commandCtx: EditorCommandContext = {
       get appearPolicy() {
         return live.current.appearPolicy;
       },
       setAppearPolicy: (p) => live.current.setAppearPolicy(p),
-      undo: () => restore(live.current.history.undo()),
-      redo: () => restore(live.current.history.redo()),
+      undo: () => session.restore(live.current.history.undo()),
+      redo: () => session.restore(live.current.history.redo()),
     };
-    // The attached extensions, in prop order. Mutated only by syncExtensions.
-    let attachedExts: { ext: EditorExtension; hooks: EditorExtensionHooks }[] = [];
 
     // baseKeymap supplies Enter (split paragraph), Backspace/Delete (join,
     // delete), etc. Arrow keys and Ctrl chords are handled by handleKeyDown
@@ -288,26 +271,11 @@ export const VedEditor = (props: VedEditorProps): React.JSX.Element => {
       beforeOffsetRef.current = off;
     }
 
-    // Record a document change in undo history (and notify the buffer). Shared
-    // by the transaction path and the post-composition path; the lastText guard
-    // makes it idempotent, so committing twice for one change is a no-op.
-    const commitHistory = (committed: EditorState): void => {
-      const text = serialize(committed.doc);
-      if (text === lastTextRef.current) return;
-      // Where the caret was BEFORE this edit, in the OUTGOING text — undo's target.
-      const before = offsetToCursor(lastTextRef.current, beforeOffsetRef.current);
-      lastTextRef.current = text;
-      const cursor = offsetToCursor(text, posToOffset(committed.doc, committed.selection.head));
-      live.current.history.push({ text, cursor, cursorBefore: before });
-      live.current.onTextChange?.(text);
-    };
-
-    // The model selection recorded on an IME-entry keydown-229, deleted at the
-    // matching compositionstart (see deleteRangeForIme). Fresh only for one
-    // handshake: cleared on use, on raw insertText, and by a 500ms expiry so a
-    // 229 that never composes (candidate-window chrome &c.) can't delete a
-    // later, unrelated selection.
-    let imePendingSel: { from: number; to: number; at: number } | null = null;
+    // The keydown dispatch (key-handler.ts: IME guard → extension chain →
+    // chord table → built-ins) and the beforeinput text-input takeover
+    // (composition.ts), both factories over the shared session.
+    const handleKeyDown = createKeyHandler({ session, commands, commandCtx, live, policyClassRef, goalInlineRef });
+    const onBeforeInput = createBeforeInputHandler(session, policyClassRef);
 
     const view = new EditorView(mount, {
       state,
@@ -341,57 +309,17 @@ export const VedEditor = (props: VedEditorProps): React.JSX.Element => {
         // History/onTextChange are skipped DURING composition (view.composing);
         // the committed IME text is recorded by onCompositionEnd instead.
         if (tr.docChanged && !view.composing && !rebuildingRef.current) {
-          commitHistory(next);
+          session.commitHistory(next);
         }
         // Track the caret as the pre-edit anchor for the NEXT edit's undo target.
         // Frozen while composing so the WHOLE IME word's anchor is its start.
         if (!view.composing) beforeOffsetRef.current = posToOffset(next.doc, next.selection.head);
       },
-      handleKeyDown: (v, event) => handleKeyDown(v, event),
+      handleKeyDown,
       handleDOMEvents: {
-        // Take over plain text insertion at the beforeinput level. With hidden
-        // markup at display:none, PM's own text-input reconciliation derives the
-        // inserted string from a DOM diff that the browser can REORDER next to a
-        // display:none delimiter (e.g. "*1ん" → "1ん*"). Use the beforeinput
-        // event's literal `data` instead and apply it at PM's MODEL selection,
-        // which we track exactly. (Backspace/Delete → handleKeyDown; IME → PM's
-        // composition path; paste → handlePaste.)
-        beforeinput: (v, event) => {
-          const ie = event as InputEvent;
-          if (v.composing || ie.inputType !== 'insertText' || ie.data == null) return false;
-          // An extension may block plain insertion (a modal extension outside
-          // insert mode). Consulted only for NON-IME input — the composing
-          // guard above already returned.
-          for (const a of attachedExts) {
-            if (a.hooks.handleTextInput?.(ie.data)) {
-              ie.preventDefault();
-              return true;
-            }
-          }
-          ie.preventDefault();
-          // Raw text arrived, so the recorded IME-entry range (if any) never
-          // composed — tr.insertText below replaces the live selection anyway.
-          imePendingSel = null;
-          if (ie.data.includes('\n')) {
-            // Multi-line insertText (some IMEs, programmatic input): a bulk
-            // insert, handled like a paste — exact, outside a
-            // collapsed ruby (`tr.insertText` would inline the \n, and a
-            // structural replaceSelection left phantom markup; plainInsertTr).
-            v.dispatch(plainInsertTr(v.state, ie.data, policyClassRef.current).scrollIntoView());
-          } else {
-            // New spec: in Rich a ruby's base EDGE writes OUTSIDE the ruby. The
-            // caret rests at the boundary, but the browser's affinity can drop the
-            // DOM caret (and thus PM's synced model selection) at the base START
-            // inside the ruby — so redirect the insert to before/after the ruby.
-            // (Only when collapsed: in expanded policies the edges are editable.)
-            const sel = v.state.selection;
-            const outside = sel.empty && policyClassRef.current === 'rich' ? rubyEdgeOutsidePos(sel.$head) : null;
-            const tr =
-              outside != null ? v.state.tr.insertText(ie.data, outside, outside) : v.state.tr.insertText(ie.data);
-            v.dispatch(tr.scrollIntoView());
-          }
-          return true;
-        },
+        // Plain text insertion is taken over at the beforeinput level — see
+        // createBeforeInputHandler (composition.ts) for why.
+        beforeinput: onBeforeInput,
       },
       // Copy as the EXACT PLAIN TEXT: reconstruct the ruby markup `|base(reading)` for
       // the selection. The delimiters are not DOM text (shown ones are widget
@@ -464,6 +392,11 @@ export const VedEditor = (props: VedEditorProps): React.JSX.Element => {
       });
     };
 
+    // Undo/redo's document rebuild — the session's late-bound half (commandCtx
+    // calls it; nothing can dispatch a command before this line runs, since the
+    // whole mount effect completes before any event handler can fire).
+    session.restore = createRestore(view, { rebuildingRef, lastTextRef, live });
+
     const teardownCompositionSurvival = installCompositionSurvival(view);
     installTestSeams(view, goalInlineRef);
 
@@ -483,22 +416,11 @@ export const VedEditor = (props: VedEditorProps): React.JSX.Element => {
     });
     live.current.onSearchOps?.(searchOps);
 
-    // Reconcile the attached set with the prop: detach the removed, attach the
-    // added, in prop order. NEVER during a composition (detach hooks may edit;
-    // attach may restyle) — deferred to compositionend.
-    let pendingExtSync: readonly EditorExtension[] | null = null;
-    const syncExtensions = (exts: readonly EditorExtension[]): void => {
-      if (view.composing) {
-        pendingExtSync = exts;
-        return;
-      }
-      const keep = new Set(exts);
-      for (const a of attachedExts) if (!keep.has(a.ext)) a.hooks.detach?.();
-      const prev = new Map(attachedExts.map((a) => [a.ext, a]));
-      attachedExts = exts.map((ext) => prev.get(ext) ?? { ext, hooks: ext.attach(extensionCtx) });
-    };
-    syncExtensionsRef.current = syncExtensions;
-    syncExtensions(live.current.extensions ?? []);
+    // Extension attach/detach reconciliation (session.ts createSyncExtensions;
+    // deferred mid-composition to compositionend).
+    session.syncExtensions = createSyncExtensions(view, session, extensionCtx);
+    syncExtensionsRef.current = session.syncExtensions;
+    session.syncExtensions(live.current.extensions ?? []);
 
     view.dom.id = 'editor-content';
     view.dom.classList.add(...CONTENT_CLASS(vert, multiCol, rows, grow).split(' ').filter(Boolean));
@@ -597,150 +519,6 @@ export const VedEditor = (props: VedEditorProps): React.JSX.Element => {
       scroller.scrollLeft = initialScroll.left;
     }
     requestAnimationFrame(() => view.focus());
-
-    const restore = (entry: ReturnType<PlainTextHistory['undo']>): void => {
-      if (!entry) return;
-      rebuildingRef.current = true;
-      const doc = docFromText(entry.text);
-      const tr = view.state.tr.replaceWith(0, view.state.doc.content.size, doc.content);
-      const pos = offsetToPos(tr.doc, entry.cursor ? cursorToOffset(entry.text, entry.cursor) : 0);
-      tr.setSelection(TextSelection.create(tr.doc, pos));
-      view.dispatch(tr);
-      rebuildingRef.current = false;
-      lastTextRef.current = entry.text;
-      live.current.onTextChange?.(entry.text);
-      requestAnimationFrame(() => view.focus());
-    };
-
-    const handleKeyDown = (v: EditorView, event: KeyboardEvent): boolean => {
-      // COMPOSING INPUT NEVER REACHES EXTENSIONS OR COMMANDS (IME-safety):
-      // the guard sits first so nothing below can steal a composing key.
-      // IME ENTRY over a non-empty selection: the first composing keypress
-      // arrives as keyCode 229 ("Process") BEFORE compositionstart. RECORD the
-      // model range now — BEFORE PM's compositionstart handler can clamp it —
-      // and let onCompositionStart delete it once the IME has committed to
-      // composing (mutating the DOM during this keydown races the IME
-      // handshake and leaks the first character raw; see deleteRangeForIme).
-      // NOT handled (return false): the key itself must still reach the IME.
-      if (event.isComposing || event.keyCode === 229) {
-        if (event.keyCode === 229 && !v.composing && !event.isComposing) {
-          const sel = v.state.selection;
-          imePendingSel = sel.empty ? null : { from: sel.from, to: sel.to, at: performance.now() };
-        }
-        return false;
-      }
-      // Extensions see the key first (a modal extension owns its keymap); an
-      // unconsumed key falls through to the chord table and the built-ins.
-      // stopPropagation so a consumed key never reaches the APP's window
-      // listener — Vim's Ctrl+F/B outrank the search/sidebar bindings (the
-      // app also guards on defaultPrevented, belt and braces).
-      for (const a of attachedExts) {
-        if (a.hooks.handleKey?.(event)) {
-          event.preventDefault();
-          event.stopPropagation();
-          return true;
-        }
-      }
-      const chord = chordOf(event, IS_MAC);
-      const commandId = chord ? (live.current.keybindings ?? DEFAULT_KEYBINDINGS)[chord] : undefined;
-      const command = commandId !== undefined ? commands.get(commandId) : undefined;
-      if (command) {
-        event.preventDefault();
-        command(commandCtx);
-        return true;
-      }
-      const mod = IS_MAC ? event.metaKey : event.ctrlKey;
-      // Take over plain Backspace/Delete (see deleteChar). Word-delete chords and
-      // IME composition keep the default path.
-      if (!mod && !event.altKey && !v.composing && (event.key === 'Backspace' || event.key === 'Delete')) {
-        event.preventDefault();
-        deleteChar(v, event.key === 'Delete', policyClassRef.current);
-        return true;
-      }
-      // Home/End → the visual-line edge. Native CE does this, but at a line that
-      // STARTS with a ruby it lands the caret on the base-START (the before-ruby
-      // position and the base-start coincide in the DOM), so "Home" reads as INSIDE
-      // the ruby. Take it over: do the native line-boundary move, then SNAP Home
-      // back to BEFORE a leading ruby so an IME there composes outside it.
-      if (!mod && !event.altKey && !v.composing && (event.key === 'Home' || event.key === 'End')) {
-        event.preventDefault();
-        const ds = v.dom.ownerDocument.getSelection();
-        if (ds?.focusNode) {
-          try {
-            ds.modify(
-              event.shiftKey ? 'extend' : 'move',
-              event.key === 'Home' ? 'backward' : 'forward',
-              'lineboundary',
-            );
-            let off = posToOffset(v.state.doc, v.posAtDOM(ds.focusNode, ds.focusOffset, event.key === 'Home' ? -1 : 1));
-            const leaves = docLeaves(serialize(v.state.doc));
-            if (event.key === 'Home') {
-              // A `body` leaf's `from` IS the base-start; the offset just before it
-              // is the lead `|` = the "before the ruby" stop.
-              for (const l of leaves) {
-                if (l.kind === 'body' && l.from === off) {
-                  off -= 1;
-                  break;
-                }
-              }
-            } else {
-              // End at a line ENDING with a ruby lands on the base-END (a `body`
-              // leaf's `to`) — a position INSIDE the ruby span, which lights the
-              // rubyActive highlight with no visible caret. Snap FORWARD to AFTER
-              // the ruby (its `trail` delimiter's `to`), mirroring the Home snap.
-              const body = leaves.find((l) => l.kind === 'body' && l.to === off);
-              const trail = body && leaves.find((l) => l.ruby === body.ruby && l.edge === 'trail');
-              if (trail) off = trail.to;
-            }
-            goalInlineRef.current = null;
-            const pos = offsetToPos(v.state.doc, off);
-            const anchor = event.shiftKey ? v.state.selection.anchor : pos;
-            v.dispatch(v.state.tr.setSelection(TextSelection.create(v.state.doc, anchor, pos)).scrollIntoView());
-          } catch {
-            /* leave the native move in place */
-          }
-        }
-        return true;
-      }
-      const isVert = live.current.writingMode !== WritingMode.Horizontal;
-      if (!isVert && (mod || event.altKey)) return false;
-      const act = (isVert ? VERT_ARROWS : HORIZ_ARROWS)[event.key];
-      if (!act) return false;
-      event.preventDefault();
-      // A plain (non-shift) arrow with a NON-EMPTY selection collapses to the
-      // DIRECTIONAL edge — the selection START going backward, its END going
-      // forward — so the cursor continues from the beginning (previous) or end
-      // (next) of the selection, never "always from the end".
-      //   - CHAR (along the line / between columns): collapse to that edge, no move
-      //     — the edge IS the adjacent character boundary.
-      //   - LINE (between rows / columns): collapse to that edge, then STEP one line
-      //     from it, so the caret lands on the line above the selection's start or
-      //     below its end (the edge itself is on the selection's boundary line).
-      //   - An AllSelection (Ctrl+A) collapses to the document edge (no move).
-      // (moveChar/moveCaretByLine only move `selection.head`, so without this a
-      // plain arrow would step the head; Shift still extends and falls through.)
-      const sel = v.state.selection;
-      if (!event.shiftKey && !sel.empty) {
-        goalInlineRef.current = null;
-        const edge = posToOffset(v.state.doc, act.reverse ? sel.from : sel.to);
-        if (act.axis === 'char' || sel instanceof AllSelection) {
-          v.dispatch(
-            v.state.tr.setSelection(TextSelection.create(v.state.doc, offsetToPos(v.state.doc, edge))).scrollIntoView(),
-          );
-          return true;
-        }
-        // LINE move: collapse to the directional edge, then fall through to step one
-        // line from it (moveCaretByLine reads the now-collapsed caret).
-        v.dispatch(v.state.tr.setSelection(TextSelection.create(v.state.doc, offsetToPos(v.state.doc, edge))));
-      }
-      if (act.axis === 'char') {
-        goalInlineRef.current = null; // moving along the line sets a new column
-        moveChar(v, policyClassRef.current, act.reverse, event.shiftKey);
-      } else {
-        moveCaretByLine(v, event.shiftKey, act.reverse, goalInlineRef);
-      }
-      return true;
-    };
 
     // In the horizontally-scrolling vertical modes (continuous Vertical and
     // VerticalRows) there is no vertical overflow, so a plain mouse wheel does
@@ -843,55 +621,15 @@ export const VedEditor = (props: VedEditorProps): React.JSX.Element => {
     };
     mount.addEventListener('mousedown', onPointerDown);
 
-    // Hide the empty-document placeholder while an IME composition is active.
-    // On Linux mozc (over-the-spot) the pre-edit stays in the IME window and the
-    // contenteditable keeps its empty <p><br></p>, so the placeholder would
-    // otherwise show behind the composing text. A class beats the `:has(br)`
-    // selector regardless of whether the pre-edit reached the DOM.
-    const onCompositionStart = (): void => {
-      view.dom.classList.add('composing');
-      // Composing over a selection: delete the range RECORDED on the entry
-      // keydown-229 (captured before PM's compositionstart handler could clamp
-      // the model selection), now that the IME has committed to composing —
-      // see deleteRangeForIme for why not during the keydown itself. IME paths
-      // that skip 229 fall back to whatever selection is still standing.
-      const pending = imePendingSel;
-      imePendingSel = null;
-      if (pending && performance.now() - pending.at < 500) deleteRangeForIme(view, pending.from, pending.to);
-      else deleteSelectionForIme(view);
-      // Observation only — extensions must not mutate during a composition.
-      for (const a of attachedExts) a.hooks.onCompositionStart?.();
-    };
-    const onCompositionEnd = (): void => {
-      view.dom.classList.remove('composing');
-      // Every transaction during composition is skipped from history by the
-      // !view.composing guard, and PM usually applies the committed text via
-      // those composing transactions WITHOUT firing a fresh docChanged tx after
-      // composition — so the IME word would never enter undo history (undo would
-      // jump past it to the last non-IME entry, discarding it). Commit it here
-      // once PM has settled. Idempotent if PM did fire a post-composition tx.
-      requestAnimationFrame(() => {
-        if (view.composing) return; // a chained composition is still active
-        commitHistory(view.state);
-        // Re-anchor for the next edit now that the IME word has settled.
-        beforeOffsetRef.current = posToOffset(view.state.doc, view.state.selection.head);
-        // Reconcile the page gaps: composition-time re-measures render a
-        // boundary trapped inside the composition text node as the one-line-
-        // late gap-BEFORE fallback (see runPageGaps) — now that the node is
-        // ordinary text again, this pass restores the true after-widget. The
-        // composition was an edit: its layout change starts at its own line,
-        // so the suffix cache stays valid.
-        pageGapsRef.current?.schedule(false);
-        // The editor has settled: extensions may react (edits are legal now),
-        // and a deferred attach/detach applies.
-        for (const a of attachedExts) a.hooks.onCompositionEnd?.();
-        if (pendingExtSync) {
-          const exts = pendingExtSync;
-          pendingExtSync = null;
-          syncExtensions(exts);
-        }
-      });
-    };
+    // IME composition listeners (composition.ts): placeholder hiding + the
+    // recorded-selection delete at compositionstart; the history commit,
+    // page-gap reconcile, and deferred extension work at compositionend.
+    const { onCompositionStart, onCompositionEnd } = createCompositionHandlers({
+      view,
+      session,
+      beforeOffsetRef,
+      pageGapsRef,
+    });
     view.dom.addEventListener('compositionstart', onCompositionStart);
     view.dom.addEventListener('compositionend', onCompositionEnd);
 
@@ -917,8 +655,8 @@ export const VedEditor = (props: VedEditorProps): React.JSX.Element => {
       pageGapsRef.current = null;
       live.current.onSearchOps?.(null);
       syncExtensionsRef.current = null;
-      for (const a of attachedExts) a.hooks.detach?.();
-      attachedExts = [];
+      for (const a of session.attachedExts) a.hooks.detach?.();
+      session.attachedExts = [];
       extClassesRef.current.clear();
       caretShapeRef.current = 'bar';
       view.destroy();

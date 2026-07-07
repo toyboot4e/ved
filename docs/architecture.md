@@ -38,18 +38,18 @@ defends one of four invariants (binding statements in `CLAUDE.md`):
 
 | Inv | Override | Native behaviour it replaces | Why | Where |
 |---|---|---|---|---|
-| 1 | **Typed text re-applied from `beforeinput`** | native CE insertion | the native DOM diff can reorder text; we insert the literal `data` at the model selection | `editor.tsx` |
-| 1 | **Backspace/Delete delete a model offset range (`deleteChar`)** | native single-char delete | unreliable around a ruby node; an offset range stays exact and lets repair re-form rubies | `editor.tsx`, `pm/cursor.ts` |
+| 1 | **Typed text re-applied from `beforeinput`** | native CE insertion | the native DOM diff can reorder text; we insert the literal `data` at the model selection | `composition.ts` |
+| 1 | **Backspace/Delete delete a model offset range (`deleteChar`)** | native single-char delete | unreliable around a ruby node; an offset range stays exact and lets repair re-form rubies | `key-handler.ts`, `plain-edits.ts` |
 | 1 | **Character arrows are model-driven (`nextCaretOffset`)** | native caret steps DOM positions | caret stops are model-defined: base interior only, markup + reading skipped ("Caret at ruby boundaries") | `pm/caret-model.ts`, `cursor.ts` |
-| 3 | **Line arrows are taken over (`moveCaretByLine`)** | `Selection.modify('move','line')` | `modify` mis-steps at page rows, short columns, paragraph edges, the doc end; we measure columns and step in reading order | `editor.tsx`, `paragraphCols` |
+| 3 | **Line arrows are taken over (`moveCaretByLine`)** | `Selection.modify('move','line')` | `modify` mis-steps at page rows, short columns, paragraph edges, the doc end; we measure columns and step in reading order | `caret-motion.ts` |
 | 1,2 | **A collapsed ruby keeps the IME out at the boundary** | native caret enters the base/reading | an IME composes at the DOM caret; the reading — and an *atom* ruby's base — are read-only so it can't ("Caret at ruby boundaries"; mozc-verified) | `pm/decorations.ts`, `pm/leaves.ts`, `pm/ruby-view.ts` |
 | 1,2 | **Structure repair after each transaction (`repair`)** | none | re-parses typed text into ruby nodes; **skipped while composing** | `pm/structure.ts` |
-| 3 | **Caret re-revealed after every doc change (`revealCaretInScroller`)** | `EditorView.scrollIntoView` | PM's scroll survives neither the post-commit repair nor the vertical-rl pages ("Keeping the caret in view") | `editor.tsx` |
-| 1,2 | **Composing over a selection deletes the model selection at IME entry** | the browser replaces the range | the native replace chokes on read-only islands; the range is recorded on keydown-229, deleted at compositionstart — deleting during the keydown leaks the first char raw (mozc-verified) | `editor.tsx` |
-| 1 | **Selection deletion edits the plain string exactly (`plainDeleteTr`)** | `deleteSelection` (structural) | a structural delete leaves debris the string never contained (a phantom `()`), and repair is skipped while composing; `plainDeleteTr` removes exactly the offset range and rebuilds the paragraphs canonically. Also Enter-replace, IME entry | `editor.tsx` |
+| 3 | **Caret re-revealed after every doc change (`revealCaretInScroller`)** | `EditorView.scrollIntoView` | PM's scroll survives neither the post-commit repair nor the vertical-rl pages ("Keeping the caret in view") | `scroll-reveal.ts`, `editor.tsx` |
+| 1,2 | **Composing over a selection deletes the model selection at IME entry** | the browser replaces the range | the native replace chokes on read-only islands; the range is recorded on keydown-229, deleted at compositionstart — deleting during the keydown leaks the first char raw (mozc-verified) | `key-handler.ts`, `composition.ts` |
+| 1 | **Selection deletion edits the plain string exactly (`plainDeleteTr`)** | `deleteSelection` (structural) | a structural delete leaves debris the string never contained (a phantom `()`), and repair is skipped while composing; `plainDeleteTr` removes exactly the offset range and rebuilds the paragraphs canonically. Also Enter-replace, IME entry | `plain-edits.ts` |
 | 3 | **Line numbers + highlight are a measured overlay** | a CSS counter on `<p>` | a wrapped paragraph needs one number + highlight per *visual* line; only measurement gives that | `line-numbers.ts` |
 | 4 | **Custom plain-text history (`PlainTextHistory`)** | `prosemirror-history` | operation-level undo is meaningless across structure repair; tabs snapshot strings | `history.ts` |
-| 2 | **The composition survives a caret-clearing conversion** | Blink leaves the selection null | an IME conversion that replaces an ISOLATED preedit text node (composing right after a ruby at a paragraph end) with a shorter candidate invalidates the DOM caret offset and Blink clears the selection FOR GOOD. Two-layer repair, either alone stays broken: (a) `domSelectionRange` answers a null selection, while composing, with the observer's last-changed text node — PM's `findCompositionNode` runs at flush BEFORE the `input` event, and with no node it redraws the preedit (killing it); (b) an `input` listener re-seats the real caret at that node's end, or the next IME query hits a caret-less context and fcitx5 confirms the preedit (Space "completes" instead of converting, no `compositionend`, the view stuck composing). Uses PM internals (`domSelectionRange`, `domObserver.lastChangedTextNode`); `mozc/space-convert.ts` guards the contract across upgrades | `editor.tsx` |
+| 2 | **The composition survives a caret-clearing conversion** | Blink leaves the selection null | an IME conversion that replaces an ISOLATED preedit text node (composing right after a ruby at a paragraph end) with a shorter candidate invalidates the DOM caret offset and Blink clears the selection FOR GOOD. Two-layer repair, either alone stays broken: (a) `domSelectionRange` answers a null selection, while composing, with the observer's last-changed text node — PM's `findCompositionNode` runs at flush BEFORE the `input` event, and with no node it redraws the preedit (killing it); (b) an `input` listener re-seats the real caret at that node's end, or the next IME query hits a caret-less context and fcitx5 confirms the preedit (Space "completes" instead of converting, no `compositionend`, the view stuck composing). Uses PM internals (`domSelectionRange`, `domObserver.lastChangedTextNode`); `mozc/space-convert.ts` guards the contract across upgrades | `ime-survival.ts` |
 | 2 | **IME composition is sacrosanct** | — | repairing, focusing, or remounting mid-composition cancels it and drops text | throughout |
 
 Everything else — bold/italic/縦中横, the ruby annotation, the page columns —
@@ -61,9 +61,17 @@ Monorepo (pnpm workspace); paths relative to the package roots.
 
 ```
 editor/                @ved/editor — the editor core (the only prosemirror consumer)
-  src/editor.tsx         VedEditor: EditorView wiring — beforeinput/keys, dispatchTransaction
+  src/editor.tsx         VedEditor: EditorView construction, dispatchTransaction
                          (apply → ruby repair → history push + onTextChange), caret reveal,
                          drag selection, React shell (writing modes, scroll-keep, tab snapshot/restore)
+  src/session.ts         EditorSession: the per-mount mutable cells the handlers share
+                         (imePendingSel, attached extensions) + commitHistory/restore/
+                         syncExtensions over them (restore/syncExtensions late-bound
+                         once the view exists)
+  src/key-handler.ts     keydown dispatch, in the load-bearing order: IME guard →
+                         extension chain → chord table → built-ins
+  src/composition.ts     compositionstart/end listeners + the beforeinput insertion
+                         takeover — the imePendingSel handshake's consumers
   src/commands.ts        commands: open namespaced ids → EditorCommand semantics
                          (CORE_COMMANDS) → Chord bindings (DEFAULT_KEYBINDINGS); a leaf module
   src/extension.ts       the extension seam (types): EditorExtension /
@@ -205,7 +213,7 @@ in `test/e2e/invisibles.ts`).
   pseudo-element in the overflow, so it consumes no line-box space — the marker
   **can never force a wrap** and stays visible past the last glyph even when a
   paragraph exactly fills its visual line. No DOM text node, so the `SHOW_TEXT`
-  glyph walks (`editor.tsx paraGlyphs`) skip it with no measurement changes.
+  glyph walks (`glyph-walker.ts paraGlyphs`) skip it with no measurement changes.
   One observable consequence: a caret at a paragraph's END has its DOM
   selection at the ELEMENT level (after the widget), not inside the text node —
   `focusOffset` is a child index and the collapsed range rect is degenerate,
@@ -414,7 +422,7 @@ sibling kills fcitx5's IM context — each composed character confirms raw and
 the context goes dead (the ↵ newline mark at `side: -1` did this at every
 paragraph end; the boundary caret at `side: -1` did it at seams). The
 flattened `coordsAtPos` that `side: -1` once worked around is handled by
-`editor.tsx caretCoords` instead: query side, opposite side, then the
+`scroll-reveal.ts caretCoords` instead: query side, opposite side, then the
 boundary-caret widget's own box. (`ruby-ime-rect.ts`, `caret-boundary.ts`,
 `ruby-boundary-caret.ts`, `mozc/ruby-composition.ts` incl.
 `|語(ご)ね|句(く)`, `mozc/page-boundary-composition.ts`.)

@@ -38,10 +38,19 @@ step is lift-and-shift, no logic edits; `just test-all` between):
 8. `extension-context.ts` — createSearchOps + createExtensionContext
    (l.1425–1645), deduping E4/E5/E6 in passing.
 
-Residual editor.tsx = 1028 lines: the session closure web
-(imePendingSel, commitHistory, restore, attachedExts, history refs) +
-handleKeyDown + composition handlers + React shell. Splitting THAT needs a
-mutable session object — **proposal**, not this pass.
+Residual editor.tsx session-closure split — **done**. The mutable session
+object is `session.ts` (EditorSession: the imePendingSel/attachedExts/
+pendingExtSync cells + commitHistory; `restore` and `syncExtensions` are
+late-bound fields set right after the view exists, so commandCtx's old
+TDZ-risky forward closure over `restore` is an explicit field read).
+`key-handler.ts` is handleKeyDown as a factory over the session — the
+dispatch order (IME guard → extension chain → chord table → built-ins)
+verbatim; `composition.ts` holds compositionstart/end + the beforeinput
+takeover (the imePendingSel handshake's consumers). Every cell access stays
+a `session.` property read at the original call site, so nothing captures a
+stale value and no read moved across a rAF boundary. editor.tsx = 761
+lines: EditorView construction, dispatchTransaction, pointer/paste/click
+wiring, React shell. Verified by test-all + the full mozc suite.
 
 ### Findings
 
