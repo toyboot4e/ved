@@ -98,6 +98,10 @@ export const mountLineNumbers = (
   let lines: VisualLine[] = []; // cached geometry from the last full measure
   let vertical = false; // cached from the last full measure (mode changes re-measure)
   let lastHit: VisualLine | null = null; // the line the highlight last painted
+  // The caret's block-axis center at that paint (the composing hold below
+  // compares against it — a pick that flips while the caret itself barely
+  // moved is band-boundary jitter, not a line change).
+  let lastCaretMid: number | null = null;
   let steadyTol = 14; // half the line pitch, cached by the full measure
 
   // FULL measure: re-collect every visual line and re-place the numbers.
@@ -170,6 +174,7 @@ export const mountLineNumbers = (
     if (content.childElementCount === 1 && !content.firstElementChild?.textContent) {
       highlight.style.display = 'none';
       lastHit = null;
+      lastCaretMid = null;
       return;
     }
     const caret = getCaret();
@@ -181,6 +186,7 @@ export const mountLineNumbers = (
       bottom: caret.bottom - o.top,
     };
     const hit = rel && pickLine(lines, rel, vertical);
+    const caretMid = rel ? (vertical ? (rel.left + rel.right) / 2 : (rel.top + rel.bottom) / 2) : null;
     // Same visual line as the last paint (the cached objects are stable between
     // full measures, so identity suffices) → the styles are already right.
     if (hit === lastHit) return;
@@ -189,8 +195,17 @@ export const mountLineNumbers = (
     if (hit && lastHit && isSteady?.()) {
       const mid = (a: VisualLine): number => (vertical ? (a.left + a.right) / 2 : (a.top + a.bottom) / 2);
       if (Math.abs(mid(hit) - mid(lastHit)) <= steadyTol) return;
+      // The pick flipped but the CARET itself barely moved (same half-pitch
+      // bound): band-boundary jitter, not a line change — an all-ruby
+      // column outgrows the plain pitch (line-height is a minimum), so the
+      // preedit tail's rect hops across the fat column's edge per keystroke
+      // and the picked band alternated one pitch back and forth per
+      // composed character (mozc/ruby-hl-compose.ts). Hold the paint; a
+      // real wrap moves the caret a full pitch and repaints once.
+      if (caretMid !== null && lastCaretMid !== null && Math.abs(caretMid - lastCaretMid) <= steadyTol) return;
     }
     lastHit = hit;
+    lastCaretMid = caretMid;
     if (hit) {
       // Anchor at the line's start corner (its top-left character) — for a
       // column that is the page's content top, so the band fills the current
