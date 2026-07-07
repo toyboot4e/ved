@@ -12,10 +12,7 @@
 import fuzzysort from 'fuzzysort';
 import { create } from 'zustand';
 import type { WorkspaceFile } from '../../shared/ipc';
-import { type ChordEvent, matchFileCommand, matchTabCommand, matchViewCommand } from './file-commands';
 import { focusEditor } from './focus';
-import { isComposingEvent } from './ime';
-import { matchSearchCommand } from './search';
 
 /** Which pool the palette searches: workspace files, or the open buffers. */
 export type QuickOpenMode = 'files' | 'buffers';
@@ -100,18 +97,6 @@ export const rankBuffers = (buffers: readonly BufferEntry[], query: string): Ran
     bufferId: b.id,
   }));
 
-/**
- * Maps a keydown to the quick-open command (Ctrl+P; Cmd on macOS). `null` when
- * the event is not ours. Chords are ignored mid-IME composition. Ctrl+Shift+P
- * (the future command palette) is deliberately NOT matched here yet.
- */
-export const matchQuickOpenCommand = (event: ChordEvent, isDarwin: boolean): 'file' | null => {
-  if (isComposingEvent(event)) return null;
-  const mod = isDarwin ? event.metaKey : event.ctrlKey;
-  if (!mod || event.altKey || event.shiftKey) return null;
-  return event.key.toLowerCase() === 'p' ? 'file' : null;
-};
-
 type QuickOpenStore = {
   readonly open: boolean;
   readonly mode: QuickOpenMode;
@@ -185,36 +170,9 @@ export const useQuickOpenStore = create<QuickOpenStore>()((set) => ({
 }));
 
 /** Close the palette and hand focus back to the editor (the overlay input owns
- *  focus while open — mirrors `closeSearch`). */
+ *  focus while open — mirrors `closeSearch`). The overlay's keyboard scope —
+ *  which keys it owns while open — lives in keymap.ts `handleQuickOpenKey`. */
 export const closeQuickOpen = (): void => {
   useQuickOpenStore.getState().close();
   focusEditor();
-};
-
-/**
- * While the palette is open its input owns the keyboard, so the app-level
- * keydown listener defers to this. Returns `true` when the event was consumed
- * here — the caller then stops. Esc closes the palette (covering the tick
- * before the input focuses; never mid-IME, where Esc cancels the composition);
- * recognized app chords (tab/file/view/search/quick-open) are swallowed so they
- * can't leak to the shell, while editing chords and printable keys fall through
- * to the overlay input untouched.
- */
-export const handleQuickOpenKey = (event: KeyboardEvent, isDarwin: boolean): boolean => {
-  if (!useQuickOpenStore.getState().open) return false;
-  if (event.key === 'Escape' && !isComposingEvent(event)) {
-    event.preventDefault();
-    closeQuickOpen();
-    return true;
-  }
-  if (
-    matchQuickOpenCommand(event, isDarwin) ||
-    matchFileCommand(event, isDarwin) ||
-    matchTabCommand(event, isDarwin) ||
-    matchViewCommand(event, isDarwin) ||
-    matchSearchCommand(event, isDarwin)
-  ) {
-    event.preventDefault();
-  }
-  return true;
 };

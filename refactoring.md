@@ -199,11 +199,11 @@ mutable session object — **proposal**, not this pass.
   (also THE place the IME invariant is documented).
 - **D7 done** — closeSearch/closeQuickOpen duplicate + 'editor-content'
   magic id ×2; shared focusEditor().
-- **D8 todo** — five chord matchers share an identical prelude and the
+- **D8 done** — five chord matchers share an identical prelude and the
   quick-open overlay must enumerate them by hand (a real chord-leak
   hazard); one declarative chord table + matchChord. This IS the planned
   keymap registry's data model.
-- **D9 todo** — app.tsx window-keydown dispatcher (60 lines) → app-keymap.ts
+- **D9 done** — app.tsx window-keydown dispatcher (60 lines) → app-keymap.ts
   consuming the D8 table.
 - **D10 proposal** — writingMode/appearPolicy are the last useState
   "view concerns" (everything else is a store); fold into a store when

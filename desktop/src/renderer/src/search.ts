@@ -7,9 +7,7 @@
 // Not persisted; the bar always opens fresh.
 import type { SearchRange } from '@ved/editor';
 import { create } from 'zustand';
-import type { ChordEvent } from './file-commands';
 import { focusEditor } from './focus';
-import { isComposingEvent } from './ime';
 
 /** Every non-overlapping match of `query` in `text`, left to right, as plain
  *  offset ranges. Literal matching (no regex), case-insensitive when
@@ -29,25 +27,6 @@ export const findMatches = (text: string, query: string): SearchRange[] => {
     out.push({ from: i, to: i + needle.length });
   }
   return out;
-};
-
-export type SearchCommand = 'find' | 'replace';
-
-/**
- * Maps a keydown to a search command (Ctrl+F opens the bar on the search
- * field, Ctrl+R on the replace field; Cmd on macOS). `null` when the event is
- * not ours. Chords are ignored mid-IME composition. (Ctrl+R normally reloads
- * an Electron window — main drops the default menu so the chord reaches us;
- * see src/main/index.ts.)
- */
-export const matchSearchCommand = (event: ChordEvent, isDarwin: boolean): SearchCommand | null => {
-  if (isComposingEvent(event)) return null;
-  const mod = isDarwin ? event.metaKey : event.ctrlKey;
-  if (!mod || event.altKey || event.shiftKey) return null;
-  const key = event.key.toLowerCase();
-  if (key === 'f') return 'find';
-  if (key === 'r') return 'replace';
-  return null;
 };
 
 type SearchStore = {

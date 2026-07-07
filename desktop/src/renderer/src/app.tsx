@@ -21,19 +21,15 @@ import {
   dirName,
   type FileCommand,
   fileName,
-  matchFileCommand,
-  matchTabCommand,
-  matchViewCommand,
   saveOrSaveAs,
   saveViaDialog,
   type TabCommand,
   windowTitle,
 } from './file-commands';
-import { isComposingEvent } from './ime';
 import { useInvisiblesStore } from './invisibles';
-import { handleQuickOpenKey, matchQuickOpenCommand, useQuickOpenStore } from './quick-open';
-import { closeSearch, matchSearchCommand, useSearchStore } from './search';
-import { useShellStore } from './shells';
+import { handleAppKeydown } from './keymap';
+import { useQuickOpenStore } from './quick-open';
+import { useSearchStore } from './search';
 import { useThemeStore } from './theme';
 import { useViewConfigStore, viewConfigToCss } from './view-config';
 import { NO_EXTENSIONS, useVimStore, vimExtensions } from './vim';
@@ -248,71 +244,23 @@ export const App = (): React.JSX.Element => {
     [handleClose, handleCycle, active.id],
   );
 
-  // File and tab shortcuts work wherever the focus is, so they live on
-  // `window`. View-mode and caret shortcuts stay inside the editor (they
+  const openSearch = useCallback((field: 'find' | 'replace') => {
+    useSearchStore.getState().openBar(textRef.current);
+    // Bump the epoch so a repeat while already open re-focuses the field.
+    setSearchFocus((f) => ({ field, epoch: f.epoch + 1 }));
+  }, []);
+
+  // App shortcuts work wherever the focus is, so they live on `window`; the
+  // chord table and the scoped dispatch (quick-open overlay first) are
+  // keymap.ts. View-mode and caret shortcuts stay inside the editor (they
   // need the editor view).
   useEffect(() => {
     const isDarwin = window.ved.platform === 'darwin';
-    const onKeyDown = (event: KeyboardEvent): void => {
-      // While the quick-open overlay is open its input owns the keyboard —
-      // it handles navigation/close, and this swallows app chords so they
-      // don't leak to the shell (quick-open.ts handleQuickOpenKey).
-      if (handleQuickOpenKey(event, isDarwin)) return;
-
-      // A key an editor EXTENSION consumed (Vim owns Ctrl+F/B as page
-      // scrolling in normal mode) never reaches this window listener: the
-      // editor stopPropagation()s it (editor.tsx handleKeyDown). We must NOT
-      // additionally guard on `event.defaultPrevented` here — ProseMirror
-      // preventDefaults keys it handles WITHOUT stopping propagation (Escape
-      // among them), and this listener's Escape-closes-search must still run.
-      const quickOpenCommand = matchQuickOpenCommand(event, isDarwin);
-      if (quickOpenCommand) {
-        event.preventDefault();
-        useQuickOpenStore.getState().openPalette();
-        return;
-      }
-      const fileCommand = matchFileCommand(event, isDarwin);
-      if (fileCommand) {
-        event.preventDefault();
-        runFileCommand(fileCommand);
-        return;
-      }
-      const tabCommand = matchTabCommand(event, isDarwin);
-      if (tabCommand) {
-        event.preventDefault();
-        runTabCommand(tabCommand);
-        return;
-      }
-      const viewCommand = matchViewCommand(event, isDarwin);
-      if (viewCommand === 'toggleSidebar') {
-        event.preventDefault();
-        useWorkspaceStore.getState().toggleSidebar();
-        return;
-      }
-      if (viewCommand === 'toggleShell') {
-        event.preventDefault();
-        useShellStore.getState().toggle();
-        return;
-      }
-      const searchCommand = matchSearchCommand(event, isDarwin);
-      if (searchCommand) {
-        event.preventDefault();
-        useSearchStore.getState().openBar(textRef.current);
-        // Bump the epoch so a repeat while already open re-focuses the field.
-        setSearchFocus((f) => ({ field: searchCommand === 'replace' ? 'replace' : 'find', epoch: f.epoch + 1 }));
-        return;
-      }
-      // Esc closes an open search bar from anywhere (the bar's inputs handle
-      // their own Esc; this covers focus back in the editor). Never mid-IME —
-      // Esc there cancels the composition.
-      if (event.key === 'Escape' && !isComposingEvent(event) && useSearchStore.getState().open) {
-        event.preventDefault();
-        closeSearch();
-      }
-    };
+    const onKeyDown = (event: KeyboardEvent): void =>
+      handleAppKeydown(event, isDarwin, { runFileCommand, runTabCommand, openSearch });
     window.addEventListener('keydown', onKeyDown);
     return () => window.removeEventListener('keydown', onKeyDown);
-  }, [runFileCommand, runTabCommand]);
+  }, [runFileCommand, runTabCommand, openSearch]);
 
   const sidebarOpen = useWorkspaceStore((s) => s.sidebarOpen);
   const sidebarSide = useWorkspaceStore((s) => s.sidebarSide);

@@ -9,8 +9,8 @@
 // every IME-processed keydown with the sentinel `keyCode === 229`.
 
 /** The fields the guard reads — structurally satisfied by a native
- *  `KeyboardEvent` (React handlers pass `event.nativeEvent`) and by the chord
- *  matchers' `ChordEvent`. */
+ *  `KeyboardEvent` (React handlers pass `event.nativeEvent`) and by
+ *  keymap.ts's `ChordEvent`. */
 export type ComposingEvent = {
   readonly isComposing: boolean;
   readonly keyCode: number;

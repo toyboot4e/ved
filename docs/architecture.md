@@ -298,13 +298,16 @@ paths cross it.
   `closeQuickOpen` just refocuses it (mirrors `closeSearch`). Nav/close keys are
   ignored mid-composition.
 
-While the palette is open the app-root keydown listener defers to
-`handleQuickOpenKey`, which swallows recognized app chords (Ctrl+W &c. must not
-leak to the shell) but lets editing chords and printable keys reach the input —
-this is the `overlay` keymap scope, ahead of a formal registry. The store is
-built generic (`items`, not `files`) so the same overlay can back the
-`Ctrl+Shift+P` command palette later; `matchQuickOpenCommand` leaves Shift+P
-unclaimed. Verified in `test/e2e/quick-open.ts`.
+The shell's chords live in ONE declarative table (renderer `keymap.ts`:
+`APP_KEYMAP`, plan-style command ids like `file.save`), dispatched by
+`handleAppKeydown` from the single window keydown listener app.tsx installs.
+While the palette is open that dispatcher defers to `handleQuickOpenKey`,
+which swallows ANY table hit (Ctrl+W &c. must not leak to the shell) but lets
+editing chords and printable keys reach the input — the `overlay` scope of the
+keymap; a new binding is overlay-safe by construction. The store is built
+generic (`items`, not `files`) so the same overlay can back the `Ctrl+Shift+P`
+command palette later; the table leaves Shift+P unclaimed. Verified in
+`test/e2e/quick-open.ts`.
 
 ## Structure repair
 

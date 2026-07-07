@@ -113,13 +113,12 @@ it is — the store only ever sees plaintext.
 
 ### 4. One keymap registry, IME-safe
 
-Today shortcuts live in `editor.tsx`'s key handling plus an app-level
-listener (`app.tsx`). Shell shortcuts
-(Ctrl+P, Ctrl+S, Ctrl+W, Ctrl+Tab…) must work when the editor is *not*
-focused, so: a single `keymap.ts` registry with scopes
+Shell shortcuts (Ctrl+P, Ctrl+S, Ctrl+W, Ctrl+Tab…) must work when the
+editor is *not* focused, so: a single `keymap.ts` registry with scopes
 (`global` / `editor` / `overlay`), dispatched from one `keydown` listener at
-the app root. The editor's caret-movement handling stays local (it needs
-the editor view), but mod-key chords move into the registry.
+the app root. The `global` + `overlay` scopes ship as `keymap.ts`'s
+declarative chord table (`APP_KEYMAP` + `handleAppKeydown`); the editor's
+caret-movement handling stays local (it needs the editor view).
 
 Rules learned from the editor core that the shell must respect:
 
@@ -414,15 +413,16 @@ Roots/visibility persistence rides Phase 4's `config.json`.
     the overlay, so its selection is preserved with no save/restore. IME-safe:
     nav/close keys ignored mid-composition.
   - **Scope**: while the palette is open the app keydown listener defers to
-    `handleQuickOpenKey` — it swallows recognized app chords (so Ctrl+W &c.
-    don't leak to the shell) while editing chords and printable keys reach the
-    input. This is the `overlay` keymap scope, ahead of a formal registry.
+    `handleQuickOpenKey` (`keymap.ts`) — it swallows any hit in the app chord
+    table (so Ctrl+W &c. don't leak to the shell) while editing chords and
+    printable keys reach the input. This is the `overlay` scope of the keymap
+    registry (step 4 of the architecture notes above).
   - Smoke: `test/e2e/quick-open.ts`. Units: `main/workspace-index.test.ts`,
     `renderer/src/quick-open.test.ts`. See architecture.md "Quick open".
 
 The same store/overlay is built to back the **command palette**
 (`Ctrl+Shift+P`) later — "input + generic item provider", hence the store's
-`items` (not `files`); `matchQuickOpenCommand` deliberately leaves Shift+P
+`items` (not `files`); the chord table deliberately leaves Shift+P
 unclaimed for it.
 
 ### Phase 4 — configuration

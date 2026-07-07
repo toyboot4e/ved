@@ -1,31 +1,11 @@
 import { describe, expect, it } from 'vitest';
 import type { WorkspaceFile } from '../../shared/ipc';
-import type { ChordEvent } from './file-commands';
-import {
-  type BufferEntry,
-  isTextLabel,
-  matchQuickOpenCommand,
-  RESULT_LIMIT,
-  rankBuffers,
-  rankFiles,
-  useQuickOpenStore,
-} from './quick-open';
+import { type BufferEntry, isTextLabel, RESULT_LIMIT, rankBuffers, rankFiles, useQuickOpenStore } from './quick-open';
 
 const files = (...labels: string[]): WorkspaceFile[] => labels.map((label) => ({ path: `/${label}`, label }));
 
 const buffers = (...labels: (string | null)[]): BufferEntry[] =>
   labels.map((path, i) => ({ id: i + 1, path, label: path ?? '無題' }));
-
-const chord = (over: Partial<ChordEvent>): ChordEvent => ({
-  key: 'p',
-  ctrlKey: false,
-  metaKey: false,
-  shiftKey: false,
-  altKey: false,
-  isComposing: false,
-  keyCode: 0,
-  ...over,
-});
 
 describe('rankFiles', () => {
   it('returns the whole list, unranked, for an empty query', () => {
@@ -124,23 +104,5 @@ describe('isTextLabel', () => {
     expect(isTextLabel('a.png')).toBe(false);
     expect(isTextLabel('lib.so')).toBe(false);
     expect(isTextLabel('doc.pdf')).toBe(false);
-  });
-});
-
-describe('matchQuickOpenCommand', () => {
-  it('matches Ctrl+P (Cmd+P on macOS)', () => {
-    expect(matchQuickOpenCommand(chord({ ctrlKey: true }), false)).toBe('file');
-    expect(matchQuickOpenCommand(chord({ metaKey: true }), true)).toBe('file');
-  });
-
-  it('ignores the bare key, the wrong modifier, and Shift (reserved for the palette)', () => {
-    expect(matchQuickOpenCommand(chord({}), false)).toBeNull();
-    expect(matchQuickOpenCommand(chord({ metaKey: true }), false)).toBeNull();
-    expect(matchQuickOpenCommand(chord({ ctrlKey: true, shiftKey: true }), false)).toBeNull();
-  });
-
-  it('ignores the chord mid-IME composition', () => {
-    expect(matchQuickOpenCommand(chord({ ctrlKey: true, isComposing: true }), false)).toBeNull();
-    expect(matchQuickOpenCommand(chord({ ctrlKey: true, keyCode: 229 }), false)).toBeNull();
   });
 });
