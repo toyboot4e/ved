@@ -24,7 +24,7 @@
 // caret-move-perf and click-perf assert caret moves cause none.
 import type { Node as PMNode } from 'prosemirror-model';
 import { Decoration, DecorationSet } from 'prosemirror-view';
-import type { CaretShape } from '../extension';
+import type { CaretShape, ExtensionDecorationRange } from '../extension';
 import { type Appear, activeRuby, docLeaves, isHidden, type Leaf, lineOf } from './leaves';
 import { buildPosMap, posToOffset, serialize } from './model';
 
@@ -194,7 +194,12 @@ const parseDoc = (doc: PMNode): Parse => {
  *  widgets) plus the search-match highlights. Fully determined by
  *  (doc, invisibles, search), so it is reused across every caret move and
  *  policy change (the cache keys on all three — see baseCache). */
-const buildBase = (parse: Parse, invis: Invisibles, search: SearchHighlights | null): DecorationSet => {
+const buildBase = (
+  parse: Parse,
+  invis: Invisibles,
+  search: SearchHighlights | null,
+  extension: readonly ExtensionDecorationRange[] | null,
+): DecorationSet => {
   const { doc, text, posMap } = parse;
   const at = (o: number) => posMap[o]!;
   const decos: Decoration[] = [];
@@ -258,6 +263,18 @@ const buildBase = (parse: Parse, invis: Invisibles, search: SearchHighlights | n
       const cls = i === search.active ? 'vedSearchMatch vedSearchActive' : 'vedSearchMatch';
       decos.push(Decoration.inline(at(from), at(to), { class: cls }));
     });
+  }
+
+  // Extension highlights (the seam's setDecorations): plain-offset ranges
+  // with caller-namespaced classes, folded exactly like the search matches
+  // above — clamped, offset-mapped, background-only by contract.
+  if (extension) {
+    for (const r of extension) {
+      const from = Math.max(0, Math.min(r.from, text.length));
+      const to = Math.max(from, Math.min(r.to, text.length));
+      if (from === to) continue;
+      decos.push(Decoration.inline(at(from), at(to), { class: r.cls }));
+    }
   }
 
   return DecorationSet.create(doc, decos);
@@ -357,6 +374,7 @@ let baseCache: {
   newline: boolean;
   whitespace: boolean;
   search: SearchHighlights | null;
+  extension: readonly ExtensionDecorationRange[] | null;
   set: DecorationSet;
 } | null = null;
 // The cached static layer: the base (bold/italic/縦中横) set PLUS the ruby static
@@ -422,21 +440,28 @@ const expandedFor = (parse: Parse, policy: Appear, ctx: CaretContext): Set<numbe
 /** The base layer through `baseCache`: the bold/italic/縦中横 + invisibles +
  *  search set depends only on (doc, invisibles, search) — reuse it across
  *  every caret move and policy change. */
-const cachedBase = (parse: Parse, invisibles: Invisibles, search: SearchHighlights | null): DecorationSet => {
+const cachedBase = (
+  parse: Parse,
+  invisibles: Invisibles,
+  search: SearchHighlights | null,
+  extension: readonly ExtensionDecorationRange[] | null,
+): DecorationSet => {
   const doc = parse.doc;
   if (
     !baseCache ||
     baseCache.doc !== doc ||
     baseCache.newline !== invisibles.newline ||
     baseCache.whitespace !== invisibles.whitespace ||
-    baseCache.search !== search
+    baseCache.search !== search ||
+    baseCache.extension !== extension
   ) {
     baseCache = {
       doc,
       newline: invisibles.newline,
       whitespace: invisibles.whitespace,
       search,
-      set: buildBase(parse, invisibles, search),
+      extension,
+      set: buildBase(parse, invisibles, search, extension),
     };
     // Test seam: count O(document) base rebuilds. A caret move must reuse the
     // cache (no increment). caret-move-perf asserts this.
@@ -489,6 +514,10 @@ export type DecorationOptions = {
   readonly selTo?: number;
   readonly invisibles?: Invisibles;
   readonly search?: SearchHighlights | null;
+  /** Extension highlight ranges (extension.ts setDecorations), keyed into
+   *  the base cache by IDENTITY like `search` — an unchanged set costs caret
+   *  moves nothing. */
+  readonly extension?: readonly ExtensionDecorationRange[] | null;
   readonly caretShape?: CaretShape;
 };
 
@@ -505,13 +534,14 @@ export const buildDecorations = (
   const selTo = opts.selTo ?? head;
   const invisibles = opts.invisibles ?? NO_INVISIBLES;
   const search = opts.search ?? null;
+  const extension = opts.extension ?? null;
   const caretShape = opts.caretShape ?? 'bar';
 
   if (!parseCache || parseCache.doc !== doc) parseCache = parseDoc(doc);
   const parse = parseCache;
   const ctx = caretContext(parse, doc, head);
   const expanded = expandedFor(parse, policy, ctx);
-  const base = cachedBase(parse, invisibles, search);
+  const base = cachedBase(parse, invisibles, search, extension);
 
   // The current-line highlight is NOT a decoration: it tracks the caret's VISUAL
   // line (one wrapped column/row), which a node decoration on the <p> can't

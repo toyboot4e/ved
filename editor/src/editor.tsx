@@ -15,7 +15,7 @@ import {
 } from './commands';
 import { createBeforeInputHandler, createCompositionHandlers } from './composition';
 import styles from './editor.module.scss';
-import type { CaretShape, EditorExtension, VisualSelectionKind } from './extension';
+import type { CaretShape, EditorExtension, ExtensionDecorationRange, VisualSelectionKind } from './extension';
 import { createEditorOps } from './extension-context';
 import { createGlyphWalker } from './glyph-walker';
 import type { PlainTextHistory } from './history';
@@ -89,6 +89,11 @@ export type VedEditorProps = {
    *  (module constant / memo); a new identity re-syncs attachments. */
   readonly extensions?: readonly EditorExtension[];
   readonly onTextChange?: (text: string) => void;
+  /** Fired after any transaction that may have moved the selection (edits
+   *  included), never during an IME composition. A payload-free PING: pull
+   *  the offsets through the extension seam (`getSelection`) only when
+   *  someone actually listens — that keeps caret moves O(1) otherwise. */
+  readonly onSelectionChange?: () => void;
   readonly initialCursor?: CursorState | null;
   readonly initialAnchor?: CursorState | null;
   readonly initialScroll?: { top: number; left: number };
@@ -159,6 +164,13 @@ export const VedEditor = (props: VedEditorProps): React.JSX.Element => {
   // Same shape as invisiblesRef: the decoration plugin reads the live value;
   // the effect below re-decorates when the prop changes.
   const searchRef = useRef<SearchHighlights | null>(props.searchHighlights ?? null);
+  // Extension highlight sets (extension.ts setDecorations), one entry per
+  // caller key; `flat` is the identity-keyed concatenation the decoration
+  // plugin reads (null = none — the common case costs nothing).
+  const extDecosRef = useRef<{
+    byKey: Map<string, readonly ExtensionDecorationRange[]>;
+    flat: readonly ExtensionDecorationRange[] | null;
+  }>({ byKey: new Map(), flat: null });
   // Extension state that must survive the mount-once effect's closures AND the
   // policy effect's class rebuild: the caret shape (read by the decoration
   // plugin like policyClassRef), the extension-owned content classes, and the
@@ -221,6 +233,7 @@ export const VedEditor = (props: VedEditorProps): React.JSX.Element => {
             selTo: state.selection.to,
             invisibles: invisiblesRef.current,
             search: searchRef.current,
+            extension: extDecosRef.current.flat,
             caretShape: caretShapeRef.current,
           }),
       },
@@ -331,6 +344,10 @@ export const VedEditor = (props: VedEditorProps): React.JSX.Element => {
         // Track the caret as the pre-edit anchor for the NEXT edit's undo target.
         // Frozen while composing so the WHOLE IME word's anchor is its start.
         if (!view.composing) beforeOffsetRef.current = posToOffset(next.doc, next.selection.head);
+        // A PING, deliberately payload-free: whoever listens pulls offsets
+        // lazily through the extension seam, so a caret move with no
+        // listeners costs O(1) here (no posToOffset). Never mid-composition.
+        if ((tr.selectionSet || tr.docChanged) && !view.composing) live.current.onSelectionChange?.();
       },
       handleKeyDown,
       handleDOMEvents: {
@@ -437,6 +454,7 @@ export const VedEditor = (props: VedEditorProps): React.JSX.Element => {
       caretShapeRef,
       visualSelectionRef,
       extClassesRef,
+      extDecosRef,
       lineNumbersRef,
       live,
       commands,

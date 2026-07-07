@@ -6,8 +6,9 @@ import { TextSelection } from 'prosemirror-state';
 import type { EditorView } from 'prosemirror-view';
 import { HORIZ_ARROWS, moveByLogicalLine, moveCaretByLine, moveChar, VERT_ARROWS } from './caret-motion';
 import type { EditorCommand, EditorCommandContext, EditorCommandId } from './commands';
+import { CORE_COMMANDS } from './commands';
 import type { EditorSearchOps, VedEditorProps } from './editor';
-import type { CaretShape, EditorExtensionContext, VisualSelectionKind } from './extension';
+import type { CaretShape, EditorExtensionContext, ExtensionDecorationRange, VisualSelectionKind } from './extension';
 import type { LineNumbers } from './line-numbers';
 import { deleteChar, plainInsertTr } from './plain-edits';
 import { isCaretStop, legalStop, nextCaretOffset } from './pm/caret-model';
@@ -45,6 +46,12 @@ export type EditorOpsDeps = {
   readonly caretShapeRef: { current: CaretShape };
   readonly visualSelectionRef: { current: VisualSelectionKind };
   readonly extClassesRef: { readonly current: Set<string> };
+  readonly extDecosRef: {
+    readonly current: {
+      readonly byKey: Map<string, readonly ExtensionDecorationRange[]>;
+      flat: readonly ExtensionDecorationRange[] | null;
+    };
+  };
   readonly lineNumbersRef: { readonly current: LineNumbers | null };
   readonly live: { readonly current: VedEditorProps };
   readonly commands: Map<EditorCommandId, EditorCommand>;
@@ -64,6 +71,7 @@ export const createEditorOps = (
     caretShapeRef,
     visualSelectionRef,
     extClassesRef,
+    extDecosRef,
     lineNumbersRef,
     live,
     commands,
@@ -230,6 +238,13 @@ export const createEditorOps = (
       return command ? command(commandCtx) : false;
     },
     registerCommand: (id, command) => {
+      // A CORE command id cannot be shadowed — `history.undo` must always be
+      // the editor's own. (Extension ids are namespaced upstream; this guard
+      // is the seam's own backstop.)
+      if (id in CORE_COMMANDS) {
+        console.warn(`ved: refusing to override the core command "${id}"`);
+        return () => {};
+      }
       commands.set(id, command);
       return () => {
         if (commands.get(id) === command) commands.delete(id);
@@ -244,6 +259,21 @@ export const createEditorOps = (
       if (on) extClassesRef.current.add(cls);
       else extClassesRef.current.delete(cls);
       view.dom.classList.toggle(cls, on);
+    },
+    setDecorations: (key, ranges) => {
+      const store = extDecosRef.current;
+      if (ranges.length === 0) store.byKey.delete(key);
+      else store.byKey.set(key, ranges);
+      const flat: ExtensionDecorationRange[] = [];
+      for (const set of store.byKey.values()) flat.push(...set);
+      // A NEW identity per change — the decoration base cache keys on it, so
+      // this costs one base rebuild now and nothing per caret move after.
+      store.flat = flat.length > 0 ? flat : null;
+      // View-only, so no transaction is NEEDED — but an idle view repaints
+      // only on the next state change, so force one… except mid-composition
+      // (the IME invariant): the composition's own commit transaction picks
+      // the new flat ref up.
+      if (!view.composing) view.dispatch(view.state.tr.setMeta('redecorate', true));
     },
     setVisualSelection: (kind) => {
       if (visualSelectionRef.current === kind) return;

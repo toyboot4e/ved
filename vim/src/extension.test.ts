@@ -40,6 +40,7 @@ const fakeContext = (initial: string) => {
     registerCommand: () => () => {},
     setCaretShape: (shape) => calls.push(`caretShape:${shape}`),
     setContentClass: () => {},
+    setDecorations: () => {},
     setVisualSelection: (kind) => calls.push(`visual:${kind}`),
     breakUndoGroup: () => {},
     isComposing: () => false,

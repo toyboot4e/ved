@@ -23,6 +23,13 @@ export type CaretShape = 'bar' | 'block';
 /** A selection in plain offsets. `head` is the moving end. */
 export type EditorSelectionOffsets = { readonly anchor: number; readonly head: number };
 
+/** One view-only highlight an extension contributes: a PLAIN-offset range
+ *  plus a CSS class (already namespaced by the caller — the desktop host
+ *  prefixes `vedx-<extension id>-`). Background-only styling by contract:
+ *  no metric may change, so every cached measurement stands (the same rule
+ *  as the search highlights). */
+export type ExtensionDecorationRange = { readonly from: number; readonly to: number; readonly cls: string };
+
 /** A spatial (screen) direction — what an arrow key means before the writing
  *  mode decides which axis it moves along. */
 export type VisualDirection = 'up' | 'down' | 'left' | 'right';
@@ -96,6 +103,14 @@ export type EditorExtensionContext = {
   /** Toggle a class on the editor's content element (survives writing-mode /
    *  policy class swaps). For extension-specific CSS. */
   readonly setContentClass: (cls: string, on: boolean) => void;
+  /** REPLACE the view-only highlight set registered under `key` (callers use
+   *  one key each — the desktop host keys by extension id); an empty array
+   *  clears it. Ranges are plain offsets, mapped and folded into the editor's
+   *  cached decoration layers exactly like the search highlights, so an idle
+   *  set costs caret moves nothing. IME-safe by construction: mid-composition
+   *  the ref updates but nothing dispatches — the composition's own commit
+   *  transaction picks the new set up. */
+  readonly setDecorations: (key: string, ranges: readonly ExtensionDecorationRange[]) => void;
   /** How the current selection RENDERS (a modal editor's visual modes) — see
    *  `VisualSelectionKind`. `'char'` keeps the anchor character selected as
    *  the head moves before it; `'line'` highlights whole paragraphs while the
