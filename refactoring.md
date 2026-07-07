@@ -237,8 +237,10 @@ mutable session object — **proposal**, not this pass.
   the element-level caret derive its rect from the fattened widget box (the
   oversized cursor). Fix: side 2 at PARAGRAPH-END boundaries (after the
   caret and the ↵ mark), side -1 kept at mid-paragraph soft wraps (where it
-  keeps the widget on the page's last line). Guard:
-  test/e2e/page-gap-caret-end.ts; mozc grid-boundary composition case owed.
+  keeps the widget on the page's last line). Guards:
+  test/e2e/page-gap-caret-end.ts (structural, verified failing pre-fix) AND
+  a real-mozc composition case at the 段-grid paragraph-end boundary
+  (mozc/page-boundary-composition.ts).
 
 ## Cross-package / config / deps
 

@@ -79,6 +79,38 @@ try {
       failures.push(`✗ ${label} (off=${off}): got …${at(got)}…, want …${at(want)}…`);
     }
   }
+  // The 段-grid boundary case (reported live): a paragraph ending EXACTLY on
+  // page 1's last line carries the intra-band page-gap WIDGET at its content
+  // end. At side -1 the widget sat BEFORE the caret and the IM context died —
+  // every composed character confirmed raw; paragraph-end boundaries render
+  // it at side 2 now (pm/page-gap.ts). 25 one-line paragraphs of 20 fullwidth
+  // chars: paragraph 20 ends at line 20 = the 1|2 intra-band boundary.
+  {
+    const gridText = Array.from({ length: 25 }, () => 'あ'.repeat(20)).join('\n');
+    const off = 19 * 21 + 20; // end of paragraph 20
+    await page.evaluate(() => getSelection()!.selectAllChildren(document.getElementById('editor-content')!));
+    await page.keyboard.press('Backspace');
+    await page.waitForTimeout(80);
+    await page.keyboard.insertText(gridText);
+    await page.waitForTimeout(500); // the measured pass places the intra-band widgets
+    const setup = await page.evaluate(() => {
+      const paras = document.querySelectorAll('#editor-content > p');
+      return { widgetInP20: paras[19]?.querySelectorAll('.ved-page-gap').length ?? 0 };
+    });
+    assert.equal(setup.widgetInP20, 1, 'setup: paragraph 20 carries the intra-band boundary widget');
+    await page.evaluate((o) => (window as unknown as W).__vedSetSelection(o, o), off);
+    await page.waitForTimeout(200);
+    await m.escape();
+    await m.type('nekoda');
+    const got = await m.commit();
+    const want = `${gridText.slice(0, off)}ねこだ${gridText.slice(off)}`;
+    if (got === want) step('mozc nekoda at a 段-grid paragraph-end page boundary: composed and committed in place');
+    else {
+      const at = (s: string) => JSON.stringify(s.slice(Math.max(0, off - 6), off + 12));
+      failures.push(`✗ 段-grid paragraph-end boundary (off=${off}): got …${at(got)}…, want …${at(want)}…`);
+    }
+  }
+
   assert.equal(failures.length, 0, `${failures.length} composition case(s) wrong:\n${failures.join('\n')}`);
   step('real mozc: composition survives every caret home in a multi-paragraph paged doc');
 } catch (e) {
