@@ -18,6 +18,7 @@ import type { ResolvedPos } from 'prosemirror-model';
 import type { EditorState, Transaction } from 'prosemirror-state';
 import { Plugin, PluginKey } from 'prosemirror-state';
 import { Decoration, DecorationSet } from 'prosemirror-view';
+
 import { makeLineGrouper } from './line-grouping';
 
 export const pageGapKey = new PluginKey<DecorationSet>('vedPageGap');
@@ -64,11 +65,24 @@ export const pageGapPlugin = (): Plugin<DecorationSet> =>
           return DecorationSet.create(
             tr.doc,
             // side -1: the widget associates with the PRECEDING content, so at a
-            // wrap boundary it stays on the page's last line (and an insertion
-            // at the boundary lands after it).
-            positions.map((g) =>
-              Decoration.widget(g.pos, g.before ? gapBefore : gapAfter, { side: -1, key: pageGapDecoKey(g) }),
-            ),
+            // MID-PARAGRAPH (soft-wrap) boundary it stays on the page's last
+            // line — side >= 0 would draw it at the next line's start, fattening
+            // the wrong page. But at a PARAGRAPH END there is no wrap ambiguity,
+            // and side -1 there puts the read-only widget BEFORE a caret sitting
+            // at the paragraph's end: fcitx5's IM context dies against a
+            // contenteditable=false previous sibling (every composed character
+            // confirms raw — the rule the ↵ newline mark already learned,
+            // pm/decorations.ts), and the element-level caret derives its rect
+            // from the FATTENED widget box (an oversized bar). side 2 renders it
+            // after both the caret and the ↵ mark (side 1).
+            positions.map((g) => {
+              const $p = tr.doc.resolve(g.pos);
+              const atParaEnd = !g.before && $p.parentOffset === $p.parent.content.size;
+              return Decoration.widget(g.pos, g.before ? gapBefore : gapAfter, {
+                side: atParaEnd ? 2 : -1,
+                key: pageGapDecoKey(g),
+              });
+            }),
           );
         }
         // Between measurements, keep the widgets riding along with edits.

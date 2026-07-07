@@ -225,6 +225,19 @@ mutable session object — **proposal**, not this pass.
   window cycler; needs a darwin carve-out like Ctrl+Tab's. (No mac to
   verify on.)
 
+## Bugs found during the effort (user-reported, pre-existing)
+
+- **B1 todo (bug, pre-existing)** — VerticalColumns 段=2: a paragraph ending
+  exactly on a page's last line (an intra-band boundary) gets the page-gap
+  widget at `side: -1` (pm/page-gap.ts, since 9d6d887 2026-07-02) — the
+  read-only widget becomes the caret's PREVIOUS DOM sibling, which (a) kills
+  fcitx5's IM context (every composed character confirms raw) and (b) makes
+  the element-level caret derive its rect from the fattened widget box (the
+  oversized cursor). Fix: side 2 at PARAGRAPH-END boundaries (after the
+  caret and the ↵ mark), side -1 kept at mid-paragraph soft wraps (where it
+  keeps the widget on the page's last line). Guard:
+  test/e2e/page-gap-caret-end.ts; mozc grid-boundary composition case owed.
+
 ## Cross-package / config / deps
 
 - **X1 done** — dead deps: fast-check (root), electron-updater +
