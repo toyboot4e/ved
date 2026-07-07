@@ -1,5 +1,4 @@
 import {
-  AppearPolicy,
   type EditorSearchOps,
   type EditorSnapshot,
   type SearchHighlights,
@@ -10,6 +9,7 @@ import {
 import { clsx } from 'clsx';
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import appStyles from './app.module.scss';
+import { useAppearPolicyStore } from './appear-policy';
 import { activeBuffer, type BufferId, isDirty, someInactiveDirty } from './buffers';
 import { dispatchBuffers, useBuffersStore } from './buffers-store';
 import { QuickOpen } from './components/quick-open';
@@ -35,10 +35,14 @@ import { useThemeStore } from './theme';
 import { useViewConfigStore, viewConfigToCss } from './view-config';
 import { NO_EXTENSIONS, useVimStore, vimExtensions } from './vim';
 import { useWorkspaceStore } from './workspace';
+import { useWritingModeStore } from './writing-mode';
 
 export const App = (): React.JSX.Element => {
-  const [writingMode, setWritingMode] = useState(WritingMode.VerticalColumns);
-  const [appearPolicy, setAppearPolicy] = useState(AppearPolicy.Rich);
+  const writingMode = useWritingModeStore((s) => s.writingMode);
+  const appearPolicy = useAppearPolicyStore((s) => s.appearPolicy);
+  // Handed to VedEditor, which writes back through it (Ctrl+1–4, Ctrl+/);
+  // a store setter, so its identity is stable across renders.
+  const setAppearPolicy = useAppearPolicyStore((s) => s.set);
   const viewConfig = useViewConfigStore((s) => s.config);
   const invisibles = useInvisiblesStore((s) => s.invisibles);
   const theme = useThemeStore((s) => s.theme);
@@ -302,12 +306,7 @@ export const App = (): React.JSX.Element => {
           >
             {/* Also makes space for traffic lights (macOS only) */}
             <div className={styles.header}>
-              <Toolbar
-                writingMode={writingMode}
-                setWritingMode={setWritingMode}
-                appearPolicy={appearPolicy}
-                setAppearPolicy={setAppearPolicy}
-              />
+              <Toolbar />
             </div>
             <TabBar activeDirty={dirty} onClose={handleClose} />
             <VedEditor

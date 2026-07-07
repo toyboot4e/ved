@@ -1,20 +1,14 @@
 import { AppearPolicy, editorStyles as styles, WritingMode } from '@ved/editor';
 import type React from 'react';
+import { useAppearPolicyStore } from '../appear-policy';
 import { preserveFocus } from '../focus';
 import { useWorkspaceStore } from '../workspace';
+import { useWritingModeStore } from '../writing-mode';
 import { HorizontalIcon, VerticalColumnsIcon, VerticalIcon, VerticalRowsIcon } from './icons/WritingModeIcons';
 import { InvisiblesControls } from './invisibles-controls';
 import { ThemeToggle } from './theme-toggle';
 import { ViewConfigControls } from './view-config-controls';
 import { VimToggle } from './vim-toggle';
-
-/** Properties of {@link Toolbar}. */
-export type ToolbarProps = {
-  readonly writingMode: WritingMode;
-  readonly setWritingMode: (_: WritingMode) => void;
-  readonly appearPolicy: AppearPolicy;
-  readonly setAppearPolicy: (_: AppearPolicy) => void;
-};
 
 const writingModeItems: {
   mode: WritingMode;
@@ -58,12 +52,11 @@ const appearPolicyItems: { policy: AppearPolicy; label: string; title: string }[
   { policy: AppearPolicy.Rich, label: 'Rich', title: 'Always render ruby (Ctrl+4, Ctrl+/)' },
 ];
 
-export const Toolbar = ({
-  writingMode,
-  setWritingMode,
-  appearPolicy,
-  setAppearPolicy,
-}: ToolbarProps): React.JSX.Element => {
+export const Toolbar = (): React.JSX.Element => {
+  const writingMode = useWritingModeStore((s) => s.writingMode);
+  const setWritingMode = useWritingModeStore((s) => s.set);
+  const appearPolicy = useAppearPolicyStore((s) => s.appearPolicy);
+  const setAppearPolicy = useAppearPolicyStore((s) => s.set);
   const sidebarOpen = useWorkspaceStore((s) => s.sidebarOpen);
   const toggleSidebar = useWorkspaceStore((s) => s.toggleSidebar);
   return (
