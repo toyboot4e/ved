@@ -1,7 +1,7 @@
 // User keymap: config → compiled per-map-mode tries, and the walk the reducer
 // runs over them (the mapping FRONT LAYER — consulted before the built-in
 // dispatch; see vimKeydown). The config is deliberately JSON-serializable:
-// this type IS the future config-file schema (docs/vim-keymap-plan.md).
+// this type IS the future config-file schema (docs/architecture.md "Extensions").
 
 import { keyToken, parseKeys, type VimKey } from './keys';
 

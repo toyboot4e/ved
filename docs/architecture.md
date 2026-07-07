@@ -574,11 +574,16 @@ targets pass through the same `snapCaret`, so it stays ruby-aware. The desktop
 shell turns it on (ved is Japanese-first); a caller may pass a custom
 `WordModel` instead of `true`.
 
-**User key mappings** (`createVimExtension({keymap})`, design in
-`docs/vim-keymap-plan.md`): a JSON-serializable `VimKeymapConfig` — per map
-mode (normal/visual/operator-pending), Vim notation (`"gw"`, `"<C-l>"`,
-`"<Leader>w"`), noremap by default — compiles EAGERLY (a broken keymap throws
-at construction; prefix conflicts are compile errors, since a pure reducer
+**User key mappings** (`createVimExtension({keymap})`): a JSON-serializable
+`VimKeymapConfig` — deliberately, since the SAME shape is the future
+config-file schema — per map mode (normal/visual/operator-pending), Vim
+notation (`keys.ts parseKeys`: plain chars, `<C-x>`/`<A-x>`, the named
+specials `<Esc> <CR> <Space> <Tab> <BS> <Del> <Bar> <lt> <Leader>` with the
+leader defaulting to `\`; unknown `<…>` specials are compile errors; Shift is
+carried by the character itself — `H`, never `<S-…>`), noremap by default
+(`{rhs, remap: true}` opts in per binding) — compiles EAGERLY (a broken
+keymap throws at construction, so the caller can fall back to defaults and
+report; prefix conflicts are compile errors, since a pure reducer
 cannot time out to disambiguate) into per-mode tries. `vimKeydown` walks them
 as a FRONT layer: user LHS win over built-ins, a match emits a `feedKeys`
 effect the adapter re-enters key by key (the dot-repeat loop generalized,
@@ -770,9 +775,39 @@ paragraph (most visible in horizontal writing).
 - The placeholder is a CSS `::before` on the empty paragraph so it sits in
   normal flow in every writing mode; an absolutely-positioned one lands a
   page away under vertical-rl.
+- Band height and any periodic paint over the bands (the `repeat-y` lattice)
+  must derive from the SAME `page-height + gutter` expression: a period that
+  omits the line-number gutter leaves every band a gutter taller than its
+  paint, and every line overruns the separator. The band's start padding is
+  exactly the gutter — no extra caret margin.
 
 Writing mode and appear policy are owned by `app.tsx` state, rendered by
 `components/toolbar.tsx`; shortcuts call the same setters.
+
+### Debugging a layout bug
+
+vertical-rl + multicol is where "it looks wrong but I can't see why" bugs
+live. The discipline that fixes them in one pass instead of ten:
+
+- **Get a screenshot of the FAILING case before theorizing.** It carries the
+  three things measurements don't give at once: the writing mode, the kind of
+  content that triggers it (a long *wrapping* line, a ruby, an over-length
+  run — never a tidy sample), and the visual itself.
+- **Don't trust `getBoundingClientRect` in fragmented layouts.** For a
+  paragraph split across multicol columns it can report the capped extent
+  while a line visibly overruns. Use rects to confirm a hypothesis, never to
+  form one.
+- **If the local environment can't reproduce it** (font, window size, device
+  scale), say so and get the user's screenshot — a large window whose
+  fallback CJK font renders fullwidth glyphs at ~1em "confirms" layouts the
+  user's font breaks. `VED_SMOKE_SCALE` pins fractional HiDPI scales.
+- **Capture harness**: a throwaway driver that launches the built app in a
+  **visible** window (Playwright's `page.screenshot` stalls on the hidden
+  smoke window; `webContents.capturePage().toDataURL()` does not), types the
+  scenario matched to the report, switches to the exact mode named in the
+  bug, and writes PNGs. Shrink a tall capture to read it inline
+  (`magick cap.png -resize 900x cap-small.png`). The driver stays a temp
+  file — the durable artifact is an e2e regression test in `test/e2e/`.
 
 ## Theming
 

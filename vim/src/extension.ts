@@ -40,7 +40,7 @@ export type VimExtensionOptions = {
    *  a broken keymap throws from `createVimExtension` itself, where the
    *  caller can catch and fall back to defaults — never silently at attach.
    *  JSON-serializable by design (the future config-file schema); see
-   *  docs/vim-keymap-plan.md. */
+   *  docs/architecture.md "Extensions". */
   readonly keymap?: VimKeymapConfig;
   /** User-supplied PRIMITIVES, bindable from `keymap` as `{action: id}`
    *  (normal/visual). Each reads the doc view and returns effects — it never

@@ -58,7 +58,7 @@
 //     macro repeats the last change WITHIN it, like Vim;
 //   - one unnamed register (plus the macro registers); NO marks, named yank
 //     registers, or ex commands (`:`) yet;
-//   - USER MAPPINGS (keymap.ts, docs/vim-keymap-plan.md): a front layer in
+//   - USER MAPPINGS (keymap.ts; docs/architecture.md "Extensions"): a front layer in
 //     vimKeydown walks per-map-mode tries (nmap/xmap/omap/imap) BEFORE this
 //     dispatch; a match feeds its RHS keys back through the adapter
 //     (noremap by default), a dead-ended walk replays what it swallowed.
