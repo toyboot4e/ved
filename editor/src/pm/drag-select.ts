@@ -4,19 +4,6 @@
 // IME-safety rule), so a drag must be driven from a GEOMETRIC hit-test against the
 // base glyphs' own rects. These two pure helpers are the testable core; the DOM
 // walk that measures the rects lives in editor.tsx.
-import type { Leaf } from './leaves';
-
-/** The model offset of each VISIBLE glyph (base + plain text), in document order.
- *  The markup (`|`,`(`,`)`) is not DOM text and the reading is skipped, so this is
- *  exactly the sequence of characters the DOM exposes (sans the `<rt>`), letting
- *  the k-th measured DOM glyph map to the k-th entry here. */
-export const glyphOffsets = (leaves: Leaf[]): number[] => {
-  const offs: number[] = [];
-  for (const l of leaves) {
-    if (l.kind === 'body' || l.kind === 'plain') for (let o = l.from; o < l.to; o++) offs.push(o);
-  }
-  return offs;
-};
 
 /** One measured glyph: its model offset and viewport bounds, already resolved to
  *  block (the line/column axis) and inline (along the line) coordinates. */

@@ -24,9 +24,11 @@ import type {
   EditorExtensionHooks,
   VisualSelectionKind,
 } from './extension';
+import { createGlyphWalker } from './glyph-walker';
 import type { PlainTextHistory } from './history';
 import { installCompositionSurvival } from './ime-survival';
 import { type CaretRect, type LineNumbers, mountLineNumbers } from './line-numbers';
+import { createPageGapMeasure } from './page-gap-measure';
 import {
   deleteChar,
   deleteRangeForIme,
@@ -37,9 +39,8 @@ import {
 import { caretStops, nextCaretOffset } from './pm/caret-model';
 import { type CursorState, cursorToOffset, offsetToCursor } from './pm/cursor';
 import { buildDecorations, type Invisibles, type SearchHighlights, type SearchRange } from './pm/decorations';
-import { type DragGlyph, glyphOffsets, nearestGlyphOffset } from './pm/drag-select';
-import type { Appear, Leaf } from './pm/leaves';
-import { activeRuby, docLeaves, isHidden, lineOf, snapToGlyph } from './pm/leaves';
+import type { Appear } from './pm/leaves';
+import { docLeaves, snapToGlyph } from './pm/leaves';
 import {
   docFromText,
   offsetToPos,
@@ -49,17 +50,7 @@ import {
   serialize,
   serializeSlice,
 } from './pm/model';
-import {
-  type LineItem,
-  type PageGapPos,
-  pageEndsFromLines,
-  pageGapDecoKey,
-  pageGapKey,
-  pageGapPlugin,
-  pageGapTr,
-  posAfterEnclosingRuby,
-  visualLineEnds,
-} from './pm/page-gap';
+import { pageGapPlugin } from './pm/page-gap';
 import { RubyView } from './pm/ruby-view';
 import { repair } from './pm/structure';
 import { revealCaretInScroller, toScrollMode, useKeepScrollPosition } from './scroll-reveal';
@@ -977,479 +968,22 @@ export const VedEditor = (props: VedEditorProps): React.JSX.Element => {
     };
     mount.addEventListener('wheel', onWheel, { passive: false });
 
-    // Walk the editor's VISIBLE glyphs (base + plain text, skipping the reading
-    // `<rt>`) in document order, pairing each with its model offset. The DOM text
-    // (sans `<rt>`) is exactly the `body`/`plain` leaf characters in order, so the
-    // k-th DOM glyph is the k-th `glyphOffsets` entry — this is the only mapping
-    // that survives a collapsed ruby's READ-ONLY base, where the browser's hit-test
-    // and `posAtDOM` clamp to the ruby element.
-    const glyphWalkRange = document.createRange();
-    const walkGlyphs = (): { off: number; rect: DOMRect }[] => {
-      // Test seam: count O(document) glyph walks (one layout read PER GLYPH — the
-      // most expensive operation in the editor). Clicks AND drags must not trigger
-      // one (click-perf asserts this; they hit-test viewport-scoped via
-      // walkGlyphsNear), and the page-gap measure walks per paragraph with a
-      // cached prefix (measurePageGaps) — only the blank-page drag fallback
-      // still takes the full walk.
-      const w = globalThis as unknown as { __vedGlyphWalks?: number };
-      w.__vedGlyphWalks = (w.__vedGlyphWalks ?? 0) + 1;
-      const offs = glyphOffsets(docLeaves(serialize(view.state.doc)));
-      const walker = document.createTreeWalker(view.dom, NodeFilter.SHOW_TEXT, {
-        acceptNode: (n) => (n.parentElement?.closest('rt') ? NodeFilter.FILTER_REJECT : NodeFilter.FILTER_ACCEPT),
-      });
-      const out: { off: number; rect: DOMRect }[] = [];
-      let k = 0;
-      for (let n = walker.nextNode(); n; n = walker.nextNode()) {
-        const len = (n.textContent ?? '').length;
-        for (let i = 0; i < len; i++, k++) {
-          if (k >= offs.length) break;
-          glyphWalkRange.setStart(n, i);
-          glyphWalkRange.setEnd(n, i + 1);
-          const rect = glyphWalkRange.getBoundingClientRect();
-          if (rect.width === 0 && rect.height === 0) continue;
-          out.push({ off: offs[k]!, rect });
-        }
-      }
-      return out;
-    };
-    // Viewport rects of the base glyphs inside the MODEL selection — the overlay
-    // paints the text-selection highlight from these (not the DOM selection, which
-    // PM can't extend across a read-only ruby base). Consecutive glyphs on the SAME
-    // line (their block-axis coord matches) are MERGED into one span: this both
-    // fills the sub-pixel hairline between adjacent glyphs/rubies and spans the gap
-    // a collapsed ruby's hidden markup/reading leaves between two bases. Empty for
-    // a caret. Measures only the paragraphs the selection SPANS (this runs on
-    // every selection change during a drag — the whole-doc walk froze drags on
-    // large docs); a select-all still spans everything, necessarily.
-    const selectedGlyphRects = (): DOMRect[] => {
-      const sel = view.state.selection;
-      const vkind = visualSelectionRef.current;
-      if (sel.empty && vkind === 'none') return [];
-      const text = serialize(view.state.doc);
-      let from = posToOffset(view.state.doc, sel.from);
-      let to = posToOffset(view.state.doc, sel.to);
-      if (vkind === 'line') {
-        // LINEWISE: expand to the whole model lines (paragraphs) the selection
-        // spans — the caret is unaffected (it stays at selection.head). A
-        // collapsed selection still highlights its own line.
-        from = from === 0 ? 0 : text.lastIndexOf('\n', from - 1) + 1;
-        const nl = text.indexOf('\n', to);
-        to = nl < 0 ? text.length : nl;
-      } else if (vkind === 'char') {
-        // CHARWISE INCLUSIVE (Vim visual): include the CELL at the max end, so
-        // both the anchor and head characters are highlighted (moving backward
-        // keeps the original char under the cursor). One caret step past `to`.
-        to = nextCaretOffset(text, to, policyClassRef.current, false);
-      }
-      if (from >= to) return [];
-      const cs = getComputedStyle(view.dom);
-      const vertical = cs.writingMode.startsWith('vertical');
-      // Cap a span's BLOCK extent at one cell (the glyph advance), centered:
-      // the measured rects are glyph EM boxes, and a big-metric font's em box
-      // (Noto Sans CJK: 1.45em) overflows the advance into the leading WHERE
-      // THE NEIGHBOR READING PAINTS — the "base-only" highlight visibly tinted
-      // the readings (ruby-selection-thin.ts). The ink of an upright glyph
-      // lives inside its advance, so the clamp only trims empty em-box bleed.
-      const cell = Number.parseFloat(cs.fontSize) || 18;
-      const clamp = (c: { l: number; t: number; r: number; b: number }): DOMRect => {
-        if (vertical) {
-          const w = c.r - c.l;
-          const l = w > cell ? (c.l + c.r) / 2 - cell / 2 : c.l;
-          return new DOMRect(l, c.t, Math.min(w, cell), c.b - c.t);
-        }
-        const h = c.b - c.t;
-        const t = h > cell ? (c.t + c.b) / 2 - cell / 2 : c.t;
-        return new DOMRect(c.l, t, c.r - c.l, Math.min(h, cell));
-      };
-      // Within-line grouping: the DIRECTIONAL half-pitch rule every other
-      // rect-grouping site uses (line-numbers groupTol, paragraphCols,
-      // page-gap visualLineEnds) — a reading-direction jump past half a pitch
-      // starts a new line; a backward excursion within one pitch merges (a
-      // 縦中横 box's per-digit sub-rects reach up to a cell backward of the
-      // slot); past one pitch backward is a page wrap. The anchor tracks the
-      // line's most-forward coordinate. A fixed few-px symmetric value here
-      // split lines (extra hairline rects) at larger font sizes.
-      const pitch = Number.parseFloat(cs.lineHeight) || 28;
-      const out: DOMRect[] = [];
-      let cur: { l: number; t: number; r: number; b: number } | null = null;
-      let coord = 0; // the current line's most-forward block coordinate
-      for (const g of walkGlyphsLines(lineOf(text, from), lineOf(text, to))) {
-        if (g.off < from || g.off >= to) continue;
-        const r = g.rect;
-        const block = vertical ? r.left : r.top;
-        const newLine =
-          cur == null ||
-          (vertical
-            ? coord - block > pitch / 2 || block - coord > pitch
-            : block - coord > pitch / 2 || coord - block > pitch);
-        if (cur && !newLine) {
-          cur.l = Math.min(cur.l, r.left);
-          cur.t = Math.min(cur.t, r.top);
-          cur.r = Math.max(cur.r, r.right);
-          cur.b = Math.max(cur.b, r.bottom);
-          coord = vertical ? Math.min(coord, block) : Math.max(coord, block);
-        } else {
-          if (cur) out.push(clamp(cur));
-          cur = { l: r.left, t: r.top, r: r.right, b: r.bottom };
-          coord = block;
-        }
-      }
-      if (cur) out.push(clamp(cur));
-      return out;
-    };
-    selectedGlyphRectsRef.current = selectedGlyphRects;
-
-    // Drag-selection hit-testing (see pm/drag-select.ts), built LAZILY by the
-    // first `offsetAtPoint` call of a gesture — never on a plain in-content
-    // click, which doesn't consume it (the browser/PM place the caret). The
-    // hit-test point is always in the viewport, so the primary path measures
-    // only the paragraphs INTERSECTING the viewport (one element rect per
-    // paragraph to filter, then per-glyph rects for the few that remain) —
-    // O(visible page), not O(document). The full-document walk survives only
-    // as the fallback for a point with no visible text at all (a blank page).
-    const toDragGlyphs = (items: { off: number; rect: DOMRect }[], vertical: boolean): DragGlyph[] =>
-      items.map(({ off, rect: r }) => ({
-        off,
-        bLo: vertical ? r.left : r.top,
-        bHi: vertical ? r.right : r.bottom,
-        iLo: vertical ? r.top : r.left,
-        iHi: vertical ? r.bottom : r.right,
-      }));
-    // Model offsets of each visual line's glyphs (body + plain chars, in order)
-    // — the per-paragraph analogue of `glyphOffsets`, memoized on the leaves
-    // (which `docLeaves` memoizes per doc version).
-    let lineOffsCache: { leaves: Leaf[]; byLine: number[][] } | null = null;
-    const lineGlyphOffsets = (): number[][] => {
-      const leaves = docLeaves(serialize(view.state.doc));
-      if (lineOffsCache?.leaves === leaves) return lineOffsCache.byLine;
-      const byLine: number[][] = [];
-      for (const l of leaves) {
-        if (l.kind !== 'body' && l.kind !== 'plain') continue;
-        let arr = byLine[l.line];
-        if (!arr) {
-          arr = [];
-          byLine[l.line] = arr;
-        }
-        for (let o = l.from; o < l.to; o++) arr.push(o);
-      }
-      lineOffsCache = { leaves, byLine };
-      return byLine;
-    };
-    // Measure ONE paragraph's glyphs (text nodes paired with that line's model
-    // offsets) into `out` — the per-paragraph unit the scoped walks below
-    // share. The delimiter WIDGETS (`|`,`(`,`)` — real spans, not model text)
-    // and `rt` text are skipped by default: their characters are not in the
-    // default offset lists, so counting them would shift the DOM-char ↔ offset
-    // pairing. `withShownMarkup` admits an EXPANDED ruby's shown markup — the
-    // inline READING and the delimiter widgets (which only exist expanded) —
-    // for callers whose `offs` include those leaf offsets (the selection
-    // overlay, which must paint them like any other visible glyph).
-    const paraGlyphs = (
-      p: Element,
-      offs: number[],
-      out: { off: number; rect: DOMRect }[],
-      withShownMarkup = false,
-    ): void => {
-      const walker = document.createTreeWalker(p, NodeFilter.SHOW_TEXT, {
-        acceptNode: (n) => {
-          const el = n.parentElement;
-          if (el?.closest('.rubyDelimOpen, .rubyDelimParen, .rubyDelimClose'))
-            return withShownMarkup ? NodeFilter.FILTER_ACCEPT : NodeFilter.FILTER_REJECT;
-          const rt = el?.closest('rt');
-          if (!rt) return NodeFilter.FILTER_ACCEPT;
-          return withShownMarkup && rt.closest('ruby')?.classList.contains('rubyExpanded')
-            ? NodeFilter.FILTER_ACCEPT
-            : NodeFilter.FILTER_REJECT;
-        },
-      });
-      let k = 0;
-      for (let n = walker.nextNode(); n; n = walker.nextNode()) {
-        const len = (n.textContent ?? '').length;
-        for (let j = 0; j < len; j++, k++) {
-          if (k >= offs.length) break;
-          glyphWalkRange.setStart(n, j);
-          glyphWalkRange.setEnd(n, j + 1);
-          const rect = glyphWalkRange.getBoundingClientRect();
-          if (rect.width === 0 && rect.height === 0) continue;
-          out.push({ off: offs[k]!, rect });
-        }
-      }
-    };
-    // Glyphs of the paragraphs intersecting the scroller viewport (+ a margin so
-    // a drag can step slightly past an edge). One <p> per model line, in order —
-    // page-gap widgets between them are not `p` elements, so indexes align.
-    const walkGlyphsNear = (): { off: number; rect: DOMRect }[] => {
-      const byLine = lineGlyphOffsets();
-      const box = mount.getBoundingClientRect();
-      const margin = Math.max(mount.clientWidth, mount.clientHeight) / 2;
-      const out: { off: number; rect: DOMRect }[] = [];
-      const paras = view.dom.querySelectorAll(':scope > p');
-      for (let i = 0; i < paras.length; i++) {
-        const offs = byLine[i];
-        if (!offs?.length) continue;
-        const pr = paras[i]!.getBoundingClientRect();
-        if (
-          pr.right < box.left - margin ||
-          pr.left > box.right + margin ||
-          pr.bottom < box.top - margin ||
-          pr.top > box.bottom + margin
-        )
-          continue;
-        paraGlyphs(paras[i]!, offs, out);
-      }
-      return out;
-    };
-    // Glyphs of the model lines `l0..l1` (inclusive) — the selection overlay's
-    // scope: exactly the paragraphs the selection spans. Unlike the other
-    // walks, this one includes an EXPANDED ruby's whole SHOWN MARKUP — the
-    // inline reading AND the `|`,`(`,`)` delimiter widgets: there they are
-    // visible body-level glyphs, so a selection covering them must paint them
-    // with the SAME overlay tint as every other glyph (a separate CSS tint
-    // stacked on the bridging overlay rect and painted the delimiters darker).
-    // A collapsed ruby's annotation reading stays excluded — base-only
-    // highlight, by design. The per-line offsets mirror `isHidden`, the same
-    // visibility rule the decorations resolve, so the DOM walk and the offset
-    // list stay paired.
-    const walkGlyphsLines = (l0: number, l1: number): { off: number; rect: DOMRect }[] => {
-      const text = serialize(view.state.doc);
-      const leaves = docLeaves(text);
-      const policy = policyClassRef.current;
-      const headOffset = posToOffset(view.state.doc, view.state.selection.head);
-      const activeLine = lineOf(text, headOffset);
-      const active = activeRuby(
-        leaves.filter((l) => l.line === activeLine),
-        headOffset,
-      );
-      const byLine: number[][] = [];
-      for (const l of leaves) {
-        if (l.line < l0 || l.line > l1) continue;
-        const visible =
-          l.kind === 'body' ||
-          l.kind === 'plain' ||
-          ((l.kind === 'rt' || l.kind === 'delim') && !isHidden(l, policy, activeLine, active));
-        if (!visible) continue;
-        let arr = byLine[l.line];
-        if (!arr) {
-          arr = [];
-          byLine[l.line] = arr;
-        }
-        for (let o = l.from; o < l.to; o++) arr.push(o);
-      }
-      const out: { off: number; rect: DOMRect }[] = [];
-      const paras = view.dom.querySelectorAll(':scope > p');
-      for (let i = Math.max(0, l0); i <= l1 && i < paras.length; i++) {
-        const offs = byLine[i];
-        if (offs?.length) paraGlyphs(paras[i]!, offs, out, true);
-      }
-      return out;
-    };
-    let dragCache: { vertical: boolean; glyphs: DragGlyph[] } | null = null;
-    // The scoped glyphs, keyed by scroll position (a drag without scrolling
-    // reuses them; a wheel-scroll mid-drag re-measures the new viewport).
-    let scopedCache: { key: string; vertical: boolean; glyphs: DragGlyph[] } | null = null;
-    // Where the current gesture pressed, for resolving the drag ANCHOR lazily on
-    // the first drag move (the press itself must not hit-test).
-    let dragStartPt: { x: number; y: number } | null = null;
-    const buildGlyphCache = (): { vertical: boolean; glyphs: DragGlyph[] } => {
-      const vertical = getComputedStyle(view.dom).writingMode.startsWith('vertical');
-      return { vertical, glyphs: toDragGlyphs(walkGlyphs(), vertical) };
-    };
-    const offsetAtPoint = (px: number, py: number): number | null => {
-      if (!dragCache) {
-        const key = `${mount.scrollLeft},${mount.scrollTop}`;
-        if (scopedCache?.key !== key) {
-          const vertical = getComputedStyle(view.dom).writingMode.startsWith('vertical');
-          scopedCache = { key, vertical, glyphs: toDragGlyphs(walkGlyphsNear(), vertical) };
-        }
-        if (scopedCache.glyphs.length) return nearestGlyphOffset(scopedCache.glyphs, px, py, scopedCache.vertical);
-        dragCache = buildGlyphCache(); // no visible text near the point — full fallback
-      }
-      return nearestGlyphOffset(dragCache.glyphs, px, py, dragCache.vertical);
-    };
-
-    // Page gaps (pm/page-gap.ts): measure the visual lines from the glyph
-    // rects (wrapping is decided by glyph advances, not arithmetic), derive
-    // the page-boundary positions, and swap the widget set when it changed.
-    // rAF-coalesced; skipped during IME composition (reconciled on
-    // compositionend) and outside the paged modes (where the set empties).
-    //
-    // SUFFIX RE-MEASURE. An edit can only move layout from its own model line
-    // onward: earlier paragraphs are separate blocks whose wrapping is
-    // untouched, and the gap widgets before the edit cannot change (boundaries
-    // derive from the line structure, stable before the edit; a widget is
-    // zero-inline-size, so it never re-wraps what it was measured from). So
-    // the measure caches the visual-line END OFFSETS — offsets, never rects:
-    // an offset is frame-independent, immune to scrolls and widget-induced
-    // shifts — and glyph-walks only the lines from the first CHANGED one.
-    // Typing at the end of a large document measures one paragraph instead of
-    // the whole text (the full walk is one layout read per glyph, ~1s at 400k
-    // chars, paid per keystroke). A model-line break is always a visual-line
-    // break (block boxes stack a pitch apart), so prefix ++ fresh-suffix
-    // preserves the clustering with no cross-epoch coordinate comparison.
-    // Sound only while the expanded set is caret-INDEPENDENT (Rich: none;
-    // Plain: all) — under ByParagraph/ByCharacter a caret MOVE re-wraps the
-    // newly (un)expanded paragraph with no doc change, so those policies take
-    // the full pass. Any non-edit layout change (mode/policy/resize/fonts)
-    // schedules with `full`, dropping the cache.
-    let pageGapRaf = 0;
-    let measuredLineCount = 0; // visual lines seen by the last measurePageGaps
-    let gapCache: {
-      text: string;
-      pitch: number;
-      linesPerPage: number;
-      pagesPerBand: number;
-      lineEnds: number[];
-    } | null = null;
-    const measurePageGaps = (pagesPerBand: number): number[] => {
-      const linesPerPage = Number.parseFloat(getComputedStyle(mount).getPropertyValue('--page-lines')) || 20;
-      const pitch = Number.parseFloat(getComputedStyle(view.dom).lineHeight) || 28;
-      const text = serialize(view.state.doc);
-      const lines = text.split('\n');
-      const policy = policyClassRef.current;
-      const usable =
-        gapCache !== null &&
-        (policy === 'rich' || policy === 'plain') &&
-        gapCache.pitch === pitch &&
-        gapCache.linesPerPage === linesPerPage &&
-        gapCache.pagesPerBand === pagesPerBand;
-      // The reusable prefix: cached visual-line ends strictly before the first
-      // changed model line. `serialize` is memoized per doc version (same
-      // string instance), so the identity check catches a text-preserving
-      // transaction (ruby repair, decoration meta) outright — measure nothing.
-      let fromLine = 0;
-      let fromOff = 0;
-      let prefixEnds: number[] = [];
-      if (usable && gapCache) {
-        if (gapCache.text === text) {
-          fromLine = lines.length;
-          prefixEnds = gapCache.lineEnds;
-        } else {
-          const old = gapCache.text;
-          const n = Math.min(old.length, text.length);
-          let i = 0;
-          while (i < n && old.charCodeAt(i) === text.charCodeAt(i)) i++;
-          fromOff = text.lastIndexOf('\n', i - 1) + 1; // start of the first changed line
-          fromLine = lineOf(text, fromOff);
-          prefixEnds = gapCache.lineEnds.filter((e) => e < fromOff);
-        }
-      }
-      // Glyph-measure the suffix lines. Empty paragraphs are visual lines with
-      // no glyphs — they contribute their own offset instead.
-      const byLine = lineGlyphOffsets();
-      const paras = view.dom.querySelectorAll(':scope > p');
-      const items: LineItem[] = [];
-      const buf: { off: number; rect: DOMRect }[] = [];
-      let off = fromOff;
-      for (let i = fromLine; i < lines.length && i < paras.length; i++) {
-        const p = paras[i]!;
-        if (lines[i]!.length === 0) items.push({ endOff: off, b: p.getBoundingClientRect().left });
-        else if (byLine[i]?.length) {
-          buf.length = 0;
-          paraGlyphs(p, byLine[i]!, buf);
-          for (const g of buf) items.push({ endOff: g.off + 1, b: g.rect.left });
-        }
-        off += lines[i]!.length + 1;
-      }
-      const lineEnds = prefixEnds.concat(visualLineEnds(items, pitch));
-      // Test seams: `__vedGapLines` counts the model lines glyph-measured per
-      // gap pass (an end-of-doc edit must measure only the tail, not the
-      // document); `__vedGapLineEnds` exposes the maintained visual-line ends
-      // so page-gap-suffix can pin suffix ≡ full re-measure exactly.
-      const w = globalThis as unknown as { __vedGapLines?: number; __vedGapLineEnds?: readonly number[] };
-      w.__vedGapLines = (w.__vedGapLines ?? 0) + (lines.length - fromLine);
-      w.__vedGapLineEnds = lineEnds;
-      gapCache = { text, pitch, linesPerPage, pagesPerBand, lineEnds };
-      measuredLineCount = lineEnds.length;
-      return pageEndsFromLines(lineEnds, linesPerPage, pagesPerBand).map((end) =>
-        posAfterEnclosingRuby(view.state.doc.resolve(offsetToPos(view.state.doc, end))),
-      );
-    };
-    let pageGapTimer: ReturnType<typeof setTimeout> | 0 = 0;
-    const runPageGaps = (): void => {
-      cancelAnimationFrame(pageGapRaf);
-      clearTimeout(pageGapTimer);
-      pageGapRaf = 0;
-      pageGapTimer = 0;
-      // Rows: one endless band — every page boundary gets a widget. Columns
-      // with pages-per-row > 1: widgets at INTRA-band boundaries only (the
-      // band break itself separates pages via fragmentation).
-      const rowsHere = view.dom.classList.contains(styles.rowsMode ?? '');
-      const multiColHere = view.dom.classList.contains(styles.multiColMode ?? '');
-      const pagesPerRow = Number.parseFloat(getComputedStyle(mount).getPropertyValue('--pages-per-row')) || 1;
-      const positions = rowsHere
-        ? measurePageGaps(Number.POSITIVE_INFINITY)
-        : multiColHere && pagesPerRow > 1
-          ? measurePageGaps(pagesPerRow)
-          : [];
-      // COMPOSING is measured too: the preedit re-wraps the page's last line,
-      // and a stale widget (riding the edit's mapping) drifts onto the NEXT
-      // page's first line — that line then jams against this page's last for
-      // the whole composition, with a double gap after it. The dispatch below
-      // is composition-safe (the preedit text node survives a redraw — see the
-      // conversion repair at view creation) EXCEPT a widget positioned INSIDE
-      // the composition TEXT NODE: it cannot render there (PM's composition
-      // protection re-covers the node whole, dropping the widget — verified
-      // against real mozc). A boundary trapped inside it is therefore rendered
-      // at the node's END — the first renderable spot, one line late — as a
-      // gap-BEFORE widget (ved-page-gap-before), whose extra width opens
-      // toward the PREVIOUS line: the gap still appears between the right
-      // lines. If the preedit can't be located (no DOM selection during a
-      // conversion transient), skip this round; the next update retries.
-      // Verified end to end against real mozc (mozc/gap-compose.ts).
-      let gaps: PageGapPos[] = positions.map((pos) => ({ pos }));
-      if (view.composing) {
-        const focus = view.dom.ownerDocument.getSelection()?.focusNode;
-        if (!(focus && focus.nodeType === 3 && view.dom.contains(focus))) return;
-        try {
-          const from = view.posAtDOM(focus, 0);
-          const to = from + (focus.nodeValue?.length ?? 0);
-          gaps = positions.map((pos) => (pos > from && pos < to ? { pos: to, before: true } : { pos }));
-        } catch {
-          return;
-        }
-      }
-      // Rows: RESERVE the remainder of a partial last page as block-end
-      // padding, so the page exists as a whole (scrollable blank space) and
-      // the folio centers on the entire page. Padding never re-wraps lines
-      // (it extends the box past them), so one pass is stable.
-      let reserve = '';
-      if (rowsHere && measuredLineCount > 0) {
-        const linesPerPage = Number.parseFloat(getComputedStyle(mount).getPropertyValue('--page-lines')) || 20;
-        const pitch = Number.parseFloat(getComputedStyle(view.dom).lineHeight) || 28;
-        const deficit = (linesPerPage - (measuredLineCount % linesPerPage)) % linesPerPage;
-        if (deficit > 0) reserve = `${deficit * pitch}px`;
-      }
-      const reserveChanged = view.dom.style.paddingLeft !== reserve;
-      if (reserveChanged) view.dom.style.paddingLeft = reserve;
-      // Compare against the LIVE widget identities (the plugin maps its set
-      // through edits between dispatches) — a cached copy of the last
-      // dispatch goes stale the moment an edit maps the widgets, and a stale
-      // "unchanged" here would leave a drifted gap in place (composing edits
-      // hit exactly that: the measured boundary offset is often numerically
-      // identical while the mapped widget has moved).
-      const wanted = gaps.map(pageGapDecoKey);
-      const live = (pageGapKey.getState(view.state)?.find() ?? []).map((d) =>
-        pageGapDecoKey({ pos: d.from, before: `${(d.spec as { key?: string }).key}`.endsWith('-before') }),
-      );
-      if (!reserveChanged && wanted.length === live.length && wanted.every((k, i) => k === live[i])) return;
-      view.dispatch(pageGapTr(view.state, gaps));
-      // The widgets/reservation shift the layout — re-measure the numbers.
-      lineNumbersRef.current?.schedule();
-    };
-    const pageGaps = {
-      // rAF for frame alignment, with a timeout fallback: rAF does NOT fire in
-      // hidden/throttled windows (the e2e harness runs hidden), where the
-      // widgets must still land. Whichever fires first runs; both are cleared.
-      // `full` (the default) drops the suffix cache — for layout changes that
-      // move lines without editing text; a doc edit passes false.
-      schedule: (full = true): void => {
-        if (full) gapCache = null;
-        cancelAnimationFrame(pageGapRaf);
-        clearTimeout(pageGapTimer);
-        pageGapRaf = requestAnimationFrame(runPageGaps);
-        pageGapTimer = setTimeout(runPageGaps, 60);
-      },
-    };
+    // Glyph geometry (glyph-walker.ts) + the page-gap measure
+    // (page-gap-measure.ts), both keyed to the live policy.
+    const walker = createGlyphWalker(
+      view,
+      mount,
+      () => policyClassRef.current,
+      () => visualSelectionRef.current,
+    );
+    selectedGlyphRectsRef.current = walker.selectedGlyphRects;
+    const pageGaps = createPageGapMeasure(
+      view,
+      mount,
+      () => policyClassRef.current,
+      walker,
+      () => lineNumbersRef.current?.schedule(),
+    );
     pageGapsRef.current = pageGaps;
     pageGaps.schedule();
 
@@ -1458,7 +992,8 @@ export const VedEditor = (props: VedEditorProps): React.JSX.Element => {
     // edge, and we set the model selection ourselves — the native selection can't
     // cross a read-only ruby base.
     const onDragMove = (e: MouseEvent): void => {
-      if (!(e.buttons & 1) || dragStartPt == null) {
+      const startPt = walker.gestureStart();
+      if (!(e.buttons & 1) || startPt == null) {
         endDrag();
         return;
       }
@@ -1466,8 +1001,8 @@ export const VedEditor = (props: VedEditorProps): React.JSX.Element => {
       // The anchor resolves on the FIRST drag move, from the recorded press point
       // — this (not the press) is what builds the glyph cache, so a plain click
       // never pays the O(document) glyph measurement.
-      dragAnchorRef.current ??= offsetAtPoint(dragStartPt.x, dragStartPt.y);
-      const head = offsetAtPoint(e.clientX, e.clientY);
+      dragAnchorRef.current ??= walker.offsetAtPoint(startPt.x, startPt.y);
+      const head = walker.offsetAtPoint(e.clientX, e.clientY);
       if (dragAnchorRef.current == null || head == null) return;
       const { doc } = view.state;
       const sel = TextSelection.create(doc, offsetToPos(doc, dragAnchorRef.current), offsetToPos(doc, head));
@@ -1478,9 +1013,7 @@ export const VedEditor = (props: VedEditorProps): React.JSX.Element => {
       window.removeEventListener('mouseup', endDrag);
       dragAnchorRef.current = null;
       pointerDraggingRef.current = false;
-      dragCache = null;
-      scopedCache = null;
-      dragStartPt = null;
+      walker.endGesture();
     };
     // A press ends any line-move run and arms a drag (left button): cache the glyph
     // geometry, record the anchor, and listen for the move/release.
@@ -1491,7 +1024,7 @@ export const VedEditor = (props: VedEditorProps): React.JSX.Element => {
       // NO glyph measurement here: a plain in-content click never consumes the
       // cache. Record the press point; the anchor (and the cache) resolve on the
       // first drag move — or right below, for an empty-area press.
-      dragStartPt = { x: e.clientX, y: e.clientY };
+      walker.beginGesture(e.clientX, e.clientY);
       // A press on the EMPTY scroller area — outside the content element, e.g.
       // left of the last line in Vertical/VerticalRows, whose content box hugs
       // its text (Horizontal/VerticalColumns cover their page box, so there the
@@ -1508,7 +1041,7 @@ export const VedEditor = (props: VedEditorProps): React.JSX.Element => {
       if (!view.composing && !e.shiftKey && inClientArea && e.target instanceof Node && !view.dom.contains(e.target)) {
         // Only this EMPTY-AREA path hit-tests at press time (it has no other way
         // to place the caret), so only it builds the glyph cache on mousedown.
-        dragAnchorRef.current = offsetAtPoint(e.clientX, e.clientY);
+        dragAnchorRef.current = walker.offsetAtPoint(e.clientX, e.clientY);
         if (dragAnchorRef.current != null) {
           e.preventDefault(); // the press must not blur the editor
           const pos = offsetToPos(view.state.doc, dragAnchorRef.current);
@@ -1593,8 +1126,7 @@ export const VedEditor = (props: VedEditorProps): React.JSX.Element => {
       contentObserver.disconnect();
       lineNumbers.destroy();
       lineNumbersRef.current = null;
-      cancelAnimationFrame(pageGapRaf);
-      clearTimeout(pageGapTimer);
+      pageGaps.cancel();
       pageGapsRef.current = null;
       live.current.onSearchOps?.(null);
       syncExtensionsRef.current = null;

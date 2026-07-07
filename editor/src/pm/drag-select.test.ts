@@ -1,27 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { type DragGlyph, glyphOffsets, nearestGlyphOffset } from './drag-select';
-import { docLeaves } from './leaves';
-
-describe('glyphOffsets', () => {
-  it('lists the model offset of each base + plain glyph, skipping markup and reading', () => {
-    // あ|漢(かん)い  →  あ@0, |@1, 漢@2, (@3, かん@4-5, )@6, い@7
-    expect(glyphOffsets(docLeaves('あ|漢(かん)い'))).toEqual([0, 2, 7]);
-  });
-
-  it('includes every character of a multi-char base', () => {
-    // |身体(からだ)  →  |@0, 身@1, 体@2, (@3, からだ@4-6, )@7
-    expect(glyphOffsets(docLeaves('|身体(からだ)'))).toEqual([1, 2]);
-  });
-
-  it('is plain text verbatim when there is no ruby', () => {
-    expect(glyphOffsets(docLeaves('あいう'))).toEqual([0, 1, 2]);
-  });
-
-  it('runs of adjacent rubies map to their base offsets in order', () => {
-    // |語(ご)|名(な)  →  |@0,語@1,(@2,ご@3,)@4, |@5,名@6,(@7,な@8,)@9
-    expect(glyphOffsets(docLeaves('|語(ご)|名(な)'))).toEqual([1, 6]);
-  });
-});
+import { type DragGlyph, nearestGlyphOffset } from './drag-select';
 
 describe('nearestGlyphOffset (horizontal: block = y, inline = x)', () => {
   // Three glyphs on one row, 10px wide each, at x = 0..10, 10..20, 20..30, y = 0..18.
