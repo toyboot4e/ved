@@ -25,6 +25,7 @@ import type {
   VisualSelectionKind,
 } from './extension';
 import type { PlainTextHistory } from './history';
+import { installCompositionSurvival } from './ime-survival';
 import { type CaretRect, type LineNumbers, mountLineNumbers } from './line-numbers';
 import {
   deleteChar,
@@ -61,7 +62,8 @@ import {
 } from './pm/page-gap';
 import { RubyView } from './pm/ruby-view';
 import { repair } from './pm/structure';
-import { caretCoords, revealCaretInScroller, toScrollMode, useKeepScrollPosition } from './scroll-reveal';
+import { revealCaretInScroller, toScrollMode, useKeepScrollPosition } from './scroll-reveal';
+import { installTestSeams } from './test-seams';
 import { WritingMode } from './writing-mode';
 // ProseMirror's required base styles, then ved's GLOBAL ruby/syntax styles
 // (decorations + the node view emit literal class names a CSS module can't match).
@@ -479,108 +481,9 @@ export const VedEditor = (props: VedEditorProps): React.JSX.Element => {
     });
     viewRef.current = view;
 
-    // KEEP THE COMPOSITION IDENTIFIED THROUGH A CONVERSION (IME safety). When
-    // the preedit is an ISOLATED text node (composing right after a ruby at a
-    // paragraph end — nothing to merge with), a conversion that REPLACES it
-    // with a shorter candidate (かんじ → 感じ) invalidates the DOM caret offset
-    // and Blink transiently CLEARS the DOM selection. ProseMirror's
-    // findCompositionNode reads that null selection at flush time, loses the
-    // composition node, skips its composition protection, and redraws the
-    // preedit node — fcitx5 then silently commits it: Space "completes" the
-    // composition instead of converting, no compositionend ever fires, and the
-    // view is stuck composing (which also disables structure repair). Answer a
-    // null DOM selection, while composing, with the IME's last-changed text
-    // node — exactly the node PM is trying to find. domSelectionRange and
-    // domObserver.lastChangedTextNode are PM internals (no public seam reaches
-    // this moment); mozc/space-convert.ts guards the contract across upgrades.
-    type DomSelRange = { focusNode: Node | null; focusOffset: number; anchorNode: Node | null; anchorOffset: number };
-    const pmView = view as unknown as {
-      domSelectionRange: () => DomSelRange;
-      domObserver: { lastChangedTextNode: Text | null };
-    };
-    const nativeDomSelectionRange = pmView.domSelectionRange.bind(view);
-    pmView.domSelectionRange = (): DomSelRange => {
-      const range = nativeDomSelectionRange();
-      if (range.focusNode || !view.composing) return range;
-      const text = pmView.domObserver.lastChangedTextNode;
-      if (!text || !view.dom.contains(text)) return range;
-      const end = text.nodeValue?.length ?? 0;
-      return { focusNode: text, focusOffset: end, anchorNode: text, anchorOffset: end };
-    };
-    // Second layer of the same repair: the cleared selection is PERMANENT, not
-    // transient — nothing re-seats it, so the NEXT IME operation queries a
-    // caret-less context and fcitx5 resets (the preedit is confirmed; further
-    // Space presses insert spaces instead of cycling candidates). Restore the
-    // caret at the changed node's end when the conversion's `input` event
-    // shows it lost; a later update re-seats it wherever the IME wants. The
-    // `input` event arrives AFTER ProseMirror's observer flush, so this layer
-    // cannot replace the fallback above (verified: either alone stays red) —
-    // the fallback carries ProseMirror through the flush, this restores the
-    // real caret for the IME.
-    const reseatCompositionCaret = (): void => {
-      if (!view.composing) return;
-      const ds = view.dom.ownerDocument.getSelection();
-      if (ds?.focusNode) return;
-      const text = pmView.domObserver.lastChangedTextNode;
-      if (!text || !view.dom.contains(text)) return;
-      ds?.collapse(text, text.nodeValue?.length ?? 0);
-    };
-    view.dom.addEventListener('input', reseatCompositionCaret);
+    const teardownCompositionSurvival = installCompositionSurvival(view);
+    installTestSeams(view, goalInlineRef);
 
-    // Test seams (read-only, harmless in production):
-    //  - __vedCaret: a reliable GLOBAL caret offset (a DOM Range metric is
-    //    unreliable across hidden markup); maps the live PM head to a plain
-    //    offset.
-    //  - __vedCaretRect: the caret's coordsAtPos rect — what drives the native
-    //    caret + IME composition box; a degenerate (0-height) or corner rect is
-    //    the ruby-boundary IME bug.
-    const w = window as unknown as {
-      __vedCaret?: () => number;
-      __vedAnchor?: () => number;
-      __vedCaretRect?: () => { top: number; bottom: number; left: number; right: number } | null;
-      __vedText?: () => string;
-      __vedSetCaret?: (off: number) => void;
-      __vedSetSelection?: (anchor: number, head: number) => void;
-    };
-    w.__vedCaret = () => posToOffset(view.state.doc, view.state.selection.head);
-    w.__vedAnchor = () => posToOffset(view.state.doc, view.state.selection.anchor);
-    w.__vedCaretRect = () => {
-      try {
-        return caretCoords(view, view.state.selection.head);
-      } catch {
-        return null;
-      }
-    };
-    //  - __vedText: the exact plain text (serialize). The PBT oracle.
-    //  - __vedSetCaret: set the caret by plain offset (positions edits in PBT).
-    w.__vedText = () => serialize(view.state.doc);
-    w.__vedSetCaret = (off: number) => {
-      const clamped = Math.max(0, Math.min(off, serialize(view.state.doc).length));
-      // Placing the caret ends any line-move run, exactly as a click or a
-      // char-axis move does — otherwise a stale goal-inline depth would steer
-      // the next line move (a test-only artifact of the programmatic seam).
-      goalInlineRef.current = null;
-      view.dispatch(
-        view.state.tr.setSelection(TextSelection.create(view.state.doc, offsetToPos(view.state.doc, clamped))),
-      );
-    };
-    //  - __vedSetSelection: set a model RANGE selection by plain offsets — what a
-    //    Shift+arrow run or a geometric drag produces (PM syncs the DOM selection
-    //    the same way). Drives the IME-over-selection mozc cases.
-    w.__vedSetSelection = (anchor: number, head: number) => {
-      const len = serialize(view.state.doc).length;
-      const clamp = (o: number) => Math.max(0, Math.min(o, len));
-      goalInlineRef.current = null;
-      view.dispatch(
-        view.state.tr.setSelection(
-          TextSelection.create(
-            view.state.doc,
-            offsetToPos(view.state.doc, clamp(anchor)),
-            offsetToPos(view.state.doc, clamp(head)),
-          ),
-        ),
-      );
-    };
     // Search operations for the shell (see VedEditorProps.onSearchOps): plain
     // offsets in, exact plain-string edits out. Edits go through the normal
     // dispatch, so structure repair, history, and onTextChange all apply. All
@@ -1685,6 +1588,7 @@ export const VedEditor = (props: VedEditorProps): React.JSX.Element => {
       endDrag();
       view.dom.removeEventListener('compositionstart', onCompositionStart);
       view.dom.removeEventListener('compositionend', onCompositionEnd);
+      teardownCompositionSurvival();
       resizeObserver.disconnect();
       contentObserver.disconnect();
       lineNumbers.destroy();
