@@ -7,7 +7,7 @@
 
 import type { ChordEvent, EditorExtension, EditorExtensionContext } from '@ved/editor';
 import { compileKeymap, type VimKeymapConfig } from './keymap';
-import type { VimKey } from './keys';
+import { isPlainKey, type VimKey } from './keys';
 import {
   VIM_ACTIONS_BY_MODE,
   VIM_INITIAL,
@@ -184,7 +184,7 @@ export const createVimExtension = (options: VimExtensionOptions = {}): EditorExt
             if (callOpts.replay && (e.kind === 'repeat' || e.kind === 'feedKeys')) continue;
             applyEffect(e);
           }
-        } else if (state.mode === 'insert' && k.key.length === 1 && !k.ctrl && !k.meta && !k.alt) {
+        } else if (state.mode === 'insert' && isPlainKey(k)) {
           const sel = ctx.getSelection();
           ctx.replaceRange(sel.head, sel.head, k.key);
         }

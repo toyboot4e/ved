@@ -33,14 +33,54 @@ export type VimKeymapConfig = {
 export type KeymapBinding =
   | { readonly kind: 'keys'; readonly keys: readonly VimKey[]; readonly remap: boolean }
   | { readonly kind: 'action'; readonly action: string };
-export type KeymapTrie = {
-  readonly children: ReadonlyMap<string, KeymapTrie>;
-  readonly binding: KeymapBinding | null;
-};
+
+/** A generic token trie — ONE implementation walked by both the user keymap
+ *  layer and model.ts's built-in sequences (`gg`, text objects). */
+export type Trie<T> = { readonly children: ReadonlyMap<string, Trie<T>>; readonly value: T | null };
+
+export type KeymapTrie = Trie<KeymapBinding>;
 export type CompiledKeymap = Readonly<Record<VimMapMode, KeymapTrie>>;
 
-type MutableTrie = { children: Map<string, MutableTrie>; binding: KeymapBinding | null };
-const emptyNode = (): MutableTrie => ({ children: new Map(), binding: null });
+type MutableTrie<T> = { children: Map<string, MutableTrie<T>>; value: T | null };
+const emptyNode = <T>(): MutableTrie<T> => ({ children: new Map(), value: null });
+
+/** Build a trie from token-sequence entries. No conflict checking — a later
+ *  entry overwrites (compileKeymap validates conflicts itself, where it can
+ *  name the offending LHS). */
+export const buildTrie = <T>(entries: Iterable<readonly [readonly string[], T]>): Trie<T> => {
+  const root = emptyNode<T>();
+  for (const [tokens, value] of entries) {
+    let node = root;
+    for (const t of tokens) {
+      let child = node.children.get(t);
+      if (!child) {
+        child = emptyNode<T>();
+        node.children.set(t, child);
+      }
+      node = child;
+    }
+    node.value = value;
+  }
+  return root;
+};
+
+export type TrieWalk<T> =
+  | { readonly kind: 'pending' } // a valid strict prefix — swallow and wait
+  | { readonly kind: 'match'; readonly value: T }
+  | { readonly kind: 'miss' }; // not in the trie (from the root: not ours at all)
+
+/** Walk `tokens` from the trie root (the walk is re-run per keydown — the
+ *  pending state stores only the keys, never a node). */
+export const walkTrie = <T>(root: Trie<T>, tokens: readonly string[]): TrieWalk<T> => {
+  let node: Trie<T> = root;
+  for (const t of tokens) {
+    const child = node.children.get(t);
+    if (!child) return { kind: 'miss' };
+    node = child;
+  }
+  if (node.value !== null) return { kind: 'match', value: node.value };
+  return { kind: 'pending' };
+};
 
 const MAP_MODES: readonly VimMapMode[] = ['normal', 'visual', 'operatorPending', 'insert'];
 
@@ -59,7 +99,7 @@ export const compileKeymap = (config: VimKeymapConfig, opts?: CompileKeymapOpts)
   const leader = config.leader ?? '\\';
   const compiled = {} as Record<VimMapMode, KeymapTrie>;
   for (const mode of MAP_MODES) {
-    const root = emptyNode();
+    const root = emptyNode<KeymapBinding>();
     for (const [lhs, rhsSpec] of Object.entries(config[mode] ?? {})) {
       const lhsKeys = parseKeys(lhs, leader);
       if (lhsKeys.length === 0) throw new Error(`vim keymap (${mode}): empty LHS`);
@@ -88,7 +128,7 @@ export const compileKeymap = (config: VimKeymapConfig, opts?: CompileKeymapOpts)
       }
       let node = root;
       for (const [i, k] of lhsKeys.entries()) {
-        if (node.binding) {
+        if (node.value) {
           throw new Error(`vim keymap (${mode}): "${lhs}" conflicts with a mapping that is its prefix`);
         }
         let child = node.children.get(keyToken(k));
@@ -98,11 +138,11 @@ export const compileKeymap = (config: VimKeymapConfig, opts?: CompileKeymapOpts)
         }
         node = child;
         if (i === lhsKeys.length - 1) {
-          if (node.binding) throw new Error(`vim keymap (${mode}): duplicate mapping "${lhs}"`);
+          if (node.value) throw new Error(`vim keymap (${mode}): duplicate mapping "${lhs}"`);
           if (node.children.size > 0) {
             throw new Error(`vim keymap (${mode}): "${lhs}" is a prefix of another mapping`);
           }
-          node.binding = binding;
+          node.value = binding;
         }
       }
     }
@@ -116,15 +156,12 @@ export type KeymapWalk =
   | { readonly kind: 'match'; readonly binding: KeymapBinding }
   | { readonly kind: 'miss' }; // not in the map (from the root: not ours at all)
 
-/** Walk `keys` from the trie root (the walk is re-run per keydown — the
- *  pending state stores only the keys, never a node). */
+/** Walk `keys` from the trie root — walkTrie over key tokens, the match
+ *  spelled as a `binding`. */
 export const walkKeymap = (trie: KeymapTrie, keys: readonly VimKey[]): KeymapWalk => {
-  let node: KeymapTrie = trie;
-  for (const k of keys) {
-    const child = node.children.get(keyToken(k));
-    if (!child) return { kind: 'miss' };
-    node = child;
-  }
-  if (node.binding) return { kind: 'match', binding: node.binding };
-  return { kind: 'pending' };
+  const walk = walkTrie(
+    trie,
+    keys.map((k) => keyToken(k)),
+  );
+  return walk.kind === 'match' ? { kind: 'match', binding: walk.value } : walk;
 };

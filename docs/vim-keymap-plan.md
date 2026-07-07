@@ -87,7 +87,7 @@ Until then, the smoke seam doubles as the manual override: the shell reads
   on every `vimKeydown`; executes `feedKeys` by re-entering the key loop
   (the dot-repeat path generalized: one `feedOne` used by both, including the
   manual insert-mode text insertion), with a per-keydown fed-key budget
-  (~256) as the mapping-cycle guard.
+  (4096) as the mapping-cycle guard.
 
 ## Steps
 

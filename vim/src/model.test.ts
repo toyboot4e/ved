@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'vitest';
-import { compileKeymap } from './keymap';
+import { compileKeymap, type VimKeymapConfig } from './keymap';
+import { isPlainKey } from './keys';
 import {
   VIM_ACTIONS_BY_MODE,
   VIM_INITIAL,
@@ -36,18 +37,31 @@ const key = (k: string, over: Partial<VimKey> = {}): VimKey => ({
 /** Feed a key sequence, TRACKING the doc through replace/select effects (the
  *  adapter's job, simulated for linear text). moveVisual left/right = a ±1
  *  character step (horizontal reading); up/down (line steps) are recorded but
- *  move nothing — the editor measures those. */
+ *  move nothing — the editor measures those. `opts.keymap` compiles and
+ *  installs a user keymap (the mapping front layer); every fed key (a mapping
+ *  RHS, a macro replay, a dead-ended walk's replay) is executed adapter-style
+ *  and logged in `fed`. */
 const play = (
   text: string,
   head: number,
   keys: (string | VimKey)[],
-  state: VimState = VIM_INITIAL,
-): { state: VimState; text: string; head: number; anchor: number; effects: VimEffect[]; handled: boolean[] } => {
+  opts: { keymap?: VimKeymapConfig } = {},
+): {
+  state: VimState;
+  text: string;
+  head: number;
+  anchor: number;
+  effects: VimEffect[];
+  handled: boolean[];
+  fed: VimKey[];
+} => {
+  const keymap = opts.keymap ? compileKeymap(opts.keymap) : undefined;
+  const baseOpts: VimKeydownOpts = keymap ? { keymap } : {};
   let cur = { text, head, anchor: head };
-  let st = state;
+  let st = VIM_INITIAL;
   const effects: VimEffect[] = [];
   const handled: boolean[] = [];
-  const isPrintable = (k: VimKey): boolean => k.key.length === 1 && !k.ctrl && !k.meta && !k.alt;
+  const fed: VimKey[] = [];
   const insertChar = (ch: string): void => {
     cur = {
       text: cur.text.slice(0, cur.head) + ch + cur.text.slice(cur.head),
@@ -71,27 +85,31 @@ const play = (
       // Mirror the adapter's dot-repeat replay.
       for (let n = 0; n < e.count; n++) for (const rk of st.lastChange ?? []) feed(rk, { replay: true });
     } else if (e.kind === 'feedKeys') {
-      // Mirror the adapter's feed loop (macro replay; `fed` keys are
-      // excluded from macro capture).
-      for (const fk of e.keys) feed(fk, e.noremap ? { fed: true, noremap: true } : { fed: true });
+      // Mirror the adapter's feed loop (mapping RHS / macro replay; `fed`
+      // keys are excluded from macro capture, noremap ones from the user
+      // mapping layer).
+      for (const fk of e.keys) {
+        fed.push(fk);
+        feed(fk, e.noremap ? { ...baseOpts, noremap: true, fed: true } : { ...baseOpts, fed: true });
+      }
     }
   }
   // Feed one key. `replay` matches the adapter's suppressed-recording replay;
   // an unhandled printable in insert mode is inserted by "the editor" (us).
-  function feed(k: VimKey, opts: VimKeydownOpts | undefined): void {
-    const step: VimStep = vimKeydown(st, k, docOf(cur.text, cur.head, cur.anchor), opts);
+  function feed(k: VimKey, callOpts: VimKeydownOpts | undefined): void {
+    const step: VimStep = vimKeydown(st, k, docOf(cur.text, cur.head, cur.anchor), callOpts);
     st = step.state;
-    if (!opts?.replay && !opts?.fed) handled.push(step.handled);
+    if (!callOpts?.replay && !callOpts?.fed) handled.push(step.handled);
     if (step.handled) {
       for (const e of step.effects) {
         // Mirror the adapter: a replay never re-runs nested feeders.
-        if (opts?.replay && (e.kind === 'repeat' || e.kind === 'feedKeys')) continue;
+        if (callOpts?.replay && (e.kind === 'repeat' || e.kind === 'feedKeys')) continue;
         applyEffect(e);
       }
-    } else if (st.mode === 'insert' && isPrintable(k)) insertChar(k.key);
+    } else if (st.mode === 'insert' && isPlainKey(k)) insertChar(k.key);
   }
-  for (const k of keys) feed(typeof k === 'string' ? key(k) : k, undefined);
-  return { state: st, ...cur, effects, handled };
+  for (const k of keys) feed(typeof k === 'string' ? key(k) : k, baseOpts);
+  return { state: st, ...cur, effects, handled, fed };
 };
 
 describe('modes', () => {
@@ -634,69 +652,13 @@ describe('pending-state hygiene', () => {
   });
 });
 
-// A mini adapter loop for mapped play: executes feedKeys (the adapter's
-// job) by re-feeding with the effect's noremap flag, tracking replaces.
+/** `play` with a user keymap installed (the mapping front layer). */
 const playMapped = (
-  config: Parameters<typeof compileKeymap>[0],
+  config: VimKeymapConfig,
   text: string,
   head: number,
   keys: (string | VimKey)[],
-): { state: VimState; text: string; head: number; handled: boolean[]; fed: VimKey[] } => {
-  const km = compileKeymap(config);
-  let cur = { text, head, anchor: head };
-  let st = VIM_INITIAL;
-  const handled: boolean[] = [];
-  const fed: VimKey[] = [];
-  function feed(k: VimKey, opts: VimKeydownOpts): void {
-    const step = vimKeydown(st, k, docOf(cur.text, cur.head, cur.anchor), opts);
-    st = step.state;
-    if (step.handled) {
-      for (const e of step.effects) apply(e);
-    } else if (st.mode === 'insert' && k.key.length === 1 && !k.ctrl && !k.meta && !k.alt) {
-      cur = {
-        text: cur.text.slice(0, cur.head) + k.key + cur.text.slice(cur.head),
-        head: cur.head + 1,
-        anchor: cur.head + 1,
-      };
-    }
-  }
-  function apply(e: VimEffect): void {
-    if (e.kind === 'replace') {
-      const after = e.from + e.text.length;
-      cur = { text: cur.text.slice(0, e.from) + e.text + cur.text.slice(e.to), head: after, anchor: after };
-    } else if (e.kind === 'select') {
-      cur = { ...cur, anchor: e.anchor, head: e.head };
-    } else if (e.kind === 'moveVisual' && (e.direction === 'left' || e.direction === 'right')) {
-      const d = e.direction === 'right' ? 1 : -1;
-      let h = cur.head;
-      for (let i = 0; i < e.count; i++) h = Math.max(0, Math.min(cur.text.length, h + d));
-      cur = { ...cur, head: h, anchor: e.extend ? cur.anchor : h };
-    } else if (e.kind === 'feedKeys') {
-      for (const k of e.keys) {
-        fed.push(k);
-        feed(k, e.noremap ? { keymap: km, noremap: true, fed: true } : { keymap: km, fed: true });
-      }
-    } else if (e.kind === 'repeat') {
-      for (let n = 0; n < e.count; n++) for (const rk of st.lastChange ?? []) feed(rk, { replay: true });
-    }
-  }
-  for (const k of keys) {
-    const vk = typeof k === 'string' ? key(k) : k;
-    const step = vimKeydown(st, vk, docOf(cur.text, cur.head, cur.anchor), { keymap: km });
-    st = step.state;
-    handled.push(step.handled);
-    if (step.handled) {
-      for (const e of step.effects) apply(e);
-    } else if (st.mode === 'insert' && vk.key.length === 1 && !vk.ctrl && !vk.meta && !vk.alt) {
-      cur = {
-        text: cur.text.slice(0, cur.head) + vk.key + cur.text.slice(cur.head),
-        head: cur.head + 1,
-        anchor: cur.head + 1,
-      };
-    }
-  }
-  return { state: st, text: cur.text, head: cur.head, handled, fed };
-};
+): ReturnType<typeof play> => play(text, head, keys, { keymap: config });
 
 describe('user mapping front layer', () => {
   it('a mapped key expands to its RHS (H → 0 = line start)', () => {
@@ -846,8 +808,9 @@ describe('builtin sequence layer (K2 — gg / text objects via the trie)', () =>
 
   it('a builtin walk records its keys, so dot-repeat replays the whole sequence', () => {
     const r = play('foo bar\nbaz qux', 0, ['d', 'i', 'w', '.']);
-    expect(r.text).toBe(' bar\nbaz qux'.slice(1) === '' ? '' : r.text);
-    // diw deletes 'foo'; '.' repeats diw at the caret (now on ' ').
+    // diw deletes 'foo'; '.' repeats diw at the caret (now on the space),
+    // deleting the space run too.
+    expect(r.text).toBe('bar\nbaz qux');
     expect(r.state.lastChange?.map((k) => k.key).join('')).toBe('diw');
   });
 

@@ -14,6 +14,11 @@ export type VimKey = {
 
 export const plainKey = (key: string): VimKey => ({ key, ctrl: false, meta: false, alt: false, shift: false });
 
+/** A plain printable character key: one character, no ctrl/meta/alt (shift is
+ *  fine — a printable carries its own case). What insert mode types, what a
+ *  search pattern accepts, and what an insert-map LHS may contain. */
+export const isPlainKey = (k: VimKey): boolean => k.key.length === 1 && !k.ctrl && !k.meta && !k.alt;
+
 /** The trie token for a key. Shift is NOT part of the token — a printable
  *  character carries its own case (`H`), and `<S-…>` specials are unsupported
  *  (v1) — so a shifted and unshifted arrival of the same character collide on

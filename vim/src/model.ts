@@ -74,8 +74,16 @@
 // keymap option (extension.ts).
 
 import { BRACKET_PAIRS, FIND_CHORDS, joinNeedsSpace } from './config';
-import { type CompiledKeymap, type KeymapBinding, type VimMapMode, walkKeymap } from './keymap';
-import type { VimKey } from './keys';
+import {
+  buildTrie,
+  type CompiledKeymap,
+  type KeymapBinding,
+  type Trie,
+  type VimMapMode,
+  walkKeymap,
+  walkTrie,
+} from './keymap';
+import { isPlainKey, type VimKey } from './keys';
 
 export type VimMode = 'normal' | 'insert' | 'visual';
 export type VimVisualKind = 'char' | 'line';
@@ -240,31 +248,7 @@ const lineStartOf = (text: string, n: number): number => {
  *  unbroken Japanese text), everything else non-blank is punctuation. */
 const classOf = (c: string): number => (/\s/.test(c) ? 0 : /[\p{L}\p{N}_]/u.test(c) ? 1 : 2);
 
-const wordForward = (text: string, off: number): number => {
-  let i = off;
-  if (i >= text.length) return i;
-  const k = classOf(text[i]!);
-  if (k !== 0) while (i < text.length && classOf(text[i]!) === k) i++;
-  while (i < text.length && classOf(text[i]!) === 0) i++;
-  return i;
-};
-const wordBack = (text: string, off: number): number => {
-  let i = off;
-  while (i > 0 && classOf(text[i - 1]!) === 0) i--;
-  if (i > 0) {
-    const k = classOf(text[i - 1]!);
-    while (i > 0 && classOf(text[i - 1]!) === k) i--;
-  }
-  return i;
-};
-const wordEndForward = (text: string, off: number): number => {
-  let i = off + 1;
-  while (i < text.length && classOf(text[i]!) === 0) i++;
-  if (i >= text.length) return Math.max(off, text.length - 1);
-  const k = classOf(text[i]!);
-  while (i + 1 < text.length && classOf(text[i + 1]!) === k) i++;
-  return i;
-};
+const isBlank = (c: string): boolean => /\s/.test(c);
 
 /** The word-granularity behind `w`/`b`/`e`, abstracted so it can be swapped
  *  (a Japanese segmenter, words-ja.ts). Each returns an offset in `text`. */
@@ -277,32 +261,43 @@ export type WordModel = {
   readonly end: (text: string, off: number) => number;
 };
 
+/** The word/WORD walk is ONE algorithm over a character classifier (class 0 =
+ *  whitespace, others = word classes); word vs WORD is just the classifier. */
+const wordTrio = (cls: (c: string) => number): WordModel => ({
+  next: (text, off) => {
+    let i = off;
+    if (i >= text.length) return i;
+    const k = cls(text[i]!);
+    if (k !== 0) while (i < text.length && cls(text[i]!) === k) i++;
+    while (i < text.length && cls(text[i]!) === 0) i++;
+    return i;
+  },
+  prev: (text, off) => {
+    let i = off;
+    while (i > 0 && cls(text[i - 1]!) === 0) i--;
+    if (i > 0) {
+      const k = cls(text[i - 1]!);
+      while (i > 0 && cls(text[i - 1]!) === k) i--;
+    }
+    return i;
+  },
+  end: (text, off) => {
+    let i = off + 1;
+    while (i < text.length && cls(text[i]!) === 0) i++;
+    if (i >= text.length) return Math.max(off, text.length - 1);
+    const k = cls(text[i]!);
+    while (i + 1 < text.length && cls(text[i + 1]!) === k) i++;
+    return i;
+  },
+});
+
 /** The default word model — Vim's `iskeyword` classes (a CJK run is one word,
  *  as Vim behaves without a segmenter). `words-ja.ts` offers a JP-aware one. */
-export const CLASS_WORDS: WordModel = { next: wordForward, prev: wordBack, end: wordEndForward };
+export const CLASS_WORDS: WordModel = wordTrio(classOf);
 
-/** WORD class (`W`/`B`/`E`): only whitespace vs non-whitespace (a WORD is a
- *  whitespace-delimited run — punctuation joins its neighbours). */
-const isBlank = (c: string): boolean => /\s/.test(c);
-const bigWordForward = (text: string, off: number): number => {
-  let i = off;
-  while (i < text.length && !isBlank(text[i]!)) i++;
-  while (i < text.length && isBlank(text[i]!)) i++;
-  return i;
-};
-const bigWordBack = (text: string, off: number): number => {
-  let i = off;
-  while (i > 0 && isBlank(text[i - 1]!)) i--;
-  while (i > 0 && !isBlank(text[i - 1]!)) i--;
-  return i;
-};
-const bigWordEndForward = (text: string, off: number): number => {
-  let i = off + 1;
-  while (i < text.length && isBlank(text[i]!)) i++;
-  if (i >= text.length) return Math.max(off, text.length - 1);
-  while (i + 1 < text.length && !isBlank(text[i + 1]!)) i++;
-  return i;
-};
+/** WORD granularity (`W`/`B`/`E`): only whitespace vs non-whitespace (a WORD
+ *  is a whitespace-delimited run — punctuation joins its neighbours). */
+const BIG_WORDS: WordModel = wordTrio((c) => (isBlank(c) ? 0 : 1));
 
 // ---------------------------------------------------------------------------
 // Brackets, paragraphs, text objects
@@ -569,7 +564,7 @@ const commandLineKey = (state: VimState, key: VimKey, doc: VimDocView): VimStep 
     if (cl.text.length === 0) return { state: { ...state, commandLine: null }, effects: [], handled: true };
     return { state: { ...state, commandLine: { ...cl, text: cl.text.slice(0, -1) } }, effects: [], handled: true };
   }
-  if (key.key.length === 1 && !key.ctrl && !key.meta && !key.alt) {
+  if (isPlainKey(key)) {
     return { state: { ...state, commandLine: { ...cl, text: cl.text + key.key } }, effects: [], handled: true };
   }
   return swallow(state);
@@ -582,8 +577,6 @@ const commandLineKey = (state: VimState, key: VimKey, doc: VimDocView): VimStep 
 /** A charwise/linewise motion target. `inclusive` = the operator range takes
  *  the character AT the target too (`e`, `f`, `t`). */
 type Motion = { readonly target: number; readonly inclusive: boolean; readonly linewise: boolean };
-
-const MOTION_KEYS = new Set(['h', 'l', 'w', 'b', 'e', 'W', 'B', 'E', '0', '^', '$', 'G', 'gg', '%', '{', '}']);
 
 /** Resolve a charwise/linewise motion (`null` for keys that aren't one). `gg`
  *  arrives as the pseudo-key 'gg'; `hasCount` distinguishes `5G` (goto line)
@@ -637,17 +630,17 @@ const motionTarget = (m: string, count: number, hasCount: boolean, doc: VimDocVi
     }
     case 'W': {
       let o = from;
-      for (let i = 0; i < count; i++) o = doc.snapCaret(bigWordForward(text, o), 1);
+      for (let i = 0; i < count; i++) o = doc.snapCaret(BIG_WORDS.next(text, o), 1);
       return { target: o, inclusive: false, linewise: false };
     }
     case 'B': {
       let o = from;
-      for (let i = 0; i < count; i++) o = doc.snapCaret(bigWordBack(text, o), -1);
+      for (let i = 0; i < count; i++) o = doc.snapCaret(BIG_WORDS.prev(text, o), -1);
       return { target: o, inclusive: false, linewise: false };
     }
     case 'E': {
       let o = from;
-      for (let i = 0; i < count; i++) o = doc.snapCaret(bigWordEndForward(text, o), 1);
+      for (let i = 0; i < count; i++) o = doc.snapCaret(BIG_WORDS.end(text, o), 1);
       return { target: o, inclusive: true, linewise: false };
     }
     case '%': {
@@ -769,8 +762,6 @@ const NAMED_KEYS: Readonly<Record<string, string>> = {
 const atRest = (s: VimState): boolean =>
   s.mode === 'normal' && !s.operator && !s.charPending && !s.mapPending && !s.commandLine && s.count === null;
 
-const isInsertChar = (key: VimKey): boolean => key.key.length === 1 && !key.ctrl && !key.meta && !key.alt;
-
 /** Maintain the dot-repeat recording around a raw dispatch (model.ts owns
  *  this, not the command handlers): begin recording when a fresh command
  *  starts from a resting normal state, append every subsequent key, and — when
@@ -779,7 +770,7 @@ const isInsertChar = (key: VimKey): boolean => key.key.length === 1 && !key.ctrl
  *  not recorded (v1). */
 const record = (incoming: VimState, key: VimKey, raw: VimStep): VimStep => {
   const editsNow =
-    raw.effects.some((e) => e.kind === 'replace') || (incoming.mode === 'insert' && !raw.handled && isInsertChar(key));
+    raw.effects.some((e) => e.kind === 'replace') || (incoming.mode === 'insert' && !raw.handled && isPlainKey(key));
   let rec = incoming.recording;
   if (rec === null) {
     if (!atRest(incoming)) return raw; // mid-sequence key with no recording (shouldn't happen) — ignore
@@ -939,8 +930,6 @@ const runBinding = (
   return action(clearPending(base), env, doc);
 };
 
-const isPlainChar = (k: VimKey): boolean => k.key.length === 1 && !k.ctrl && !k.meta && !k.alt;
-
 /** The INSERT-mode walk (`jj` → `<Esc>`). Unlike the normal walk it never
  *  swallows text: prefix keys PASS and type live, and a match DELETES the
  *  typed prefix before feeding the RHS. So an interrupting IME composition,
@@ -956,7 +945,7 @@ const insertMappingKey = (
   doc: VimDocView,
 ): MappingResult => {
   const pending = state.mapPending?.layer === 'user' ? state.mapPending.keys : [];
-  if (!isPlainChar(key)) {
+  if (!isPlainKey(key)) {
     // Chords / Escape / named keys abort the walk; the typed prefix stays.
     return pending.length ? { kind: 'pass', state: { ...state, mapPending: null } } : null;
   }
@@ -1009,39 +998,11 @@ const insertMappingKey = (
 // where Vim's omap/xmap would bind it, and plain insert elsewhere).
 // ---------------------------------------------------------------------------
 
-type BuiltinTrie = { readonly children: Map<string, BuiltinTrie>; action: VimAction | null };
+type BuiltinTrie = Trie<VimAction>;
 
 /** Build a trie from plain-char sequences (all built-ins are plain chars). */
-const builtinTrie = (entries: Readonly<Record<string, VimAction>>): BuiltinTrie => {
-  const root: BuiltinTrie = { children: new Map(), action: null };
-  for (const [seq, action] of Object.entries(entries)) {
-    let node = root;
-    for (const ch of seq) {
-      let child = node.children.get(ch);
-      if (!child) {
-        child = { children: new Map(), action: null };
-        node.children.set(ch, child);
-      }
-      node = child;
-    }
-    node.action = action;
-  }
-  return root;
-};
-
-const walkBuiltin = (
-  root: BuiltinTrie,
-  keys: readonly VimKey[],
-): { kind: 'pending' } | { kind: 'match'; action: VimAction } | { kind: 'miss' } => {
-  let node = root;
-  for (const k of keys) {
-    const child = node.children.get(k.key);
-    if (!child) return { kind: 'miss' };
-    node = child;
-  }
-  if (node.action) return { kind: 'match', action: node.action };
-  return { kind: 'pending' };
-};
+const builtinTrie = (entries: Readonly<Record<string, VimAction>>): BuiltinTrie =>
+  buildTrie(Object.entries(entries).map(([seq, action]) => [[...seq], action] as const));
 
 /** `g` + h/j/k/l = the DISPLAY (visual) line/column walk — the wrapped
  *  column/row, as opposed to bare hjkl's logical paragraph walk. */
@@ -1103,7 +1064,10 @@ const builtinLayerKey = (state: VimState, key: VimKey, doc: VimDocView): Mapping
   if (k.length !== 1) return null; // arrows &c. — the editor's own handlers
   const context = state.operator ? 'operatorPending' : state.mode === 'visual' ? 'visual' : 'normal';
   const keys = [...pending, { ...key, key: k }];
-  const walk = walkBuiltin(BUILTIN_TRIES[context], keys);
+  const walk = walkTrie(
+    BUILTIN_TRIES[context],
+    keys.map((kk) => kk.key),
+  );
   if (walk.kind === 'pending') {
     return {
       kind: 'step',
@@ -1112,10 +1076,18 @@ const builtinLayerKey = (state: VimState, key: VimKey, doc: VimDocView): Mapping
   }
   if (walk.kind === 'match') {
     const env: VimActionEnv = { count: state.count ?? 1, hasCount: state.count !== null };
-    return { kind: 'step', step: walk.action({ ...state, mapPending: null }, env, doc) };
+    return { kind: 'step', step: walk.value({ ...state, mapPending: null }, env, doc) };
   }
   if (pending.length === 0) return null; // the key starts no sequence — the dispatch's business
   return { kind: 'step', step: swallow({ ...clearPending(state), mapPending: null }) };
+};
+
+/** Ctrl+f/b/d/u in normal mode: full/half page scrolls. */
+const PAGE_SCROLLS: Readonly<Record<string, { readonly dir: 1 | -1; readonly half: boolean }>> = {
+  f: { dir: 1, half: false },
+  b: { dir: -1, half: false },
+  d: { dir: 1, half: true },
+  u: { dir: -1, half: true },
 };
 
 const dispatch = (state: VimState, key: VimKey, doc: VimDocView): VimStep => {
@@ -1125,9 +1097,7 @@ const dispatch = (state: VimState, key: VimKey, doc: VimDocView): VimStep => {
   // A LONE modifier keydown (the browser fires it before the real key — e.g.
   // Control before Ctrl+l) must not disturb pending state: ignore it, keeping
   // any charPending/count/operator intact for the chord that follows.
-  if (key.key === 'Control' || key.key === 'Shift' || key.key === 'Alt' || key.key === 'Meta') {
-    return unhandled(state);
-  }
+  if (isLoneModifier(key)) return unhandled(state);
   if (key.meta || key.alt) return unhandled(state);
   if (state.mode === 'insert') return insertKey(state, key, doc);
   if (key.ctrl) {
@@ -1147,13 +1117,7 @@ const dispatch = (state: VimState, key: VimKey, doc: VimDocView): VimStep => {
     // Page scrolling — CONSUMED here so Vim outranks the app bindings on the
     // same chords (Ctrl+F search, Ctrl+B sidebar) while normal mode is on;
     // insert mode returned above, so the app keeps them there.
-    const page: Record<string, { dir: 1 | -1; half: boolean }> = {
-      f: { dir: 1, half: false },
-      b: { dir: -1, half: false },
-      d: { dir: 1, half: true },
-      u: { dir: -1, half: true },
-    };
-    const scroll = page[key.key];
+    const scroll = PAGE_SCROLLS[key.key];
     if (scroll) {
       return { state: clearPending(state), effects: [{ kind: 'scrollPage', ...scroll }], handled: true };
     }
@@ -1296,12 +1260,14 @@ const textObjectStep = (state: VimState, kind: 'i' | 'a', objKey: string, doc: V
   };
 };
 
+/** The opposite direction of each find op, for `,`. */
+const REVERSE_FIND: Readonly<Record<FindOp, FindOp>> = { f: 'F', F: 'f', t: 'T', T: 't' };
+
 /** `;`/`,` — repeat the last find (`,` reversed). Returns null without one. */
 const repeatFind = (state: VimState, k: ';' | ',', count: number, doc: VimDocView): VimStep | null => {
   const last = state.lastFind;
   if (!last) return null;
-  const REVERSE: Record<FindOp, FindOp> = { f: 'F', F: 'f', t: 'T', T: 't' };
-  const op = k === ',' ? REVERSE[last.op] : last.op;
+  const op = k === ',' ? REVERSE_FIND[last.op] : last.op;
   const hadOperator = state.operator;
   const cleared = clearPending(state);
   const motion = findTarget(doc.text, doc.head, op, last.ch, count);
@@ -1366,28 +1332,31 @@ const pendOperator = (state: VimState, op: Operator, env: VimActionEnv): VimStep
   handled: true,
 });
 
+/** Leave visual mode, collapsing the selection to the head (v/V toggled off). */
+const exitVisual = (state: VimState, doc: VimDocView): VimStep => ({
+  state: { ...state, mode: 'normal' as const },
+  effects: [{ kind: 'select', anchor: doc.head, head: doc.head }],
+  handled: true,
+});
+
+/** D/C/Y: the operator from the caret to the line end (charwise). */
+const toLineEnd =
+  (op: Operator): VimAction =>
+  (state, _env, doc) =>
+    applyOperator(state, op, { from: doc.head, to: lineEnd(doc.text, doc.head), linewise: false }, doc);
+
 /** Visual-mode commands (operators over the selection, kind switches,
  *  end-swap, paste-over). Motions are NOT here — they fall through to the
  *  normal tables and extend from the visual anchor. */
 const VISUAL_ACTIONS = {
   // Charwise v exits; from linewise it narrows to charwise (selection kept).
-  'visual.toggleChar': (state, _env, doc) => {
-    if (state.visualKind === 'line') return swallow({ ...state, visualKind: 'char' });
-    return {
-      state: { ...state, mode: 'normal' as const },
-      effects: [{ kind: 'select', anchor: doc.head, head: doc.head }],
-      handled: true,
-    };
-  },
+  'visual.toggleChar': (state, _env, doc) =>
+    state.visualKind === 'line' ? swallow({ ...state, visualKind: 'char' }) : exitVisual(state, doc),
   // V again exits visual; else widen to linewise WITHOUT moving the cursor —
   // the editor expands the highlight to whole lines from the flag.
   'visual.toggleLine': (state, _env, doc) =>
     state.visualKind === 'line'
-      ? {
-          state: { ...state, mode: 'normal' as const },
-          effects: [{ kind: 'select', anchor: doc.head, head: doc.head }],
-          handled: true,
-        }
+      ? exitVisual(state, doc)
       : { state: { ...state, visualKind: 'line' }, effects: [], handled: true },
   'visual.swapEnds': (state, _env, doc) => ({
     state,
@@ -1457,7 +1426,7 @@ const normalKey = (state: VimState, k: string, count: number, hasCount: boolean,
     };
   }
   const motion = motionTarget(k, count, hasCount, doc, doc.head);
-  if (motion && MOTION_KEYS.has(k)) return motionStep(state, motion, doc);
+  if (motion) return motionStep(state, motion, doc);
   if (k === 'f' || k === 'F' || k === 't' || k === 'T') {
     return { state: { ...state, charPending: k, count: hasCount ? count : null }, effects: [], handled: true };
   }
@@ -1514,14 +1483,11 @@ const NORMAL_ACTIONS = {
   'delete.charBack': (state, env, doc) => deleteSteps(state, doc, env.count, false, false),
   'substitute.char': (state, env, doc) => deleteSteps(state, doc, env.count, true, true),
   'substitute.line': (state, env, doc) => linewiseOperator(state, 'c', env.count, doc),
-  'delete.toLineEnd': (state, _env, doc) =>
-    applyOperator(state, 'd', { from: doc.head, to: lineEnd(doc.text, doc.head), linewise: false }, doc),
-  'change.toLineEnd': (state, _env, doc) =>
-    applyOperator(state, 'c', { from: doc.head, to: lineEnd(doc.text, doc.head), linewise: false }, doc),
+  'delete.toLineEnd': toLineEnd('d'),
+  'change.toLineEnd': toLineEnd('c'),
   // Yank from the caret to the paragraph (line) end — like D/C (Neovim's
   // default; Vim's own Y is `yy`, but this pairs with D and C).
-  'yank.toLineEnd': (state, _env, doc) =>
-    applyOperator(state, 'y', { from: doc.head, to: lineEnd(doc.text, doc.head), linewise: false }, doc),
+  'yank.toLineEnd': toLineEnd('y'),
   'line.join': (state, env, doc) => joinLines(state, doc, env.count),
   'operator.delete': (state, env) => pendOperator(state, 'd', env),
   'operator.change': (state, env) => pendOperator(state, 'c', env),
