@@ -11,7 +11,7 @@ worth it / load-bearing).
 
 ## editor/src/editor.tsx (2641 lines — 41% of the core)
 
-### Module split (E0) — todo
+### Module split (E0) — done
 
 The file holds eight separable concerns. Split, in shippable order (each
 step is lift-and-shift, no logic edits; `just test-all` between):
@@ -38,7 +38,7 @@ step is lift-and-shift, no logic edits; `just test-all` between):
 8. `extension-context.ts` — createSearchOps + createExtensionContext
    (l.1425–1645), deduping E4/E5/E6 in passing.
 
-Residual editor.tsx ≈ 700–800 lines: the session closure web
+Residual editor.tsx = 1028 lines: the session closure web
 (imePendingSel, commitHistory, restore, attachedExts, history refs) +
 handleKeyDown + composition handlers + React shell. Splitting THAT needs a
 mutable session object — **proposal**, not this pass.
@@ -47,7 +47,7 @@ mutable session object — **proposal**, not this pass.
 
 - **E1 done** — orphaned JSDoc for revealCaretInScroller stranded at
   l.927–935; move to the function.
-- **E2 todo (bug)** — walkGlyphs (l.1935) doesn't skip delimiter-widget
+- **E2 done (bug)** — walkGlyphs (l.1935) doesn't skip delimiter-widget
   text nodes the way paraGlyphs (l.2091) does; drag started on blank space
   under an expanded policy maps shifted offsets. Fix by reusing paraGlyphs'
   filter.
@@ -56,23 +56,23 @@ mutable session object — **proposal**, not this pass.
   page-gap visualLineEnds) with drift in the page-wrap threshold (2.5 cells
   vs 1 pitch). Extract one pure `visual-lines.ts` leaf; keep per-site
   thresholds unless proven unifiable.
-- **E4 todo** — searchOps.replace duplicates extensionCtx.replaceRange
+- **E4 done** — searchOps.replace duplicates extensionCtx.replaceRange
   byte-for-byte; one replacePlainRange helper.
-- **E5 todo** — reveal-on-rAF block triplicated (l.1200, 1446, 1521); one
+- **E5 done** — reveal-on-rAF block triplicated (l.1200, 1446, 1521); one
   revealSoon().
-- **E6 todo** — legal-caret-stop snap triplicated (l.213, 1508, 1593) +
+- **E6 done** — legal-caret-stop snap triplicated (l.213, 1508, 1593) +
   clamp lambda ×5; one legalStop helper.
-- **E7 todo** — "DOM selection may lead the model" reader duplicated in
+- **E7 done** — "DOM selection may lead the model" reader duplicated in
   deleteChar / enterReplacingSelection; one domLedRange.
-- **E8 todo** — __vedSetSelection duplicates searchOps.select minus reveal.
-- **E9 todo** — stale display:none-markup rationale in deleteChar /
-  beforeinput comments (that architecture is a documented dead end; the
-  takeovers stay, reworded to the real reason).
+- **E8 done** — __vedSetSelection duplicates searchOps.select minus reveal.
+- **E9 rejected** — the audit called the display:none rationale stale, but
+  bold/italic markers ARE still display:none editable DOM text (.syn in
+  ruby.css); only the RUBY markup left the DOM. Comments stand.
 - **E10 todo (bug, needs repro)** — beforeOffsetRef isn't seeded from
   initialCursor; first edit after a tab switch-back can record
   cursorBefore=0 so undo jumps the caret to the doc start. Seed it +
   e2e case.
-- **E11 todo** — "Caret movement" banner covers plain-edit functions;
+- **E11 done** — "Caret movement" banner covers plain-edit functions;
   resolved by the split.
 - **E12 proposal** — pm/page-gap.ts pageBoundaryEnds is production-dead
   (test oracle only); move into the test or mark @internal.
@@ -86,7 +86,7 @@ mutable session object — **proposal**, not this pass.
 - **E16 proposal** — moveCaretByLine: collapse the duplicated accept/reject
   narration; optional phase extraction (probe/accept/step) with no control
   flow change. Do only during the caret-motion.ts move.
-- **E17 todo** — line-span slicing (`lastIndexOf('\n')+1` / `indexOf`)
+- **E17 done** — line-span slicing (`lastIndexOf('\n')+1` / `indexOf`)
   duplicated ×4; add lineSpanAt to pm/leaves.ts. PBT guards the plain-edit
   sites.
 
