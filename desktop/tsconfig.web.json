@@ -1,5 +1,5 @@
 {
-  "extends": "@electron-toolkit/tsconfig/tsconfig.web.json",
+  "extends": ["@electron-toolkit/tsconfig/tsconfig.web.json", "../tsconfig.base.json"],
   "include": [
     "src/renderer/src/env.d.ts",
     "src/renderer/src/**/*",
@@ -9,16 +9,6 @@
   ],
   "compilerOptions": {
     "composite": true,
-    "jsx": "react-jsx",
-    "strict": true,
-    "noUncheckedIndexedAccess": true,
-    "exactOptionalPropertyTypes": true,
-    "noImplicitReturns": true,
-    "noImplicitOverride": true,
-    "noFallthroughCasesInSwitch": true,
-    "noUnusedLocals": true,
-    "noUnusedParameters": true,
-    "allowUnreachableCode": false,
-    "allowUnusedLabels": false
+    "jsx": "react-jsx"
   }
 }
