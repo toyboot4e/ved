@@ -1,16 +1,25 @@
 import { type EditorSnapshot, editorStyles as styles, VedEditor, WritingMode } from '@ved/editor';
 import { clsx } from 'clsx';
-import { useCallback, useEffect, useRef, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import appStyles from './app.module.scss';
 import { useAppearPolicyStore } from './appear-policy';
 import { activeBuffer, type BufferId, isDirty, someInactiveDirty } from './buffers';
 import { dispatchBuffers, useBuffersStore } from './buffers-store';
+import { ExtensionPanels, ExtensionQuickPick, StatusItems } from './components/extension-ui';
+import extensionUiStyles from './components/extension-ui.module.scss';
 import { QuickOpen } from './components/quick-open';
 import { SearchBar } from './components/search-bar';
 import { ShellPanel } from './components/shell-panel';
 import { Sidebar } from './components/sidebar';
 import { TabBar } from './components/tab-bar';
 import { Toolbar } from './components/toolbar';
+import {
+  initializeUserExtensions,
+  notifyExtensionSelectionChanged,
+  notifyExtensionTextChanged,
+  useUserExtensionsStore,
+} from './extension-host';
+import { useExtensionPickerStore } from './extension-ui';
 import { dirName, type FileCommand, saveOrSaveAs, saveViaDialog, type TabCommand, windowTitle } from './file-commands';
 import { useInvisiblesStore } from './invisibles';
 import { handleAppKeydown } from './keymap';
@@ -20,7 +29,7 @@ import { useSearchStore } from './search';
 import { useThemeStore } from './theme';
 import { useSearchWiring } from './use-search-wiring';
 import { useViewConfigStore, viewConfigToCss } from './view-config';
-import { NO_EXTENSIONS, useVimStore, vimExtensions } from './vim';
+import { useVimStore, vimExtensions } from './vim';
 import { useWorkspaceStore } from './workspace';
 import { useWritingModeStore } from './writing-mode';
 
@@ -61,7 +70,23 @@ export const App = (): React.JSX.Element => {
     setDirty(text !== savedTextRef.current);
     // An edit shifts/consumes matches — recompute (no-op while the bar is closed).
     useSearchStore.getState().docChanged(text);
+    // User extensions' onDidChangeText (extension-host.ts).
+    notifyExtensionTextChanged(text);
   }, []);
+
+  // User extensions (extension-host.ts): loaded once at startup; the store
+  // then feeds the editor's extensions array and its keybinding table.
+  useEffect(() => {
+    void initializeUserExtensions();
+  }, []);
+  const userExtensions = useUserExtensionsStore((s) => s.editorExtensions);
+  const keybindings = useUserExtensionsStore((s) => s.keybindings);
+  // Stable identity per (vim, user-extensions) pair — the editor re-syncs
+  // attachments on identity change (same members stay attached).
+  const editorExtensions = useMemo(
+    () => (vimEnabled ? [...vimExtensions(), ...userExtensions] : userExtensions),
+    [vimEnabled, userExtensions],
+  );
 
   // Switching to a buffer adopts its committed text + dirtiness as the live
   // baseline (its stored text is current on switch-in). Done during render —
@@ -208,6 +233,7 @@ export const App = (): React.JSX.Element => {
   const sidebarSide = useWorkspaceStore((s) => s.sidebarSide);
   const roots = useWorkspaceStore((s) => s.roots);
   const quickOpenOpen = useQuickOpenStore((s) => s.open);
+  const extensionPickerOpen = useExtensionPickerStore((s) => s.open);
   // New shells open in the active file's directory, else the first workspace
   // root, else $HOME (main's fallback).
   const shellCwd = (active.path !== null ? dirName(active.path) : undefined) ?? roots[0];
@@ -265,25 +291,30 @@ export const App = (): React.JSX.Element => {
               appearPolicy={appearPolicy}
               setAppearPolicy={setAppearPolicy}
               onTextChange={onTextChange}
+              onSelectionChange={notifyExtensionSelectionChanged}
               onSnapshot={(snapshot) => handleSnapshot(active.id, snapshot)}
               viewConfigEpoch={viewConfig}
               invisibles={invisibles}
               searchHighlights={searchHighlights}
               onSearchOps={handleSearchOps}
-              extensions={vimEnabled ? vimExtensions() : NO_EXTENSIONS}
+              keybindings={keybindings}
+              extensions={editorExtensions}
             />
-            <div className={styles.footer}>
+            <div className={clsx(styles.footer, extensionUiStyles.footerHost)}>
               <p id='counter' className={styles.footerCounter}></p>
+              <StatusItems />
             </div>
           </div>
         </div>
         {/* Search & replace: a full-width bar docked at the bottom of the
             editor area (above the shell panel), not a row inside the page column. */}
         {searchOpen && <SearchBar getText={getText} getOps={getOps} focusRequest={searchFocus} />}
+        <ExtensionPanels />
         <ShellPanel defaultCwd={shellCwd} />
       </div>
       {sidebarSide === 'right' && sidebar}
       {quickOpenOpen && <QuickOpen onOpenFile={handleOpenTreeFile} />}
+      {extensionPickerOpen && <ExtensionQuickPick />}
       {notice !== null && (
         <p className={appStyles.notice} role='status'>
           {notice}

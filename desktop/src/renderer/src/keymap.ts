@@ -14,6 +14,7 @@
 // Command ids are plan-style names (`file.save`, `view.quickOpen`, …) — the
 // future command palette's catalog and the config file's keybinding keys.
 import type { ChordEvent } from '@ved/editor';
+import { settleExtensionPicker, useExtensionPickerStore } from './extension-ui';
 import type { FileCommand, TabCommand } from './file-commands';
 import { isComposingEvent } from './ime';
 import { closeQuickOpen, useQuickOpenStore } from './quick-open';
@@ -158,6 +159,20 @@ export const handleQuickOpenKey = (event: KeyboardEvent, isDarwin: boolean): boo
   return true;
 };
 
+/** Overlay scope for the extension quick pick (extension-ui.ts) — the same
+ *  rules as the quick-open palette: while open its input owns the keyboard,
+ *  Esc dismisses (resolving null), and any table chord is swallowed. */
+export const handleExtensionPickerKey = (event: KeyboardEvent, isDarwin: boolean): boolean => {
+  if (!useExtensionPickerStore.getState().open) return false;
+  if (event.key === 'Escape' && !isComposingEvent(event)) {
+    event.preventDefault();
+    settleExtensionPicker(null);
+    return true;
+  }
+  if (matchAppCommand(event, isDarwin) !== null) event.preventDefault();
+  return true;
+};
+
 /**
  * Global scope: the window keydown dispatcher, installed once by app.tsx.
  *
@@ -169,6 +184,7 @@ export const handleQuickOpenKey = (event: KeyboardEvent, isDarwin: boolean): boo
  * Escape-closes-search must still run.
  */
 export const handleAppKeydown = (event: KeyboardEvent, isDarwin: boolean, handlers: AppCommandHandlers): void => {
+  if (handleExtensionPickerKey(event, isDarwin)) return;
   if (handleQuickOpenKey(event, isDarwin)) return;
   const command = matchAppCommand(event, isDarwin);
   if (command !== null) {
