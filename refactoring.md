@@ -45,7 +45,7 @@ mutable session object — **proposal**, not this pass.
 
 ### Findings
 
-- **E1 todo** — orphaned JSDoc for revealCaretInScroller stranded at
+- **E1 done** — orphaned JSDoc for revealCaretInScroller stranded at
   l.927–935; move to the function.
 - **E2 todo (bug)** — walkGlyphs (l.1935) doesn't skip delimiter-widget
   text nodes the way paraGlyphs (l.2091) does; drag started on blank space
@@ -81,7 +81,7 @@ mutable session object — **proposal**, not this pass.
   the per-hit-test weights (×3, ×10) as named consts, unmerged.
 - **E14 todo** — redundant effect deps (vert/multiCol/rows/grow are
   functions of writingMode).
-- **E15 todo** — revealCaretInScroller reads window.getSelection() while
+- **E15 done** — revealCaretInScroller reads window.getSelection() while
   every other site uses view.dom.ownerDocument.
 - **E16 proposal** — moveCaretByLine: collapse the duplicated accept/reject
   narration; optional phase extraction (probe/accept/step) with no control
@@ -92,20 +92,20 @@ mutable session object — **proposal**, not this pass.
 
 ## editor/src (other modules)
 
-- **P1 todo (lying test)** — scroll-keep.ts revealDelta is production-dead
+- **P1 done (lying test)** — scroll-keep.ts revealDelta is production-dead
   AND semantically diverged from the live editor.tsx copy (flush-at-edge vs
   cushion); the unit test pins the NON-shipping behavior. Consolidate on the
   live semantics in scroll-keep.ts, retarget the test, import from
   editor.tsx.
-- **P2 todo** — dead re-exports at caret-model.ts:96–98 (Leaf, activeRuby,
+- **P2 done** — dead re-exports at caret-model.ts:96–98 (Leaf, activeRuby,
   docLeaves, lineOf — every consumer imports from leaves directly).
-- **P3 todo** — model.ts unused exports: rubyBaseText, rubyReadingText,
+- **P3 done** — model.ts unused exports: rubyBaseText, rubyReadingText,
   RubyDelims (internal-only).
-- **P4 todo** — parse.ts PlainText variant is never produced; every
+- **P4 done** — parse.ts PlainText variant is never produced; every
   consumer carries a dead `!== 'ruby'` guard. Minimal fix: parse(): Ruby[].
-- **P5 todo** — decorations.ts Parse.leaves member stored, never read.
-- **P6 todo** — dead CSS: .toolbarTextInput, a.vertMode overline.
-- **P7 todo** — PlainTextHistory.entries/.pointer public but externally
+- **P5 done** — decorations.ts Parse.leaves member stored, never read.
+- **P6 done** — dead CSS: .toolbarTextInput, a.vertMode overline.
+- **P7 done** — PlainTextHistory.entries/.pointer public but externally
   unread; make private.
 - **P8 todo** — buildMaps vs paraMaps duplicate the per-child ruby walk
   verbatim (~25 lines). Shared walker variant (keeps the independent-oracle
@@ -141,7 +141,7 @@ mutable session object — **proposal**, not this pass.
   caret move (no counter seam guards it; Vim motions multiply it).
   Neighborhood-local reformulation with caret-model.cases.ts as oracle;
   keep the whole-doc function as the spec.
-- **P18 todo** — doc drift: architecture.md delimiter class names
+- **P18 done** — doc drift: architecture.md delimiter class names
   (openDelim… vs actual rubyDelim…); "mode" used for appear POLICY in two
   comments (CONTEXT.md bans it).
 
@@ -226,20 +226,20 @@ mutable session object — **proposal**, not this pass.
 
 ## Cross-package / config / deps
 
-- **X1 todo** — dead deps: fast-check (root), electron-updater +
+- **X1 done** — dead deps: fast-check (root), electron-updater +
   dev-app-update.yml (desktop), prosemirror-transform (editor),
   vitest.shims.d.ts (root, references uninstalled @vitest/browser).
   Lockfile change → `just bump-hash`.
 - **X2 todo** — export `Invisibles` from @ved/editor and delete desktop's
   hand-written structural mirror (invisibles.ts).
-- **X3 todo (typing hole)** — tsconfig.base.json lacks noImplicitAny:true
+- **X3 done (typing hole)** — tsconfig.base.json lacks noImplicitAny:true
   while @electron-toolkit/tsconfig sets it FALSE explicitly — and
   desktop/tsconfig.node.json doesn't extend base at all, so the fs/IPC
   main-process code is the loosest-typed in the repo. Extend base in
   tsconfig.node.json, set noImplicitAny in base, fix fallout.
-- **X4 todo** — desktop/tsconfig.web.json re-implements base's 10 strictness
+- **X4 done** — desktop/tsconfig.web.json re-implements base's 10 strictness
   flags inline; extend instead.
-- **X5 todo** — dangling ADR citations (ADRs deliberately deleted):
+- **X5 done** — dangling ADR citations (ADRs deliberately deleted):
   vitest.config.ts, biome.jsonc, root package.json description,
   web/vite.config.ts, 7 e2e driver comments. Rewire to architecture.md
   section names.
@@ -258,7 +258,7 @@ mutable session object — **proposal**, not this pass.
   docs/debugging-vertical-layout.md is a retrospective citing the
   untracked a.png. Fold the surviving content into architecture.md, drop
   the fossils. Left as proposal: doc-policy calls are the author's.
-- **X10 todo** — gitignore a.png/repro.txt-style scratch or remove;
+- **X10 done** — gitignore a.png/repro.txt-style scratch or remove;
   examples/ fate is the author's call (left untracked).
 - **X11 todo** — editor index.ts: retract CoreCommandId/EditorCommand/
   EditorCommandContext/CORE_COMMANDS/chordOf (no consumer, not part of a
