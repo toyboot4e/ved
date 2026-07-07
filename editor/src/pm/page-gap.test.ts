@@ -1,8 +1,19 @@
 import { describe, expect, it } from 'vitest';
-import { type LineItem, pageBoundaryEnds, pageEndsFromLines, visualLineEnds } from './page-gap';
+import { type LineItem, pageEndsFromLines, visualLineEnds } from './page-gap';
 
 // vertical-rl: lines advance leftward (decreasing b), pitch 28
 const line = (b: number, offs: number[]): LineItem[] => offs.map((endOff) => ({ endOff, b }));
+
+/** The ONE-SHOT composition of the two production halves — the suffix≡full
+ *  ORACLE these tests compare against. Production never calls it (the editor
+ *  runs the halves separately so the visual-line ends can be cached across
+ *  measures — page-gap-measure.ts), so it lives here, not in page-gap.ts. */
+const pageBoundaryEnds = (
+  items: readonly LineItem[],
+  linesPerPage: number,
+  linePitch: number,
+  pagesPerBand: number = Number.POSITIVE_INFINITY,
+): number[] => pageEndsFromLines(visualLineEnds(items, linePitch), linesPerPage, pagesPerBand);
 
 describe('pageBoundaryEnds', () => {
   it('emits the end of every Nth visual line that has a successor', () => {

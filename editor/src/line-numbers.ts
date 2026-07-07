@@ -91,7 +91,10 @@ export const mountLineNumbers = (
   let vertical = false; // cached from the last full measure (mode changes re-measure)
   let lastHit: VisualLine | null = null; // the line the highlight last painted
 
-  // FULL measure: re-collect every visual line and re-place the numbers. O(doc).
+  // FULL measure: re-collect every visual line and re-place the numbers.
+  // O(doc). Orchestration only — (1) collect the geometry, (2) read EVERY
+  // measured input (getComputedStyle is live, so all reads come before any
+  // placement write), (3) place the numbers, (4) place the page marks.
   const measure = (): void => {
     const cs = getComputedStyle(content);
     vertical = cs.writingMode.startsWith('vertical');
@@ -121,96 +124,27 @@ export const mountLineNumbers = (
 
     lines = collectVisualLines(content, range, vertical, colJump, groupTol, bandLen, o);
 
-    // MEASURED, PER-LINE placement. Every mark derives from ITS OWN line's
-    // measured (rt-excluded) rects — never from index arithmetic extrapolated
-    // across the document. A pure slot grid (anchor + k·pitch) was tried and
-    // DETACHED at scale: `line-height` is a MINIMUM, not a cap, so a ruby line
-    // whose reading doesn't fit the leading (low --line-space-ratio, a heavy
-    // webfont) is REALLY taller than the computed lineHeight — band capacity
-    // deviates from the arithmetic and the numbers drifted whole bands away by
-    // line ~1700 (they "disappeared"). Measured centers are exact by
-    // construction: the rects exclude `rt`, so ruby text cannot lean a number,
-    // and an empty paragraph's box center coincides with a glyph column's.
-    // Only the BAND top is quantized — multicol fragmentation IS physically
-    // periodic (bandPeriod = columnWidth + columnGap), so snapping each line's
-    // measured top to the nearest band keeps the numbers on the gutter line.
     const multiCol = content.classList.contains(styles.multiColMode ?? '');
     const paged = multiCol || content.classList.contains(styles.rowsMode ?? '');
-    const linesPerPage = paged ? Number.parseFloat(cs.getPropertyValue('--page-lines')) || 20 : 0;
-    const bandPeriod = multiCol ? (Number.parseFloat(cs.columnWidth) || 0) + (Number.parseFloat(cs.columnGap) || 0) : 0;
-    const bandTop0 = vertical && lines.length > 0 ? Math.min(...lines.slice(0, 8).map((ln) => ln.top)) : 0;
-    // The line's band top: its measured top snapped to the exact band period.
-    const bandTopAt = (ln: VisualLine): number =>
-      multiCol && bandPeriod > 0 ? bandTop0 + Math.round((ln.top - bandTop0) / bandPeriod) * bandPeriod : bandTop0;
-    const centerX = (ln: VisualLine): number => (ln.left + ln.right) / 2;
-
-    // Number each line at its measured column center in vertical modes — above
-    // the column, on the band's gutter line — or left of the row (measured)
-    // in horizontal. Coords are already overlay-relative.
-    lines.forEach((ln, i) => {
-      const el = pool[i] ?? makeNumber(overlay, pool);
-      const x = vertical ? centerX(ln) : ln.left;
-      const y = vertical ? bandTopAt(ln) : (ln.top + ln.bottom) / 2;
-      el.style.transform = vertical
-        ? `translate(${x}px, ${y}px) translate(-50%, -100%)`
-        : `translate(${x}px, ${y}px) translate(-100%, -50%)`;
-      el.textContent = String(i + 1);
-      el.style.display = '';
-    });
-    for (const el of pool.slice(lines.length)) el.style.display = 'none';
-
-    // Page separators and folios, from the same measured lines. The gap
-    // knobs are the PAGE'S MARGINS around the border: gap下 = the earlier
-    // page's side (its folio → the border), gap上 = the border → the next
-    // page's text. So the separator between the last line of page p−1 and
-    // the first line of page p sits gap下 from the earlier (right) side and
-    // gap上 from the next — the measured midpoint shifted by (top − bottom)/2
-    // (zero for a symmetric split), whatever the font does to the real pitch.
-    // Skipped when the two lines sit in different bands (a multiCol band
-    // break separates those physically — the scroller lattice draws the
-    // border there, after the folio strip; see editor.module.scss). The folio
-    // centers on the WHOLE page area (the page's slots exist physically even
-    // when empty — the rows reservation / band width guarantee them): the
-    // missing tail of a partial page is extrapolated at the page's OWN
-    // measured line step, so a real-pitch deviation stays page-local.
-    const pitch = Number.parseFloat(cs.lineHeight) || 28;
-    const cell = Number.parseFloat(cs.fontSize) || 18;
+    const grid: BandGrid = {
+      vertical,
+      multiCol,
+      bandPeriod: multiCol ? (Number.parseFloat(cs.columnWidth) || 0) + (Number.parseFloat(cs.columnGap) || 0) : 0,
+      bandTop0: vertical && lines.length > 0 ? Math.min(...lines.slice(0, 8).map((ln) => ln.top)) : 0,
+    };
     // Registered @property lengths — evaluated px (editor.module.scss).
     const gapTop = paged ? Number.parseFloat(cs.getPropertyValue('--page-gap-top')) || 0 : 0;
     const gapBottom = paged ? Number.parseFloat(cs.getPropertyValue('--page-gap-bottom')) || 0 : 0;
-    const sepShift = (gapTop - gapBottom) / 2;
-    let chips = 0;
-    let seps = 0;
-    if (linesPerPage > 0 && lines.length > 0) {
-      for (let p = 0; p * linesPerPage < lines.length; p++) {
-        const count = Math.min((p + 1) * linesPerPage, lines.length) - p * linesPerPage;
-        const first = lines[p * linesPerPage] as VisualLine;
-        const last = lines[p * linesPerPage + count - 1] as VisualLine;
-        const prev = p > 0 ? (lines[p * linesPerPage - 1] as VisualLine) : null;
-        const bandAnchor = bandTopAt(first);
-        if (prev && (!multiCol || bandTopAt(prev) === bandAnchor)) {
-          const el = sepPool[seps] ?? makePageSeparator(overlay, sepPool);
-          const x = (centerX(prev) + centerX(first)) / 2 + sepShift;
-          el.style.transform = `translate(${x}px, ${bandAnchor}px)`;
-          el.style.height = `${bandLen}px`;
-          el.style.display = '';
-          seps++;
-        }
-        const chip = pagePool[chips] ?? makePageNumber(overlay, pagePool);
-        const step = count >= 2 ? (centerX(first) - centerX(last)) / (count - 1) : pitch;
-        const chipX = centerX(first) - (step * (linesPerPage - 1)) / 2;
-        // Columns: the folio centers in its RESERVED STRIP — the first cell of
-        // the band gap, right under the page (gap下 then runs folio → border).
-        chip.style.transform = multiCol
-          ? `translate(${chipX}px, ${bandAnchor + bandLen + cell / 2}px) translate(-50%, -50%)`
-          : `translate(${chipX}px, ${bandAnchor + bandLen}px) translate(-50%, 0) translateY(0.4em)`;
-        chip.textContent = `${p + 1}`;
-        chip.style.display = '';
-        chips++;
-      }
-    }
-    for (const el of pagePool.slice(chips)) el.style.display = 'none';
-    for (const el of sepPool.slice(seps)) el.style.display = 'none';
+    const marks: PageMarkMetrics = {
+      linesPerPage: paged ? Number.parseFloat(cs.getPropertyValue('--page-lines')) || 20 : 0,
+      bandLen,
+      pitch: readPitch(cs),
+      cell: readCell(cs),
+      sepShift: (gapTop - gapBottom) / 2,
+    };
+
+    placeNumbers(overlay, pool, lines, grid);
+    placePageMarks(overlay, pagePool, sepPool, lines, grid, marks);
 
     refreshHighlight(o);
     refreshSelection(o);
@@ -315,6 +249,132 @@ export const mountLineNumbers = (
       overlay.remove();
     },
   };
+};
+
+/** The measured band lattice of the current layout, shared by both placement
+ *  passes. In VerticalColumns multicol fragmentation IS physically periodic —
+ *  bands repeat every `bandPeriod` (columnWidth + columnGap) from `bandTop0`;
+ *  in the other modes `bandTop0` is the single anchor (0 in horizontal). */
+type BandGrid = {
+  readonly vertical: boolean;
+  readonly multiCol: boolean;
+  readonly bandPeriod: number;
+  readonly bandTop0: number;
+};
+
+/** The line's band top: its measured top snapped to the exact band period. */
+const bandTopAt = (grid: BandGrid, ln: VisualLine): number =>
+  grid.multiCol && grid.bandPeriod > 0
+    ? grid.bandTop0 + Math.round((ln.top - grid.bandTop0) / grid.bandPeriod) * grid.bandPeriod
+    : grid.bandTop0;
+
+const centerX = (ln: VisualLine): number => (ln.left + ln.right) / 2;
+
+/** Place one number per visual line — at its measured column center in
+ *  vertical modes (above the column, on the band's gutter line) or left of
+ *  the row (measured) in horizontal. Coords are already overlay-relative.
+ *
+ *  MEASURED, PER-LINE placement. Every mark derives from ITS OWN line's
+ *  measured (rt-excluded) rects — never from index arithmetic extrapolated
+ *  across the document. A pure slot grid (anchor + k·pitch) was tried and
+ *  DETACHED at scale: `line-height` is a MINIMUM, not a cap, so a ruby line
+ *  whose reading doesn't fit the leading (low --line-space-ratio, a heavy
+ *  webfont) is REALLY taller than the computed lineHeight — band capacity
+ *  deviates from the arithmetic and the numbers drifted whole bands away by
+ *  line ~1700 (they "disappeared"). Measured centers are exact by
+ *  construction: the rects exclude `rt`, so ruby text cannot lean a number,
+ *  and an empty paragraph's box center coincides with a glyph column's.
+ *  Only the BAND top is quantized (`bandTopAt`), which keeps the numbers on
+ *  the gutter line. */
+const placeNumbers = (
+  overlay: HTMLElement,
+  pool: HTMLElement[],
+  lines: readonly VisualLine[],
+  grid: BandGrid,
+): void => {
+  lines.forEach((ln, i) => {
+    const el = pool[i] ?? makeNumber(overlay, pool);
+    const x = grid.vertical ? centerX(ln) : ln.left;
+    const y = grid.vertical ? bandTopAt(grid, ln) : (ln.top + ln.bottom) / 2;
+    el.style.transform = grid.vertical
+      ? `translate(${x}px, ${y}px) translate(-50%, -100%)`
+      : `translate(${x}px, ${y}px) translate(-100%, -50%)`;
+    el.textContent = String(i + 1);
+    el.style.display = '';
+  });
+  for (const el of pool.slice(lines.length)) el.style.display = 'none';
+};
+
+/** The measured inputs of the page-mark pass (paged modes; `linesPerPage` 0 =
+ *  not paged, which just hides every chip/separator). */
+type PageMarkMetrics = {
+  readonly linesPerPage: number;
+  /** One page's `--line-length` in px (the paragraphs' `inline-size`). */
+  readonly bandLen: number;
+  /** The line pitch — the folio-centering fallback step for a 1-line page. */
+  readonly pitch: number;
+  /** One cell (fullwidth advance) in px — centers the folio in its strip. */
+  readonly cell: number;
+  /** (gap上 − gap下) / 2 — how far the separator shifts off the measured
+   *  midpoint between the two pages' edge lines (zero for a symmetric split). */
+  readonly sepShift: number;
+};
+
+/** Place the page separators and folios, from the same measured lines. The
+ *  gap knobs are the PAGE'S MARGINS around the border: gap下 = the earlier
+ *  page's side (its folio → the border), gap上 = the border → the next
+ *  page's text. So the separator between the last line of page p−1 and
+ *  the first line of page p sits gap下 from the earlier (right) side and
+ *  gap上 from the next — the measured midpoint shifted by `sepShift`,
+ *  whatever the font does to the real pitch.
+ *  Skipped when the two lines sit in different bands (a multiCol band
+ *  break separates those physically — the scroller lattice draws the
+ *  border there, after the folio strip; see editor.module.scss). The folio
+ *  centers on the WHOLE page area (the page's slots exist physically even
+ *  when empty — the rows reservation / band width guarantee them): the
+ *  missing tail of a partial page is extrapolated at the page's OWN
+ *  measured line step, so a real-pitch deviation stays page-local. */
+const placePageMarks = (
+  overlay: HTMLElement,
+  pagePool: HTMLElement[],
+  sepPool: HTMLElement[],
+  lines: readonly VisualLine[],
+  grid: BandGrid,
+  m: PageMarkMetrics,
+): void => {
+  const { linesPerPage, bandLen } = m;
+  let chips = 0;
+  let seps = 0;
+  if (linesPerPage > 0 && lines.length > 0) {
+    for (let p = 0; p * linesPerPage < lines.length; p++) {
+      const count = Math.min((p + 1) * linesPerPage, lines.length) - p * linesPerPage;
+      const first = lines[p * linesPerPage] as VisualLine;
+      const last = lines[p * linesPerPage + count - 1] as VisualLine;
+      const prev = p > 0 ? (lines[p * linesPerPage - 1] as VisualLine) : null;
+      const bandAnchor = bandTopAt(grid, first);
+      if (prev && (!grid.multiCol || bandTopAt(grid, prev) === bandAnchor)) {
+        const el = sepPool[seps] ?? makePageSeparator(overlay, sepPool);
+        const x = (centerX(prev) + centerX(first)) / 2 + m.sepShift;
+        el.style.transform = `translate(${x}px, ${bandAnchor}px)`;
+        el.style.height = `${bandLen}px`;
+        el.style.display = '';
+        seps++;
+      }
+      const chip = pagePool[chips] ?? makePageNumber(overlay, pagePool);
+      const step = count >= 2 ? (centerX(first) - centerX(last)) / (count - 1) : m.pitch;
+      const chipX = centerX(first) - (step * (linesPerPage - 1)) / 2;
+      // Columns: the folio centers in its RESERVED STRIP — the first cell of
+      // the band gap, right under the page (gap下 then runs folio → border).
+      chip.style.transform = grid.multiCol
+        ? `translate(${chipX}px, ${bandAnchor + bandLen + m.cell / 2}px) translate(-50%, -50%)`
+        : `translate(${chipX}px, ${bandAnchor + bandLen}px) translate(-50%, 0) translateY(0.4em)`;
+      chip.textContent = `${p + 1}`;
+      chip.style.display = '';
+      chips++;
+    }
+  }
+  for (const el of pagePool.slice(chips)) el.style.display = 'none';
+  for (const el of sepPool.slice(seps)) el.style.display = 'none';
 };
 
 /** Group each paragraph's line-box rects (`Range.getClientRects`) into visual

@@ -154,16 +154,6 @@ export const pageEndsFromLines = (
   return out;
 };
 
-/** Text offsets of the page boundaries, straight from measured items — the
- *  composition of the two halves above (the editor calls them separately so
- *  the visual-line ends can be cached across measures). */
-export const pageBoundaryEnds = (
-  items: readonly LineItem[],
-  linesPerPage: number,
-  linePitch: number,
-  pagesPerBand: number = Number.POSITIVE_INFINITY,
-): number[] => pageEndsFromLines(visualLineEnds(items, linePitch), linesPerPage, pagesPerBand);
-
 /** The position itself, or — when it landed inside a ruby (a page's last glyph
  *  can be a base's last character, whose end offset maps into the hidden
  *  markup) — the position right AFTER the enclosing ruby node. */
