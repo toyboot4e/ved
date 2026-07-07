@@ -376,12 +376,11 @@ let rubyCache: {
   doc: PMNode;
   policy: Appear;
   expanded: Set<number>;
-  // Mirrors the invisibles/search the cached `set` was built ON TOP of (it
-  // starts from baseCache.set, which carries those markers) — so a toggle or a
-  // search change rebuilds it.
-  newline: boolean;
-  whitespace: boolean;
-  search: SearchHighlights | null;
+  // The base set the cached `set` was built ON TOP of. Its IDENTITY encodes
+  // every base input (doc, invisibles, search — and any key baseCache gains
+  // later), so a base rebuild invalidates this layer with no mirrored fields
+  // to drift.
+  base: DecorationSet;
   set: DecorationSet;
   atomBase: Map<number, Decoration>;
 } | null = null;
@@ -463,9 +462,7 @@ export const buildDecorations = (
     !rubyCache ||
     rubyCache.doc !== doc ||
     rubyCache.policy !== policy ||
-    rubyCache.newline !== invisibles.newline ||
-    rubyCache.whitespace !== invisibles.whitespace ||
-    rubyCache.search !== search ||
+    rubyCache.base !== baseCache.set ||
     !setsEq(rubyCache.expanded, expanded)
   ) {
     const { nodes, atomBase } = buildRubyStatic(parseCache, expanded);
@@ -473,9 +470,7 @@ export const buildDecorations = (
       doc,
       policy,
       expanded,
-      newline: invisibles.newline,
-      whitespace: invisibles.whitespace,
-      search,
+      base: baseCache.set,
       set: baseCache.set.add(doc, nodes),
       atomBase,
     };

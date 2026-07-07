@@ -13,22 +13,7 @@
 //
 // Line movement stays visual (the browser, over the editor's contentDOM);
 // only character movement is here, and it is a pure function of the document.
-import { type Appear, activeRuby, docLeaves, isHidden, type Leaf, lineOf, snapToGlyph } from './leaves';
-
-/** Is this ruby COLLAPSED (its markup `|`,`(`,`)` hidden) under the policy? Mirrors
- *  `isHidden`'s decision for the ruby's delimiters, but answers it for the BASE. */
-const rubyCollapsed = (leaf: Leaf, policy: Appear, activeLine: number, active: number): boolean => {
-  switch (policy) {
-    case 'plain':
-      return false;
-    case 'rich':
-      return true;
-    case 'paragraph':
-      return leaf.line !== activeLine;
-    case 'char':
-      return leaf.ruby !== active;
-  }
-};
+import { type Appear, activeRuby, docLeaves, isHidden, lineOf, rubyCollapsed, snapToGlyph } from './leaves';
 
 /** Sorted, unique caret-stop offsets for the whole document under `policy`,
  *  given where the caret currently is (which fixes the active paragraph/ruby

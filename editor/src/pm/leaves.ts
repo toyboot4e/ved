@@ -90,17 +90,22 @@ export const docLeaves = (doc: string): Leaf[] => {
 
 let lineStartsCache: { doc: string; starts: number[] } | null = null;
 
-/** The 0-based line index containing `offset`. Memoized line starts (same
- *  single-slot discipline as docLeaves) + binary search — the old per-call
- *  char scan was O(offset) on every caret move. The `\n` itself belongs to the
- *  line it ends, exactly like the scan it replaces. */
-export const lineOf = (doc: string, offset: number): number => {
+/** Offset of each line's first character. Memoized (same single-slot
+ *  discipline as docLeaves) — cursor mapping and lineOf share it. */
+export const lineStarts = (doc: string): number[] => {
   if (lineStartsCache?.doc !== doc) {
     const starts = [0];
     for (let i = 0; i < doc.length; i++) if (doc[i] === '\n') starts.push(i + 1);
     lineStartsCache = { doc, starts };
   }
-  const starts = lineStartsCache.starts;
+  return lineStartsCache.starts;
+};
+
+/** The 0-based line index containing `offset`: memoized line starts + binary
+ *  search — the old per-call char scan was O(offset) on every caret move. The
+ *  `\n` itself belongs to the line it ends, exactly like the scan it replaces. */
+export const lineOf = (doc: string, offset: number): number => {
+  const starts = lineStarts(doc);
   let lo = 0;
   let hi = starts.length - 1;
   let best = 0;
@@ -144,8 +149,14 @@ export const activeRuby = (leaves: Leaf[], offset: number): number => {
  *  kept read-only so the IME can't leak into it. Plain expands all; Rich
  *  collapses all; ByParagraph expands the caret paragraph's; ByCharacter expands
  *  the caret ruby's. (Plain text is never hidden; the base is handled separately.) */
-export const isHidden = (leaf: Leaf, policy: Appear, activeLine: number, active: number): boolean => {
-  if (leaf.kind !== 'delim' && leaf.kind !== 'rt') return false;
+export const isHidden = (leaf: Leaf, policy: Appear, activeLine: number, active: number): boolean =>
+  (leaf.kind === 'delim' || leaf.kind === 'rt') && rubyCollapsed(leaf, policy, activeLine, active);
+
+/** Is this leaf's ruby COLLAPSED (its markup `|`,`(`,`)` hidden) under the
+ *  policy? The ONE per-policy visibility switch — isHidden answers it for the
+ *  markup leaves, the caret model for the BASE. (pm/decorations resolves the
+ *  same rule into its expanded SET once per pass — the documented perf shape.) */
+export const rubyCollapsed = (leaf: Leaf, policy: Appear, activeLine: number, active: number): boolean => {
   switch (policy) {
     case 'plain':
       return false;

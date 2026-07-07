@@ -4,15 +4,10 @@
 // the `invisibles` prop — NOT custom properties, because the newline marker is a
 // ProseMirror widget decoration, so the editor must emit it, not just style it.
 // Not persisted yet; Phase-4 config.json will hydrate this same store.
+import type { Invisibles } from '@ved/editor';
 import { create } from 'zustand';
 
-/** The editor's `invisibles` prop shape (mirrors @ved/editor's Invisibles). */
-export type Invisibles = {
-  /** Show a ↵ marker at each line end (paragraph break). */
-  readonly newline: boolean;
-  /** Show markers for spaces (·), full-width spaces (□) and tabs (→). */
-  readonly whitespace: boolean;
-};
+export type { Invisibles };
 
 // Newline markers on by default (they aid prose editing and never touch the
 // model); whitespace markers off (noisier, opt-in).

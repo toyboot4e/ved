@@ -263,72 +263,78 @@ export const rubyPasteOutsidePos = ($h: ResolvedPos): number | null => {
 // node identity — model.test asserts the two stay equivalent.
 // ---------------------------------------------------------------------------
 
-type Maps = { offToPos: number[]; posToOff: number[] };
+type Maps = { offToPos: number[]; posToOff: (number | undefined)[] };
+
+// The shared caret-landing walk state + discipline (ONE implementation; the
+// whole-doc and per-paragraph drivers below both assemble from it):
+// `markBoth` is a caret-LANDING position (a text char, a delimiter boundary, or
+// the edge just before/after a ruby): it sets BOTH maps. Because offToPos keeps
+// the first position per offset and the inner regions are walked AFTER the
+// wrapper edge, an interior offset prefers the INNERMOST editable region.
+// `markPos` is an intermediate wrapper position (ruby content edge, between the
+// two regions): it records only posToOff, so `offsetToPos` never lands the caret
+// on a wrapper boundary where editing/IME has no real text to attach to.
+type WalkState = { off: number; pos: number; offToPos: number[]; posToOff: (number | undefined)[] };
+
+const markBoth = (st: WalkState): void => {
+  st.posToOff[st.pos] = st.off;
+  if (st.offToPos[st.off] === undefined) st.offToPos[st.off] = st.pos;
+};
+const markPos = (st: WalkState): void => {
+  st.posToOff[st.pos] = st.off;
+};
+// Walk a run of characters: each spends one offset and one position.
+const walkChars = (st: WalkState, s: string): void => {
+  for (let i = 0; i < s.length; i++) {
+    markBoth(st);
+    st.off += 1;
+    st.pos += 1;
+  }
+};
+/** Walk one paragraph's children (and its content-end landing) — the ruby
+ *  offset/position accounting, written ONCE. */
+const walkParagraphChildren = (st: WalkState, para: PMNode): void => {
+  para.forEach((child) => {
+    if (child.type.name === 'ruby') {
+      markBoth(st); // the front boundary (before the ruby node — logically outside)
+      st.off += child.attrs.front.length; // spend the front marker (`|` / `｜`)
+      st.pos += 1; // into the ruby content
+      markPos(st); // ruby content start (wrapper edge)
+      st.pos += 1; // into rubyBase content
+      walkChars(st, rubyBaseText(child));
+      markBoth(st); // after the base = the open-delimiter boundary
+      st.off += child.attrs.open.length; // spend the opening delimiter (`(` / `《`)
+      st.pos += 1; // out of rubyBase
+      markPos(st); // between rubyBase and rubyReading (wrapper edge)
+      st.pos += 1; // into rubyReading content
+      walkChars(st, rubyReadingText(child));
+      markBoth(st); // after the reading = the close-delimiter boundary
+      st.pos += 1; // out of rubyReading
+      markPos(st); // ruby content end (wrapper edge, still before the close delimiter)
+      st.off += child.attrs.close.length; // spend the closing delimiter (`)` / `》`)
+      st.pos += 1; // out of the ruby node
+    } else {
+      walkChars(st, child.textContent);
+    }
+  });
+  markBoth(st); // paragraph content end (also the empty-paragraph caret)
+};
 
 const buildMaps = (doc: PMNode): Maps => {
-  const offToPos: number[] = [];
-  const posToOff: number[] = [];
-  let off = 0;
-  let pos = 0;
-  // `markBoth` is a caret-LANDING position (a text char, a delimiter boundary, or
-  // the edge just before/after a ruby): it sets BOTH maps. Because offToPos keeps
-  // the first position per offset and the inner regions are walked AFTER the
-  // wrapper edge, an interior offset prefers the INNERMOST editable region.
-  // `markPos` is an intermediate wrapper position (ruby content edge, between the
-  // two regions): it records only posToOff, so `offsetToPos` never lands the caret
-  // on a wrapper boundary where editing/IME has no real text to attach to.
-  const markBoth = (): void => {
-    posToOff[pos] = off;
-    if (offToPos[off] === undefined) offToPos[off] = pos;
-  };
-  const markPos = (): void => {
-    posToOff[pos] = off;
-  };
-  // Walk a run of characters: each spends one offset and one position.
-  const walkChars = (s: string): void => {
-    for (let i = 0; i < s.length; i++) {
-      markBoth();
-      off += 1;
-      pos += 1;
-    }
-  };
-
+  const st: WalkState = { off: 0, pos: 0, offToPos: [], posToOff: [] };
   doc.forEach((para, paraOff) => {
     if (paraOff > 0) {
       // The newline between paragraphs sits at the previous paragraph's end pos.
-      off += 1;
+      st.off += 1;
     }
-    pos += 1; // into the paragraph content (offset 0 maps HERE, not the doc edge)
-    para.forEach((child) => {
-      if (child.type.name === 'ruby') {
-        markBoth(); // the front boundary (before the ruby node — logically outside)
-        off += child.attrs.front.length; // spend the front marker (`|` / `｜`)
-        pos += 1; // into the ruby content
-        markPos(); // ruby content start (wrapper edge)
-        pos += 1; // into rubyBase content
-        walkChars(rubyBaseText(child));
-        markBoth(); // after the base = the open-delimiter boundary
-        off += child.attrs.open.length; // spend the opening delimiter (`(` / `《`)
-        pos += 1; // out of rubyBase
-        markPos(); // between rubyBase and rubyReading (wrapper edge)
-        pos += 1; // into rubyReading content
-        walkChars(rubyReadingText(child));
-        markBoth(); // after the reading = the close-delimiter boundary
-        pos += 1; // out of rubyReading
-        markPos(); // ruby content end (wrapper edge, still before the close delimiter)
-        off += child.attrs.close.length; // spend the closing delimiter (`)` / `》`)
-        pos += 1; // out of the ruby node
-      } else {
-        walkChars(child.textContent);
-      }
-    });
-    markBoth(); // paragraph content end (also the empty-paragraph caret)
-    pos += 1; // out of the paragraph
+    st.pos += 1; // into the paragraph content (offset 0 maps HERE, not the doc edge)
+    walkParagraphChildren(st, para);
+    st.pos += 1; // out of the paragraph
   });
   // The final position (doc end) carries the final offset.
-  posToOff[pos] = off;
-  if (offToPos[off] === undefined) offToPos[off] = Math.min(pos, doc.content.size);
-  return { offToPos, posToOff };
+  st.posToOff[st.pos] = st.off;
+  if (st.offToPos[st.off] === undefined) st.offToPos[st.off] = Math.min(st.pos, doc.content.size);
+  return { offToPos: st.offToPos, posToOff: st.posToOff };
 };
 
 // ---------------------------------------------------------------------------
@@ -354,49 +360,11 @@ const paraMapsCache = new WeakMap<PMNode, ParaMaps>();
 const paraMaps = (para: PMNode): ParaMaps => {
   const hit = paraMapsCache.get(para);
   if (hit) return hit;
-  const offToPos: number[] = [];
-  const posToOff: (number | undefined)[] = [];
-  let off = 0;
-  let pos = 1; // into the paragraph content
-  const markBoth = (): void => {
-    posToOff[pos] = off;
-    if (offToPos[off] === undefined) offToPos[off] = pos;
-  };
-  const markPos = (): void => {
-    posToOff[pos] = off;
-  };
-  const walkChars = (s: string): void => {
-    for (let i = 0; i < s.length; i++) {
-      markBoth();
-      off += 1;
-      pos += 1;
-    }
-  };
-  para.forEach((child) => {
-    if (child.type.name === 'ruby') {
-      markBoth(); // the front boundary (before the ruby node — logically outside)
-      off += child.attrs.front.length; // spend the front marker (`|` / `｜`)
-      pos += 1; // into the ruby content
-      markPos(); // ruby content start (wrapper edge)
-      pos += 1; // into rubyBase content
-      walkChars(rubyBaseText(child));
-      markBoth(); // after the base = the open-delimiter boundary
-      off += child.attrs.open.length; // spend the opening delimiter (`(` / `《`)
-      pos += 1; // out of rubyBase
-      markPos(); // between rubyBase and rubyReading (wrapper edge)
-      pos += 1; // into rubyReading content
-      walkChars(rubyReadingText(child));
-      markBoth(); // after the reading = the close-delimiter boundary
-      pos += 1; // out of rubyReading
-      markPos(); // ruby content end (wrapper edge, still before the close delimiter)
-      off += child.attrs.close.length; // spend the closing delimiter (`)` / `》`)
-      pos += 1; // out of the ruby node
-    } else {
-      walkChars(child.textContent);
-    }
-  });
-  markBoth(); // paragraph content end (also the empty-paragraph caret)
-  const maps = { offToPos, posToOff };
+  // Local coordinates: position 0 = BEFORE the paragraph node (content starts
+  // at local 1); offset 0 = the paragraph's first character.
+  const st: WalkState = { off: 0, pos: 1, offToPos: [], posToOff: [] };
+  walkParagraphChildren(st, para);
+  const maps = { offToPos: st.offToPos, posToOff: st.posToOff };
   paraMapsCache.set(para, maps);
   return maps;
 };

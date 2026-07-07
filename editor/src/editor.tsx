@@ -81,7 +81,7 @@ export type EditorSnapshot = {
 
 // Re-exported so the shell can type its search state without reaching into
 // `pm/` (which stays private — see index.ts).
-export type { SearchHighlights, SearchRange } from './pm/decorations';
+export type { Invisibles, SearchHighlights, SearchRange } from './pm/decorations';
 
 /** Plain-offset operations the search bar drives (see
  *  VedEditorProps.onSearchOps). Every edit goes through the normal dispatch,
@@ -291,6 +291,11 @@ export const VedEditor = (props: VedEditorProps): React.JSX.Element => {
           TextSelection.create(state.doc, offsetToPos(state.doc, aOff), offsetToPos(state.doc, off)),
         ),
       );
+      // Seed the undo anchor at the restored caret: this apply() bypasses
+      // dispatchTransaction, so without it the FIRST edit after a tab
+      // switch-back records cursorBefore = offset 0 and its undo jumps the
+      // caret to the document start.
+      beforeOffsetRef.current = off;
     }
 
     // Record a document change in undo history (and notify the buffer). Shared

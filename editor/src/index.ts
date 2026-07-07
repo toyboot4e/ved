@@ -5,18 +5,12 @@
 
 // Commands and keybindings — the aggregated API for user configuration and
 // extensions (see commands.ts).
-export type {
-  Chord,
-  ChordEvent,
-  CoreCommandId,
-  EditorCommand,
-  EditorCommandContext,
-  EditorCommandId,
-} from './commands';
-export { AppearPolicy, CORE_COMMANDS, chordOf, DEFAULT_KEYBINDINGS } from './commands';
+export type { Chord, ChordEvent, EditorCommandId } from './commands';
+export { AppearPolicy, DEFAULT_KEYBINDINGS } from './commands';
 export type {
   EditorSearchOps,
   EditorSnapshot,
+  Invisibles,
   SearchHighlights,
   SearchRange,
   VedEditorProps,

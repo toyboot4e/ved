@@ -4,21 +4,16 @@
 // string. (ProseMirror positions, which count node boundaries, are a separate
 // mapping — see pm/model.ts `offsetToPos`.)
 import type { CursorState } from '../history';
+import { lineOf, lineStarts } from './leaves';
 
 export type { CursorState };
 
-const lineStarts = (doc: string): number[] => {
-  const starts = [0];
-  for (let i = 0; i < doc.length; i++) if (doc[i] === '\n') starts.push(i + 1);
-  return starts;
-};
-
-/** Resolve a document offset to {para, offset-within-line}. */
+/** Resolve a document offset to {para, offset-within-line}. Memoized line
+ *  starts + binary search (pm/leaves) — the old per-call scan rebuilt the
+ *  starts and walked them linearly on every commit/snapshot. */
 export const offsetToCursor = (doc: string, offset: number): CursorState => {
-  const starts = lineStarts(doc);
-  let para = 0;
-  for (let i = 0; i < starts.length; i++) if (starts[i]! <= offset) para = i;
-  return { para, offset: offset - starts[para]! };
+  const para = lineOf(doc, offset);
+  return { para, offset: offset - lineStarts(doc)[para]! };
 };
 
 /** Resolve {para, offset-within-line} back to a document offset, clamped to
