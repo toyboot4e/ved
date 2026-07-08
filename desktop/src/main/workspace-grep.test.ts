@@ -37,6 +37,15 @@ describe('grepWorkspaceFiles', () => {
     expect(matches.map((m) => m.label)).toEqual(['poem.txt']);
   });
 
+  it('never greps gitignored files (the grep rides the gitignore-honoring index)', async () => {
+    await writeFile(join(dir, '.gitignore'), 'secret.txt\n', 'utf-8');
+    await writeFile(join(dir, 'secret.txt'), 'みつけた ひみつ\n', 'utf-8');
+    await writeFile(join(dir, 'open.txt'), 'みつけた こうかい\n', 'utf-8');
+    const { matches, total } = await grepWorkspaceFiles([dir], 'みつけた');
+    expect(matches.map((m) => m.label)).toEqual(['open.txt']);
+    expect(total).toBe(1);
+  });
+
   it('an empty query is empty, not everything', async () => {
     await writeFile(join(dir, 'a.txt'), 'text\n', 'utf-8');
     expect(await grepWorkspaceFiles([dir], '')).toEqual({ matches: [], total: 0 });

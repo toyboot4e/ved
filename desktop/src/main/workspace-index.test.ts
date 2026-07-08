@@ -58,6 +58,16 @@ describe('workspace-index', () => {
     expect(await labels([dir])).toEqual(['other/skip.log', 'pkg/.gitignore', 'pkg/keep.log']);
   });
 
+  it('carries the layered text verdict (isText) on each file', async () => {
+    await write(dir, 'prose.txt', '|空(そら)は青い\n');
+    await write(dir, 'movie.iso', 'name alone decides'); // denylisted extension
+    await writeFile(join(dir, 'blob.rec'), Buffer.from([0x43, 0x44, 0x00, 0x01])); // unknown ext, binary bytes
+    const byLabel = new Map((await listWorkspaceFiles([dir])).map((f) => [f.label, f.isText]));
+    expect(byLabel.get('prose.txt')).toBe(true);
+    expect(byLabel.get('movie.iso')).toBe(false);
+    expect(byLabel.get('blob.rec')).toBe(false);
+  });
+
   it('does not follow directory symlinks (loop safety)', async () => {
     await write(dir, 'real.txt');
     await symlink(dir, join(dir, 'loop'), 'dir');

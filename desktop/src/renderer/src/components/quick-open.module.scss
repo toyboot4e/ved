@@ -54,7 +54,7 @@
   }
 }
 
-// The line under the search box: the text-only checkbox (right-aligned)
+// The line under the search box: the text-only checkbox (left-aligned)
 .optionsRow {
   flex: none;
   display: flex;
@@ -99,9 +99,8 @@
   border-color: var(--ved-accent);
 }
 
-// The text-only filter: a labeled checkbox pinned to the mode row's right end
+// The text-only filter: a labeled checkbox
 .textOnly {
-  margin-inline-start: auto;
   display: inline-flex;
   align-items: center;
   gap: 6px;
