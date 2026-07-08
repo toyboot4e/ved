@@ -35,7 +35,7 @@
           src = self;
           pnpm = pkgs.pnpm_10;
           fetcherVersion = 3;
-          hash = "sha256-SgDa/S+E0o3V2xUQKL0qbbijHEzQieS7uRB3qSi6uOM=";
+          hash = "sha256-oQWMCIJF9+PCG60Gm3nJ6dzA/PDoUsBDRo7MCnkj+h4=";
         };
 
       # A sandboxed check that runs a pnpm script against a node_modules
@@ -46,7 +46,7 @@
           name = "ved-${name}";
           src = self;
           nativeBuildInputs = with pkgs; [
-            nodejs_24
+            nodejs_26
             pnpm_10
             pnpmConfigHook
           ];
@@ -154,7 +154,7 @@
               biome
               just
               ni
-              nodejs_24
+              nodejs_26
               pnpm
               pinact
               zizmor
@@ -185,9 +185,10 @@
           # pnpm 10, not 11: pnpm 11's store writes a SQLite index whose file
           # descriptor is guarded on macOS; pnpm's cleanup closes fds by number
           # and gets SIGKILLed with EXC_GUARD inside the fetchDeps build.
-          # nodejs_24 matches the Node bundled in Electron 42 (24.15.0).
+          # nodejs_26 is the build-tooling Node (vite/tsc/vitest); the shipped
+          # app runs on the Node bundled in nixpkgs' electron, not this one.
           nativeBuildInputs = with pkgs; [
-            nodejs_24
+            nodejs_26
             pnpm_10
             pnpmConfigHook
             makeWrapper
