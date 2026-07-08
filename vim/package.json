@@ -7,7 +7,9 @@
     ".": "./src/index.ts"
   },
   "scripts": {
-    "typecheck": "tsc --noEmit -p tsconfig.json --composite false"
+    "typecheck": "tsc --noEmit -p tsconfig.json --composite false",
+    "keybindings": "node scripts/gen-keybindings.ts",
+    "keybindings:check": "node scripts/gen-keybindings.ts --check"
   },
   "dependencies": {
     "@ved/editor": "workspace:*"

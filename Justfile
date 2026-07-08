@@ -113,6 +113,14 @@ test-all:
 [private]
 alias ta := test-all
 
+# regenerates the Vim keybinding reference (vim/docs/keybindings.{json,md}) by
+# joining Vim's own index.txt against @ved/vim's declared binding catalog
+vim-keys:
+    pnpm -C vim run keybindings
+
+[private]
+alias vk := vim-keys
+
 # typechecks both the node and web tsconfigs
 typecheck:
     pnpm run typecheck

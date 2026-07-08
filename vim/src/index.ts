@@ -5,6 +5,10 @@
 // spacing — config.ts) are INTERNAL: nothing outside the package consumes
 // them, and un-exported they can be reshaped freely.
 
+// The declared binding catalog (assembled from the dispatch tables): the
+// single source of truth for what this extension implements. Consumed by the
+// keybinding-reference generator, and available to an in-app help view.
+export { VIM_BINDINGS, type VimBinding, type VimBindingKind, type VimBindingMode } from './bindings';
 export { createVimExtension, type VimExtensionOptions } from './extension';
 // compileKeymap is exported so a shell can VALIDATE a user keymap (e.g. a
 // config file) early and report errors without constructing the extension.

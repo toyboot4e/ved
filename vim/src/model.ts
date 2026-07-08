@@ -362,108 +362,214 @@ const commandLineKey = (state: VimState, key: VimKey, doc: VimDocView): VimStep 
  *  the character AT the target too (`e`, `f`, `t`). */
 type Motion = { readonly target: number; readonly inclusive: boolean; readonly linewise: boolean };
 
-/** Resolve a charwise/linewise motion (`null` for keys that aren't one). `gg`
- *  arrives as the pseudo-key 'gg'; `hasCount` distinguishes `5G` (goto line)
- *  from bare `G` (last line). */
-const motionTarget = (m: string, count: number, hasCount: boolean, doc: VimDocView, from: number): Motion | null => {
-  const { text, caretStop } = doc;
-  switch (m) {
-    case 'h': {
-      const ls = lineStart(text, from);
-      let o = from;
-      for (let i = 0; i < count; i++) {
-        const n = caretStop(o, -1);
-        if (n === o || n < ls) break;
-        o = n;
-      }
-      return { target: o, inclusive: false, linewise: false };
-    }
-    case 'l': {
-      const le = lineEnd(text, from);
-      let o = from;
-      for (let i = 0; i < count; i++) {
-        const n = caretStop(o, 1);
-        if (n === o || n > le) break;
-        o = n;
-      }
-      return { target: o, inclusive: false, linewise: false };
-    }
-    // Word motions run over the raw plain text (markup included) then SNAP the
-    // target to a legal caret stop in the motion direction — so a boundary
-    // landing inside a collapsed ruby's markup skips out to the ruby's edge
-    // rather than stranding the caret there (it used to get stuck at a ruby).
-    // The word GRANULARITY is pluggable (`doc.words` — default CLASS_WORDS, or
-    // the Japanese segmenter).
-    case 'w': {
-      const words = doc.words ?? CLASS_WORDS;
-      let o = from;
-      for (let i = 0; i < count; i++) o = doc.snapCaret(words.next(text, o), 1);
-      return { target: o, inclusive: false, linewise: false };
-    }
-    case 'b': {
-      const words = doc.words ?? CLASS_WORDS;
-      let o = from;
-      for (let i = 0; i < count; i++) o = doc.snapCaret(words.prev(text, o), -1);
-      return { target: o, inclusive: false, linewise: false };
-    }
-    case 'e': {
-      const words = doc.words ?? CLASS_WORDS;
-      let o = from;
-      for (let i = 0; i < count; i++) o = doc.snapCaret(words.end(text, o), 1);
-      return { target: o, inclusive: true, linewise: false };
-    }
-    case 'W': {
-      let o = from;
-      for (let i = 0; i < count; i++) o = doc.snapCaret(BIG_WORDS.next(text, o), 1);
-      return { target: o, inclusive: false, linewise: false };
-    }
-    case 'B': {
-      let o = from;
-      for (let i = 0; i < count; i++) o = doc.snapCaret(BIG_WORDS.prev(text, o), -1);
-      return { target: o, inclusive: false, linewise: false };
-    }
-    case 'E': {
-      let o = from;
-      for (let i = 0; i < count; i++) o = doc.snapCaret(BIG_WORDS.end(text, o), 1);
-      return { target: o, inclusive: true, linewise: false };
-    }
-    case '%': {
-      const m = matchBracket(text, from);
-      return m == null ? null : { target: m, inclusive: true, linewise: false };
-    }
-    case '}': {
-      let o = from;
-      for (let i = 0; i < count; i++) o = paraForward(text, o);
-      return { target: o, inclusive: false, linewise: false };
-    }
-    case '{': {
-      let o = from;
-      for (let i = 0; i < count; i++) o = paraBack(text, o);
-      return { target: o, inclusive: false, linewise: false };
-    }
-    case '0':
-      return { target: lineStart(text, from), inclusive: false, linewise: false };
-    case '^':
-      return { target: firstNonBlank(text, from), inclusive: false, linewise: false };
-    case '$':
-      return { target: lineEnd(text, from), inclusive: false, linewise: false };
-    // gg/G land on the target line KEEPING the current column (Vim with
-    // `nostartofline`); still linewise so `dgg`/`dG` take whole lines.
-    case 'gg':
-      return {
-        target: atColumn(text, from, hasCount ? lineStartOf(text, count - 1) : 0),
-        inclusive: false,
-        linewise: true,
-      };
-    case 'G':
-      return {
-        target: atColumn(text, from, hasCount ? lineStartOf(text, count - 1) : lineStart(text, text.length)),
-        inclusive: false,
-        linewise: true,
-      };
-    default:
-      return null;
+/** What a motion's resolver reads: the caret origin `from` and the resolved
+ *  count. */
+type MotionEnv = {
+  readonly doc: VimDocView;
+  readonly from: number;
+  readonly count: number;
+  readonly hasCount: boolean;
+};
+
+/** A motion DEFINITION: its static range flags, a human description, and a pure
+ *  resolver from origin → target offset (`null` = no target, e.g. `%` off a
+ *  bracket). `inclusive` = the operator range takes the char AT the target too
+ *  (`e`, `f`, `t`); `linewise` = whole lines (`gg`, `G`). */
+type MotionDef = {
+  readonly inclusive: boolean;
+  readonly linewise: boolean;
+  readonly desc: string;
+  readonly resolve: (env: MotionEnv) => number | null;
+};
+
+/** Step `count` caret stops within the caret's line (h/l): a collapsed ruby is
+ *  one stop, and the walk never crosses the line boundary. */
+const stepInLine = (doc: VimDocView, from: number, count: number, dir: 1 | -1): number => {
+  const bound = dir < 0 ? lineStart(doc.text, from) : lineEnd(doc.text, from);
+  let o = from;
+  for (let i = 0; i < count; i++) {
+    const n = doc.caretStop(o, dir);
+    if (n === o || (dir < 0 ? n < bound : n > bound)) break;
+    o = n;
   }
+  return o;
+};
+
+/** Walk `count` word boundaries with the pluggable word model, then SNAP each
+ *  target to a legal caret stop in the walk direction — a boundary landing
+ *  inside a collapsed ruby's markup skips out to the ruby's edge rather than
+ *  stranding the caret (it used to get stuck at a ruby). The word GRANULARITY
+ *  is pluggable (`doc.words` — default CLASS_WORDS, or the Japanese segmenter);
+ *  `big` forces WORD (whitespace-delimited). */
+const wordStep = (doc: VimDocView, from: number, count: number, edge: keyof WordModel, big: boolean): number => {
+  const words = big ? BIG_WORDS : (doc.words ?? CLASS_WORDS);
+  const dir = edge === 'prev' ? -1 : 1;
+  let o = from;
+  for (let i = 0; i < count; i++) o = doc.snapCaret(words[edge](doc.text, o), dir);
+  return o;
+};
+
+/** Repeat a plain-offset step `count` times from `from`. */
+const repeatStep = (from: number, count: number, step: (o: number) => number): number => {
+  let o = from;
+  for (let i = 0; i < count; i++) o = step(o);
+  return o;
+};
+
+/** Every motion DEFINITION, keyed by its stable id — the resolver switches on
+ *  the id, never the key, so a remapped key can't break it (MOTION_BINDINGS
+ *  maps keys → ids). The record's keys ARE `MotionId`, so adding a motion is a
+ *  single edit here; `bindings.ts` reads this table for the reference doc. */
+export const MOTIONS = {
+  charLeft: {
+    inclusive: false,
+    linewise: false,
+    desc: 'left within the line',
+    resolve: ({ doc, from, count }) => stepInLine(doc, from, count, -1),
+  },
+  charRight: {
+    inclusive: false,
+    linewise: false,
+    desc: 'right within the line',
+    resolve: ({ doc, from, count }) => stepInLine(doc, from, count, 1),
+  },
+  wordForward: {
+    inclusive: false,
+    linewise: false,
+    desc: 'N words forward',
+    resolve: ({ doc, from, count }) => wordStep(doc, from, count, 'next', false),
+  },
+  wordBackward: {
+    inclusive: false,
+    linewise: false,
+    desc: 'N words backward',
+    resolve: ({ doc, from, count }) => wordStep(doc, from, count, 'prev', false),
+  },
+  wordEnd: {
+    inclusive: true,
+    linewise: false,
+    desc: 'forward to the end of a word',
+    resolve: ({ doc, from, count }) => wordStep(doc, from, count, 'end', false),
+  },
+  bigWordForward: {
+    inclusive: false,
+    linewise: false,
+    desc: 'N WORDs forward',
+    resolve: ({ doc, from, count }) => wordStep(doc, from, count, 'next', true),
+  },
+  bigWordBackward: {
+    inclusive: false,
+    linewise: false,
+    desc: 'N WORDs backward',
+    resolve: ({ doc, from, count }) => wordStep(doc, from, count, 'prev', true),
+  },
+  bigWordEnd: {
+    inclusive: true,
+    linewise: false,
+    desc: 'forward to the end of a WORD',
+    resolve: ({ doc, from, count }) => wordStep(doc, from, count, 'end', true),
+  },
+  matchBracket: {
+    inclusive: true,
+    linewise: false,
+    desc: 'to the matching bracket',
+    resolve: ({ doc, from }) => matchBracket(doc.text, from),
+  },
+  paraForward: {
+    inclusive: false,
+    linewise: false,
+    desc: 'N paragraphs forward',
+    resolve: ({ doc, from, count }) => repeatStep(from, count, (o) => paraForward(doc.text, o)),
+  },
+  paraBack: {
+    inclusive: false,
+    linewise: false,
+    desc: 'N paragraphs backward',
+    resolve: ({ doc, from, count }) => repeatStep(from, count, (o) => paraBack(doc.text, o)),
+  },
+  lineStart: {
+    inclusive: false,
+    linewise: false,
+    desc: 'to the first column of the line',
+    resolve: ({ doc, from }) => lineStart(doc.text, from),
+  },
+  firstNonBlank: {
+    inclusive: false,
+    linewise: false,
+    desc: 'to the first non-blank of the line',
+    resolve: ({ doc, from }) => firstNonBlank(doc.text, from),
+  },
+  lineEnd: {
+    inclusive: false,
+    linewise: false,
+    desc: 'to the end of the line',
+    resolve: ({ doc, from }) => lineEnd(doc.text, from),
+  },
+  // gg/G land on the target line KEEPING the current column (Vim with
+  // `nostartofline`); still linewise so `dgg`/`dG` take whole lines.
+  gotoFirst: {
+    inclusive: false,
+    linewise: true,
+    desc: 'to line N, default the first line',
+    resolve: ({ doc, from, count, hasCount }) =>
+      atColumn(doc.text, from, hasCount ? lineStartOf(doc.text, count - 1) : 0),
+  },
+  gotoLast: {
+    inclusive: false,
+    linewise: true,
+    desc: 'to line N, default the last line',
+    resolve: ({ doc, from, count, hasCount }) =>
+      atColumn(doc.text, from, hasCount ? lineStartOf(doc.text, count - 1) : lineStart(doc.text, doc.text.length)),
+  },
+} satisfies Record<string, MotionDef>;
+
+/** The semantic identity of a motion — derived FROM the definition table, so
+ *  the id set and the resolvers can never diverge. */
+export type MotionId = keyof typeof MOTIONS;
+
+/** Default key → motion binding: the remappable layer over MOTIONS. `gg`
+ *  arrives as the pseudo-key 'gg' from the g-sequence layer. */
+export const MOTION_BINDINGS: Readonly<Record<string, MotionId>> = {
+  h: 'charLeft',
+  l: 'charRight',
+  w: 'wordForward',
+  b: 'wordBackward',
+  e: 'wordEnd',
+  W: 'bigWordForward',
+  B: 'bigWordBackward',
+  E: 'bigWordEnd',
+  '%': 'matchBracket',
+  '}': 'paraForward',
+  '{': 'paraBack',
+  '0': 'lineStart',
+  '^': 'firstNonBlank',
+  $: 'lineEnd',
+  gg: 'gotoFirst',
+  G: 'gotoLast',
+};
+
+/** Resolve the motion a key triggers (`null` when the key is not a motion, or
+ *  the motion found no target). `hasCount` distinguishes `5G` (goto line) from
+ *  bare `G` (last line). */
+const motionTarget = (m: string, count: number, hasCount: boolean, doc: VimDocView, from: number): Motion | null => {
+  const id = MOTION_BINDINGS[m];
+  if (!id) return null;
+  const def = MOTIONS[id];
+  const target = def.resolve({ doc, from, count, hasCount });
+  return target == null ? null : { target, inclusive: def.inclusive, linewise: def.linewise };
+};
+
+/** The find-family keys: f/F/t/T take a {char} argument (dispatch stages them
+ *  via charPending); ;/, repeat the last find (`,` reversed). Declared as data
+ *  for the reference catalog — `bindings.ts` reads it; the runtime resolves
+ *  f/F/t/T through `findTarget` and ;/, through `repeatFind`. */
+export const FIND_BINDINGS: Readonly<Record<string, { readonly desc: string; readonly takesChar: boolean }>> = {
+  f: { desc: 'to the N-th occurrence of {char} to the right (inclusive)', takesChar: true },
+  F: { desc: 'to the N-th occurrence of {char} to the left', takesChar: true },
+  t: { desc: 'till before the N-th occurrence of {char} to the right', takesChar: true },
+  T: { desc: 'till after the N-th occurrence of {char} to the left', takesChar: true },
+  ';': { desc: 'repeat the last f/F/t/T [count] times', takesChar: false },
+  ',': { desc: 'repeat the last f/F/t/T in the opposite direction', takesChar: false },
 };
 
 /** f/F/t/T within the caret's line. Forward finds are INCLUSIVE motions
@@ -889,7 +995,7 @@ const displayWalk =
     handled: true,
   });
 
-const G_SEQUENCES: Readonly<Record<string, VimAction>> = {
+export const G_SEQUENCES: Readonly<Record<string, VimAction>> = {
   gg: (state, _env, doc) => commandKey(state, 'gg', doc),
   gh: displayWalk('left'),
   gj: displayWalk('down'),
@@ -924,7 +1030,7 @@ const G_SEQUENCES: Readonly<Record<string, VimAction>> = {
 /** Every key `textObjectRange` understands: word/WORD, paragraph, quotes,
  *  `b`/`B` aliases, and BOTH chars of every bracket pair (config.ts —
  *  Japanese brackets included). */
-const TEXT_OBJECT_KEYS: readonly string[] = [
+export const TEXT_OBJECT_KEYS: readonly string[] = [
   ...new Set(['w', 'W', 'b', 'B', '"', "'", '`', 'p', ...BRACKET_PAIRS.flatMap(([o, c]) => [o, c])]),
 ];
 
@@ -1481,7 +1587,7 @@ const VISUAL_ACTIONS = {
   },
 } satisfies Record<string, VimAction>;
 
-const VISUAL_BINDINGS: Readonly<Record<string, keyof typeof VISUAL_ACTIONS>> = {
+export const VISUAL_BINDINGS: Readonly<Record<string, keyof typeof VISUAL_ACTIONS>> = {
   v: 'visual.toggleChar',
   V: 'visual.toggleLine',
   o: 'visual.swapEnds',
@@ -1691,7 +1797,7 @@ const NORMAL_ACTIONS = {
   }),
 } satisfies Record<string, VimAction>;
 
-const NORMAL_BINDINGS: Readonly<Record<string, keyof typeof NORMAL_ACTIONS>> = {
+export const NORMAL_BINDINGS: Readonly<Record<string, keyof typeof NORMAL_ACTIONS>> = {
   i: 'insert.here',
   a: 'insert.after',
   I: 'insert.lineStart',
