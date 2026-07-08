@@ -20,6 +20,15 @@ export class PlainTextHistory {
   private pointer: number;
   private lastPushTime: number = 0;
   private debounceMs: number = 500;
+  /** Explicit-group nesting depth. While > 0, pushes merge into the group's
+   *  entry REGARDLESS of time — batching is the caller's to end, not the
+   *  clock's. Depth (not a boolean) so a replayed key sequence re-entering
+   *  the group wrapper (Vim's `.`) nests harmlessly. */
+  private groupDepth: number = 0;
+  /** Whether the open group has pushed its first entry yet. The first push
+   *  of a group always CREATES an entry — it must never merge into whatever
+   *  timed batch happened to precede the group. */
+  private groupHasEntry: boolean = false;
 
   constructor(initialText: string) {
     this.entries = [{ text: initialText, cursor: null }];
@@ -27,24 +36,64 @@ export class PlainTextHistory {
   }
 
   push(entry: HistoryEntry): void {
-    const now = Date.now();
     const atLast = this.pointer === this.entries.length - 1;
+    if (this.groupDepth > 0) {
+      if (this.groupHasEntry && atLast && this.pointer > 0) {
+        this.merge(entry);
+      } else {
+        this.append(entry);
+        this.groupHasEntry = true;
+      }
+      // Group merging is purely group-controlled; never extend a timed batch
+      // across a group's edges.
+      this.lastPushTime = 0;
+      return;
+    }
+    const now = Date.now();
     if (now - this.lastPushTime < this.debounceMs && this.pointer > 0 && atLast) {
       // Within debounce window and at the newest entry: replace it (batch edits).
       // After an undo (pointer not at the end) we must not overwrite a middle
-      // entry in place — that would leave a stale redo stack. Preserve the
-      // batch's ORIGINAL pre-edit caret so undoing the whole batch returns there.
-      // biome-ignore lint/style/noNonNullAssertion: atLast ⇒ entry exists
-      const keepBefore = this.entries[this.pointer]!.cursorBefore;
-      if (keepBefore !== undefined) entry.cursorBefore = keepBefore;
-      this.entries[this.pointer] = entry;
+      // entry in place — that would leave a stale redo stack.
+      this.merge(entry);
     } else {
-      // New batch: truncate redo entries and push
-      this.entries = this.entries.slice(0, this.pointer + 1);
-      this.entries.push(entry);
-      this.pointer = this.entries.length - 1;
+      this.append(entry);
     }
     this.lastPushTime = now;
+  }
+
+  /** Replace the newest entry (batch), preserving the batch's ORIGINAL
+   *  pre-edit caret so undoing the whole batch returns there. */
+  private merge(entry: HistoryEntry): void {
+    // biome-ignore lint/style/noNonNullAssertion: callers check atLast ⇒ entry exists
+    const keepBefore = this.entries[this.pointer]!.cursorBefore;
+    if (keepBefore !== undefined) entry.cursorBefore = keepBefore;
+    this.entries[this.pointer] = entry;
+  }
+
+  /** New batch: truncate redo entries and push. */
+  private append(entry: HistoryEntry): void {
+    this.entries = this.entries.slice(0, this.pointer + 1);
+    this.entries.push(entry);
+    this.pointer = this.entries.length - 1;
+  }
+
+  /** Open an explicit undo group: until the matching `endGroup`, every push
+   *  merges into one entry no matter how much time passes. A modal extension
+   *  brackets e.g. an insert-mode session (`i`…`Esc`) so it undoes as ONE
+   *  unit. Nests by depth — only the outermost `endGroup` closes it. */
+  beginGroup(): void {
+    this.groupDepth++;
+  }
+
+  /** Close an explicit undo group (outermost close ends the entry; the next
+   *  push starts fresh). A no-op with no group open. */
+  endGroup(): void {
+    if (this.groupDepth === 0) return;
+    this.groupDepth--;
+    if (this.groupDepth === 0) {
+      this.groupHasEntry = false;
+      this.lastPushTime = 0;
+    }
   }
 
   /** End the current batch: the next push starts a fresh entry even inside
@@ -54,7 +103,17 @@ export class PlainTextHistory {
     this.lastPushTime = 0;
   }
 
+  /** Undo/redo inside an open group would merge FUTURE edits into an entry
+   *  behind the pointer — force-close instead; the wrapper's later
+   *  `endGroup`s no-op harmlessly. */
+  private closeGroups(): void {
+    this.groupDepth = 0;
+    this.groupHasEntry = false;
+    this.lastPushTime = 0;
+  }
+
   undo(): HistoryEntry | null {
+    this.closeGroups();
     if (this.pointer <= 0) return null;
     // biome-ignore lint/style/noNonNullAssertion: bounds checked
     const undone = this.entries[this.pointer]!;
@@ -67,6 +126,7 @@ export class PlainTextHistory {
   }
 
   redo(): HistoryEntry | null {
+    this.closeGroups();
     if (this.pointer >= this.entries.length - 1) return null;
     this.pointer++;
     // biome-ignore lint/style/noNonNullAssertion: bounds checked

@@ -96,6 +96,78 @@ describe('PlainTextHistory', () => {
     expect(h.undo()).toEqual({ text: 'ab', cursor: { para: 0, offset: 2 } });
   });
 
+  it('a group merges pushes into one entry regardless of the debounce window', () => {
+    const h = new PlainTextHistory('');
+    noDebounce(h);
+    h.push({ text: 'x', cursor: { para: 0, offset: 1 } }); // baseline edit
+    h.beginGroup();
+    noDebounce(h); // outside the debounce window — a timed batch would split here
+    h.push({ text: 'xa', cursor: { para: 0, offset: 2 }, cursorBefore: { para: 0, offset: 1 } });
+    noDebounce(h);
+    h.push({ text: 'xab', cursor: { para: 0, offset: 3 }, cursorBefore: { para: 0, offset: 2 } });
+    h.endGroup();
+    // One undo takes back the WHOLE group, to its first edit's pre-caret.
+    expect(h.undo()).toEqual({ text: 'x', cursor: { para: 0, offset: 1 } });
+    expect(h.undo()).toEqual({ text: '', cursor: null });
+  });
+
+  it("a group's first push never merges into the preceding timed batch", () => {
+    const h = new PlainTextHistory('');
+    noDebounce(h);
+    h.push({ text: 'x', cursor: null }); // lastPushTime is now LIVE (within window)
+    h.beginGroup();
+    h.push({ text: 'xa', cursor: null });
+    h.endGroup();
+    h.undo();
+    expect(h.current().text).toBe('x'); // 'x' survived as its own entry
+  });
+
+  it('after endGroup the next push starts fresh even within the debounce window', () => {
+    const h = new PlainTextHistory('');
+    h.beginGroup();
+    h.push({ text: 'a', cursor: null });
+    h.endGroup();
+    h.push({ text: 'ab', cursor: null }); // immediately after — no timed merge
+    h.undo();
+    expect(h.current().text).toBe('a');
+  });
+
+  it('nested groups: only the outermost endGroup closes the batch', () => {
+    const h = new PlainTextHistory('');
+    h.beginGroup();
+    h.push({ text: 'a', cursor: null });
+    h.beginGroup(); // a replayed key sequence re-entering the wrapper
+    h.push({ text: 'ab', cursor: null });
+    h.endGroup(); // inner close — the group stays open
+    noDebounce(h);
+    h.push({ text: 'abc', cursor: null });
+    h.endGroup();
+    h.undo();
+    expect(h.current().text).toBe('');
+  });
+
+  it('undo force-closes an open group; later pushes are their own entries', () => {
+    const h = new PlainTextHistory('');
+    h.beginGroup();
+    h.push({ text: 'a', cursor: null });
+    h.undo(); // defensive: should never happen mid-group, but must not corrupt
+    expect(h.current().text).toBe('');
+    h.push({ text: 'b', cursor: null });
+    h.endGroup(); // stale close from the wrapper — a no-op
+    noDebounce(h);
+    h.push({ text: 'bc', cursor: null });
+    h.undo();
+    expect(h.current().text).toBe('b'); // 'bc' did NOT merge into a group
+  });
+
+  it('endGroup without beginGroup is a no-op', () => {
+    const h = new PlainTextHistory('a');
+    h.endGroup();
+    h.push({ text: 'b', cursor: null });
+    expect(h.current().text).toBe('b');
+    expect(h.undo()).toEqual({ text: 'a', cursor: null });
+  });
+
   it('multiple undo/redo cycles work', () => {
     const h = new PlainTextHistory('a');
     noDebounce(h);
