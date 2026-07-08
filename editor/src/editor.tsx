@@ -511,7 +511,19 @@ export const VedEditor = (props: VedEditorProps): React.JSX.Element => {
         if (view.composing && live.current.writingMode !== WritingMode.Horizontal) {
           const doc = view.state.doc;
           const preedit = Math.max(0, serialize(doc).length - lastTextRef.current.length);
-          const r = caretCoords(view, offsetToPos(doc, beforeOffsetRef.current + preedit));
+          const pos = offsetToPos(doc, beforeOffsetRef.current + preedit);
+          // A tail at its PARAGRAPH'S END can report a caret rect ON the
+          // boundary between its own band and the previous one (the after-side
+          // rect of the last char) — the overlay's band pick then ties into
+          // the PREVIOUS column, and the composing steady hold below (rightly,
+          // for jitter) refuses the correction for the rest of the composition:
+          // the highlight sat one line back while typing at the end of an
+          // all-ruby multi-row paragraph (mozc/ruby-hl-compose.ts). Anchor to
+          // the last preedit char's LEADING edge (`pos - 1`, side 1) instead —
+          // interior to the tail's real column by construction, and still the
+          // NEW column when the tail char itself wraps (forward crossing).
+          const atEnd = preedit > 0 && pos === doc.resolve(pos).end();
+          const r = caretCoords(view, atEnd ? pos - 1 : pos);
           if (composingHl) {
             const pitch = Number.parseFloat(getComputedStyle(view.dom).lineHeight) || 28;
             const mid = (a: CaretRect): number => (a.left + a.right) / 2;

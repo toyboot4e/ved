@@ -784,7 +784,13 @@ between — with a sticky-forward hold on line flips, and the overlay
 additionally HOLDS the painted band while the picked line's column is
 unchanged (the composing line's measured block-start breathes per key as raw
 romaji converts to kana). The highlight crosses a boundary exactly once,
-forward (`mozc/candidate-window-pos.ts`). A caret at a ruby's *leading* boundary anchors
+forward (`mozc/candidate-window-pos.ts`). A tail at the PARAGRAPH END anchors
+to the last preedit char's *leading* edge (`pos - 1`, side 1) — the
+paragraph-end caret rect can sit ON the band boundary shared with the
+previous column; the pick then tied into the previous column and the steady
+holds (rightly, for jitter) refused the correction for the rest of the
+composition, leaving the highlight one line back while typing at the end of
+an all-ruby multi-row paragraph (`mozc/ruby-hl-compose.ts`). A caret at a ruby's *leading* boundary anchors
 into that ruby's base too (`head + 2`): at a soft wrap the boundary is
 ambiguous and `coordsAtPos` reports the previous row's end, so a ruby starting
 a wrapped row would highlight the line above (`line-highlight-ruby-wrap.ts`).
