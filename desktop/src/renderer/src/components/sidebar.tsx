@@ -8,6 +8,13 @@
 // A header toggle switches the pane between the root trees (ファイル) and the
 // OPEN BUFFERS (開いているファイル — same labels as quick open's modes): a
 // flat list mirroring the tab strip, with the tab bar's dirty/close semantics.
+//
+// Right-click opens a context menu: on a FILE row rename (inline input) and
+// delete (native confirm in main), anywhere add-folder. Mutations bump an
+// epoch that re-reads every MOUNTED listing (the lazy tree stays lazy);
+// failures surface through the app notice. Open buffers are NOT synced to a
+// rename/delete — they keep their plain string and old path (save recreates
+// it); reconciling buffers rides the Phase-2b watcher.
 import { clsx } from 'clsx';
 import type React from 'react';
 import { useEffect, useState } from 'react';
@@ -16,7 +23,9 @@ import { type BufferId, isDirty } from '../buffers';
 import { dispatchBuffers, useBuffersStore } from '../buffers-store';
 import { fileName } from '../file-commands';
 import { preserveFocus } from '../focus';
+import { useNoticeStore } from '../notice';
 import { SIDEBAR_MAX_WIDTH, SIDEBAR_MIN_WIDTH, type SidebarView, useWorkspaceStore } from '../workspace';
+import { ContextMenu, type ContextMenuItem } from './context-menu';
 import {
   ChevronIcon,
   FileGenericIcon,
@@ -46,16 +55,68 @@ const FileTypeIcon = ({ name }: { readonly name: string }): React.JSX.Element =>
   return <FileGenericIcon className={styles.typeIcon} />;
 };
 
+/** Tree plumbing threaded to every row (one object, not six props). `epoch`
+ * bumps after a rename/delete: mounted listings re-read (effects key on the
+ * VALUE, so the object's per-render identity is harmless). */
+type TreeOps = {
+  readonly onOpenFile: SidebarProps['onOpenFile'];
+  readonly onFileMenu: (entry: DirEntry, event: React.MouseEvent<HTMLButtonElement>) => void;
+  readonly renamingPath: string | null;
+  readonly onRenameSubmit: (path: string, newName: string) => void;
+  readonly onRenameCancel: () => void;
+  readonly epoch: number;
+};
+
+const RenameInput = ({
+  initial,
+  onSubmit,
+  onCancel,
+}: {
+  readonly initial: string;
+  readonly onSubmit: (newName: string) => void;
+  readonly onCancel: () => void;
+}): React.JSX.Element => {
+  const [value, setValue] = useState(initial);
+  return (
+    <input
+      className={styles.renameInput}
+      value={value}
+      aria-label='Rename file'
+      spellCheck={false}
+      // Focus + select on mount (not autoFocus: the guard keeps later render
+      // passes from re-selecting while the user edits)
+      ref={(el) => {
+        if (el && document.activeElement !== el) {
+          el.focus();
+          el.select();
+        }
+      }}
+      onChange={(e) => setValue(e.target.value)}
+      onKeyDown={(e) => {
+        // A Japanese file name arrives via IME — never treat composition keys
+        if (e.nativeEvent.isComposing || e.keyCode === 229) return;
+        if (e.key === 'Enter') {
+          const name = value.trim();
+          if (name === '' || name === initial) onCancel();
+          else onSubmit(name);
+        } else if (e.key === 'Escape') onCancel();
+      }}
+      onBlur={onCancel}
+    />
+  );
+};
+
 const DirListing = ({
   path,
   depth,
-  onOpenFile,
+  ops,
 }: {
   readonly path: string;
   readonly depth: number;
-  readonly onOpenFile: SidebarProps['onOpenFile'];
+  readonly ops: TreeOps;
 }): React.JSX.Element | null => {
   const [entries, setEntries] = useState<readonly DirEntry[] | null>(null);
+  // biome-ignore lint/correctness/useExhaustiveDependencies: ops.epoch is an explicit re-read trigger (rename/delete bump it)
   useEffect(() => {
     let stale = false;
     window.ved
@@ -70,13 +131,13 @@ const DirListing = ({
     return () => {
       stale = true;
     };
-  }, [path]);
+  }, [path, ops.epoch]);
   if (entries === null) return null;
   return (
     // biome-ignore lint/a11y/useSemanticElements: a nested level of an ARIA tree is a <ul role="group">
     <ul className={styles.entryList} role='group'>
       {entries.map((e) => (
-        <EntryRow key={e.path} entry={e} depth={depth} onOpenFile={onOpenFile} />
+        <EntryRow key={e.path} entry={e} depth={depth} ops={ops} />
       ))}
     </ul>
   );
@@ -85,14 +146,29 @@ const DirListing = ({
 const EntryRow = ({
   entry,
   depth,
-  onOpenFile,
+  ops,
 }: {
   readonly entry: DirEntry;
   readonly depth: number;
-  readonly onOpenFile: SidebarProps['onOpenFile'];
+  readonly ops: TreeOps;
 }): React.JSX.Element => {
   const [open, setOpen] = useState(false);
   const isDir = entry.kind === 'dir';
+  if (ops.renamingPath === entry.path) {
+    return (
+      <li role='none'>
+        <div className={clsx(styles.entry, styles.renameRow)} style={{ '--depth': depth } as React.CSSProperties}>
+          <span className={styles.twisty} />
+          {isDir ? <FolderIcon className={styles.typeIcon} /> : <FileTypeIcon name={entry.name} />}
+          <RenameInput
+            initial={entry.name}
+            onSubmit={(name) => ops.onRenameSubmit(entry.path, name)}
+            onCancel={ops.onRenameCancel}
+          />
+        </div>
+      </li>
+    );
+  }
   return (
     <li role='none'>
       <button
@@ -103,24 +179,25 @@ const EntryRow = ({
         style={{ '--depth': depth } as React.CSSProperties}
         title={entry.path}
         onMouseDown={preserveFocus}
-        onClick={() => (isDir ? setOpen((o) => !o) : onOpenFile(entry.path))}
+        onClick={() => (isDir ? setOpen((o) => !o) : ops.onOpenFile(entry.path))}
+        onContextMenu={isDir ? undefined : (e) => ops.onFileMenu(entry, e)}
       >
         <span className={clsx(styles.twisty, open && styles.twistyOpen)}>{isDir && <ChevronIcon />}</span>
         {isDir ? <FolderIcon className={styles.typeIcon} open={open} /> : <FileTypeIcon name={entry.name} />}
         <span className={styles.entryName}>{entry.name}</span>
       </button>
-      {open && <DirListing path={entry.path} depth={depth + 1} onOpenFile={onOpenFile} />}
+      {open && <DirListing path={entry.path} depth={depth + 1} ops={ops} />}
     </li>
   );
 };
 
 const RootSection = ({
   root,
-  onOpenFile,
+  ops,
   onRemove,
 }: {
   readonly root: string;
-  readonly onOpenFile: SidebarProps['onOpenFile'];
+  readonly ops: TreeOps;
   readonly onRemove: () => void;
 }): React.JSX.Element => {
   const [open, setOpen] = useState(true);
@@ -157,7 +234,7 @@ const RootSection = ({
               ✕
             </button>
           </div>
-          {open && <DirListing path={root} depth={1} onOpenFile={onOpenFile} />}
+          {open && <DirListing path={root} depth={1} ops={ops} />}
         </li>
       </ul>
     </section>
@@ -223,6 +300,9 @@ const VIEWS: readonly {
   { view: 'buffers', aria: 'Open files view', title: '開いているファイル', Icon: FileStackIcon },
 ];
 
+/** Right-click target: a file row, or the pane background (`entry: null`). */
+type MenuTarget = { readonly x: number; readonly y: number; readonly entry: DirEntry | null };
+
 export const Sidebar = ({ onOpenFile, activeDirty, onCloseBuffer }: SidebarProps): React.JSX.Element => {
   const roots = useWorkspaceStore((s) => s.roots);
   const side = useWorkspaceStore((s) => s.sidebarSide);
@@ -234,11 +314,62 @@ export const Sidebar = ({ onOpenFile, activeDirty, onCloseBuffer }: SidebarProps
   const setView = useWorkspaceStore((s) => s.setSidebarView);
   // The sidebar only renders while open, so toggling always means closing
   const closeSidebar = useWorkspaceStore((s) => s.toggleSidebar);
+  const showNotice = useNoticeStore((s) => s.show);
+
+  const [menu, setMenu] = useState<MenuTarget | null>(null);
+  const [renamingPath, setRenamingPath] = useState<string | null>(null);
+  const [treeEpoch, setTreeEpoch] = useState(0);
 
   const handleAddFolder = async (): Promise<void> => {
     const path = await window.ved.openDirDialog();
     if (path !== null) addRoot(path);
   };
+
+  const handleRenameSubmit = async (path: string, newName: string): Promise<void> => {
+    const result = await window.ved.renamePath(path, newName);
+    if (result.kind === 'error') {
+      // The input stays open so the user can fix the name (or Esc out)
+      showNotice(result.message);
+      return;
+    }
+    setRenamingPath(null);
+    setTreeEpoch((n) => n + 1);
+  };
+
+  const handleDelete = async (path: string): Promise<void> => {
+    const result = await window.ved.deletePath(path);
+    if (result.kind === 'error') showNotice(result.message);
+    if (result.kind === 'deleted') setTreeEpoch((n) => n + 1);
+  };
+
+  const treeOps: TreeOps = {
+    onOpenFile,
+    onFileMenu: (entry, e) => {
+      e.preventDefault();
+      e.stopPropagation();
+      setMenu({ x: e.clientX, y: e.clientY, entry });
+    },
+    renamingPath,
+    onRenameSubmit: (path, newName) => void handleRenameSubmit(path, newName),
+    onRenameCancel: () => setRenamingPath(null),
+    epoch: treeEpoch,
+  };
+
+  const menuItems: readonly ContextMenuItem[] =
+    menu === null
+      ? []
+      : [
+          ...(menu.entry !== null
+            ? (() => {
+                const entry = menu.entry;
+                return [
+                  { label: '名前を変更', onSelect: () => setRenamingPath(entry.path) },
+                  { label: '削除', onSelect: () => void handleDelete(entry.path) },
+                ];
+              })()
+            : []),
+          { label: 'フォルダを追加', onSelect: () => void handleAddFolder() },
+        ];
 
   // Drag the inner edge to resize: pointer capture keeps the moves coming
   // even when the pointer leaves the 5px handle; the width derives from the
@@ -265,6 +396,11 @@ export const Sidebar = ({ onOpenFile, activeDirty, onCloseBuffer }: SidebarProps
       aria-label='File browser'
       data-side={side}
       style={{ '--sidebar-width': `${width}px` } as React.CSSProperties}
+      onContextMenu={(e) => {
+        // The pane background (file rows stopPropagation their own menu)
+        e.preventDefault();
+        setMenu({ x: e.clientX, y: e.clientY, entry: null });
+      }}
     >
       <div className={styles.sidebarHeader}>
         <fieldset className={styles.views} aria-label='Sidebar view'>
@@ -321,13 +457,14 @@ export const Sidebar = ({ onOpenFile, activeDirty, onCloseBuffer }: SidebarProps
           <>
             {roots.length === 0 && <p className={styles.emptyNote}>フォルダがありません</p>}
             {roots.map((root) => (
-              <RootSection key={root} root={root} onOpenFile={onOpenFile} onRemove={() => removeRoot(root)} />
+              <RootSection key={root} root={root} ops={treeOps} onRemove={() => removeRoot(root)} />
             ))}
           </>
         ) : (
           <BufferList activeDirty={activeDirty} onCloseBuffer={onCloseBuffer} />
         )}
       </div>
+      {menu !== null && <ContextMenu x={menu.x} y={menu.y} items={menuItems} onClose={() => setMenu(null)} />}
       {/* ARIA window-splitter: focusable separator, arrow-key operable */}
       {/* biome-ignore lint/a11y/useSemanticElements: an <hr> cannot be the interactive window-splitter widget */}
       <div

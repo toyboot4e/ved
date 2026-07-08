@@ -13,6 +13,8 @@ export const IpcChannel = {
   ReadFile: 'ved:file:read',
   ReadDir: 'ved:file:read-dir',
   OpenDirDialog: 'ved:file:open-dir',
+  RenamePath: 'ved:file:rename',
+  DeletePath: 'ved:file:delete',
   ListWorkspaceFiles: 'ved:workspace:list-files',
   ShellCreate: 'ved:shell:create',
   ShellResume: 'ved:shell:resume',
@@ -82,6 +84,20 @@ export type WorkspaceFile = {
  * and the shell must not open it as a buffer. */
 export type ReadFileResult = { readonly kind: 'text'; readonly text: string } | { readonly kind: 'binary' };
 
+/** Outcome of a sidebar rename. `error` carries a user-facing message (the
+ * shell shows it as a notice); validation (single segment, no overwrite)
+ * happens in main. */
+export type RenamePathResult =
+  | { readonly kind: 'renamed'; readonly newPath: string }
+  | { readonly kind: 'error'; readonly message: string };
+
+/** Outcome of a sidebar delete. `canceled` = the user declined the native
+ * confirm dialog (its smoke seam: VED_SMOKE_DELETE_RESPONSE). */
+export type DeletePathResult =
+  | { readonly kind: 'deleted' }
+  | { readonly kind: 'canceled' }
+  | { readonly kind: 'error'; readonly message: string };
+
 /** The file portion of the renderer-facing API. */
 export type VedFileApi = {
   /** The files named as command-line arguments, read once at startup. */
@@ -99,6 +115,11 @@ export type VedFileApi = {
   readonly readDir: (path: string) => Promise<readonly DirEntry[]>;
   /** Shows a directory picker; `null` means canceled. */
   readonly openDirDialog: () => Promise<string | null>;
+  /** Renames a file WITHIN its directory (sidebar context menu). `newName`
+   * is a single path segment; main validates and refuses overwrites. */
+  readonly renamePath: (path: string, newName: string) => Promise<RenamePathResult>;
+  /** Deletes a FILE behind a native confirm dialog (sidebar context menu). */
+  readonly deletePath: (path: string) => Promise<DeletePathResult>;
   /** Walks the workspace roots (honoring .gitignore) into one flat, deduped
    * file list for quick open. Per-root results are cached in main; this is a
    * snapshot taken when the palette opens. */

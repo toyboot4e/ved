@@ -1,15 +1,18 @@
+import { basename } from 'node:path';
 import { app, BrowserWindow, dialog, ipcMain, type OpenDialogOptions, type WebContents } from 'electron';
 import {
   type CliFile,
+  type DeletePathResult,
   type DirEntry,
   IpcChannel,
   type OpenFileResult,
   type ReadFileResult,
+  type RenamePathResult,
   type SaveFileAsResult,
   type WorkspaceFile,
 } from '../shared/ipc';
 import { cliFilePaths, readCliFiles } from './cli-args';
-import { isDirectory, listDir, readTextFileChecked, writeTextFileAtomic } from './fs-io';
+import { deleteFileEntry, isDirectory, listDir, readTextFileChecked, renameEntry, writeTextFileAtomic } from './fs-io';
 import { listWorkspaceFiles } from './workspace-index';
 
 // Native dialogs cannot be driven by Playwright, so the smoke test injects
@@ -19,6 +22,9 @@ import { listWorkspaceFiles } from './workspace-index';
 const SMOKE_OPEN_PATH = 'VED_SMOKE_OPEN_PATH';
 const SMOKE_SAVE_PATH = 'VED_SMOKE_SAVE_PATH';
 const SMOKE_OPEN_DIR_PATH = 'VED_SMOKE_OPEN_DIR_PATH';
+// Delete-confirm answers ('delete' | 'cancel'), a comma list consumed one
+// per call (clamped to the last) so a test can exercise cancel THEN delete.
+const SMOKE_DELETE_RESPONSE = 'VED_SMOKE_DELETE_RESPONSE';
 
 const makeOpenPicker = (
   stubEnvVar: string,
@@ -58,6 +64,29 @@ const pickSavePath = async (sender: WebContents, defaultPath?: string): Promise<
   return result.canceled || !result.filePath ? null : result.filePath;
 };
 
+let deleteStubCall = 0;
+const confirmDelete = async (sender: WebContents, path: string): Promise<boolean> => {
+  const stub = process.env[SMOKE_DELETE_RESPONSE];
+  if (stub) {
+    const answers = stub.split(',');
+    const answer = answers[Math.min(deleteStubCall, answers.length - 1)];
+    deleteStubCall++;
+    return answer === 'delete';
+  }
+
+  const win = BrowserWindow.fromWebContents(sender);
+  if (!win) return false;
+  const { response } = await dialog.showMessageBox(win, {
+    type: 'warning',
+    message: `${basename(path)} を削除しますか？`,
+    detail: path,
+    buttons: ['キャンセル', '削除'],
+    defaultId: 0,
+    cancelId: 0,
+  });
+  return response === 1;
+};
+
 /** Registers the handlers behind `window.ved` (contract: `src/shared/ipc.ts`). */
 export const registerFileService = (): void => {
   ipcMain.handle(IpcChannel.CliFiles, (): Promise<CliFile[]> => {
@@ -90,6 +119,16 @@ export const registerFileService = (): void => {
   ipcMain.handle(IpcChannel.ReadDir, (_event, path: string): Promise<DirEntry[]> => listDir(path));
 
   ipcMain.handle(IpcChannel.OpenDirDialog, (event): Promise<string | null> => pickDirPath(event.sender));
+
+  ipcMain.handle(
+    IpcChannel.RenamePath,
+    (_event, path: string, newName: string): Promise<RenamePathResult> => renameEntry(path, newName),
+  );
+
+  ipcMain.handle(IpcChannel.DeletePath, async (event, path: string): Promise<DeletePathResult> => {
+    if (!(await confirmDelete(event.sender, path))) return { kind: 'canceled' };
+    return deleteFileEntry(path);
+  });
 
   ipcMain.handle(
     IpcChannel.ListWorkspaceFiles,

@@ -5,10 +5,12 @@ import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import type { DirEntry } from '../shared/ipc';
 import {
   compareDirEntries,
+  deleteFileEntry,
   isBinaryContent,
   listDir,
   readTextFile,
   readTextFileChecked,
+  renameEntry,
   writeTextFileAtomic,
 } from './fs-io';
 
@@ -78,6 +80,62 @@ describe('readTextFileChecked / isBinaryContent', () => {
     // 「あ」 in Shift_JIS: 0x82 0xA0 — not valid UTF-8
     await writeFile(path, Buffer.from([0x82, 0xa0, 0x82, 0xa2]));
     expect(await readTextFileChecked(path)).toEqual({ kind: 'binary' });
+  });
+});
+
+describe('renameEntry / deleteFileEntry', () => {
+  let dir: string;
+  beforeEach(async () => {
+    dir = await mkdtemp(join(tmpdir(), 'ved-fs-io-'));
+  });
+  afterEach(async () => {
+    await rm(dir, { recursive: true, force: true });
+  });
+
+  it('renames within the directory', async () => {
+    await writeFile(join(dir, 'a.txt'), 'A', 'utf-8');
+    expect(await renameEntry(join(dir, 'a.txt'), 'b.txt')).toEqual({
+      kind: 'renamed',
+      newPath: join(dir, 'b.txt'),
+    });
+    expect(await readdir(dir)).toEqual(['b.txt']);
+    expect(await readTextFile(join(dir, 'b.txt'))).toBe('A');
+  });
+
+  it('refuses names that are not a single segment', async () => {
+    await writeFile(join(dir, 'a.txt'), '', 'utf-8');
+    for (const bad of ['', '.', '..', 'x/y', 'x\\y']) {
+      expect((await renameEntry(join(dir, 'a.txt'), bad)).kind).toBe('error');
+    }
+    expect(await readdir(dir)).toEqual(['a.txt']);
+  });
+
+  it('refuses to overwrite an existing target', async () => {
+    await writeFile(join(dir, 'a.txt'), 'A', 'utf-8');
+    await writeFile(join(dir, 'b.txt'), 'B', 'utf-8');
+    expect((await renameEntry(join(dir, 'a.txt'), 'b.txt')).kind).toBe('error');
+    expect(await readTextFile(join(dir, 'b.txt'))).toBe('B');
+  });
+
+  it('renaming to the same name is a no-op success', async () => {
+    await writeFile(join(dir, 'a.txt'), 'A', 'utf-8');
+    expect(await renameEntry(join(dir, 'a.txt'), 'a.txt')).toEqual({
+      kind: 'renamed',
+      newPath: join(dir, 'a.txt'),
+    });
+  });
+
+  it('errors on a missing source', async () => {
+    expect((await renameEntry(join(dir, 'nope.txt'), 'x.txt')).kind).toBe('error');
+  });
+
+  it('deletes a file, refuses a directory, errors on a missing path', async () => {
+    await writeFile(join(dir, 'a.txt'), '', 'utf-8');
+    await mkdir(join(dir, 'sub'));
+    expect(await deleteFileEntry(join(dir, 'a.txt'))).toEqual({ kind: 'deleted' });
+    expect((await deleteFileEntry(join(dir, 'sub'))).kind).toBe('error');
+    expect((await deleteFileEntry(join(dir, 'nope.txt'))).kind).toBe('error');
+    expect(await readdir(dir)).toEqual(['sub']);
   });
 });
 

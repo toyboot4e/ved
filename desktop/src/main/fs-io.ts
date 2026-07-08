@@ -1,8 +1,8 @@
 // Plain-node file primitives for the file service. No `electron` import:
 // this module stays unit-testable under vitest.
-import { readdir, readFile, rename, rm, stat, writeFile } from 'node:fs/promises';
-import { join } from 'node:path';
-import type { DirEntry, ReadFileResult } from '../shared/ipc';
+import { lstat, readdir, readFile, rename, rm, stat, writeFile } from 'node:fs/promises';
+import { dirname, join } from 'node:path';
+import type { DeletePathResult, DirEntry, ReadFileResult, RenamePathResult } from '../shared/ipc';
 
 export const readTextFile = (path: string): Promise<string> => readFile(path, 'utf-8');
 
@@ -63,6 +63,45 @@ export const listDir = async (path: string): Promise<DirEntry[]> => {
       }),
   );
   return entries.filter((e): e is DirEntry => e !== null).sort(compareDirEntries);
+};
+
+const pathExists = async (path: string): Promise<boolean> => {
+  try {
+    await lstat(path);
+    return true;
+  } catch {
+    return false;
+  }
+};
+
+/** Renames a file WITHIN its directory. `newName` must be a bare name (one
+ * path segment); an existing target is refused, never overwritten. Messages
+ * are user-facing (the sidebar shows them as notices). */
+export const renameEntry = async (path: string, newName: string): Promise<RenamePathResult> => {
+  if (newName === '' || newName === '.' || newName === '..' || /[/\\]/.test(newName))
+    return { kind: 'error', message: `無効な名前です: ${newName}` };
+  const target = join(dirname(path), newName);
+  if (target === path) return { kind: 'renamed', newPath: path };
+  if (await pathExists(target)) return { kind: 'error', message: `すでに存在します: ${newName}` };
+  try {
+    await rename(path, target);
+    return { kind: 'renamed', newPath: target };
+  } catch (error) {
+    return { kind: 'error', message: `名前を変更できません: ${String(error)}` };
+  }
+};
+
+/** Deletes a FILE (the context menu offers delete on files only; a directory
+ * arriving here is refused). The confirm dialog lives in the file service —
+ * this primitive stays dialog-free and unit-testable. */
+export const deleteFileEntry = async (path: string): Promise<DeletePathResult> => {
+  try {
+    if ((await lstat(path)).isDirectory()) return { kind: 'error', message: `ディレクトリは削除できません: ${path}` };
+    await rm(path);
+    return { kind: 'deleted' };
+  } catch (error) {
+    return { kind: 'error', message: `削除できません: ${String(error)}` };
+  }
 };
 
 /** Writes via a sibling temp file + rename so a crash never truncates the target. */

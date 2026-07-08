@@ -167,6 +167,28 @@
   min-width: 0;
 }
 
+// The inline rename row: the .entry frame around an input instead of a button
+.renameRow {
+  cursor: default;
+
+  &:hover {
+    background: transparent;
+  }
+}
+
+.renameInput {
+  flex: 1 1 auto;
+  min-width: 0;
+  height: 20px;
+  padding: 0 4px;
+  font-size: 12px;
+  color: var(--ved-fg);
+  background: var(--ved-input-bg);
+  border: 1px solid var(--ved-accent);
+  border-radius: 3px;
+  outline: none;
+}
+
 .twisty {
   flex: 0 0 auto;
   display: inline-flex;
