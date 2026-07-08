@@ -91,13 +91,14 @@ export const renameEntry = async (path: string, newName: string): Promise<Rename
   }
 };
 
-/** Deletes a FILE (the context menu offers delete on files only; a directory
- * arriving here is refused). The confirm dialog lives in the file service —
- * this primitive stays dialog-free and unit-testable. */
-export const deleteFileEntry = async (path: string): Promise<DeletePathResult> => {
+/** Deletes a file or a directory (recursively — the confirm dialog warns
+ * about contents). The dialog lives in the file service; this primitive
+ * stays dialog-free and unit-testable. A missing path is an error, never a
+ * silent success. */
+export const deleteEntry = async (path: string): Promise<DeletePathResult> => {
   try {
-    if ((await lstat(path)).isDirectory()) return { kind: 'error', message: `ディレクトリは削除できません: ${path}` };
-    await rm(path);
+    await lstat(path); // no `force`: surface a missing path as the error it is
+    await rm(path, { recursive: true });
     return { kind: 'deleted' };
   } catch (error) {
     return { kind: 'error', message: `削除できません: ${String(error)}` };

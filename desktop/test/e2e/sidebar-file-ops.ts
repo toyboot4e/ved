@@ -1,6 +1,6 @@
 // Sidebar file operations (Phase 2): right-click on a tree row opens a
-// context menu with rename (inline input; files AND directories), delete
-// (files only; native confirm, stubbed via VED_SMOKE_DELETE_RESPONSE), and
+// context menu with rename (inline input) and delete (recursive for
+// directories; native confirm, stubbed via VED_SMOKE_DELETE_RESPONSE), and
 // add-folder; the pane background offers add-folder alone. Rename collisions
 // are refused with a notice, delete asks first (cancel keeps the file), and
 // every mutation is verified ON DISK.
@@ -76,10 +76,9 @@ try {
   assert.ok(await exists(join(tmp, 'ws', 'b.txt')));
   step('a rename collision is refused with a notice');
 
-  // A DIRECTORY renames too — its menu offers rename but never delete
+  // A DIRECTORY renames too
   await page.click(treeItem('sub'), { button: 'right' });
   await page.waitForSelector('[role=menu]');
-  assert.equal(await page.$(menuItem('削除')), null, 'no delete on a directory');
   await page.click(menuItem('名前を変更'));
   await page.waitForSelector('[aria-label="Rename entry"]');
   await page.fill('[aria-label="Rename entry"]', 'chapters');
@@ -88,7 +87,7 @@ try {
   assert.equal(await page.$(treeItem('sub')), null);
   assert.ok(await exists(join(tmp, 'ws', 'chapters', 'nested.txt')));
   assert.ok(!(await exists(join(tmp, 'ws', 'sub'))));
-  step('a directory renames from the menu, contents intact (no delete offered)');
+  step('a directory renames from the menu, contents intact');
 
   // Delete b.txt: the first (stubbed) confirm cancels, the second deletes
   await page.click(treeItem('b.txt'), { button: 'right' });
@@ -101,6 +100,13 @@ try {
   await page.waitForFunction(() => !document.querySelector('[role=treeitem][title$="b.txt"]'));
   assert.ok(!(await exists(join(tmp, 'ws', 'b.txt'))));
   step('delete asks first: cancel keeps, confirm removes from tree and disk');
+
+  // A directory deletes RECURSIVELY (the stub clamps to 'delete' now)
+  await page.click(treeItem('chapters'), { button: 'right' });
+  await page.click(menuItem('削除'));
+  await page.waitForFunction(() => !document.querySelector('[role=treeitem][title$="chapters"]'));
+  assert.ok(!(await exists(join(tmp, 'ws', 'chapters'))));
+  step('a directory deletes recursively from the menu');
 
   // Right-click the pane background: add-folder only, and it works
   await page.click('[aria-label="File browser"]', { button: 'right', position: { x: 60, y: 300 } });

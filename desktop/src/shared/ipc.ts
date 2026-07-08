@@ -118,7 +118,8 @@ export type VedFileApi = {
   /** Renames a file or directory WITHIN its parent (sidebar context menu).
    * `newName` is a single path segment; main validates and refuses overwrites. */
   readonly renamePath: (path: string, newName: string) => Promise<RenamePathResult>;
-  /** Deletes a FILE behind a native confirm dialog (sidebar context menu). */
+  /** Deletes a file or a directory (RECURSIVELY — the confirm dialog warns)
+   * behind a native confirm dialog (sidebar context menu). */
   readonly deletePath: (path: string) => Promise<DeletePathResult>;
   /** Walks the workspace roots (honoring .gitignore) into one flat, deduped
    * file list for quick open. Per-root results are cached in main; this is a

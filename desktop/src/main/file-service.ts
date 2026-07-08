@@ -12,7 +12,7 @@ import {
   type WorkspaceFile,
 } from '../shared/ipc';
 import { cliFilePaths, readCliFiles } from './cli-args';
-import { deleteFileEntry, isDirectory, listDir, readTextFileChecked, renameEntry, writeTextFileAtomic } from './fs-io';
+import { deleteEntry, isDirectory, listDir, readTextFileChecked, renameEntry, writeTextFileAtomic } from './fs-io';
 import { listWorkspaceFiles } from './workspace-index';
 
 // Native dialogs cannot be driven by Playwright, so the smoke test injects
@@ -65,7 +65,7 @@ const pickSavePath = async (sender: WebContents, defaultPath?: string): Promise<
 };
 
 let deleteStubCall = 0;
-const confirmDelete = async (sender: WebContents, path: string): Promise<boolean> => {
+const confirmDelete = async (sender: WebContents, path: string, isDir: boolean): Promise<boolean> => {
   const stub = process.env[SMOKE_DELETE_RESPONSE];
   if (stub) {
     const answers = stub.split(',');
@@ -79,7 +79,8 @@ const confirmDelete = async (sender: WebContents, path: string): Promise<boolean
   const { response } = await dialog.showMessageBox(win, {
     type: 'warning',
     message: `${basename(path)} を削除しますか？`,
-    detail: path,
+    // A directory delete is recursive — say so before it happens
+    detail: isDir ? `中身もすべて削除されます\n${path}` : path,
     buttons: ['キャンセル', '削除'],
     defaultId: 0,
     cancelId: 0,
@@ -126,8 +127,8 @@ export const registerFileService = (): void => {
   );
 
   ipcMain.handle(IpcChannel.DeletePath, async (event, path: string): Promise<DeletePathResult> => {
-    if (!(await confirmDelete(event.sender, path))) return { kind: 'canceled' };
-    return deleteFileEntry(path);
+    if (!(await confirmDelete(event.sender, path, await isDirectory(path)))) return { kind: 'canceled' };
+    return deleteEntry(path);
   });
 
   ipcMain.handle(

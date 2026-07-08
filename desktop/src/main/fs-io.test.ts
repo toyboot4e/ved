@@ -5,7 +5,7 @@ import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import type { DirEntry } from '../shared/ipc';
 import {
   compareDirEntries,
-  deleteFileEntry,
+  deleteEntry,
   isBinaryContent,
   listDir,
   readTextFile,
@@ -139,13 +139,14 @@ describe('renameEntry / deleteFileEntry', () => {
     expect((await renameEntry(join(dir, 'nope.txt'), 'x.txt')).kind).toBe('error');
   });
 
-  it('deletes a file, refuses a directory, errors on a missing path', async () => {
+  it('deletes a file, a directory recursively, and errors on a missing path', async () => {
     await writeFile(join(dir, 'a.txt'), '', 'utf-8');
     await mkdir(join(dir, 'sub'));
-    expect(await deleteFileEntry(join(dir, 'a.txt'))).toEqual({ kind: 'deleted' });
-    expect((await deleteFileEntry(join(dir, 'sub'))).kind).toBe('error');
-    expect((await deleteFileEntry(join(dir, 'nope.txt'))).kind).toBe('error');
-    expect(await readdir(dir)).toEqual(['sub']);
+    await writeFile(join(dir, 'sub', 'n.txt'), '', 'utf-8');
+    expect(await deleteEntry(join(dir, 'a.txt'))).toEqual({ kind: 'deleted' });
+    expect(await deleteEntry(join(dir, 'sub'))).toEqual({ kind: 'deleted' });
+    expect((await deleteEntry(join(dir, 'nope.txt'))).kind).toBe('error');
+    expect(await readdir(dir)).toEqual([]);
   });
 });
 

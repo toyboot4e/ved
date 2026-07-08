@@ -9,9 +9,9 @@
 // OPEN BUFFERS (開いているファイル — same labels as quick open's modes): a
 // flat list mirroring the tab strip, with the tab bar's dirty/close semantics.
 //
-// Right-click opens a context menu: on a tree row rename (inline input; files
-// AND directories), on a FILE row delete (native confirm in main), anywhere
-// add-folder. Mutations bump an
+// Right-click opens a context menu on any tree row: rename (inline input) and
+// delete (native confirm in main; recursive for directories, and the dialog
+// says so), plus add-folder anywhere. Mutations bump an
 // epoch that re-reads every MOUNTED listing (the lazy tree stays lazy);
 // failures surface through the app notice. Open buffers are NOT synced to a
 // rename/delete — they keep their plain string and old path (save recreates
@@ -365,10 +365,8 @@ export const Sidebar = ({ onOpenFile, activeDirty, onCloseBuffer }: SidebarProps
                 const entry = menu.entry;
                 return [
                   { label: '名前を変更', onSelect: () => setRenamingPath(entry.path) },
-                  // Directories rename but never delete (deleteFileEntry refuses them too)
-                  ...(entry.kind === 'file'
-                    ? [{ label: '削除', onSelect: () => void handleDelete(entry.path) }]
-                    : []),
+                  // Directories delete RECURSIVELY — the confirm dialog warns
+                  { label: '削除', onSelect: () => void handleDelete(entry.path) },
                 ];
               })()
             : []),
