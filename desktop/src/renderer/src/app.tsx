@@ -3,7 +3,7 @@ import { clsx } from 'clsx';
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import appStyles from './app.module.scss';
 import { useAppearPolicyStore } from './appear-policy';
-import { activeBuffer, type BufferId, isDirty, someInactiveDirty } from './buffers';
+import { activeBuffer, type BufferId, type CursorState, isDirty, someInactiveDirty } from './buffers';
 import { dispatchBuffers, useBuffersStore } from './buffers-store';
 import { ExtensionPanels, ExtensionQuickPick, StatusItems } from './components/extension-ui';
 import extensionUiStyles from './components/extension-ui.module.scss';
@@ -188,6 +188,41 @@ export const App = (): React.JSX.Element => {
     dispatchBuffers({ type: 'openPath', path, text: result.text });
   }, []);
 
+  // A quick-open content-search row: open (or focus) the file and place the
+  // caret on the match. The cursor lands via a snapshot BEFORE React renders
+  // the switched editor (both dispatches batch), so the remount reads it as
+  // its initial caret; the editor reveals a mounted caret itself.
+  const handleOpenFileAt = useCallback(
+    async (path: string, cursor: CursorState): Promise<void> => {
+      const result = await window.ved.readFile(path);
+      if (result.kind !== 'text') {
+        showNotTextNotice(path);
+        return;
+      }
+      dispatchBuffers({ type: 'openPath', path, text: result.text });
+      const s = useBuffersStore.getState();
+      const buf = s.buffers.find((b) => b.path === path);
+      // Jumping within the ALREADY-ACTIVE buffer would need a live-editor seam,
+      // not a remount — skipped (the match file was usually not active).
+      if (buf && buf.id === s.activeId && buf.id !== baselineId) {
+        dispatchBuffers({ type: 'snapshot', id: buf.id, text: buf.text, cursor, anchor: cursor, scroll: buf.scroll });
+      }
+    },
+    [baselineId],
+  );
+
+  // Buffers content search: activate the tab with the caret on the match.
+  // Snapshot FIRST (the buffer is still inactive — its committed text is
+  // current), then switch; the remount reads the cursor.
+  const handleJumpToBuffer = useCallback((id: BufferId, cursor: CursorState): void => {
+    const s = useBuffersStore.getState();
+    if (id === s.activeId) return; // no remount happens — keep the live caret
+    const buf = s.buffers.find((b) => b.id === id);
+    if (!buf) return;
+    dispatchBuffers({ type: 'snapshot', id, text: buf.text, cursor, anchor: cursor, scroll: buf.scroll });
+    dispatchBuffers({ type: 'setActive', id });
+  }, []);
+
   const handleSave = useCallback(
     async (saveAs: boolean) => {
       const text = textRef.current;
@@ -313,7 +348,14 @@ export const App = (): React.JSX.Element => {
         <ShellPanel defaultCwd={shellCwd} />
       </div>
       {sidebarSide === 'right' && sidebar}
-      {quickOpenOpen && <QuickOpen onOpenFile={handleOpenTreeFile} />}
+      {quickOpenOpen && (
+        <QuickOpen
+          onOpenFile={handleOpenTreeFile}
+          onOpenFileAt={handleOpenFileAt}
+          onJumpToBuffer={handleJumpToBuffer}
+          getActiveText={getText}
+        />
+      )}
       {extensionPickerOpen && <ExtensionQuickPick />}
       {notice !== null && (
         <p className={appStyles.notice} role='status'>

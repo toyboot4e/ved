@@ -15,6 +15,7 @@ export const IpcChannel = {
   OpenDirDialog: 'ved:file:open-dir',
   RenamePath: 'ved:file:rename',
   DeletePath: 'ved:file:delete',
+  GrepWorkspaceFiles: 'ved:workspace:grep',
   ListWorkspaceFiles: 'ved:workspace:list-files',
   ShellCreate: 'ved:shell:create',
   ShellResume: 'ved:shell:resume',
@@ -83,6 +84,23 @@ export type WorkspaceFile = {
   readonly isText: boolean;
 };
 
+/** One content-search hit (quick open's 内容 mode): a line of a workspace
+ * file the fuzzy query matched. `line` is 1-based (a ved line IS a paragraph,
+ * so it maps straight onto CursorState.para); `col` indexes the UNTRIMMED
+ * line (the caret target), while `text`/`matched` may be a window trimmed
+ * around the match for display. */
+export type GrepMatch = {
+  readonly path: string;
+  readonly label: string;
+  readonly line: number;
+  readonly col: number;
+  readonly text: string;
+  readonly matched: readonly number[];
+};
+
+/** Capped matches plus the uncapped total (the palette's overflow note). */
+export type GrepResult = { readonly matches: readonly GrepMatch[]; readonly total: number };
+
 /** A known path read by CONTENT: `binary` means "not UTF-8 text" — sniffed
  * from the bytes (NUL check + strict decode), never from the extension —
  * and the shell must not open it as a buffer. */
@@ -129,6 +147,9 @@ export type VedFileApi = {
    * file list for quick open. Per-root results are cached in main; this is a
    * snapshot taken when the palette opens. */
   readonly listWorkspaceFiles: (roots: readonly string[]) => Promise<readonly WorkspaceFile[]>;
+  /** Fuzzy content grep over the indexed TEXT files of the workspace roots
+   * (quick open's 内容 mode). Reads run in main per query, capped. */
+  readonly grepWorkspaceFiles: (roots: readonly string[], query: string) => Promise<GrepResult>;
 };
 
 export type Unsubscribe = () => void;

@@ -5,7 +5,7 @@
 import assert from 'node:assert/strict';
 import { mkdir, writeFile } from 'node:fs/promises';
 import { join } from 'node:path';
-import { fail, finish, launchVed, pressMod, step } from './harness.ts';
+import { caretOffset, fail, finish, launchVed, pressMod, step } from './harness.ts';
 
 const ved = await launchVed({
   env: (tmp) => ({
@@ -28,6 +28,9 @@ await writeFile(join(tmp, 'ws', 'photo.png'), Buffer.from([0x89, 0x50, 0x4e, 0x4
 // text twin: the toggle must decide by CONTENT (main's sniff), not the name.
 await writeFile(join(tmp, 'ws', 'notes.rec'), Buffer.from([0x43, 0x44, 0x00, 0x01, 0x02]));
 await writeFile(join(tmp, 'ws', 'poem.rec'), 'ことばの列\n', 'utf-8');
+// Content-search (内容) target: the match sits on line 2, column 4 —
+// global plain offset 4 (line 1 + \n) + 4 = 8.
+await writeFile(join(tmp, 'ws', 'grep.txt'), '一行目\n二行目 みつけた\n三行目\n', 'utf-8');
 // 60 more files: the empty-query view must list the WHOLE index (the old
 // 50-row cap read as "files are missing"), in sorted label order.
 await mkdir(join(tmp, 'ws', 'many'), { recursive: true });
@@ -199,6 +202,38 @@ try {
   await page.keyboard.press('Escape');
   await page.waitForFunction(() => document.querySelector('[aria-label="Quick open"]') === null);
   step('the list/preview divider drags and persists across opens');
+
+  // Content search over WORKSPACE FILES (内容 toggle): rows are path:line +
+  // the matched line; Enter opens the file with the caret ON the match.
+  await pressMod(page, 'p');
+  await page.waitForSelector('[aria-label="Quick open"]');
+  await page.click('[aria-label="Content search"]');
+  await page.fill('#quick-open-input', 'みつけた');
+  await page.waitForFunction(() =>
+    Array.from(document.querySelectorAll('[role=option]')).some(
+      (e) => e.textContent?.includes('grep.txt:2') && e.textContent.includes('みつけた'),
+    ),
+  );
+  await page.keyboard.press('Enter');
+  await page.waitForFunction(() => document.getElementById('editor-content')?.textContent?.includes('みつけた'));
+  assert.equal(await caretOffset(page), 8, 'the caret lands on the match (line 2, column 4)');
+  step('files content search greps the workspace and jumps to the match');
+
+  // Content search over the OPEN BUFFERS: matches the live document of an
+  // open tab and switches to it (no new tab).
+  const tabsBefore = await tabCount();
+  await pressMod(page, 'p');
+  await page.waitForSelector('[aria-label="Quick open"]');
+  await page.click('[aria-label="Open file search"]');
+  await page.click('[aria-label="Content search"]');
+  await page.fill('#quick-open-input', 'ALPHA');
+  await page.waitForFunction(() =>
+    Array.from(document.querySelectorAll('[role=option]')).some((e) => e.textContent?.includes('alpha.txt:1')),
+  );
+  await page.keyboard.press('Enter');
+  await page.waitForFunction(() => document.getElementById('editor-content')?.textContent?.includes('ALPHA'));
+  assert.equal(await tabCount(), tabsBefore, 'buffer content search switches tabs, never opens a new one');
+  step('buffers content search matches open documents and switches tabs');
 } catch (e) {
   fail(e instanceof Error ? e.message : String(e));
 } finally {

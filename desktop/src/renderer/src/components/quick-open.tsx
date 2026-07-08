@@ -12,6 +12,7 @@
 import { clsx } from 'clsx';
 import type React from 'react';
 import { useEffect, useRef, useState } from 'react';
+import type { BufferId, CursorState } from '../buffers';
 import { dispatchBuffers, useBuffersStore } from '../buffers-store';
 import { preserveFocus } from '../focus';
 import { isComposingEvent } from '../ime';
@@ -29,6 +30,13 @@ import styles from './quick-open.module.scss';
 export type QuickOpenProps = {
   /** Opens a file as a buffer (content-sniffed in main; non-text is refused). */
   readonly onOpenFile: (path: string) => void;
+  /** Opens a file and places the caret (a content-search row was chosen). */
+  readonly onOpenFileAt: (path: string, cursor: CursorState) => void;
+  /** Activates an open buffer and places the caret (buffers content search). */
+  readonly onJumpToBuffer: (id: BufferId, cursor: CursorState) => void;
+  /** The ACTIVE buffer's live text — its committed text lags during editing
+   *  (buffers-store.ts), and content search must see what the user sees. */
+  readonly getActiveText: () => string;
 };
 
 /** How much of a file to show in the preview pane (plain slice — a preview,
@@ -145,7 +153,33 @@ const MODES: readonly { readonly mode: QuickOpenMode; readonly label: string; re
   { mode: 'buffers', label: '開いているファイル', aria: 'Open file search' },
 ];
 
-export const QuickOpen = ({ onOpenFile }: QuickOpenProps): React.JSX.Element => {
+const placeholderFor = (mode: QuickOpenMode, contentSearch: boolean): string => {
+  if (contentSearch) return mode === 'buffers' ? '開いているファイルの内容を検索…' : 'ファイルの内容を検索…';
+  return mode === 'buffers' ? '開いているファイルへ移動…' : 'ファイルを開く…';
+};
+
+const emptyNoteFor = (s: {
+  readonly mode: QuickOpenMode;
+  readonly query: string;
+  readonly loading: boolean;
+  readonly contentSearch: boolean;
+  readonly grepping: boolean;
+}): string => {
+  if (s.contentSearch) {
+    if (s.query === '') return '検索語を入力…';
+    return s.grepping ? '検索中…' : '一致する行がありません';
+  }
+  if (s.mode === 'buffers') return s.query ? '一致するファイルがありません' : '開いているファイルがありません';
+  if (s.loading) return '読み込み中…';
+  return s.query ? '一致するファイルがありません' : 'ファイルがありません';
+};
+
+export const QuickOpen = ({
+  onOpenFile,
+  onOpenFileAt,
+  onJumpToBuffer,
+  getActiveText,
+}: QuickOpenProps): React.JSX.Element => {
   const query = useQuickOpenStore((s) => s.query);
   const mode = useQuickOpenStore((s) => s.mode);
   const items = useQuickOpenStore((s) => s.items);
@@ -153,6 +187,8 @@ export const QuickOpen = ({ onOpenFile }: QuickOpenProps): React.JSX.Element => 
   const selected = useQuickOpenStore((s) => s.selected);
   const loading = useQuickOpenStore((s) => s.loading);
   const textOnly = useQuickOpenStore((s) => s.textOnly);
+  const contentSearch = useQuickOpenStore((s) => s.contentSearch);
+  const grepping = useQuickOpenStore((s) => s.grepping);
   const listWidthPct = useQuickOpenStore((s) => s.listWidthPct);
   const inputRef = useRef<HTMLInputElement>(null);
   const listRef = useRef<HTMLDivElement>(null);
@@ -161,11 +197,20 @@ export const QuickOpen = ({ onOpenFile }: QuickOpenProps): React.JSX.Element => 
   // Mount == open: snapshot the buffer pool (the tab strip) and the workspace
   // roots, fetch the index, focus the input. `getState()` reads, not
   // subscriptions — a mid-open tab or root change must not reshuffle the list.
+  // biome-ignore lint/correctness/useExhaustiveDependencies: mount == open; getActiveText is a stable app callback
   useEffect(() => {
     let stale = false;
     inputRef.current?.focus();
-    const { buffers } = useBuffersStore.getState();
-    useQuickOpenStore.getState().setBuffers(buffers.map((b) => ({ id: b.id, path: b.path, label: b.path ?? '無題' })));
+    const { buffers, activeId } = useBuffersStore.getState();
+    useQuickOpenStore.getState().setBuffers(
+      buffers.map((b) => ({
+        id: b.id,
+        path: b.path,
+        label: b.path ?? '無題',
+        // The active buffer's committed text lags typing — take the live one
+        text: b.id === activeId ? getActiveText() : b.text,
+      })),
+    );
     void window.ved.listWorkspaceFiles(useWorkspaceStore.getState().roots).then((files) => {
       if (!stale) useQuickOpenStore.getState().setFiles(files);
     });
@@ -173,6 +218,22 @@ export const QuickOpen = ({ onOpenFile }: QuickOpenProps): React.JSX.Element => 
       stale = true;
     };
   }, []);
+
+  // Files content search: debounce, then grep in main; a stale reply (the
+  // query moved on) is dropped by sequence.
+  const grepSeq = useRef(0);
+  useEffect(() => {
+    if (!(contentSearch && mode === 'files')) return;
+    const seq = ++grepSeq.current;
+    if (query === '') return; // the store already emptied the list
+    const roots = useWorkspaceStore.getState().roots;
+    const timer = setTimeout(() => {
+      void window.ved.grepWorkspaceFiles(roots, query).then((result) => {
+        if (seq === grepSeq.current) useQuickOpenStore.getState().setGrepResult(result);
+      });
+    }, 180);
+    return () => clearTimeout(timer);
+  }, [contentSearch, mode, query]);
 
   // Keep the selected row in view as the selection moves.
   // biome-ignore lint/correctness/useExhaustiveDependencies: scroll on selection change
@@ -182,6 +243,13 @@ export const QuickOpen = ({ onOpenFile }: QuickOpenProps): React.JSX.Element => 
 
   const choose = (item: QuickOpenItem): void => {
     closeQuickOpen();
+    if (item.line !== null) {
+      // A content-search row: jump to the matched line (a line IS a paragraph)
+      const cursor: CursorState = { para: item.line - 1, offset: item.col ?? 0 };
+      if (item.bufferId !== null) onJumpToBuffer(item.bufferId, cursor);
+      else if (item.path !== null) onOpenFileAt(item.path, cursor);
+      return;
+    }
     if (item.bufferId !== null) dispatchBuffers({ type: 'setActive', id: item.bufferId });
     else if (item.path !== null) onOpenFile(item.path);
   };
@@ -227,16 +295,7 @@ export const QuickOpen = ({ onOpenFile }: QuickOpenProps): React.JSX.Element => 
     handle.addEventListener('pointerup', onUp, { once: true });
   };
 
-  const empty =
-    mode === 'buffers'
-      ? query
-        ? '一致するファイルがありません'
-        : '開いているファイルがありません'
-      : loading
-        ? '読み込み中…'
-        : query
-          ? '一致するファイルがありません'
-          : 'ファイルがありません';
+  const empty = emptyNoteFor({ mode, query, loading, contentSearch, grepping });
   const overflow = total - items.length;
   const selectedItem = items[selected] ?? null;
 
@@ -269,18 +328,29 @@ export const QuickOpen = ({ onOpenFile }: QuickOpenProps): React.JSX.Element => 
               </button>
             ))}
           </fieldset>
+          <button
+            type='button'
+            className={clsx(styles.toggle, contentSearch && styles.toggleOn)}
+            aria-pressed={contentSearch}
+            aria-label='Content search'
+            title='内容で検索（行単位のあいまい一致）'
+            onMouseDown={preserveFocus}
+            onClick={() => useQuickOpenStore.getState().toggleContentSearch()}
+          >
+            内容
+          </button>
           <input
             id='quick-open-input'
             ref={inputRef}
             className={styles.input}
             type='text'
-            placeholder={mode === 'buffers' ? '開いているファイルへ移動…' : 'ファイルを開く…'}
+            placeholder={placeholderFor(mode, contentSearch)}
             spellCheck={false}
             value={query}
             onChange={(event) => useQuickOpenStore.getState().setQuery(event.target.value)}
             onKeyDown={onKeyDown}
           />
-          {mode === 'files' && (
+          {mode === 'files' && !contentSearch && (
             <button
               type='button'
               className={clsx(styles.toggle, textOnly && styles.toggleOn)}
@@ -311,14 +381,24 @@ export const QuickOpen = ({ onOpenFile }: QuickOpenProps): React.JSX.Element => 
                     role='option'
                     aria-selected={i === selected}
                     className={clsx(styles.row, i === selected && styles.rowSelected)}
-                    title={item.path ?? item.label}
+                    title={item.line === null ? (item.path ?? item.label) : `${item.path ?? item.label}:${item.line}`}
                     onMouseMove={() => i !== selected && useQuickOpenStore.getState().setSelected(i)}
                     onMouseDown={(e) => {
                       e.preventDefault();
                       choose(item);
                     }}
                   >
-                    <Label label={item.label} matched={item.matched} />
+                    {item.detail === null ? (
+                      <Label label={item.label} matched={item.matched} />
+                    ) : (
+                      // A content-search row: where (muted) + the matched line
+                      <>
+                        <span className={styles.rowPath}>
+                          {item.label}:{item.line}
+                        </span>
+                        <Label label={item.detail} matched={item.detailMatched} />
+                      </>
+                    )}
                   </div>
                 ))}
                 {overflow > 0 && <div className={styles.overflowNote}>…他 {overflow} 件（入力で絞り込み）</div>}

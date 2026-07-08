@@ -24,6 +24,7 @@ const ved: VedApi = {
   renamePath: (path, newName) => ipcRenderer.invoke(IpcChannel.RenamePath, path, newName),
   deletePath: (path) => ipcRenderer.invoke(IpcChannel.DeletePath, path),
   listWorkspaceFiles: (roots) => ipcRenderer.invoke(IpcChannel.ListWorkspaceFiles, roots),
+  grepWorkspaceFiles: (roots, query) => ipcRenderer.invoke(IpcChannel.GrepWorkspaceFiles, roots, query),
   createShell: (cwd) => ipcRenderer.invoke(IpcChannel.ShellCreate, cwd),
   resumeShell: (id) => ipcRenderer.send(IpcChannel.ShellResume, id),
   writeShell: (id, data) => ipcRenderer.send(IpcChannel.ShellInput, id, data),

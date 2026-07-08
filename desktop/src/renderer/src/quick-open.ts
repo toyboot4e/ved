@@ -11,7 +11,8 @@
 
 import fuzzysort from 'fuzzysort';
 import { create } from 'zustand';
-import type { WorkspaceFile } from '../../shared/ipc';
+import { grepLines } from '../../shared/grep';
+import type { GrepResult, WorkspaceFile } from '../../shared/ipc';
 import { focusEditor } from './focus';
 
 /** Which pool the palette searches: workspace files, or the open buffers. */
@@ -24,11 +25,14 @@ export type QuickOpenMode = 'files' | 'buffers';
 export const RESULT_LIMIT = 500;
 
 /** An open buffer as a palette entry (`id` is the stable BufferId — untitled
- *  buffers have no path). */
+ *  buffers have no path). `text` is the buffer's document at snapshot time
+ *  (the overlay substitutes the ACTIVE buffer's live text), for content
+ *  search. */
 export type BufferEntry = {
   readonly id: number;
   readonly label: string;
   readonly path: string | null;
+  readonly text: string;
 };
 
 /** One palette row, mode-agnostic: what to render (label + match indices),
@@ -42,7 +46,17 @@ export type QuickOpenItem = {
   readonly matched: readonly number[];
   readonly path: string | null;
   readonly bufferId: number | null;
+  /** Content-search rows only: the matched line (1-based — CursorState.para
+   *  is `line - 1`), the caret column, and the line text with its own match
+   *  highlight. Name rows carry null/empty. */
+  readonly line: number | null;
+  readonly col: number | null;
+  readonly detail: string | null;
+  readonly detailMatched: readonly number[];
 };
+
+/** The name-row tail of {@link QuickOpenItem} (content-search fields empty). */
+const NO_DETAIL = { line: null, col: null, detail: null, detailMatched: [] as readonly number[] };
 
 /** A ranking: the capped rows plus the TOTAL match count (the overflow note
  *  shows `total - items.length`). */
@@ -75,6 +89,7 @@ export const rankFiles = (files: readonly WorkspaceFile[], query: string, textOn
     matched,
     path: f.path,
     bufferId: null,
+    ...NO_DETAIL,
   }));
 };
 
@@ -86,7 +101,52 @@ export const rankBuffers = (buffers: readonly BufferEntry[], query: string): Ran
     matched,
     path: b.path,
     bufferId: b.id,
+    ...NO_DETAIL,
   }));
+
+/** Content search over the open buffers: fuzzy per LINE (shared/grep.ts), in
+ *  tab order, capped like the other rankings. Synchronous — the pool is the
+ *  handful of open documents, snapshotted with their text. */
+export const rankBufferGrep = (buffers: readonly BufferEntry[], query: string): RankResult => {
+  if (query === '') return { items: [], total: 0 };
+  const items: QuickOpenItem[] = [];
+  let total = 0;
+  for (const b of buffers) {
+    if (items.length >= RESULT_LIMIT) break;
+    const r = grepLines(b.text, query, RESULT_LIMIT - items.length);
+    total += r.total;
+    for (const m of r.matches) {
+      items.push({
+        key: `grep:b${b.id}:${m.line}:${m.col}`,
+        label: b.label,
+        matched: [],
+        path: b.path,
+        bufferId: b.id,
+        line: m.line,
+        col: m.col,
+        detail: m.text,
+        detailMatched: m.matched,
+      });
+    }
+  }
+  return { items, total };
+};
+
+/** Palette rows from a main-process workspace grep (files content search). */
+export const grepResultItems = (result: GrepResult): RankResult => ({
+  items: result.matches.map((m) => ({
+    key: `grep:${m.path}:${m.line}:${m.col}`,
+    label: m.label,
+    matched: [],
+    path: m.path,
+    bufferId: null,
+    line: m.line,
+    col: m.col,
+    detail: m.text,
+    detailMatched: m.matched,
+  })),
+  total: result.total,
+});
 
 type QuickOpenStore = {
   readonly open: boolean;
@@ -106,6 +166,13 @@ type QuickOpenStore = {
   readonly selected: number;
   /** Hide known-binary files (files mode; the toggle); kept across opens. */
   readonly textOnly: boolean;
+  /** Content search (内容): match file/buffer CONTENTS per line instead of
+   *  names. Per-open (reset by openPalette) — Ctrl+P muscle memory is name
+   *  search. Files-mode content search is ASYNC (an IPC grep the overlay
+   *  debounces); buffers-mode is synchronous over the snapshot. */
+  readonly contentSearch: boolean;
+  /** True while a files-mode content search is debouncing/fetching. */
+  readonly grepping: boolean;
   /** List-pane width as a % of the two-pane body (the draggable divider);
    *  a preference like `textOnly`, kept across opens. Clamped. */
   readonly listWidthPct: number;
@@ -121,6 +188,10 @@ type QuickOpenStore = {
   readonly close: () => void;
   readonly setQuery: (query: string) => void;
   readonly toggleTextOnly: () => void;
+  readonly toggleContentSearch: () => void;
+  /** Land a main-process grep (files content search). The overlay guards
+   *  staleness by sequence; the store guards mode/open drift. */
+  readonly setGrepResult: (result: GrepResult) => void;
   /** Move the selection (wraps around). */
   readonly move: (delta: 1 | -1) => void;
   readonly setSelected: (index: number) => void;
@@ -130,10 +201,24 @@ type QuickOpenStore = {
 export const QUICK_OPEN_LIST_MIN_PCT = 15;
 export const QUICK_OPEN_LIST_MAX_PCT = 85;
 
-type PoolState = Pick<QuickOpenStore, 'mode' | 'query' | 'files' | 'buffers' | 'textOnly'>;
+type PoolState = Pick<QuickOpenStore, 'mode' | 'query' | 'files' | 'buffers' | 'textOnly' | 'contentSearch'>;
+
+/** Files-mode content search ranks in MAIN (async IPC) — rerank leaves the
+ *  list empty and the overlay's debounced grep fills it via setGrepResult. */
+const isAsyncGrep = (s: Pick<PoolState, 'mode' | 'contentSearch'>): boolean => s.contentSearch && s.mode === 'files';
 
 const rerank = (s: PoolState): RankResult =>
-  s.mode === 'files' ? rankFiles(s.files, s.query, s.textOnly) : rankBuffers(s.buffers, s.query);
+  isAsyncGrep(s)
+    ? { items: [], total: 0 }
+    : s.contentSearch
+      ? rankBufferGrep(s.buffers, s.query)
+      : s.mode === 'files'
+        ? rankFiles(s.files, s.query, s.textOnly)
+        : rankBuffers(s.buffers, s.query);
+
+/** `grepping` after a pool-state change: an async grep with a needle is
+ *  in flight (the overlay debounce picks it up); anything else is settled. */
+const greppingAfter = (s: PoolState): boolean => isAsyncGrep(s) && s.query !== '';
 
 const CLOSED = {
   open: false,
@@ -144,6 +229,8 @@ const CLOSED = {
   items: [],
   total: 0,
   selected: 0,
+  contentSearch: false,
+  grepping: false,
 } as const;
 
 export const useQuickOpenStore = create<QuickOpenStore>()((set) => ({
@@ -155,14 +242,30 @@ export const useQuickOpenStore = create<QuickOpenStore>()((set) => ({
   openPalette: (mode = 'files') => set({ ...CLOSED, open: true, loading: mode === 'files', mode }),
   setFiles: (files) => set((s) => (s.open ? { loading: false, files, ...rerank({ ...s, files }), selected: 0 } : {})),
   setBuffers: (buffers) => set((s) => (s.open ? { buffers, ...rerank({ ...s, buffers }), selected: 0 } : {})),
-  setMode: (mode) => set((s) => (s.mode === mode ? {} : { mode, ...rerank({ ...s, mode }), selected: 0 })),
+  setMode: (mode) =>
+    set((s) => {
+      if (s.mode === mode) return {};
+      const n = { ...s, mode };
+      return { mode, ...rerank(n), selected: 0, grepping: greppingAfter(n) };
+    }),
   close: () => set(CLOSED),
-  setQuery: (query) => set((s) => ({ query, ...rerank({ ...s, query }), selected: 0 })),
+  setQuery: (query) =>
+    set((s) => {
+      const n = { ...s, query };
+      return { query, ...rerank(n), selected: 0, grepping: greppingAfter(n) };
+    }),
   toggleTextOnly: () =>
     set((s) => {
       const textOnly = !s.textOnly;
       return { textOnly, ...rerank({ ...s, textOnly }), selected: 0 };
     }),
+  toggleContentSearch: () =>
+    set((s) => {
+      const n = { ...s, contentSearch: !s.contentSearch };
+      return { contentSearch: n.contentSearch, ...rerank(n), selected: 0, grepping: greppingAfter(n) };
+    }),
+  setGrepResult: (result) =>
+    set((s) => (s.open && isAsyncGrep(s) ? { ...grepResultItems(result), selected: 0, grepping: false } : {})),
   move: (delta) =>
     set((s) => (s.items.length === 0 ? {} : { selected: (s.selected + delta + s.items.length) % s.items.length })),
   setSelected: (index) => set({ selected: index }),

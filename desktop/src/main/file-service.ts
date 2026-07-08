@@ -4,6 +4,7 @@ import {
   type CliFile,
   type DeletePathResult,
   type DirEntry,
+  type GrepResult,
   IpcChannel,
   type OpenFileResult,
   type ReadFileResult,
@@ -13,6 +14,7 @@ import {
 } from '../shared/ipc';
 import { cliFilePaths, readCliFiles } from './cli-args';
 import { deleteEntry, isDirectory, listDir, readTextFileChecked, renameEntry, writeTextFileAtomic } from './fs-io';
+import { grepWorkspaceFiles } from './workspace-grep';
 import { listWorkspaceFiles } from './workspace-index';
 
 // Native dialogs cannot be driven by Playwright, so the smoke test injects
@@ -134,5 +136,10 @@ export const registerFileService = (): void => {
   ipcMain.handle(
     IpcChannel.ListWorkspaceFiles,
     (_event, roots: readonly string[]): Promise<WorkspaceFile[]> => listWorkspaceFiles(roots),
+  );
+
+  ipcMain.handle(
+    IpcChannel.GrepWorkspaceFiles,
+    (_event, roots: readonly string[], query: string): Promise<GrepResult> => grepWorkspaceFiles(roots, query),
   );
 };

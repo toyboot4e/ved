@@ -13,6 +13,7 @@ const fakeApi = (overrides: Partial<VedFileApi>): VedFileApi => ({
   renamePath: (path) => Promise.resolve({ kind: 'renamed', newPath: path }),
   deletePath: () => Promise.resolve({ kind: 'deleted' }),
   listWorkspaceFiles: () => Promise.resolve([]),
+  grepWorkspaceFiles: () => Promise.resolve({ matches: [], total: 0 }),
   ...overrides,
 });
 

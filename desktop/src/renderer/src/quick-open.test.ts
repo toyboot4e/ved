@@ -1,13 +1,21 @@
 import { describe, expect, it } from 'vitest';
 import type { WorkspaceFile } from '../../shared/ipc';
-import { type BufferEntry, RESULT_LIMIT, rankBuffers, rankFiles, useQuickOpenStore } from './quick-open';
+import {
+  type BufferEntry,
+  grepResultItems,
+  RESULT_LIMIT,
+  rankBufferGrep,
+  rankBuffers,
+  rankFiles,
+  useQuickOpenStore,
+} from './quick-open';
 
 const files = (...labels: string[]): WorkspaceFile[] =>
   // A `!bin` suffix stands in for main's "not text" sniff verdict
   labels.map((label) => ({ path: `/${label}`, label, isText: !label.endsWith('!bin') }));
 
 const buffers = (...labels: (string | null)[]): BufferEntry[] =>
-  labels.map((path, i) => ({ id: i + 1, path, label: path ?? '無題' }));
+  labels.map((path, i) => ({ id: i + 1, path, label: path ?? '無題', text: `本文 ${path ?? '無題'}\n二行目\n` }));
 
 describe('rankFiles', () => {
   it('returns the whole list, unranked, for an empty query', () => {
@@ -94,6 +102,70 @@ describe('quick-open store modes', () => {
     expect(after.query).toBe('beta');
     expect(after.items.map((i) => i.label)).toEqual(['/ws/beta.txt']);
     expect(after.items[0]?.bufferId).toBe(1);
+    s.close();
+  });
+});
+
+describe('rankBufferGrep', () => {
+  it('matches buffer lines, carrying buffer id, line and column', () => {
+    const pool = buffers('/ws/alpha.txt', '/ws/beta.txt');
+    const { items, total } = rankBufferGrep(pool, '二行目');
+    expect(total).toBe(2);
+    expect(items[0]).toMatchObject({ bufferId: 1, line: 2, col: 0, detail: '二行目' });
+    expect(items[0]!.detailMatched).toEqual([0, 1, 2]);
+  });
+
+  it('an empty query matches nothing', () => {
+    expect(rankBufferGrep(buffers('/a'), '')).toEqual({ items: [], total: 0 });
+  });
+});
+
+describe('grepResultItems', () => {
+  it('maps main grep matches onto palette rows', () => {
+    const { items, total } = grepResultItems({
+      matches: [{ path: '/ws/a.txt', label: 'a.txt', line: 3, col: 5, text: 'あの ことば', matched: [3, 4, 5] }],
+      total: 7,
+    });
+    expect(total).toBe(7);
+    expect(items[0]).toMatchObject({
+      path: '/ws/a.txt',
+      bufferId: null,
+      line: 3,
+      col: 5,
+      detail: 'あの ことば',
+      key: 'grep:/ws/a.txt:3:5',
+    });
+  });
+});
+
+describe('content search state', () => {
+  it('buffers content search ranks synchronously; files content search awaits main', () => {
+    const s = useQuickOpenStore.getState();
+    s.openPalette('buffers');
+    s.setBuffers(buffers('/ws/alpha.txt'));
+    s.toggleContentSearch();
+    s.setQuery('二行目');
+    expect(useQuickOpenStore.getState().items[0]).toMatchObject({ line: 2, bufferId: 1 });
+    expect(useQuickOpenStore.getState().grepping).toBe(false);
+    // Files mode: the list empties and grepping goes up until main answers
+    s.setMode('files');
+    let st = useQuickOpenStore.getState();
+    expect(st.items).toEqual([]);
+    expect(st.grepping).toBe(true);
+    s.setGrepResult({ matches: [], total: 0 });
+    st = useQuickOpenStore.getState();
+    expect(st.grepping).toBe(false);
+    s.close();
+  });
+
+  it('content search resets on open (a per-open mode, unlike textOnly)', () => {
+    const s = useQuickOpenStore.getState();
+    s.openPalette();
+    s.toggleContentSearch();
+    expect(useQuickOpenStore.getState().contentSearch).toBe(true);
+    s.close();
+    s.openPalette();
+    expect(useQuickOpenStore.getState().contentSearch).toBe(false);
     s.close();
   });
 });

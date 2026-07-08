@@ -651,6 +651,11 @@ export const VedEditor = (props: VedEditorProps): React.JSX.Element => {
       scroller.scrollTop = initialScroll.top;
       scroller.scrollLeft = initialScroll.left;
     }
+    // Keep the caret in view from the FIRST paint too: the restored scroll
+    // may have left the caret behind (a quick-open content-search jump mounts
+    // with a far caret and the old scroll). Same invariant as after edits;
+    // synchronous — rAF stalls in hidden windows.
+    if (scroller && initialCursor) revealCaretInScroller(scroller, view, toScrollMode(live.current.writingMode));
     requestAnimationFrame(() => view.focus());
 
     // In the horizontally-scrolling vertical modes (continuous Vertical and

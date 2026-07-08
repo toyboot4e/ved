@@ -145,6 +145,18 @@
   text-decoration: underline;
 }
 
+// Content-search rows: the where (path:line) muted, then the matched line
+.rowPath {
+  color: var(--ved-fg-muted);
+  margin-inline-end: 8px;
+  font-size: 12px;
+}
+
+.rowSelected .rowPath {
+  color: inherit;
+  opacity: 0.85;
+}
+
 .emptyNote {
   padding: 10px;
   font-size: 13px;
