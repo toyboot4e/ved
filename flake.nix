@@ -35,7 +35,7 @@
           src = self;
           pnpm = pkgs.pnpm_10;
           fetcherVersion = 3;
-          hash = "sha256-EUClv5pC8DR72aTGUp3AvUkcbskjrEAGSpd0XwdLSrg=";
+          hash = "sha256-SgDa/S+E0o3V2xUQKL0qbbijHEzQieS7uRB3qSi6uOM=";
         };
 
       # A sandboxed check that runs a pnpm script against a node_modules
