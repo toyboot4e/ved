@@ -14,7 +14,7 @@
 // verbatimModuleSyntax, and the loader strips type-only imports away). Every
 // capability arrives as the `VedContext` handed to `activate` — bound to the
 // extension's id, which is how command namespacing is enforced by
-// construction (docs/extensions-plan.md).
+// construction (docs/extensions.md).
 
 /** Something to undo — a registration, a listener, a UI contribution. Every
  *  registration on `VedContext` returns one AND is tracked by the context,

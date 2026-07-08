@@ -1,4 +1,4 @@
-// The renderer half of user extensions (docs/extensions-plan.md): imports
+// The renderer half of user extensions (docs/extensions.md): imports
 // the sources main compiled (shared/ipc.ts ExtensionSource) as blob modules,
 // hands each an id-bound VedContext (shared/extension-api.ts — namespacing
 // by construction: there is no unprefixed registration API), and wraps its
@@ -127,8 +127,8 @@ type UserExtension = {
 const createUserExtension = (id: string, fileName: string): UserExtension => {
   // Every registration is tracked here, so a failed activate (or a future
   // reload) sweeps exactly this extension's contributions — no
-  // extension-authored cleanup bookkeeping (docs/extensions-plan.md
-  // "Namespacing").
+  // extension-authored cleanup bookkeeping (docs/extensions.md
+  // "The module contract").
   const tracked: Disposable[] = [];
   const track = (disposable: Disposable): Disposable => {
     tracked.push(disposable);

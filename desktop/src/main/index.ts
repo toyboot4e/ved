@@ -127,7 +127,7 @@ app.whenReady().then(() => {
   registerShellService();
   registerCloseGuard();
   installClipboardPersist();
-  // User config lives under the config dir (docs/extensions-plan.md) —
+  // User config lives under the config dir (docs/extensions.md) —
   // `--config-dir=<path>` overrides the platform default; the flag is also
   // the e2e isolation seam, like VED_SMOKE_USER_DATA above.
   registerExtensionService(

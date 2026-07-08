@@ -1,19 +1,153 @@
-# Writing an editor extension
+# Extensions
 
-An extension adds behavior to `@ved/editor` — modal keymaps, custom commands,
-caret styling — through one seam: the `extensions` prop. `@ved/vim` is the
-reference implementation; everything it does goes through the API below, so
-anything it does, yours can.
+An extension adds behavior to ved — commands, keybindings, editor behavior,
+shell UI. ONE concept (the word "plugin" is not used), in three packaging
+tiers that share a single contract:
 
-## The shape
+- a **single `.ts` file** in the config dir's `extensions/` — zero setup,
+  the Emacs-init ergonomic; `init.ts` is by convention the user's own
+  configuration (there is no data config file — configuration IS code);
+- a **project directory** there (or linked via `--dev-extension`) with a
+  `package.json` manifest — multi-file sources and npm dependencies;
+- an **in-repo workspace package** (`@ved/vim` is the reference) built
+  directly on the editor seam, for first-party extensions shipped with ved.
+
+The first two are *user extensions*, loaded at startup from the config dir
+and driven through the `ved` API below; the loader wraps each one onto the
+same editor seam the in-repo tier uses, so anything `@ved/vim` can do, a
+user extension can.
+
+## The config directory
+
+The platform config dir (`~/.config/ved` on Linux via XDG,
+`~/Library/Application Support/ved` on macOS, `%APPDATA%\ved` on Windows),
+overridable with `--config-dir=<path>` — equals form only: a space-separated
+value would read as a positional file argument. The flag is also the e2e
+isolation seam (`test/e2e/user-extensions.ts`). Resolution:
+`desktop/src/main/config-dir.ts`.
+
+```
+<configDir>/
+  extensions/
+    init.ts            # the user's config — an ordinary extension, loaded LAST
+    reflow.ts          # single-file extension (id: "reflow")
+    word-count/        # project extension (id from its manifest)
+      package.json     #   { "ved": { "id": "…", "entry": "src/main.ts", "minAppVersion": "…" } }
+      src/…
+    ved.d.ts           # generated at launch — do not edit
+    tsconfig.json      # generated at launch — do not edit
+  storage/<id>/        # per-extension persistent files (ctx.storage)
+```
+
+Load order is deterministic: regular extensions name-sorted, then
+`--dev-extension` links, then `init.ts` LAST — so the user's own keybindings
+win collisions against extension-shipped defaults. Machine-owned app state
+(window geometry, session restore) is NOT user configuration and lives
+elsewhere; nothing ever machine-writes user code.
+
+## The module contract
+
+```ts
+import type { VedContext } from 'ved';
+
+export function activate(ctx: VedContext): void | Promise<void> {
+  ctx.commands.register('stamp', () => {
+    const end = ctx.editor.text().length;
+    return ctx.editor.replaceRange(end, end, '拡張');
+  });
+  ctx.keybindings.bind('mod+9', 'reflow.stamp');
+}
+export function deactivate(): void {} // optional
+```
+
+`VedContext` (the full surface: `desktop/src/shared/extension-api.ts`) is
+bound to the extension's id — **namespacing is by construction**, not
+convention: there is no unprefixed registration API.
+
+- `commands.register(name, run)` registers `<id>.<name>`; `execute(fullId)`
+  runs anything — composition is allowed, foreign registration impossible.
+  Reserved ids (`history`, `appear`, `vim`, …) and duplicates refuse to load;
+  the editor seam additionally refuses to shadow a core command id.
+- `keybindings.bind(chord, commandId)` feeds the editor's single binding
+  table (per-chord stacks over `DEFAULT_KEYBINDINGS`; later binders win —
+  shadowing another EXTENSION notices, rebinding a default is silent;
+  dispose restores the previous binding). The chord vocabulary is `Mod+…`
+  only (`chordOf`); plain keys and multi-stroke sequences are `handleKey`
+  territory.
+- `editor` targets the focused editor in plain text and plain offsets —
+  `text`/`selection`/`replaceRange`/`moveCaret`/`caretStop`/`snapCaret`/… ,
+  `addHooks` (keydown/text-input/composition edges), `onDidChangeText`,
+  `onDidChangeSelection`, and `decorate(ranges)` — view-only highlights
+  whose classes are namespaced `vedx-<id>-…` (style them with your own CSS,
+  background properties only; displayed text can never diverge from the
+  document because the API has no vocabulary for it).
+- `ui`: `statusItem` (footer right edge), `panel` (bottom-docked; the
+  extension OWNS the body element, alive across show/hide), `quickPick`
+  (modal fuzzy picker; one at a time, a new one preempts with `null`),
+  `notice` (transient toast).
+- `storage.read/write(file)` — plain files under `<configDir>/storage/<id>/`
+  behind the ipc.ts contract: the ONE fs capability an extension has,
+  single-segment names, id-bound so no extension can name another's dir.
+
+Every registration returns a `Disposable` AND is tracked by the context, so
+a failed `activate` — or a dev-loop reload — sweeps exactly that extension's
+contributions. A broken extension reports a notice and is skipped; it never
+takes down the editor.
+
+## How loading works
+
+Extensions run in the **renderer** (they drive the editor), but the renderer
+has no fs and no TypeScript, so main compiles and the renderer imports
+(`desktop/src/main/extension-host.ts` / `renderer/src/extension-host.ts`):
+
+1. Main scans `extensions/`: a `.ts` file compiles via Node's own
+   `stripTypeScriptTypes` (type STRIPPING — erasable syntax only, `enum` is
+   a load error, and nothing type-checks at load time: the user's editor is
+   the checker); a project directory bundles via esbuild (`bundle: true`,
+   browser platform) — relative imports and browser-safe npm dependencies
+   work with no user-side build step.
+2. The JS string crosses the typed IPC and loads as a blob module
+   (`Blob` → `URL.createObjectURL` → `import()`; the renderer CSP allows
+   `script-src blob:` for exactly this).
+3. The `ved` specifier never reaches the runtime — **the module is
+   types-only**, so `import type` strips away with the types and no import
+   map exists. A VALUE import of `ved` (or of a Node built-in) fails loudly
+   at bundle time: the renderer sandbox is the point. An extension that
+   legitimately needs fs gets a capability on `VedContext`, never Node.
+
+**Typing without setup**: at launch ved writes `ved.d.ts` — the VERBATIM raw
+source of `shared/extension-api.ts`, so the declaration users see cannot
+drift from the implementation (keep that file types-only and
+self-contained) — and a `tsconfig.json` mapping the `ved` path, with
+`verbatimModuleSyntax` making the checker enforce what the runtime does.
+Any editor opened on `extensions/` resolves `import type … from 'ved'` with
+full types; no npm install, no package.json for the single-file tier.
+
+## The dev loop
+
+`--dev-extension=<path>` (repeatable, equals form) links a working directory
+or file. Main watches every extension source — the `extensions/` top level
+for single files (`init.ts` included) and each project/dev tree recursively —
+and pushes debounced per-extension recompiles; the renderer hot-swaps that
+one extension: `deactivate()`, the automatic registration sweep, then
+re-activation in the same load-order slot. New files appearing after launch
+need a restart; edits to known ones do not. A project's `minAppVersion`
+gates it against an older ved.
+
+## The editor seam (in-repo tier)
+
+`EditorExtension` (`editor/src/extension.ts`) is the mechanism everything
+above wraps: handed to the editor's `extensions` prop with a STABLE array
+identity (module constant / memo — reconciliation is by identity, same
+members stay attached). Mechanisms and per-method semantics:
+architecture.md "Extensions".
 
 ```ts
 import type { EditorExtension } from '@ved/editor';
 
 export const myExtension: EditorExtension = {
-  id: 'my-ext', // unique; namespace your command ids under it
+  id: 'my-ext', // unique; namespaces your command ids
   attach(ctx) {
-    // runs when the editor attaches you; close over `ctx`
     const unregister = ctx.registerCommand('my-ext.hello', () => {
       ctx.replaceRange(0, 0, 'こんにちは');
       return true;
@@ -34,57 +168,56 @@ export const myExtension: EditorExtension = {
 };
 ```
 
-Hand it to the editor with a **stable identity** — the prop is reconciled by
-identity, so build the array once (module constant), not per render:
+- **The document is a plain string; a position is a plain offset.** You
+  never see the rich (ProseMirror) document, so you cannot desync it: edits
+  take the editor's exact plain-string path, selections snap to legal caret
+  stops. Movement is the editor's, axis-aware — never compute writing
+  direction yourself.
+- **IME is sacrosanct, and the seam enforces it.** Hooks never see composing
+  input; every mutator refuses while `isComposing()`; attach/detach waits
+  out a live composition. React to composed text at `onCompositionEnd`.
+- **Styling**: `setCaretShape('block')`, `setContentClass`,
+  `setVisualSelection` (charwise/linewise rendering), and
+  `setDecorations(key, ranges)` — the offset-addressed highlight layer the
+  user-facing `decorate` rides on (folded into the cached decoration base
+  like the search highlights: an idle set costs caret moves nothing).
+  `breakUndoGroup()` at your semantic boundaries.
+- **Model/view split (recommended)**: keep semantics a pure reducer over
+  `(state, key, {text, selection, caretStop})` returning effects; a thin
+  adapter applies them through the context — `vim/src/model.ts` vs
+  `vim/src/extension.ts`. The reducer unit-tests as plain functions.
 
-```tsx
-const EXTS = [myExtension];
-<VedEditor … extensions={enabled ? EXTS : NO_EXTS} />;
-```
+### Package setup (in-repo only)
 
-## The contract
-
-- **The document is a plain string; a position is a plain offset.** `getText`,
-  `getSelection`, `replaceRange`, `setSelection` speak nothing else. You never
-  see the rich (ProseMirror) document, so you cannot desync it: edits take the
-  editor's exact plain-string path (canonical rebuild + ruby repair + undo
-  history), selections snap to legal caret stops.
-- **Movement is the editor's, not yours.** Two movers, both axis-aware so you
-  never compute writing direction. `moveCaret('char'|'line', dir)` is LOGICAL
-  — the editor rotates `'line'` to the physical axis (the next/previous column
-  in vertical-rl). `moveCaretVisual('up'|'down'|'left'|'right', extend,
-  visualLine?)` is SPATIAL — the matching arrow key — and is what a screen walk
-  (Vim's hjkl) maps onto; its line-axis step is a logical paragraph walk by
-  default, or the wrapped display line/column with `visualLine` (Vim's
-  `g`-prefixed motions). `caretStop(offset, dir)` answers
-  "where would one step land" without moving; compute word targets over
-  `getText()` and land them with `setSelection` — it clamps and snaps for you.
-  `scrollPage(dir, half?)` is a viewport turn that carries the caret along.
-- **IME is sacrosanct, and the seam enforces it.** Your hooks never see
-  composing input; every mutator refuses while `isComposing()`; attach/detach
-  waits out a live composition. If your semantics reject composed text (a
-  modal normal mode), snapshot at `onCompositionStart` and restore at
-  `onCompositionEnd` — never interfere between the two.
-- **Styling**: `setCaretShape('block')` for a modal cursor (falls back to the
-  bar where no visible character sits under the caret), `setContentClass` for
-  your own CSS hooks (it survives writing-mode/policy switches). Undo
-  grouping: `breakUndoGroup()` at your semantic boundaries.
-
-## Model/view split (recommended)
-
-Keep your semantics a pure reducer over `(state, key, {text, selection,
-caretStop})` returning effects, and let a thin adapter apply effects through
-the context — `@ved/vim` (`vim/src/model.ts` vs `vim/src/extension.ts`). The
-reducer unit-tests as plain functions; the adapter is small enough to verify
-end-to-end (`desktop/test/e2e/vim-mode.ts` is the template — new extensions
-with UI need such a driver, and any new dialog its `VED_SMOKE_*` seam).
-
-## Package setup
-
-An in-repo extension is a flat workspace package depending only on
-`@ved/editor`'s public entry (`"@ved/editor": "workspace:*"`; never deep-import
-its internals — pnpm isolation and Biome both block prosemirror imports).
-Declare the asset-import shapes (`src/env.d.ts`, copy vim's), add the package
-to `pnpm-workspace.yaml`, root `tsconfig.json` references, `vitest.config.ts`
+A flat workspace package depending only on `@ved/editor`'s public entry
+(`"@ved/editor": "workspace:*"`; never deep-import its internals — pnpm
+isolation and Biome both block prosemirror imports). Declare the
+asset-import shapes (`src/env.d.ts`, copy vim's), add the package to
+`pnpm-workspace.yaml`, root `tsconfig.json` references, `vitest.config.ts`
 projects, and the Biome prosemirror-restriction override. After
-`pnpm install`, refresh the Nix hash: `just bump-hash`.
+`pnpm install`, refresh the Nix hash: `just bump-hash`. (User extensions
+skip ALL of this — that is the loader tier's point.)
+
+## Testing
+
+`test/e2e/user-extensions.ts` walks the whole user-extension surface through
+real keydowns in an isolated `--config-dir`. Extensions with UI need such a
+driver (`vim-mode.ts` is the in-repo template), and any new dialog its
+`VED_SMOKE_*` seam. IME-adjacent behavior is verified with real mozc
+(`test/e2e/mozc/`), never synthetic composition.
+
+## Deferred (deliberately out, revisit on demand)
+
+- **Anchored overlays** (pin an element near offset N): exposing rect
+  queries invites unscoped glyph walks (the per-caret-move perf invariant),
+  and multicol geometry is subtle enough that extensions would hold them
+  wrong. In-editor visuals stay declarative (`decorate`).
+- **Panel sides beyond bottom.**
+- **Configuring third-party extensions from `init.ts`** (the Emacs
+  variables-before-load story) — most user extensions are the user's own
+  code; a thin data layer could later slot UNDER code config (data defaults,
+  code wins) if a GUI settings editor ever materializes.
+- **A published types-only package** for project extensions wanting standard
+  npm tooling instead of the generated `ved.d.ts`.
+- **Machine-owned app state under the config dir** (it lives in renderer
+  localStorage; move it only if it should survive profile switches).

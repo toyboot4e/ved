@@ -1,4 +1,4 @@
-// The user config directory (docs/extensions-plan.md "The config
+// The user config directory (docs/extensions.md "The config
 // directory"): resolved ONCE at startup from the `--config-dir=<path>` CLI
 // flag, defaulting to the platform config dir. Everything user-configurable
 // (the extensions dir, generated typing files, per-extension storage)
@@ -26,7 +26,7 @@ const DEV_FLAG = '--dev-extension=';
 /** Every `--dev-extension=<path>` (repeatable, equals-form like
  *  `--config-dir`), resolved against `cwd`: working directories loaded as
  *  extensions and WATCHED — edits re-bundle and hot-reload
- *  (docs/extensions-plan.md "Dev loop"). */
+ *  (docs/extensions.md "The dev loop"). */
 export const devExtensionFlags = (argv: readonly string[], cwd: string): string[] =>
   argv
     .filter((arg) => arg.startsWith(DEV_FLAG) && arg.length > DEV_FLAG.length)

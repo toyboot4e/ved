@@ -500,6 +500,14 @@ never ProseMirror values — so extensions cannot violate the identity model:
   (line-wise visual); `'char'` is INCLUSIVE of both end cells, so the anchor
   character stays highlighted when the head moves before it (char-wise visual);
   `'none'` is the plain range.
+  `setDecorations(key, ranges)` REPLACES one caller's set of view-only
+  highlight ranges (plain offsets, a caller-namespaced class, background-only
+  styling): folded into the cached decoration BASE layer exactly like the
+  search highlights (identity-keyed — an idle set costs caret moves nothing)
+  and IME-safe by construction — mid-composition only the ref updates, the
+  composition's own commit transaction repaints. The matching event is the
+  editor's `onSelectionChange` prop: a payload-free ping (listeners pull
+  offsets lazily through the seam), so caret moves stay O(1) with none.
 
 Dispatch order on keydown: **IME guard → extension `handleKey` chain → chord
 table (command registry) → built-in handlers → PM keymaps.** The guard sits

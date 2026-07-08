@@ -1,4 +1,4 @@
-// User extensions end to end (docs/extensions-plan.md loader MVP): a fixture
+// User extensions end to end (docs/extensions.md): a fixture
 // init.ts in an isolated `--config-dir` registers a namespaced command,
 // binds a chord to it, and adds a raw key hook; the driver exercises both
 // paths through real keydowns and checks the generated typing files
@@ -62,7 +62,7 @@ await mkdir(join(configDir, 'extensions'), { recursive: true });
 await writeFile(join(configDir, 'extensions', 'init.ts'), INIT_TS, 'utf-8');
 
 // A PROJECT extension: a directory with a manifest and a relative import —
-// esbuild bundles the graph in main (docs/extensions-plan.md step 7).
+// esbuild bundles the graph in main (docs/extensions.md "How loading works").
 const projectDir = join(configDir, 'extensions', 'counter');
 await mkdir(join(projectDir, 'src'), { recursive: true });
 await writeFile(
