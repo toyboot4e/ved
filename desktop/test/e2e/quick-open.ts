@@ -203,11 +203,11 @@ try {
   await page.waitForFunction(() => document.querySelector('[aria-label="Quick open"]') === null);
   step('the list/preview divider drags and persists across opens');
 
-  // Content search over WORKSPACE FILES (内容 toggle): rows are path:line +
-  // the matched line; Enter opens the file with the caret ON the match.
+  // Content search over WORKSPACE FILES (ファイルを検索): rows are path:line
+  // + the matched line; Enter opens the file with the caret ON the match.
   await pressMod(page, 'p');
   await page.waitForSelector('[aria-label="Quick open"]');
-  await page.click('[aria-label="Content search"]');
+  await page.click('[aria-label="Grep files"]');
   await page.fill('#quick-open-input', 'みつけた');
   await page.waitForFunction(() =>
     Array.from(document.querySelectorAll('[role=option]')).some(
@@ -219,13 +219,26 @@ try {
   assert.equal(await caretOffset(page), 8, 'the caret lands on the match (line 2, column 4)');
   step('files content search greps the workspace and jumps to the match');
 
+  // The ACTIVE buffer is a target too: grep.txt is the active tab now — a
+  // second search jumps WITHIN it (the epoch-keyed remount, no tab change).
+  await pressMod(page, 'p');
+  await page.waitForSelector('[aria-label="Quick open"]');
+  await page.click('[aria-label="Grep files"]');
+  await page.fill('#quick-open-input', '三行目');
+  await page.waitForFunction(() =>
+    Array.from(document.querySelectorAll('[role=option]')).some((e) => e.textContent?.includes('grep.txt:3')),
+  );
+  await page.keyboard.press('Enter');
+  // 一行目\n (4) + 二行目 みつけた\n (9) = 13 — line 3, column 0
+  await page.waitForFunction(() => (window as unknown as { __vedCaret: () => number }).__vedCaret() === 13);
+  step('a match inside the ACTIVE buffer jumps the caret in place');
+
   // Content search over the OPEN BUFFERS: matches the live document of an
   // open tab and switches to it (no new tab).
   const tabsBefore = await tabCount();
   await pressMod(page, 'p');
   await page.waitForSelector('[aria-label="Quick open"]');
-  await page.click('[aria-label="Open file search"]');
-  await page.click('[aria-label="Content search"]');
+  await page.click('[aria-label="Grep open files"]');
   await page.fill('#quick-open-input', 'ALPHA');
   await page.waitForFunction(() =>
     Array.from(document.querySelectorAll('[role=option]')).some((e) => e.textContent?.includes('alpha.txt:1')),

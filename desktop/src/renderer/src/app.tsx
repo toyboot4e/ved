@@ -188,10 +188,29 @@ export const App = (): React.JSX.Element => {
     dispatchBuffers({ type: 'openPath', path, text: result.text });
   }, []);
 
-  // A quick-open content-search row: open (or focus) the file and place the
-  // caret on the match. The cursor lands via a snapshot BEFORE React renders
-  // the switched editor (both dispatches batch), so the remount reads it as
-  // its initial caret; the editor reveals a mounted caret itself.
+  // Caret placement for quick-open content search. The one-editor model moves
+  // carets by MOUNT: a snapshot lands the cursor before React renders, and the
+  // editor reveals a mounted caret itself. For the currently-RENDERED buffer
+  // (same key, no natural remount) commit the LIVE text with the caret and
+  // bump the key epoch to force one — never mid-composition (the palette owns
+  // focus while open, so no editor composition is live here).
+  const [jumpEpoch, setJumpEpoch] = useState(0);
+  const placeCursor = useCallback(
+    (id: BufferId, cursor: CursorState): void => {
+      const buf = useBuffersStore.getState().buffers.find((b) => b.id === id);
+      if (!buf) return;
+      if (id === baselineId) {
+        dispatchBuffers({ type: 'snapshot', id, text: textRef.current, cursor, anchor: cursor, scroll: buf.scroll });
+        setJumpEpoch((e) => e + 1);
+      } else {
+        // Inactive: its committed text is current; the switch remounts
+        dispatchBuffers({ type: 'snapshot', id, text: buf.text, cursor, anchor: cursor, scroll: buf.scroll });
+      }
+    },
+    [baselineId],
+  );
+
+  // A files content-search row: open (or focus) the file, caret on the match.
   const handleOpenFileAt = useCallback(
     async (path: string, cursor: CursorState): Promise<void> => {
       const result = await window.ved.readFile(path);
@@ -200,28 +219,20 @@ export const App = (): React.JSX.Element => {
         return;
       }
       dispatchBuffers({ type: 'openPath', path, text: result.text });
-      const s = useBuffersStore.getState();
-      const buf = s.buffers.find((b) => b.path === path);
-      // Jumping within the ALREADY-ACTIVE buffer would need a live-editor seam,
-      // not a remount — skipped (the match file was usually not active).
-      if (buf && buf.id === s.activeId && buf.id !== baselineId) {
-        dispatchBuffers({ type: 'snapshot', id: buf.id, text: buf.text, cursor, anchor: cursor, scroll: buf.scroll });
-      }
+      const buf = useBuffersStore.getState().buffers.find((b) => b.path === path);
+      if (buf) placeCursor(buf.id, cursor);
     },
-    [baselineId],
+    [placeCursor],
   );
 
-  // Buffers content search: activate the tab with the caret on the match.
-  // Snapshot FIRST (the buffer is still inactive — its committed text is
-  // current), then switch; the remount reads the cursor.
-  const handleJumpToBuffer = useCallback((id: BufferId, cursor: CursorState): void => {
-    const s = useBuffersStore.getState();
-    if (id === s.activeId) return; // no remount happens — keep the live caret
-    const buf = s.buffers.find((b) => b.id === id);
-    if (!buf) return;
-    dispatchBuffers({ type: 'snapshot', id, text: buf.text, cursor, anchor: cursor, scroll: buf.scroll });
-    dispatchBuffers({ type: 'setActive', id });
-  }, []);
+  // A buffers content-search row: activate the tab, caret on the match.
+  const handleJumpToBuffer = useCallback(
+    (id: BufferId, cursor: CursorState): void => {
+      placeCursor(id, cursor);
+      dispatchBuffers({ type: 'setActive', id });
+    },
+    [placeCursor],
+  );
 
   const handleSave = useCallback(
     async (saveAs: boolean) => {
@@ -316,7 +327,7 @@ export const App = (): React.JSX.Element => {
             </div>
             <TabBar activeDirty={dirty} onClose={handleClose} />
             <VedEditor
-              key={active.id}
+              key={`${active.id}.${jumpEpoch}`}
               initialText={active.text}
               history={active.history}
               initialCursor={active.cursor}

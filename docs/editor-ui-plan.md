@@ -452,21 +452,25 @@ Roots/visibility persistence rides Phase 4's `config.json`.
     window-splitter, pointer-captured drag + arrow keys — the sidebar
     handle's pattern); the list width is a store-clamped % of the body,
     kept across opens like the text-only toggle.
-  - *(2026-07-08)* **Content search (内容 toggle)** — a compact chip next to
-    the mode pair flips BOTH modes from name search to per-LINE fuzzy grep
+  - *(2026-07-08)* **Content search (検索)** — the header is TWO rows: a
+    four-view mode row (ファイル / 開いているファイル / ファイルを検索 /
+    開いているファイルを検索 — `setView`, mode × name/content in the store)
+    over the search box. The 検索 views are per-LINE fuzzy grep
     (shared/grep.ts over fuzzysort; long lines trimmed to a window around the
-    match). Files mode greps in MAIN over the indexed TEXT files
+    match). Files grep runs in MAIN over the indexed TEXT files
     (`grepWorkspaceFiles` IPC; reads per settled query — the overlay
     debounces 180ms, replies dropped by sequence; capped at 200 matches),
-    buffers mode greps the open documents synchronously (the ACTIVE buffer's
-    LIVE text is substituted into the snapshot). Rows render path:line + the
-    matched line; choosing one opens/activates with the caret ON the match —
-    a line is a paragraph, so `CursorState = {para: line-1, offset: col}`
-    lands via a pre-remount snapshot, and the editor core now reveals a
-    mounted caret (editor.tsx — the keep-the-caret-in-view invariant from
-    the first paint). Per-open, unlike textOnly (Ctrl+P muscle memory is
-    name search). Jumping within the already-active buffer is a no-op
-    (needs a live-editor seam; deferred).
+    buffers grep runs synchronously over the open documents (the ACTIVE
+    buffer's LIVE text is substituted into the snapshot). Rows render
+    path:line + the matched line; choosing one opens/activates with the
+    caret ON the match — a line is a paragraph, so `CursorState = {para:
+    line-1, offset: col}` lands via a pre-remount snapshot, and the editor
+    core reveals a mounted caret (editor.tsx — the keep-the-caret-in-view
+    invariant from the first paint). A match inside the currently-RENDERED
+    buffer commits the live text with the caret and forces a remount via an
+    epoch in the editor key (`app.tsx placeCursor`) — safe because the
+    palette owns focus, so no editor composition can be live. Content search
+    is per-open, unlike textOnly (Ctrl+P muscle memory is name search).
 
 The same store/overlay is built to back the **command palette**
 (`Ctrl+Shift+P`) later — "input + generic item provider", hence the store's

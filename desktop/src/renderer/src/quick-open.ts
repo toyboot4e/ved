@@ -166,10 +166,12 @@ type QuickOpenStore = {
   readonly selected: number;
   /** Hide known-binary files (files mode; the toggle); kept across opens. */
   readonly textOnly: boolean;
-  /** Content search (内容): match file/buffer CONTENTS per line instead of
-   *  names. Per-open (reset by openPalette) — Ctrl+P muscle memory is name
-   *  search. Files-mode content search is ASYNC (an IPC grep the overlay
-   *  debounces); buffers-mode is synchronous over the snapshot. */
+  /** Content search (検索): match file/buffer CONTENTS per line instead of
+   *  names — with `mode`, the four palette views (ファイル / 開いている
+   *  ファイル / ファイルを検索 / 開いているファイルを検索). Per-open (reset
+   *  by openPalette) — Ctrl+P muscle memory is name search. Files-mode
+   *  content search is ASYNC (an IPC grep the overlay debounces);
+   *  buffers-mode is synchronous over the snapshot. */
   readonly contentSearch: boolean;
   /** True while a files-mode content search is debouncing/fetching. */
   readonly grepping: boolean;
@@ -185,10 +187,11 @@ type QuickOpenStore = {
   readonly setBuffers: (buffers: readonly BufferEntry[]) => void;
   /** Switch pools; the query survives the switch. */
   readonly setMode: (mode: QuickOpenMode) => void;
+  /** Select one of the four views (mode × name/content) in one re-rank. */
+  readonly setView: (mode: QuickOpenMode, contentSearch: boolean) => void;
   readonly close: () => void;
   readonly setQuery: (query: string) => void;
   readonly toggleTextOnly: () => void;
-  readonly toggleContentSearch: () => void;
   /** Land a main-process grep (files content search). The overlay guards
    *  staleness by sequence; the store guards mode/open drift. */
   readonly setGrepResult: (result: GrepResult) => void;
@@ -259,10 +262,11 @@ export const useQuickOpenStore = create<QuickOpenStore>()((set) => ({
       const textOnly = !s.textOnly;
       return { textOnly, ...rerank({ ...s, textOnly }), selected: 0 };
     }),
-  toggleContentSearch: () =>
+  setView: (mode, contentSearch) =>
     set((s) => {
-      const n = { ...s, contentSearch: !s.contentSearch };
-      return { contentSearch: n.contentSearch, ...rerank(n), selected: 0, grepping: greppingAfter(n) };
+      if (s.mode === mode && s.contentSearch === contentSearch) return {};
+      const n = { ...s, mode, contentSearch };
+      return { mode, contentSearch, ...rerank(n), selected: 0, grepping: greppingAfter(n) };
     }),
   setGrepResult: (result) =>
     set((s) => (s.open && isAsyncGrep(s) ? { ...grepResultItems(result), selected: 0, grepping: false } : {})),

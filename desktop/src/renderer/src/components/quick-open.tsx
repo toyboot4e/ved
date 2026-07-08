@@ -148,9 +148,17 @@ const PreviewPane = ({ item }: { readonly item: QuickOpenItem | null }): React.J
   );
 };
 
-const MODES: readonly { readonly mode: QuickOpenMode; readonly label: string; readonly aria: string }[] = [
-  { mode: 'files', label: 'ファイル', aria: 'File search' },
-  { mode: 'buffers', label: '開いているファイル', aria: 'Open file search' },
+// The four palette views (mode × name/content search), one button each.
+const VIEWS: readonly {
+  readonly mode: QuickOpenMode;
+  readonly contentSearch: boolean;
+  readonly label: string;
+  readonly aria: string;
+}[] = [
+  { mode: 'files', contentSearch: false, label: 'ファイル', aria: 'File search' },
+  { mode: 'buffers', contentSearch: false, label: '開いているファイル', aria: 'Open file search' },
+  { mode: 'files', contentSearch: true, label: 'ファイルを検索', aria: 'Grep files' },
+  { mode: 'buffers', contentSearch: true, label: '開いているファイルを検索', aria: 'Grep open files' },
 ];
 
 const placeholderFor = (mode: QuickOpenMode, contentSearch: boolean): string => {
@@ -312,44 +320,25 @@ export const QuickOpen = ({
     >
       {/* biome-ignore lint/a11y/noStaticElementInteractions: stops backdrop dismissal for clicks inside the panel */}
       <div className={styles.panel} onMouseDown={(e) => e.stopPropagation()}>
-        <div className={styles.inputRow}>
+        <div className={styles.modeRow}>
           <fieldset className={styles.modes} aria-label='Search mode'>
-            {MODES.map((m) => (
-              <button
-                key={m.mode}
-                type='button'
-                className={clsx(styles.toggle, mode === m.mode && styles.toggleOn)}
-                aria-pressed={mode === m.mode}
-                aria-label={m.aria}
-                onMouseDown={preserveFocus}
-                onClick={() => useQuickOpenStore.getState().setMode(m.mode)}
-              >
-                {m.label}
-              </button>
-            ))}
+            {VIEWS.map((v) => {
+              const on = mode === v.mode && contentSearch === v.contentSearch;
+              return (
+                <button
+                  key={v.aria}
+                  type='button'
+                  className={clsx(styles.toggle, on && styles.toggleOn)}
+                  aria-pressed={on}
+                  aria-label={v.aria}
+                  onMouseDown={preserveFocus}
+                  onClick={() => useQuickOpenStore.getState().setView(v.mode, v.contentSearch)}
+                >
+                  {v.label}
+                </button>
+              );
+            })}
           </fieldset>
-          <button
-            type='button'
-            className={clsx(styles.toggle, contentSearch && styles.toggleOn)}
-            aria-pressed={contentSearch}
-            aria-label='Content search'
-            title='内容で検索（行単位のあいまい一致）'
-            onMouseDown={preserveFocus}
-            onClick={() => useQuickOpenStore.getState().toggleContentSearch()}
-          >
-            内容
-          </button>
-          <input
-            id='quick-open-input'
-            ref={inputRef}
-            className={styles.input}
-            type='text'
-            placeholder={placeholderFor(mode, contentSearch)}
-            spellCheck={false}
-            value={query}
-            onChange={(event) => useQuickOpenStore.getState().setQuery(event.target.value)}
-            onKeyDown={onKeyDown}
-          />
           {mode === 'files' && !contentSearch && (
             <button
               type='button'
@@ -363,6 +352,19 @@ export const QuickOpen = ({
               テキストのみ
             </button>
           )}
+        </div>
+        <div className={styles.inputRow}>
+          <input
+            id='quick-open-input'
+            ref={inputRef}
+            className={styles.input}
+            type='text'
+            placeholder={placeholderFor(mode, contentSearch)}
+            spellCheck={false}
+            value={query}
+            onChange={(event) => useQuickOpenStore.getState().setQuery(event.target.value)}
+            onKeyDown={onKeyDown}
+          />
         </div>
         <div
           ref={bodyRef}

@@ -143,12 +143,12 @@ describe('content search state', () => {
     const s = useQuickOpenStore.getState();
     s.openPalette('buffers');
     s.setBuffers(buffers('/ws/alpha.txt'));
-    s.toggleContentSearch();
+    s.setView('buffers', true);
     s.setQuery('二行目');
     expect(useQuickOpenStore.getState().items[0]).toMatchObject({ line: 2, bufferId: 1 });
     expect(useQuickOpenStore.getState().grepping).toBe(false);
-    // Files mode: the list empties and grepping goes up until main answers
-    s.setMode('files');
+    // Files grep view: the list empties and grepping goes up until main answers
+    s.setView('files', true);
     let st = useQuickOpenStore.getState();
     expect(st.items).toEqual([]);
     expect(st.grepping).toBe(true);
@@ -161,7 +161,7 @@ describe('content search state', () => {
   it('content search resets on open (a per-open mode, unlike textOnly)', () => {
     const s = useQuickOpenStore.getState();
     s.openPalette();
-    s.toggleContentSearch();
+    s.setView('files', true);
     expect(useQuickOpenStore.getState().contentSearch).toBe(true);
     s.close();
     s.openPalette();

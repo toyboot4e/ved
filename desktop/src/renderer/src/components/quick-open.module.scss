@@ -28,6 +28,16 @@
   box-shadow: 0 12px 40px rgba(0, 0, 0, 0.35);
 }
 
+// Two chrome rows over the body: the view selection (four mode buttons +
+// the text-only toggle), then the search box on its own line.
+.modeRow {
+  flex: none;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 8px 8px 0;
+}
+
 .inputRow {
   flex: none;
   display: flex;
