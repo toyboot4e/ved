@@ -31,6 +31,28 @@ export type GlyphWalker = {
   readonly endGesture: () => void;
 };
 
+/** BLOCK visual (Vim blockwise): the rectangle between the two selection
+ *  ends — their line range × their character-column range, both inclusive —
+ *  as one [from, to) segment per line, clipped to each line's end. A line
+ *  shorter than the left column contributes nothing. */
+const blockRanges = (text: string, a: number, b: number): { from: number; to: number }[] => {
+  const colOf = (off: number): number => off - (off <= 0 ? 0 : text.lastIndexOf('\n', off - 1) + 1);
+  const leftCol = Math.min(colOf(a), colOf(b));
+  const rightCol = Math.max(colOf(a), colOf(b));
+  const lastLs = b - colOf(b);
+  const ranges: { from: number; to: number }[] = [];
+  for (let ls = a - colOf(a); ; ) {
+    const nl = text.indexOf('\n', ls);
+    const le = nl < 0 ? text.length : nl;
+    const from = ls + leftCol;
+    const to = Math.min(ls + rightCol + 1, le);
+    if (from < to) ranges.push({ from, to });
+    if (ls >= lastLs || le >= text.length) break;
+    ls = le + 1;
+  }
+  return ranges;
+};
+
 export const createGlyphWalker = (
   view: EditorView,
   mount: HTMLElement,
@@ -91,7 +113,12 @@ export const createGlyphWalker = (
       // keeps the original char under the cursor). One caret step past `to`.
       to = nextCaretOffset(text, to, getPolicy(), false);
     }
-    if (from >= to) return [];
+    // BLOCK replaces the single [from, to) with one range per line
+    // (blockRanges); the other kinds keep the adjusted single range.
+    const ranges = vkind === 'block' ? blockRanges(text, from, to) : from < to ? [{ from, to }] : [];
+    if (ranges.length === 0) return [];
+    const first = ranges[0] as { from: number; to: number };
+    const last = ranges[ranges.length - 1] as { from: number; to: number };
     const cs = getComputedStyle(view.dom);
     const vertical = cs.writingMode.startsWith('vertical');
     // Cap a span's BLOCK extent at one cell (the glyph advance), centered:
@@ -119,8 +146,13 @@ export const createGlyphWalker = (
     const grouper = makeLineGrouper(vertical, pitch / 2, pitch);
     const out: DOMRect[] = [];
     let cur: { l: number; t: number; r: number; b: number } | null = null;
-    for (const g of walkGlyphsLines(lineOf(text, from), lineOf(text, to))) {
-      if (g.off < from || g.off >= to) continue;
+    // Glyphs stream in ascending offset order, so the (sorted, disjoint)
+    // ranges advance with a single cursor.
+    let ri = 0;
+    for (const g of walkGlyphsLines(lineOf(text, first.from), lineOf(text, last.to))) {
+      while (ri < ranges.length && g.off >= (ranges[ri] as { to: number }).to) ri++;
+      if (ri >= ranges.length) break;
+      if (g.off < (ranges[ri] as { from: number }).from) continue;
       const r = g.rect;
       if (!grouper.step(vertical ? r.left : r.top) && cur) {
         cur.l = Math.min(cur.l, r.left);

@@ -433,6 +433,53 @@ try {
   await page.keyboard.press('Escape');
   step('v charwise selection includes the anchor char moving backward');
 
+  // --- Ctrl+V block visual (still horizontal): the rectangle renders one
+  // rect per line, d cuts it, I repeats editor-inserted text (insertText =
+  // the IME-commit path) on every line, $ + A appends at ragged line ends. ---
+  await toggleVim();
+  await setDoc(page, 'abcd\nefgh\nijkl');
+  await toggleVim();
+  await setCaret(page, 1); // line 0, col 1
+  await page.keyboard.press('Control+v');
+  await press('j'); // next model line, same column
+  await press('l'); // col 2 → a 2×2 block
+  assert.ok((await selRects()) >= 2, 'block selection draws a rect per line');
+  await press('d');
+  assert.equal(await docText(page), 'ad\neh\nijkl', 'd deletes the 2×2 block');
+  step('Ctrl+V selects a rectangle; d cuts it');
+
+  await toggleVim();
+  await setDoc(page, 'abcd\nefgh');
+  await toggleVim();
+  await setCaret(page, 1);
+  await page.keyboard.press('Control+v');
+  await press('j');
+  await press('I');
+  await page.keyboard.insertText('カ'); // bypasses keydown, like an IME commit
+  await page.keyboard.press('Escape');
+  await page.waitForTimeout(80);
+  assert.equal(await docText(page), 'aカbcd\neカfgh', 'block I repeats the inserted text on every line');
+  step('block I inserts on every line (insertText/IME path)');
+
+  await toggleVim();
+  await setDoc(page, 'ab\ncdef');
+  await toggleVim();
+  await setCaret(page, 0);
+  await page.keyboard.press('Control+v');
+  await press('j');
+  await press('$');
+  await press('A');
+  await press('!');
+  await page.keyboard.press('Escape');
+  await page.waitForTimeout(80);
+  assert.equal(await docText(page), 'ab!\ncdef!', 'block $ + A appends at every line end');
+  step('block $ + A appends at ragged line ends');
+
+  // Restore the charwise-test doc so the sections below see what they expect.
+  await toggleVim();
+  await setDoc(page, 'abcde');
+  await toggleVim();
+
   // --- User keymap (the __vedVimKeymap seam set before the first toggle):
   // Q is mapped to 0 (line start) — a key the defaults leave unbound. ---
   await setCaret(page, 3);

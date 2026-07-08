@@ -590,7 +590,20 @@ keys re-dispatched, text inserted as-is (the reducer can't step a mutating
 doc within one call); `mozc/vim-dot-repeat.ts` pins the real-IME loop. `gg`/`G` KEEP the column; `Ctrl+A`/`Ctrl+X`
 increment/decrement the number at the caret; linewise `V` keeps the cursor and
 highlights the paragraph, charwise `v` is inclusive of the anchor cell
-(`setVisualSelection`). **Macros**: `q{reg}`…`q` records the TYPED keys —
+(`setVisualSelection`). **Block visual** (`Ctrl+V`): the rectangle between
+anchor and head — their line range × their CHARACTER-column range, both
+inclusive (ved's one-character-per-cell grid; a deviation from Vim's screen
+columns). The editor renders it as the `'block'` visual-selection kind (one
+overlay rect per line, clipped to each line's end); `d`/`x`/`c`/`s`/`y` take
+the per-line segments into a BLOCKWISE register that `p`/`P` re-insert as a
+column (padding short lines, creating missing ones); `I`/`A` insert on the
+block's top line (`A` after the right edge, padding a short top line; after
+`$`, at every line's END) and Escape repeats the typed text on the remaining
+lines — the text accumulates through the same channels as the dot-repeat
+recording, so IME-committed text repeats too (`mozc/vim-block-ime.ts`).
+Enter/Delete (or Backspacing past the insert start) abort the repeat; block
+changes are not dot-repeatable (like all visual changes, v1) and block-visual
+paste is not supported (v1). **Macros**: `q{reg}`…`q` records the TYPED keys —
 capture lives in `vimKeydown` and excludes fed/replayed keys, so a replay
 (`@{reg}`, `@@`, counts multiply) re-expands through user mappings, and `.`
 after a macro repeats the last change WITHIN it, as in Vim; the adapter runs

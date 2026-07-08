@@ -180,6 +180,28 @@ describe('dot-repeat over editor-inserted text', () => {
     t.press('Escape', '.');
     expect(t.state.text).toBe('ab\nx\nx');
   });
+
+  it('block I with an IME commit repeats the committed text on every line', () => {
+    const t = attach('ab\ncd');
+    t.hooks.handleKey?.(chord('v', { ctrlKey: true })); // block visual
+    t.press('G', 'I'); // extend to the last line, insert at the left column
+    t.hooks.onCompositionStart?.();
+    // The IME commits on the top line — no keydowns reach the extension.
+    t.state.text = 'あab\ncd';
+    t.state.head = t.state.anchor = 1;
+    t.hooks.onCompositionEnd?.();
+    t.press('Escape');
+    expect(t.state.text).toBe('あab\nあcd');
+  });
+
+  it('block A with live typed text appends on every line', () => {
+    const t = attach('ab\ncd');
+    t.hooks.handleKey?.(chord('v', { ctrlKey: true }));
+    t.press('G', 'l', 'A'); // block cols 0-1, append after it
+    typeLive(t, '!');
+    t.press('Escape');
+    expect(t.state.text).toBe('ab!\ncd!');
+  });
 });
 
 describe('{action} RHS through the adapter', () => {

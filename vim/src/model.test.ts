@@ -694,6 +694,99 @@ describe('dot-repeat (.)', () => {
   });
 });
 
+describe('block visual (Ctrl+V)', () => {
+  const cv = key('v', { ctrl: true });
+
+  it('Ctrl+V toggles block visual; v narrows to charwise', () => {
+    const on = play('abc', 0, [cv]);
+    expect(on.state.mode).toBe('visual');
+    expect(on.state.visualKind).toBe('block');
+    const off = play('abc', 0, [cv, cv]);
+    expect(off.state.mode).toBe('normal');
+    const narrowed = play('abc', 0, [cv, 'v']);
+    expect(narrowed.state.mode).toBe('visual');
+    expect(narrowed.state.visualKind).toBe('char');
+  });
+
+  it('d deletes the rectangle and fills the blockwise register', () => {
+    // Anchor at 0 (line 0, col 0); G → line 1 same column; l → col 1.
+    const r = play('abcd\nefgh', 0, [cv, 'G', 'l', 'd']);
+    expect(r.text).toBe('cd\ngh');
+    expect(r.head).toBe(0); // caret at the block's top-left
+    expect(r.state.register).toEqual({ text: 'ab\nef', linewise: false, block: ['ab', 'ef'] });
+    expect(r.state.mode).toBe('normal');
+  });
+
+  it('y yanks blockwise; p re-inserts the column at the caret', () => {
+    const y = play('ab\ncd', 0, [cv, 'G', 'l', 'y']);
+    expect(y.text).toBe('ab\ncd');
+    expect(y.state.register?.block).toEqual(['ab', 'cd']);
+    const p = play('ab\ncd', 0, [cv, 'G', 'l', 'y', 'p']);
+    // The yank left the caret at the block's top-left (0); p pastes the
+    // column one cell AFTER it (col 1) on successive lines.
+    expect(p.text).toBe('aabb\nccdd');
+  });
+
+  it('block paste pads short lines and creates missing ones', () => {
+    const r = play('ab\ncd\nef', 0, [cv, 'G', 'y', 'G', 'p']);
+    // Yank col 0 of all three lines (['a','c','e']); G → the last line; p
+    // pastes the 3-segment column at col 1 from there: two NEW lines take
+    // the overflow, space-padded up to the paste column.
+    expect(r.text).toBe('ab\ncd\neaf\n c\n e');
+  });
+
+  it('I inserts the typed text on every block line (top line live, rest on Escape)', () => {
+    const r = play('abcd\nefgh', 1, [cv, 'G', 'I', 'X', key('Escape')]);
+    expect(r.text).toBe('aXbcd\neXfgh');
+    expect(r.state.mode).toBe('normal');
+    expect(r.head).toBe(1); // Escape steps back onto the inserted text, top line
+  });
+
+  it('I skips lines shorter than the block column', () => {
+    // Block cols 2..2 over 3 lines; line 2 ('e') is too short.
+    const r = play('abcd\ne\nfghi', 2, [cv, 'G', 'I', 'X', key('Escape')]);
+    expect(r.text).toBe('abXcd\ne\nfgXhi');
+  });
+
+  it('A appends after the block, padding short lines with spaces', () => {
+    const r = play('abcd\nef', 2, [cv, 'G', 'A', 'X', key('Escape')]);
+    expect(r.text).toBe('abcXd\nef X');
+  });
+
+  it('$ + A appends at every line END (ragged lines)', () => {
+    const r = play('ab\ncdef', 0, [cv, 'G', '$', 'A', '!', key('Escape')]);
+    expect(r.text).toBe('ab!\ncdef!');
+  });
+
+  it('c deletes the rectangle and repeats the replacement on every line', () => {
+    const r = play('abcd\nefgh', 1, [cv, 'G', 'l', 'c', 'Z', key('Escape')]);
+    expect(r.text).toBe('aZd\neZh');
+    expect(r.state.register?.block).toEqual(['bc', 'fg']);
+  });
+
+  it('Backspace within the typed text shortens the repeat; past its start aborts it', () => {
+    const within = play('ab\ncd', 0, [cv, 'G', 'I', 'X', key('Backspace'), 'Y', key('Escape')]);
+    expect(within.text).toBe('Yab\nYcd'); // X was retracted; Y repeats
+    const past = play('ab\ncd', 0, [cv, 'G', 'I', 'X', key('Backspace'), key('Backspace'), 'Y', key('Escape')]);
+    expect(past.text).toBe('Yab\ncd'); // over-deleted: top-line edit stays, no repeat
+  });
+
+  it('Enter aborts the repeat (the multi-line insert stays on the top line)', () => {
+    const r = play('ab\ncd', 0, [cv, 'G', 'I', 'X', key('Enter'), key('Escape')]);
+    expect(r.text).toBe('X\nab\ncd');
+  });
+
+  it('IME-committed text (vimRecordText) repeats over the block', () => {
+    const r = play('ab\ncd', 0, [cv, 'G', 'I']);
+    const st = vimRecordText(r.state, 'あい');
+    const after = `あい${r.text}`; // the IME committed on the top line
+    const esc = vimKeydown(st, key('Escape'), docOf(after, 2));
+    expect(esc.state.mode).toBe('normal');
+    // Line 1 of 'あいab\ncd' starts at 5 — the repeat inserts there.
+    expect(esc.effects).toContainEqual({ kind: 'replace', from: 5, to: 5, text: 'あい' });
+  });
+});
+
 describe('pending-state hygiene', () => {
   it('Escape clears a pending count/operator/find', () => {
     const r = play('abc', 0, ['2', 'd', key('Escape'), 'x']);

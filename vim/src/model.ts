@@ -41,6 +41,15 @@
 //     cursor (a collapsed selection at the caret) and highlights the whole
 //     paragraph. Both shape the render via setVisualSelection; operators still
 //     take whole lines for V (visualRange);
+//   - BLOCK visual `Ctrl+V`: the rectangle between anchor and head (lines ×
+//     character columns, both inclusive — ved's cell grid, a deviation from
+//     Vim's screen columns). d/x/c/s/y take the per-line segments (blockwise
+//     register; `p`/`P` re-insert them as a column, padding short lines);
+//     `I`/`A` insert on the TOP line (A after the right edge, padding a short
+//     top line; after `$`, at every line's end) and Escape repeats the typed
+//     text on the remaining lines — IME-committed text included, via the
+//     same vimRecordText channel as dot-repeat. Block changes are not
+//     dot-repeatable (like all visual changes, v1);
 //   - search: / ? n N * # (literal, case-sensitive; command line built in
 //     state — the shell renders it). NOT incremental, and NOT IME-aware (the
 //     pattern captures raw keydowns; a composed IME pattern is out of scope);
@@ -111,7 +120,7 @@ import {
 } from './text';
 
 export type VimMode = 'normal' | 'insert' | 'visual';
-export type VimVisualKind = 'char' | 'line';
+export type VimVisualKind = 'char' | 'line' | 'block';
 
 export type { VimKey } from './keys';
 export type { WordModel } from './text';
@@ -164,7 +173,14 @@ export type VimEffect =
    *  `repeat`; `noremap` = the fed keys skip the user mapping layer. */
   | { readonly kind: 'feedKeys'; readonly keys: readonly VimKey[]; readonly noremap: boolean };
 
-export type VimRegister = { readonly text: string; readonly linewise: boolean };
+export type VimRegister = {
+  readonly text: string;
+  readonly linewise: boolean;
+  /** Present for a BLOCKWISE yank/delete: the per-line segments. `p`/`P`
+   *  re-insert them as a column at the caret (`text` joins them with
+   *  newlines for any consumer that only reads plain text). */
+  readonly block?: readonly string[];
+};
 
 /** One item of a recorded change (dot-repeat): a key the replay re-dispatches,
  *  or literal TEXT the insert phase produced — typed, fed, or IME-committed —
@@ -173,6 +189,30 @@ export type VimChangeItem =
   | { readonly kind: 'key'; readonly key: VimKey }
   | { readonly kind: 'text'; readonly text: string };
 
+/** A pending visual-block insert (`I`/`A`/`c` from block visual): the insert
+ *  runs LIVE on the block's TOP line; Escape repeats the typed text on the
+ *  remaining block lines. The text accumulates through the same channels as
+ *  the dot-repeat recording (fed printables at dispatch, live/IME text via
+ *  vimRecordText), so IME-committed text repeats over the block too. */
+type VimBlockInsert = {
+  /** 0-based indices of the block's remaining lines (below the top line —
+   *  block I/A/c always insert on the top line first, like Vim). */
+  readonly lines: readonly number[];
+  /** The insert column (character offset within the line). */
+  readonly col: number;
+  /** `A`: a line shorter than `col` is PADDED with spaces up to it;
+   *  `I`/`c`: such a line is skipped (Vim's rule). */
+  readonly append: boolean;
+  /** `$`-block `A`: append at each line's END (`col` ignored). */
+  readonly eol: boolean;
+  /** The text typed so far. */
+  readonly text: string;
+  /** Cleared when the insert can no longer repeat (Enter, Backspace past
+   *  the insert start, Delete): the top-line edit stays, the repeat is
+   *  skipped — close to Vim, which aborts the repeat on such edits. */
+  readonly valid: boolean;
+};
+
 type Operator = 'd' | 'c' | 'y';
 type FindOp = 'f' | 'F' | 't' | 'T';
 
@@ -180,6 +220,12 @@ export type VimState = {
   readonly mode: VimMode;
   /** Which flavor of visual mode (meaningful while mode === 'visual'). */
   readonly visualKind: VimVisualKind;
+  /** Block visual only: `$` extended the block to every line's END (Vim's
+   *  curswant=MAXCOL). Kept over hjkl/gg/G walks, cleared by column motions
+   *  (`0` `^` `w` `b` `e` `f`…) and on entering block mode. */
+  readonly visualBlockEol: boolean;
+  /** The block insert pending its Escape-time repeat, or null. */
+  readonly blockInsert: VimBlockInsert | null;
   /** Pending count digits (`2` of `2dw`), null = none. */
   readonly count: number | null;
   /** Pending operator (`d` of `dw`), waiting for its motion. */
@@ -220,6 +266,8 @@ export type VimState = {
 export const VIM_INITIAL: VimState = {
   mode: 'normal',
   visualKind: 'char',
+  visualBlockEol: false,
+  blockInsert: null,
   count: null,
   operator: null,
   charPending: null,
@@ -534,21 +582,29 @@ const record = (incoming: VimState, key: VimKey, raw: VimStep, fed: boolean): Vi
   const insertEdit = inInsert && !key.ctrl && !key.meta && !key.alt && INSERT_EDIT_KEYS.has(key.key);
   const editsNow = raw.effects.some((e) => e.kind === 'replace') || insertText || insertEdit;
   const item: VimChangeItem | null = insertText ? (fed ? { kind: 'text', text: key.key } : null) : { kind: 'key', key };
+  // A FED printable also feeds a pending block insert (live ones arrive via
+  // vimRecordText; the feed loop inserts fed keys programmatically, so no
+  // input event follows).
+  const bi = raw.state.blockInsert;
+  const step =
+    fed && insertText && bi?.valid
+      ? { ...raw, state: { ...raw.state, blockInsert: { ...bi, text: bi.text + key.key } } }
+      : raw;
   let rec = incoming.recording;
   if (rec === null) {
-    if (!atRest(incoming)) return raw; // mid-sequence key with no recording (shouldn't happen) — ignore
+    if (!atRest(incoming)) return step; // mid-sequence key with no recording (shouldn't happen) — ignore
     rec = { items: item ? [item] : [], changed: editsNow };
   } else {
     rec = { items: item ? appendItem(rec.items, item) : rec.items, changed: rec.changed || editsNow };
   }
-  if (raw.state.mode === 'visual') return { ...raw, state: { ...raw.state, recording: null } };
-  if (atRest(raw.state)) {
+  if (step.state.mode === 'visual') return { ...step, state: { ...step.state, recording: null } };
+  if (atRest(step.state)) {
     return {
-      ...raw,
-      state: { ...raw.state, recording: null, lastChange: rec.changed ? rec.items : raw.state.lastChange },
+      ...step,
+      state: { ...step.state, recording: null, lastChange: rec.changed ? rec.items : step.state.lastChange },
     };
   }
-  return { ...raw, state: { ...raw.state, recording: rec } };
+  return { ...step, state: { ...step.state, recording: rec } };
 };
 
 /** Append literal insert-phase text to the live dot-repeat recording. The
@@ -557,10 +613,15 @@ const record = (incoming: VimState, key: VimKey, raw: VimStep, fed: boolean): Vi
  *  (composing keydowns are 229-guarded and never reach vimKeydown). No-op
  *  outside insert mode or without a live recording. */
 export const vimRecordText = (state: VimState, text: string): VimState => {
-  if (text.length === 0 || state.mode !== 'insert' || state.recording === null) return state;
+  if (text.length === 0 || state.mode !== 'insert') return state;
+  // A pending block insert accumulates the same text — its Escape-time
+  // repeat is what makes block I/A work with IME-committed text.
+  const bi = state.blockInsert;
+  const st = bi?.valid ? { ...state, blockInsert: { ...bi, text: bi.text + text } } : state;
+  if (st.recording === null) return st;
   return {
-    ...state,
-    recording: { items: appendItem(state.recording.items, { kind: 'text', text }), changed: true },
+    ...st,
+    recording: { items: appendItem(st.recording.items, { kind: 'text', text }), changed: true },
   };
 };
 
@@ -912,15 +973,34 @@ const dispatch = (state: VimState, key: VimKey, doc: VimDocView): VimStep => {
 };
 
 /** Insert mode: only Escape is ours (back to normal, caret one step left like
- *  Vim, its own undo unit). Everything else — including chords — is the
- *  editor's normal editing. */
+ *  Vim, its own undo unit; a pending BLOCK insert repeats its text on the
+ *  block's other lines first). Everything else — including chords — is the
+ *  editor's normal editing, though a pending block insert tracks the keys
+ *  that break its repeat (Enter/Delete) or shorten it (Backspace). */
 const insertKey = (state: VimState, key: VimKey, doc: VimDocView): VimStep => {
-  if (key.key !== 'Escape' || key.ctrl) return unhandled(state);
-  const ls = lineStart(doc.text, doc.head);
-  const back = doc.caretStop(doc.head, -1);
-  const effects: VimEffect[] = [{ kind: 'breakUndo' }];
-  if (back >= ls && back !== doc.head) effects.push({ kind: 'select', anchor: back, head: back });
-  return { state: { ...clearPending(state), mode: 'normal' }, effects, handled: true };
+  if (key.key === 'Escape' && !key.ctrl) {
+    const flushed = flushBlockInsert(state, doc);
+    const ls = lineStart(doc.text, doc.head);
+    const back = doc.caretStop(doc.head, -1);
+    const effects: VimEffect[] = [{ kind: 'breakUndo' }, ...flushed.effects];
+    // The block-repeat inserts all sit BELOW the caret's line, so the caret
+    // offset is unaffected by them.
+    if (back >= ls && back !== doc.head) effects.push({ kind: 'select', anchor: back, head: back });
+    return { state: { ...clearPending(flushed.state), mode: 'normal' }, effects, handled: true };
+  }
+  const bi = state.blockInsert;
+  if (bi?.valid && !key.ctrl && !key.meta && !key.alt) {
+    if (key.key === 'Enter' || key.key === 'Delete') {
+      return unhandled({ ...state, blockInsert: { ...bi, valid: false } });
+    }
+    if (key.key === 'Backspace') {
+      // Deleting within the typed text shortens the repeat; deleting past
+      // its start makes the repeat unpredictable — abort it.
+      const next = bi.text.length > 0 ? { ...bi, text: bi.text.slice(0, -1) } : { ...bi, valid: false };
+      return unhandled({ ...state, blockInsert: next });
+    }
+  }
+  return unhandled(state);
 };
 
 /** The character argument of a pending `r`/`f`/`F`/`t`/`T`. */
@@ -1055,6 +1135,154 @@ const visualRange = (state: VimState, doc: VimDocView): VimRange => {
 };
 
 // ---------------------------------------------------------------------------
+// Block visual (Ctrl+V): the rectangle between the anchor and head — their
+// line range × their column range, both INCLUSIVE, columns as CHARACTER
+// offsets within the line (ved's grid renders one character per cell in both
+// writing modes, so character columns ARE the visual rectangle; deviation
+// from Vim's screen columns). Offsets index the raw plain text, markup
+// included — a block that cuts through a collapsed ruby's markup edits the
+// exact plain string, the identity model's contract.
+// ---------------------------------------------------------------------------
+
+/** One line of a block: its bounds and the block's segment on it, clipped to
+ *  the line end (EMPTY — from === to — on a line shorter than the left
+ *  column). */
+type BlockLine = { readonly ls: number; readonly le: number; readonly from: number; readonly to: number };
+
+type BlockGeom = {
+  readonly lines: readonly BlockLine[];
+  readonly leftCol: number;
+  readonly rightCol: number;
+  /** 0-based index of the block's top line. */
+  readonly topIndex: number;
+};
+
+const blockGeometry = (text: string, anchor: number, head: number, eol: boolean): BlockGeom => {
+  const aCol = anchor - lineStart(text, anchor);
+  const hCol = head - lineStart(text, head);
+  const leftCol = Math.min(aCol, hCol);
+  const rightCol = Math.max(aCol, hCol);
+  const first = Math.min(lineStart(text, anchor), lineStart(text, head));
+  const last = Math.max(lineStart(text, anchor), lineStart(text, head));
+  let topIndex = 0;
+  for (let i = text.indexOf('\n'); i >= 0 && i < first; i = text.indexOf('\n', i + 1)) topIndex++;
+  const lines: BlockLine[] = [];
+  let ls = first;
+  for (;;) {
+    const le = lineEnd(text, ls);
+    const from = Math.min(ls + leftCol, le);
+    const to = eol ? le : Math.min(ls + rightCol + 1, le);
+    lines.push({ ls, le, from, to: Math.max(from, to) });
+    if (ls >= last || le >= text.length) break;
+    ls = le + 1;
+  }
+  return { lines, leftCol, rightCol, topIndex };
+};
+
+/** d/x/y/c over a block: capture the blockwise register; d/c also delete the
+ *  segments (BOTTOM-UP, so earlier offsets stay valid); the caret lands at
+ *  the block's top-left, Vim's rule. */
+const blockOperator = (state: VimState, op: Operator, doc: VimDocView): VimStep => {
+  const geom = blockGeometry(doc.text, doc.anchor, doc.head, state.visualBlockEol);
+  const segs = geom.lines.map((l) => doc.text.slice(l.from, l.to));
+  const register: VimRegister = { text: segs.join('\n'), linewise: false, block: segs };
+  const top = geom.lines[0] as BlockLine;
+  if (op === 'y') {
+    return {
+      state: { ...state, mode: 'normal', register },
+      effects: [{ kind: 'select', anchor: top.from, head: top.from }],
+      handled: true,
+    };
+  }
+  const deletes: VimEffect[] = [...geom.lines]
+    .reverse()
+    .filter((l) => l.from < l.to)
+    .map((l) => ({ kind: 'replace', from: l.from, to: l.to, text: '' }) as const);
+  if (op === 'd') {
+    return {
+      state: { ...state, mode: 'normal', register },
+      effects: [...deletes, { kind: 'select', anchor: top.from, head: top.from }],
+      handled: true,
+    };
+  }
+  // c: delete, then a block insert at the left column — Escape repeats the
+  // typed text on the remaining lines (lines shorter than the column skip).
+  const blockInsert: VimBlockInsert = {
+    lines: geom.lines.slice(1).map((_, i) => geom.topIndex + 1 + i),
+    col: geom.leftCol,
+    append: false,
+    eol: false,
+    text: '',
+    valid: true,
+  };
+  return {
+    state: { ...state, mode: 'insert', register, blockInsert },
+    effects: [{ kind: 'breakUndo' }, ...deletes, { kind: 'select', anchor: top.from, head: top.from }],
+    handled: true,
+  };
+};
+
+/** Block `I`/`A`: move to the block's top line (`I` its left column; `A`
+ *  after its right column — padding a short top line with spaces — or the
+ *  line END for a `$`-block) and insert there; Escape repeats the typed text
+ *  on the remaining block lines (flushBlockInsert). */
+const blockInsertStart = (state: VimState, doc: VimDocView, append: boolean): VimStep => {
+  const eol = append && state.visualBlockEol;
+  const geom = blockGeometry(doc.text, doc.anchor, doc.head, eol);
+  const top = geom.lines[0] as BlockLine;
+  const col = append ? (eol ? 0 : geom.rightCol + 1) : geom.leftCol;
+  const pre: VimEffect[] = [];
+  let caret: number;
+  if (eol) {
+    caret = top.le;
+  } else if (append && top.le - top.ls < col) {
+    pre.push({ kind: 'replace', from: top.le, to: top.le, text: ' '.repeat(col - (top.le - top.ls)) });
+    caret = top.ls + col;
+  } else {
+    caret = top.ls + col;
+  }
+  const blockInsert: VimBlockInsert = {
+    lines: geom.lines.slice(1).map((_, i) => geom.topIndex + 1 + i),
+    col,
+    append,
+    eol,
+    text: '',
+    valid: true,
+  };
+  return {
+    state: { ...state, mode: 'insert', blockInsert },
+    effects: [{ kind: 'breakUndo' }, ...pre, { kind: 'select', anchor: caret, head: caret }],
+    handled: true,
+  };
+};
+
+/** Escape after a block insert: repeat the typed text on the remaining block
+ *  lines (BOTTOM-UP — all of them sit below the caret's line, so the caret's
+ *  own offsets are untouched). Skipped when the insert cannot repeat: it was
+ *  invalidated (Enter/Delete/over-deleting Backspace), is empty, or the text
+ *  no longer sits right before the caret (the liveness check — a click or an
+ *  interrupted composition moved the insertion elsewhere). */
+const flushBlockInsert = (state: VimState, doc: VimDocView): { state: VimState; effects: VimEffect[] } => {
+  const bi = state.blockInsert;
+  const cleared = { ...state, blockInsert: null };
+  if (!bi) return { state: cleared, effects: [] };
+  const t = bi.text;
+  if (!bi.valid || t.length === 0 || t.includes('\n')) return { state: cleared, effects: [] };
+  if (doc.text.slice(doc.head - t.length, doc.head) !== t) return { state: cleared, effects: [] };
+  const effects: VimEffect[] = [];
+  for (const li of [...bi.lines].sort((a, b) => b - a)) {
+    const ls = lineStartOf(doc.text, li);
+    const le = lineEnd(doc.text, ls);
+    const len = le - ls;
+    if (bi.eol) effects.push({ kind: 'replace', from: le, to: le, text: t });
+    else if (len >= bi.col) effects.push({ kind: 'replace', from: ls + bi.col, to: ls + bi.col, text: t });
+    else if (bi.append) effects.push({ kind: 'replace', from: le, to: le, text: ' '.repeat(bi.col - len) + t });
+    // else: I/c skip a line shorter than the block column (Vim's rule).
+  }
+  return { state: cleared, effects };
+};
+
+// ---------------------------------------------------------------------------
 // Named actions + built-in bindings (K1 — bindings as data)
 //
 // Every COMMAND key resolves through a bindings table (key → action id) into
@@ -1120,27 +1348,43 @@ const pageScroll =
  *  end-swap, paste-over). Motions are NOT here — they fall through to the
  *  normal tables and extend from the visual anchor. */
 const VISUAL_ACTIONS = {
-  // Charwise v exits; from linewise it narrows to charwise (selection kept).
+  // Charwise v exits; from linewise/block it narrows to charwise (selection
+  // kept).
   'visual.toggleChar': (state, _env, doc) =>
-    state.visualKind === 'line' ? swallow({ ...state, visualKind: 'char' }) : exitVisual(state, doc),
+    state.visualKind !== 'char' ? swallow({ ...state, visualKind: 'char' }) : exitVisual(state, doc),
   // V again exits visual; else widen to linewise WITHOUT moving the cursor —
   // the editor expands the highlight to whole lines from the flag.
   'visual.toggleLine': (state, _env, doc) =>
     state.visualKind === 'line'
       ? exitVisual(state, doc)
-      : { state: { ...state, visualKind: 'line' }, effects: [], handled: true },
+      : { state: { ...state, visualKind: 'line' as const }, effects: [], handled: true },
   'visual.swapEnds': (state, _env, doc) => ({
     state,
     effects: [{ kind: 'select', anchor: doc.head, head: doc.anchor }],
     handled: true,
   }),
-  'visual.delete': (state, _env, doc) => applyOperator({ ...state, mode: 'normal' }, 'd', visualRange(state, doc), doc),
-  'visual.yank': (state, _env, doc) => applyOperator({ ...state, mode: 'normal' }, 'y', visualRange(state, doc), doc),
-  'visual.change': (state, _env, doc) => applyOperator({ ...state, mode: 'normal' }, 'c', visualRange(state, doc), doc),
+  'visual.delete': (state, _env, doc) =>
+    state.visualKind === 'block'
+      ? blockOperator(state, 'd', doc)
+      : applyOperator({ ...state, mode: 'normal' }, 'd', visualRange(state, doc), doc),
+  'visual.yank': (state, _env, doc) =>
+    state.visualKind === 'block'
+      ? blockOperator(state, 'y', doc)
+      : applyOperator({ ...state, mode: 'normal' }, 'y', visualRange(state, doc), doc),
+  'visual.change': (state, _env, doc) =>
+    state.visualKind === 'block'
+      ? blockOperator(state, 'c', doc)
+      : applyOperator({ ...state, mode: 'normal' }, 'c', visualRange(state, doc), doc),
+  // Block visual only (Vim's v_b_I / v_b_A); charwise/linewise swallow.
+  'visual.blockInsert': (state, _env, doc) =>
+    state.visualKind === 'block' ? blockInsertStart(state, doc, false) : swallow(state),
+  'visual.blockAppend': (state, _env, doc) =>
+    state.visualKind === 'block' ? blockInsertStart(state, doc, true) : swallow(state),
   // Paste over the selection; the replaced text takes the register's place.
+  // (Block visual: not supported (v1) — swallowed.)
   'visual.pasteOver': (state, _env, doc) => {
     const reg = state.register;
-    if (!reg || reg.text.length === 0) return swallow(state);
+    if (!reg || reg.text.length === 0 || state.visualKind === 'block') return swallow(state);
     const r = visualRange(state, doc);
     return {
       state: {
@@ -1166,6 +1410,8 @@ const VISUAL_BINDINGS: Readonly<Record<string, keyof typeof VISUAL_ACTIONS>> = {
   y: 'visual.yank',
   c: 'visual.change',
   s: 'visual.change',
+  I: 'visual.blockInsert',
+  A: 'visual.blockAppend',
   p: 'visual.pasteOver',
   P: 'visual.pasteOver',
 };
@@ -1185,8 +1431,37 @@ const WALK: Readonly<Record<'h' | 'j' | 'k' | 'l', VimVisualDirection>> = {
   l: 'right',
 };
 
-const normalKey = (state: VimState, k: string, count: number, hasCount: boolean, doc: VimDocView): VimStep => {
-  const visual = state.mode === 'visual';
+/** Column-absolute motions that drop a `$`-block's to-every-line-end shape
+ *  (Vim resets curswant on them); the hjkl walk and gg/G keep it. */
+const BLOCK_COL_MOTIONS: ReadonlySet<string> = new Set([
+  '0',
+  '^',
+  'w',
+  'W',
+  'b',
+  'B',
+  'e',
+  'E',
+  'f',
+  'F',
+  't',
+  'T',
+  ';',
+  ',',
+  '%',
+]);
+
+const normalKey = (rawState: VimState, k: string, count: number, hasCount: boolean, doc: VimDocView): VimStep => {
+  const visual = rawState.mode === 'visual';
+  // $-block bookkeeping (block visual only): `$` extends the block to every
+  // line's end; a column-absolute motion re-shapes it back to a rectangle.
+  const inBlock = visual && rawState.visualKind === 'block';
+  const state =
+    inBlock && k === '$'
+      ? { ...rawState, visualBlockEol: true }
+      : inBlock && rawState.visualBlockEol && BLOCK_COL_MOTIONS.has(k)
+        ? { ...rawState, visualBlockEol: false }
+        : rawState;
 
   // The spatial walk (arrow keys; extends the selection in visual mode).
   if (k === 'h' || k === 'j' || k === 'k' || k === 'l') {
@@ -1236,6 +1511,16 @@ const NORMAL_ACTIONS = {
     effects: [],
     handled: true,
   }),
+  // Ctrl+V: enter block visual; again in block visual exits; from another
+  // visual kind it re-shapes the selection to a block.
+  'visual.enterBlock': (state, _env, doc) =>
+    state.mode === 'visual' && state.visualKind === 'block'
+      ? exitVisual(state, doc)
+      : {
+          state: { ...state, mode: 'visual' as const, visualKind: 'block' as const, visualBlockEol: false },
+          effects: [],
+          handled: true,
+        },
   // Linewise visual WITHOUT moving the cursor: the caret stays at its column
   // (a collapsed selection there), and the editor highlights the whole
   // paragraph via the visual-selection kind (adapter). Operators still take
@@ -1362,6 +1647,7 @@ const NORMAL_BINDINGS: Readonly<Record<string, keyof typeof NORMAL_ACTIONS>> = {
   // Ctrl chords, keyed by their chord token (keys.ts keyToken) — the ctrl
   // branch of `dispatch` looks these up, so a chord binding lives in the same
   // table as the plain keys and its action validates like any other.
+  'C-v': 'visual.enterBlock',
   'C-r': 'history.redo',
   'C-a': 'increment.add',
   'C-x': 'increment.sub',
@@ -1505,9 +1791,50 @@ const applyOperator = (state: VimState, op: Operator, range: VimRange, doc: VimD
   }
 };
 
+/** Blockwise `p`/`P`: insert the register's segments as a COLUMN — each on
+ *  its own line starting at the caret's line, all at the caret's column (`p`
+ *  one caret step after it, like charwise). Vim's rules: a line shorter than
+ *  the column is padded with spaces; missing lines are created at the
+ *  document end; the caret lands on the first pasted character. `count`
+ *  repeats each segment horizontally. */
+const blockPaste = (state: VimState, doc: VimDocView, count: number, after: boolean): VimStep => {
+  const segs = (state.register?.block ?? []).map((s) => s.repeat(count));
+  const { text, head, caretStop } = doc;
+  const le0 = lineEnd(text, head);
+  const at0 = after && head < le0 ? Math.min(caretStop(head, 1), le0) : head;
+  const col = at0 - lineStart(text, at0);
+  const effects: VimEffect[] = [];
+  // Build against a VIRTUAL document — each effect speaks post-previous-
+  // effect offsets (the VimEffect contract), and every insert shifts the
+  // lines below it.
+  let virtual = text;
+  let ls = lineStart(text, head);
+  let caret = at0;
+  for (let i = 0; i < segs.length; i++) {
+    const seg = segs[i] as string;
+    const le = lineEnd(virtual, ls);
+    const len = le - ls;
+    const pad = len < col ? ' '.repeat(col - len) : '';
+    const at = len < col ? le : ls + col;
+    effects.push({ kind: 'replace', from: at, to: at, text: pad + seg });
+    virtual = virtual.slice(0, at) + pad + seg + virtual.slice(at);
+    if (i === 0) caret = at + pad.length;
+    if (i === segs.length - 1) break;
+    const nle = lineEnd(virtual, ls);
+    if (nle >= virtual.length) {
+      effects.push({ kind: 'replace', from: virtual.length, to: virtual.length, text: '\n' });
+      virtual += '\n';
+    }
+    ls = lineEnd(virtual, ls) + 1;
+  }
+  effects.push({ kind: 'select', anchor: caret, head: caret });
+  return { state, effects, handled: true };
+};
+
 const paste = (state: VimState, doc: VimDocView, count: number, after: boolean): VimStep => {
   const reg = state.register;
   if (!reg || reg.text.length === 0) return swallow(state);
+  if (reg.block) return blockPaste(state, doc, count, after);
   const { text, head, caretStop } = doc;
   // Linewise copies are LINES — joined by newlines, not concatenated.
   const body = reg.linewise ? Array.from({ length: count }, () => reg.text).join('\n') : reg.text.repeat(count);

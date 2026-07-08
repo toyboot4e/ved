@@ -37,8 +37,11 @@ export type VisualDirection = 'up' | 'down' | 'left' | 'right';
 /** How an extension's visual selection renders. `'none'` = the plain model
  *  range; `'char'` = INCLUSIVE of both end cells (Vim charwise visual — the
  *  anchor character stays selected when the head moves before it); `'line'` =
- *  the whole model lines the selection spans. */
-export type VisualSelectionKind = 'none' | 'char' | 'line';
+ *  the whole model lines the selection spans; `'block'` = the RECTANGLE
+ *  between the two ends — their line range × their character-column range,
+ *  both inclusive, each line's segment clipped to its end (Vim blockwise
+ *  visual on ved's one-character-per-cell grid). */
+export type VisualSelectionKind = 'none' | 'char' | 'line' | 'block';
 
 /** The capabilities handed to an extension at attach time. */
 export type EditorExtensionContext = {

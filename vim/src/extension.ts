@@ -135,10 +135,11 @@ export const createVimExtension = (options: VimExtensionOptions = {}): EditorExt
 
       // Visual selection rendering: charwise = inclusive of both ends (the
       // anchor char stays selected moving backward); linewise = whole
-      // paragraphs (V keeps the cursor). Normal/insert = the plain range.
-      let lastVisual: 'none' | 'char' | 'line' = 'none';
+      // paragraphs (V keeps the cursor); block = the per-line rectangle
+      // segments. Normal/insert = the plain range.
+      let lastVisual: 'none' | 'char' | 'line' | 'block' = 'none';
       const syncVisual = (): void => {
-        const kind = state.mode !== 'visual' ? 'none' : state.visualKind === 'line' ? 'line' : 'char';
+        const kind = state.mode !== 'visual' ? 'none' : state.visualKind;
         if (kind === lastVisual) return;
         lastVisual = kind;
         ctx.setVisualSelection(kind);
@@ -215,16 +216,18 @@ export const createVimExtension = (options: VimExtensionOptions = {}): EditorExt
       // editor itself handles them.)
       const insertUnhandled = (k: VimKey): void => {
         if (k.ctrl || k.meta || k.alt) return;
-        const sel = ctx.getSelection();
-        if (isPlainKey(k)) ctx.replaceRange(sel.head, sel.head, k.key);
-        else if (k.key === 'Enter') ctx.replaceRange(sel.head, sel.head, '\n');
-        else if (k.key === 'Backspace') {
-          const back = ctx.caretStop(sel.head, -1);
-          if (back < sel.head) ctx.replaceRange(back, sel.head, '');
-        } else if (k.key === 'Delete') {
-          const fwd = ctx.caretStop(sel.head, 1);
-          if (fwd > sel.head) ctx.replaceRange(sel.head, fwd, '');
+        const { head } = ctx.getSelection();
+        if (isPlainKey(k)) {
+          ctx.replaceRange(head, head, k.key);
+          return;
         }
+        if (k.key === 'Enter') {
+          ctx.replaceRange(head, head, '\n');
+          return;
+        }
+        if (k.key !== 'Backspace' && k.key !== 'Delete') return;
+        const other = ctx.caretStop(head, k.key === 'Backspace' ? -1 : 1);
+        if (other !== head) ctx.replaceRange(Math.min(head, other), Math.max(head, other), '');
       };
 
       // One key re-entering the loop (a replayed change or a mapping's fed
