@@ -66,7 +66,8 @@ try {
   }
 
   const spread = Math.max(...columns) - Math.min(...columns);
-  if (spread <= idle.pitch / 2) step(`highlight held one column through the composition (spread ${spread.toFixed(1)}px)`);
+  if (spread <= idle.pitch / 2)
+    step(`highlight held one column through the composition (spread ${spread.toFixed(1)}px)`);
   else fail(`highlight flipped lines while composing — columns ${columns.map((c) => c.toFixed(0)).join(', ')}`);
 
   await s.escape();
