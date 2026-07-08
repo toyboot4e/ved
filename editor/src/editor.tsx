@@ -342,8 +342,20 @@ export const VedEditor = (props: VedEditorProps): React.JSX.Element => {
           session.commitHistory(next);
         }
         // Track the caret as the pre-edit anchor for the NEXT edit's undo target.
-        // Frozen while composing so the WHOLE IME word's anchor is its start.
-        if (!view.composing) beforeOffsetRef.current = posToOffset(next.doc, next.selection.head);
+        // Frozen while composing so the WHOLE IME word's anchor is its start —
+        // and equally while the doc is AHEAD of the committed baseline: an IME
+        // commit can land in a still-composing transaction (history rightly
+        // skipped), and a selection-only transaction in the gap before the
+        // deferred compositionend commit would otherwise re-anchor with an
+        // offset measured in the NEW text. That entry's undo then restored a
+        // caret INSIDE the old text's collapsed ruby markup — not a caret
+        // stop, so the cursor vanished until the next move surfaced it at the
+        // ruby's end (mozc/ruby-undo-caret.ts). `beforeOffsetRef` indexes
+        // lastTextRef's text BY CONTRACT; only update when they agree
+        // (serialize is doc-identity memoized — O(1) here).
+        if (!view.composing && serialize(next.doc) === lastTextRef.current) {
+          beforeOffsetRef.current = posToOffset(next.doc, next.selection.head);
+        }
         // A PING, deliberately payload-free: whoever listens pulls offsets
         // lazily through the extension seam, so a caret move with no
         // listeners costs O(1) here (no posToOffset). Never mid-composition.
