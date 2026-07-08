@@ -41,6 +41,26 @@
   --ved-invisible: #b0b0b0;
   --ved-search-match: rgba(255, 214, 90, 0.4);
   --ved-search-active: rgba(255, 152, 40, 0.6);
+  // Terminal ANSI palette (shell-theme.ts feeds these to xterm). The
+  // terminal's core colors reuse --ved-bg/--ved-fg/--ved-caret/--ved-selection;
+  // these sixteen color programs' output. Values are VS Code's Light defaults —
+  // legible on a white field, unlike xterm's stock dark-oriented palette.
+  --ved-term-black: #000000;
+  --ved-term-red: #cd3131;
+  --ved-term-green: #00bc00;
+  --ved-term-yellow: #949800;
+  --ved-term-blue: #0451a5;
+  --ved-term-magenta: #bc05bc;
+  --ved-term-cyan: #0598bc;
+  --ved-term-white: #555555;
+  --ved-term-bright-black: #666666;
+  --ved-term-bright-red: #cd3131;
+  --ved-term-bright-green: #14ce14;
+  --ved-term-bright-yellow: #b5ba00;
+  --ved-term-bright-blue: #0451a5;
+  --ved-term-bright-magenta: #bc05bc;
+  --ved-term-bright-cyan: #0598bc;
+  --ved-term-bright-white: #a5a5a5;
 }
 
 @mixin ved-dark {
@@ -69,6 +89,23 @@
   --ved-invisible: #6a6a6a;
   --ved-search-match: rgba(255, 214, 90, 0.26);
   --ved-search-active: rgba(255, 152, 40, 0.45);
+  // Terminal ANSI palette (VS Code's Dark defaults) — see the light block.
+  --ved-term-black: #000000;
+  --ved-term-red: #cd3131;
+  --ved-term-green: #0dbc79;
+  --ved-term-yellow: #e5e510;
+  --ved-term-blue: #2472c8;
+  --ved-term-magenta: #bc3fbc;
+  --ved-term-cyan: #11a8cd;
+  --ved-term-white: #e5e5e5;
+  --ved-term-bright-black: #666666;
+  --ved-term-bright-red: #f14c4c;
+  --ved-term-bright-green: #23d18b;
+  --ved-term-bright-yellow: #f5f543;
+  --ved-term-bright-blue: #3b8eea;
+  --ved-term-bright-magenta: #d670d6;
+  --ved-term-bright-cyan: #29b8db;
+  --ved-term-bright-white: #e5e5e5;
 }
 
 :root {

@@ -10,7 +10,9 @@ import { clsx } from 'clsx';
 import type React from 'react';
 import { useCallback, useEffect, useRef } from 'react';
 import { type ShellTab, useShellStore } from '../shells';
+import { useThemeStore } from '../theme';
 import styles from './shell-panel.module.scss';
+import { shellTheme } from './shell-theme';
 
 export type ShellPanelProps = {
   /** Directory for NEW shells: the active file's directory when there is one. */
@@ -20,6 +22,13 @@ export type ShellPanelProps = {
 // Live terminals by PTY id — outside React so the e2e seam can read a
 // buffer without threading refs through the tree.
 const terminals = new Map<number, Terminal>();
+
+// Recolor live terminals on a palette flip. theme.ts is a dependency of this
+// module, so its own subscriber — the one that writes `data-theme` on <html> —
+// registered first and has already run: shellTheme() reads the NEW tokens.
+useThemeStore.subscribe(() => {
+  for (const term of terminals.values()) term.options.theme = shellTheme();
+});
 
 /** e2e seam: the active terminal's screen+scrollback as plain text. */
 const shellText = (ptyId: number | null): string => {
@@ -45,7 +54,7 @@ const ShellTerminal = ({
   const fitRef = useRef<FitAddon | null>(null);
 
   useEffect(() => {
-    const term = new Terminal({ cursorBlink: true, fontSize: 13, scrollback: 2000 });
+    const term = new Terminal({ cursorBlink: true, fontSize: 13, scrollback: 2000, theme: shellTheme() });
     const fit = new FitAddon();
     term.loadAddon(fit);
     term.open(hostRef.current!);

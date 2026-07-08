@@ -26,7 +26,7 @@ import { handleAppKeydown } from './keymap';
 import { showNotTextNotice, useNoticeStore } from './notice';
 import { useQuickOpenStore } from './quick-open';
 import { useSearchStore } from './search';
-import { useThemeStore } from './theme';
+import './theme'; // applies `data-theme` on <html> at import and on toggle
 import { useSearchWiring } from './use-search-wiring';
 import { useViewConfigStore, viewConfigToCss } from './view-config';
 import { useVimStore, vimExtensions } from './vim';
@@ -41,15 +41,7 @@ export const App = (): React.JSX.Element => {
   const setAppearPolicy = useAppearPolicyStore((s) => s.set);
   const viewConfig = useViewConfigStore((s) => s.config);
   const invisibles = useInvisiblesStore((s) => s.invisibles);
-  const theme = useThemeStore((s) => s.theme);
   const vimEnabled = useVimStore((s) => s.enabled);
-
-  // Apply the theme by setting `data-theme` on <html>; main.scss resolves the
-  // `--ved-*` token palette from it. (Before JS sets the attribute,
-  // `:root:not([data-theme])` follows the OS preference — no light flash.)
-  useEffect(() => {
-    document.documentElement.dataset.theme = theme;
-  }, [theme]);
 
   // Committed buffer state (tab strip, per-buffer snapshots) lives in the
   // Zustand store (buffers-store.ts); the whole-state subscription keeps this

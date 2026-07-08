@@ -1,5 +1,5 @@
 // Theme: the toolbar icon flips Light ⇄ Dark, writing `data-theme` on <html>
-// (app.tsx); main.scss resolves the `--ved-*` token palette from it. The launch
+// (theme.ts); main.scss resolves the `--ved-*` token palette from it. The launch
 // default is the OS preference. Assert the toggle flips, that the palette
 // actually changes (chrome + editor recolor) between light and dark — a token
 // read back from a real element — and that a second click returns.

@@ -57,9 +57,9 @@
   flex: 1 1 auto;
   min-height: 0;
   position: relative;
-  // xterm's default theme paints its own dark background; this shows in the
-  // padding fringe around the terminal
-  background: #000000;
+  // The padding fringe around the terminal — the same token the xterm theme
+  // paints the terminal itself with (shell-theme.ts)
+  background: var(--ved-bg);
 }
 
 .term {

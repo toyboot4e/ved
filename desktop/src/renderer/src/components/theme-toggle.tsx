@@ -5,8 +5,8 @@ import { type Theme, useThemeStore } from '../theme';
 import { MoonIcon, SunIcon } from './icons/ThemeIcons';
 
 // Theme toggle: one icon button that flips Light ⇄ Dark. The icon shows the
-// CURRENT theme (app.tsx applies it to <html data-theme>); the launch default is
-// the OS preference (theme.ts). Styled like the writing-mode icon buttons.
+// CURRENT theme (theme.ts applies it to <html data-theme>); the launch default
+// is the OS preference (theme.ts). Styled like the writing-mode icon buttons.
 
 const face: Record<Theme, { Icon: React.ComponentType<{ className?: string }>; label: string }> = {
   light: { Icon: SunIcon, label: 'Light' },

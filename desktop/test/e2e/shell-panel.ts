@@ -65,6 +65,31 @@ try {
   );
   step('typed commands execute and stream their output back');
 
+  // The terminal follows the app palette (shell-theme.ts): its xterm-painted
+  // background (the scrollable element is the node xterm themes) equals the
+  // app's `--ved-bg` (read off <body>, which is painted with that token) in
+  // BOTH themes, and the two themes differ.
+  const shellColors = () =>
+    page.evaluate(() => {
+      const el = document.querySelector('[aria-label="Shell panel"] .xterm-scrollable-element');
+      return {
+        terminal: el ? getComputedStyle(el).backgroundColor : '<no terminal>',
+        app: getComputedStyle(document.body).backgroundColor,
+      };
+    });
+  const clickTheme = async () => {
+    await page.click('button[aria-label^="Theme:"]');
+    await page.waitForTimeout(80);
+  };
+  const c0 = await shellColors();
+  assert.equal(c0.terminal, c0.app, `terminal background matches the palette (${c0.terminal} vs ${c0.app})`);
+  await clickTheme();
+  const c1 = await shellColors();
+  assert.equal(c1.terminal, c1.app, `terminal recolors with the palette (${c1.terminal} vs ${c1.app})`);
+  assert.notEqual(c0.terminal, c1.terminal, 'light and dark paint the terminal differently');
+  await clickTheme(); // back to the launch palette
+  step('the terminal follows the app theme');
+
   // A second shell tab
   await page.click('[aria-label="New shell"]');
   await page.waitForFunction(() => document.querySelectorAll('[aria-label="Shell panel"] [role=tab]').length === 2);
