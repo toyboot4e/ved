@@ -115,8 +115,8 @@ export type VedFileApi = {
   readonly readDir: (path: string) => Promise<readonly DirEntry[]>;
   /** Shows a directory picker; `null` means canceled. */
   readonly openDirDialog: () => Promise<string | null>;
-  /** Renames a file WITHIN its directory (sidebar context menu). `newName`
-   * is a single path segment; main validates and refuses overwrites. */
+  /** Renames a file or directory WITHIN its parent (sidebar context menu).
+   * `newName` is a single path segment; main validates and refuses overwrites. */
   readonly renamePath: (path: string, newName: string) => Promise<RenamePathResult>;
   /** Deletes a FILE behind a native confirm dialog (sidebar context menu). */
   readonly deletePath: (path: string) => Promise<DeletePathResult>;

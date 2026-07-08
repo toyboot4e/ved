@@ -1,8 +1,9 @@
-// Sidebar file operations (Phase 2): right-click on a file row opens a
-// context menu with rename (inline input), delete (native confirm, stubbed
-// via VED_SMOKE_DELETE_RESPONSE), and add-folder; the pane background offers
-// add-folder alone. Rename collisions are refused with a notice, delete asks
-// first (cancel keeps the file), and every mutation is verified ON DISK.
+// Sidebar file operations (Phase 2): right-click on a tree row opens a
+// context menu with rename (inline input; files AND directories), delete
+// (files only; native confirm, stubbed via VED_SMOKE_DELETE_RESPONSE), and
+// add-folder; the pane background offers add-folder alone. Rename collisions
+// are refused with a notice, delete asks first (cancel keeps the file), and
+// every mutation is verified ON DISK.
 // Usage: node test/e2e/sidebar-file-ops.ts  (after a build; window stays hidden)
 import assert from 'node:assert/strict';
 import { access, mkdir, writeFile } from 'node:fs/promises';
@@ -20,8 +21,10 @@ const ved = await launchVed({
 const { page, tmp } = ved;
 await mkdir(join(tmp, 'ws'), { recursive: true });
 await mkdir(join(tmp, 'ws2'), { recursive: true });
+await mkdir(join(tmp, 'ws', 'sub'), { recursive: true });
 await writeFile(join(tmp, 'ws', 'a.txt'), 'AAA', 'utf-8');
 await writeFile(join(tmp, 'ws', 'b.txt'), 'BBB', 'utf-8');
+await writeFile(join(tmp, 'ws', 'sub', 'nested.txt'), 'NESTED', 'utf-8');
 
 const exists = (path: string) =>
   access(path).then(
@@ -50,8 +53,8 @@ try {
   // Rename a.txt → renamed.txt: inline input, Enter commits, disk follows
   await page.click(treeItem('a.txt'), { button: 'right' });
   await page.click(menuItem('名前を変更'));
-  await page.waitForSelector('[aria-label="Rename file"]');
-  await page.fill('[aria-label="Rename file"]', 'renamed.txt');
+  await page.waitForSelector('[aria-label="Rename entry"]');
+  await page.fill('[aria-label="Rename entry"]', 'renamed.txt');
   await page.keyboard.press('Enter');
   await page.waitForSelector(treeItem('renamed.txt'));
   assert.equal(await page.$(treeItem('a.txt')), null);
@@ -62,16 +65,30 @@ try {
   // A collision is refused with a notice; the input stays for a retry
   await page.click(treeItem('b.txt'), { button: 'right' });
   await page.click(menuItem('名前を変更'));
-  await page.waitForSelector('[aria-label="Rename file"]');
-  await page.fill('[aria-label="Rename file"]', 'renamed.txt');
+  await page.waitForSelector('[aria-label="Rename entry"]');
+  await page.fill('[aria-label="Rename entry"]', 'renamed.txt');
   await page.keyboard.press('Enter');
   await page.waitForSelector('[role=status]');
   assert.match((await page.textContent('[role=status]')) ?? '', /すでに存在します/);
-  assert.ok(await page.$('[aria-label="Rename file"]'), 'input stays open after a refused rename');
+  assert.ok(await page.$('[aria-label="Rename entry"]'), 'input stays open after a refused rename');
   await page.keyboard.press('Escape');
-  await page.waitForFunction(() => document.querySelector('[aria-label="Rename file"]') === null);
+  await page.waitForFunction(() => document.querySelector('[aria-label="Rename entry"]') === null);
   assert.ok(await exists(join(tmp, 'ws', 'b.txt')));
   step('a rename collision is refused with a notice');
+
+  // A DIRECTORY renames too — its menu offers rename but never delete
+  await page.click(treeItem('sub'), { button: 'right' });
+  await page.waitForSelector('[role=menu]');
+  assert.equal(await page.$(menuItem('削除')), null, 'no delete on a directory');
+  await page.click(menuItem('名前を変更'));
+  await page.waitForSelector('[aria-label="Rename entry"]');
+  await page.fill('[aria-label="Rename entry"]', 'chapters');
+  await page.keyboard.press('Enter');
+  await page.waitForSelector(treeItem('chapters'));
+  assert.equal(await page.$(treeItem('sub')), null);
+  assert.ok(await exists(join(tmp, 'ws', 'chapters', 'nested.txt')));
+  assert.ok(!(await exists(join(tmp, 'ws', 'sub'))));
+  step('a directory renames from the menu, contents intact (no delete offered)');
 
   // Delete b.txt: the first (stubbed) confirm cancels, the second deletes
   await page.click(treeItem('b.txt'), { button: 'right' });

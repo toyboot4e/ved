@@ -102,6 +102,16 @@ describe('renameEntry / deleteFileEntry', () => {
     expect(await readTextFile(join(dir, 'b.txt'))).toBe('A');
   });
 
+  it('renames a directory, contents intact', async () => {
+    await mkdir(join(dir, 'sub'));
+    await writeFile(join(dir, 'sub', 'n.txt'), 'N', 'utf-8');
+    expect(await renameEntry(join(dir, 'sub'), 'chapters')).toEqual({
+      kind: 'renamed',
+      newPath: join(dir, 'chapters'),
+    });
+    expect(await readTextFile(join(dir, 'chapters', 'n.txt'))).toBe('N');
+  });
+
   it('refuses names that are not a single segment', async () => {
     await writeFile(join(dir, 'a.txt'), '', 'utf-8');
     for (const bad of ['', '.', '..', 'x/y', 'x\\y']) {

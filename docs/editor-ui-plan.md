@@ -387,13 +387,14 @@ costs more than the lines it saves.
   `test/e2e/sidebar-open-files.ts`.
 
 - [x] **2f. File operations (context menu)** *(done 2026-07-08)*.
-  User-requested. Right-click on a FILE row opens a hand-rolled context menu
-  (`components/context-menu.tsx`): 名前を変更 (inline input in the row —
-  Enter commits, Esc/blur cancels, IME-guarded), 削除 (native confirm in
+  User-requested. Right-click on a tree row opens a hand-rolled context menu
+  (`components/context-menu.tsx`): 名前を変更 (files AND directories —
+  inline input in the row; Enter commits, Esc/blur cancels, IME-guarded),
+  削除 (files only; native confirm in
   main; seam `VED_SMOKE_DELETE_RESPONSE`, a comma list consumed per call),
   and フォルダを追加; the pane background offers add-folder alone. New IPC
   `renamePath`/`deletePath` over pure `fs-io.ts` primitives (rename stays
-  within the directory, single-segment names only, never overwrites; delete
+  within the parent, single-segment names only, never overwrites; delete
   refuses directories) — unit-tested. Mutations bump a tree epoch that
   re-reads mounted listings. Open buffers are NOT synced to a rename/delete
   (they keep their string and old path; save recreates) — reconciling

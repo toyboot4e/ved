@@ -74,9 +74,9 @@ const pathExists = async (path: string): Promise<boolean> => {
   }
 };
 
-/** Renames a file WITHIN its directory. `newName` must be a bare name (one
- * path segment); an existing target is refused, never overwritten. Messages
- * are user-facing (the sidebar shows them as notices). */
+/** Renames a file or directory WITHIN its parent. `newName` must be a bare
+ * name (one path segment); an existing target is refused, never overwritten.
+ * Messages are user-facing (the sidebar shows them as notices). */
 export const renameEntry = async (path: string, newName: string): Promise<RenamePathResult> => {
   if (newName === '' || newName === '.' || newName === '..' || /[/\\]/.test(newName))
     return { kind: 'error', message: `無効な名前です: ${newName}` };

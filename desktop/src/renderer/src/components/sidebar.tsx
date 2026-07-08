@@ -9,8 +9,9 @@
 // OPEN BUFFERS (開いているファイル — same labels as quick open's modes): a
 // flat list mirroring the tab strip, with the tab bar's dirty/close semantics.
 //
-// Right-click opens a context menu: on a FILE row rename (inline input) and
-// delete (native confirm in main), anywhere add-folder. Mutations bump an
+// Right-click opens a context menu: on a tree row rename (inline input; files
+// AND directories), on a FILE row delete (native confirm in main), anywhere
+// add-folder. Mutations bump an
 // epoch that re-reads every MOUNTED listing (the lazy tree stays lazy);
 // failures surface through the app notice. Open buffers are NOT synced to a
 // rename/delete — they keep their plain string and old path (save recreates
@@ -60,7 +61,7 @@ const FileTypeIcon = ({ name }: { readonly name: string }): React.JSX.Element =>
  * VALUE, so the object's per-render identity is harmless). */
 type TreeOps = {
   readonly onOpenFile: SidebarProps['onOpenFile'];
-  readonly onFileMenu: (entry: DirEntry, event: React.MouseEvent<HTMLButtonElement>) => void;
+  readonly onEntryMenu: (entry: DirEntry, event: React.MouseEvent<HTMLButtonElement>) => void;
   readonly renamingPath: string | null;
   readonly onRenameSubmit: (path: string, newName: string) => void;
   readonly onRenameCancel: () => void;
@@ -81,7 +82,7 @@ const RenameInput = ({
     <input
       className={styles.renameInput}
       value={value}
-      aria-label='Rename file'
+      aria-label='Rename entry'
       spellCheck={false}
       // Focus + select on mount (not autoFocus: the guard keeps later render
       // passes from re-selecting while the user edits)
@@ -180,7 +181,7 @@ const EntryRow = ({
         title={entry.path}
         onMouseDown={preserveFocus}
         onClick={() => (isDir ? setOpen((o) => !o) : ops.onOpenFile(entry.path))}
-        onContextMenu={isDir ? undefined : (e) => ops.onFileMenu(entry, e)}
+        onContextMenu={(e) => ops.onEntryMenu(entry, e)}
       >
         <span className={clsx(styles.twisty, open && styles.twistyOpen)}>{isDir && <ChevronIcon />}</span>
         {isDir ? <FolderIcon className={styles.typeIcon} open={open} /> : <FileTypeIcon name={entry.name} />}
@@ -344,7 +345,7 @@ export const Sidebar = ({ onOpenFile, activeDirty, onCloseBuffer }: SidebarProps
 
   const treeOps: TreeOps = {
     onOpenFile,
-    onFileMenu: (entry, e) => {
+    onEntryMenu: (entry, e) => {
       e.preventDefault();
       e.stopPropagation();
       setMenu({ x: e.clientX, y: e.clientY, entry });
@@ -364,7 +365,10 @@ export const Sidebar = ({ onOpenFile, activeDirty, onCloseBuffer }: SidebarProps
                 const entry = menu.entry;
                 return [
                   { label: '名前を変更', onSelect: () => setRenamingPath(entry.path) },
-                  { label: '削除', onSelect: () => void handleDelete(entry.path) },
+                  // Directories rename but never delete (deleteFileEntry refuses them too)
+                  ...(entry.kind === 'file'
+                    ? [{ label: '削除', onSelect: () => void handleDelete(entry.path) }]
+                    : []),
                 ];
               })()
             : []),
