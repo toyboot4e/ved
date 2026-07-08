@@ -32,12 +32,16 @@ describe('rankFiles', () => {
     expect(total).toBe(RESULT_LIMIT + 10);
   });
 
-  it('fuzzy-matches non-contiguous characters and reports match indices', () => {
-    const { items } = rankFiles(files('sub/deep.txt', 'alpha.txt'), 'dp', false);
-    expect(items[0]?.label).toBe('sub/deep.txt');
-    // Each matched index points at a char of the label that the query hit.
+  it('matches contiguous substrings (never scatter) and ANDs terms', () => {
+    // 'dp' is not a substring of either label — the old fuzzy scatter is gone
+    expect(rankFiles(files('sub/deep.txt', 'alpha.txt'), 'dp', false).items).toEqual([]);
+    const { items } = rankFiles(files('sub/deep.txt', 'alpha.txt'), 'deep', false);
+    expect(items.map((i) => i.label)).toEqual(['sub/deep.txt']);
     const label = items[0]!.label;
-    expect(items[0]!.matched.map((i) => label[i]).join('')).toBe('dp');
+    expect(items[0]!.matched.map((i) => label[i]).join('')).toBe('deep');
+    // Terms AND in any order
+    const anded = rankFiles(files('sub/deep.txt', 'sub/other.txt'), 'txt deep', false);
+    expect(anded.items.map((i) => i.label)).toEqual(['sub/deep.txt']);
   });
 
   it('drops files that do not match', () => {
@@ -70,8 +74,8 @@ describe('rankBuffers', () => {
     expect(items[2]).toMatchObject({ bufferId: 3, path: null });
   });
 
-  it('fuzzy-filters buffers', () => {
-    const { items } = rankBuffers(buffers('/ws/alpha.txt', '/ws/beta.txt'), 'bta');
+  it('filters buffers by substring', () => {
+    const { items } = rankBuffers(buffers('/ws/alpha.txt', '/ws/beta.txt'), 'beta');
     expect(items.map((i) => i.label)).toEqual(['/ws/beta.txt']);
   });
 });

@@ -1,7 +1,8 @@
-// Fuzzy line-grep shared by MAIN (workspace content search over the indexed
-// text files) and the RENDERER (content search over the open buffers). Pure:
+// Line-grep shared by MAIN (workspace content search over the indexed text
+// files) and the RENDERER (content search over the open buffers). Matching is
+// shared/match.ts's AND-of-substrings (never per-character fuzzy). Pure:
 // strings in, line matches out — the callers attach paths/labels/buffer ids.
-import fuzzysort from 'fuzzysort';
+import { matchTerms, queryTerms } from './match';
 
 /** One matched line. `col` indexes the UNTRIMMED line (the caret target);
  * `text`/`matched` may be a window trimmed around the match for display. */
@@ -38,18 +39,21 @@ const trimAround = (
   };
 };
 
-/** Fuzzy-match `query` against each line of `content`, best lines first,
- * at most `limit` matches (`total` is uncapped). An empty query matches
- * nothing — a grep needs a needle. */
+/** Match `query` (AND of substrings) against each line of `content`, in LINE
+ * order, at most `limit` matches (`total` is uncapped). An empty query
+ * matches nothing — a grep needs a needle. */
 export const grepLines = (content: string, query: string, limit: number): LineGrepResult => {
-  if (query === '' || limit <= 0) return { matches: [], total: 0 };
-  const lines = content.split('\n').map((text, i) => ({ text, i }));
-  const results = fuzzysort.go(query, lines, { key: 'text', limit });
-  return {
-    matches: results.map((r) => {
-      const indexes = Array.from(r.indexes);
-      return { line: r.obj.i + 1, col: indexes[0] ?? 0, ...trimAround(r.obj.text, indexes) };
-    }),
-    total: results.total,
-  };
+  const terms = queryTerms(query);
+  if (terms.length === 0 || limit <= 0) return { matches: [], total: 0 };
+  const lines = content.split('\n');
+  const matches: LineMatch[] = [];
+  let total = 0;
+  for (let i = 0; i < lines.length; i++) {
+    const text = lines[i] as string;
+    const m = matchTerms(text, terms);
+    if (m === null) continue;
+    total++;
+    if (matches.length < limit) matches.push({ line: i + 1, col: m.first, ...trimAround(text, [...m.matched]) });
+  }
+  return { matches, total };
 };

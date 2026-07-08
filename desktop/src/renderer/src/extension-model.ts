@@ -2,7 +2,7 @@
 // side-effectful half: blob imports, stores, the seam wrapper). Unit-tested
 // as plain functions.
 import type { Chord } from '@ved/editor';
-import fuzzysort from 'fuzzysort';
+import { matchTerms, queryTerms } from '../../shared/match';
 
 /** Normalize a user-written chord spec (`"mod+k"`, `"Shift+Mod+Z"`) to the
  *  editor's canonical `Chord` (`chordOf`'s output: `Shift+`? `Mod+` KEY,
@@ -32,12 +32,17 @@ export type RankedLabel = {
   readonly matched: readonly number[];
 };
 
-/** Rank quick-pick labels against `query` — fuzzy, like quick open. An empty
- *  query keeps the caller's order (with no match highlights). */
+/** Filter quick-pick labels against `query` (shared/match.ts — AND of
+ *  substrings, like quick open), keeping the caller's order. An empty query
+ *  keeps every label (with no match highlights). */
 export const rankLabels = (labels: readonly string[], query: string): RankedLabel[] => {
   const pool = labels.map((label, index) => ({ label, index }));
-  if (!query) return pool.map((entry) => ({ ...entry, matched: [] }));
-  return fuzzysort
-    .go(query, pool, { key: 'label' })
-    .map((result) => ({ index: result.obj.index, label: result.obj.label, matched: Array.from(result.indexes) }));
+  const terms = queryTerms(query);
+  if (terms.length === 0) return pool.map((entry) => ({ ...entry, matched: [] }));
+  const out: RankedLabel[] = [];
+  for (const entry of pool) {
+    const m = matchTerms(entry.label, terms);
+    if (m !== null) out.push({ ...entry, matched: m.matched });
+  }
+  return out;
 };

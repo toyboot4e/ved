@@ -50,9 +50,6 @@ importers:
       esbuild:
         specifier: ^0.28.1
         version: 0.28.1
-      fuzzysort:
-        specifier: ^3.1.0
-        version: 3.1.0
       ignore:
         specifier: ^7.0.5
         version: 7.0.5
@@ -1518,9 +1515,6 @@ packages:
 
   function-bind@1.1.2:
     resolution: {integrity: sha512-7XHNxH7qX9xG5mIwxkhumTox/MIRNcOgDrxWsMt2pAr23WHp6MrRlN7FBSFpCpr+oVO0F744iUgR82nJMfG2SA==}
-
-  fuzzysort@3.1.0:
-    resolution: {integrity: sha512-sR9BNCjBg6LNgwvxlBd0sBABvQitkLzoVY9MYYROQVX/FvfJ4Mai9LsGhDgd8qYdds0bY77VzYd5iuB+v5rwQQ==}
 
   gensync@1.0.0-beta.2:
     resolution: {integrity: sha512-3hN7NaskYvMDLQY55gnW3NQ+mesEAepTqlg+VEbj7zzqEMBVNhzcGYYeqFo/TlYz6eQiFcp1HcsCZO+nGgS8zg==}
@@ -3823,8 +3817,6 @@ snapshots:
     optional: true
 
   function-bind@1.1.2: {}
-
-  fuzzysort@3.1.0: {}
 
   gensync@1.0.0-beta.2: {}
 

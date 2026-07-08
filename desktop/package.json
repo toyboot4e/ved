@@ -29,7 +29,6 @@
     "@xterm/xterm": "^6.0.0",
     "clsx": "^2.1.1",
     "esbuild": "^0.28.1",
-    "fuzzysort": "^3.1.0",
     "ignore": "^7.0.5",
     "node-pty": "^1.1.0",
     "zustand": "^5.0.14"

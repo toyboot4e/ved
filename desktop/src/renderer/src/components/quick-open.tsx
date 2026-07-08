@@ -340,17 +340,16 @@ export const QuickOpen = ({
             })}
           </fieldset>
           {mode === 'files' && !contentSearch && (
-            <button
-              type='button'
-              className={clsx(styles.toggle, textOnly && styles.toggleOn)}
-              aria-pressed={textOnly}
-              aria-label='Text files only'
-              title='テキストファイルのみ表示'
-              onMouseDown={preserveFocus}
-              onClick={() => useQuickOpenStore.getState().toggleTextOnly()}
-            >
-              テキストのみ
-            </button>
+            <label className={styles.textOnly}>
+              <input
+                type='checkbox'
+                checked={textOnly}
+                aria-label='Text files only'
+                onMouseDown={preserveFocus}
+                onChange={() => useQuickOpenStore.getState().toggleTextOnly()}
+              />
+              テキストファイルのみ
+            </label>
           )}
         </div>
         <div className={styles.inputRow}>

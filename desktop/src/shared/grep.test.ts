@@ -2,7 +2,7 @@ import { describe, expect, it } from 'vitest';
 import { grepLines } from './grep';
 
 describe('grepLines', () => {
-  it('matches lines fuzzily and reports 1-based line and first-hit column', () => {
+  it('matches lines and reports 1-based line and first-hit column', () => {
     const { matches, total } = grepLines('一行目\n二行目 みつけた\n三行目\n', 'みつけた', 10);
     expect(total).toBe(1);
     expect(matches[0]).toMatchObject({ line: 2, col: 4, text: '二行目 みつけた' });
@@ -10,10 +10,11 @@ describe('grepLines', () => {
     expect(m.matched.map((i) => m.text[i]).join('')).toBe('みつけた');
   });
 
-  it('matches non-contiguous characters (fuzzy, not substring)', () => {
-    const { matches } = grepLines('あXいXう\n', 'あいう', 10);
+  it('never scatter-matches; space-separated terms AND together', () => {
+    expect(grepLines('あXいXう\n', 'あいう', 10).matches).toHaveLength(0);
+    const { matches } = grepLines('あXいXう\nほかの行\n', 'あ う', 10);
     expect(matches).toHaveLength(1);
-    expect(matches[0]!.col).toBe(0);
+    expect(matches[0]).toMatchObject({ line: 1, col: 0 });
   });
 
   it('an empty query matches nothing (a grep needs a needle)', () => {

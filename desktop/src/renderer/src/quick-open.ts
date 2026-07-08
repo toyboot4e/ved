@@ -9,10 +9,10 @@
 // is designed to back the command palette (Ctrl+Shift+P) later — hence
 // generic "items"/"entries", not "files".
 
-import fuzzysort from 'fuzzysort';
 import { create } from 'zustand';
 import { grepLines } from '../../shared/grep';
 import type { GrepResult, WorkspaceFile } from '../../shared/ipc';
+import { matchTerms, queryTerms } from '../../shared/match';
 import { focusEditor } from './focus';
 
 /** Which pool the palette searches: workspace files, or the open buffers. */
@@ -62,20 +62,29 @@ const NO_DETAIL = { line: null, col: null, detail: null, detailMatched: [] as re
  *  shows `total - items.length`). */
 export type RankResult = { readonly items: readonly QuickOpenItem[]; readonly total: number };
 
-/** Rank a labeled pool against `query`: fuzzy over the label, capped at
- *  {@link RESULT_LIMIT} with the uncapped match count alongside. An empty
- *  query yields the head of the pool unranked, so the palette shows the whole
+/** Filter a labeled pool against `query` (shared/match.ts — AND of literal
+ *  substrings, never per-character fuzzy), keeping the POOL's order, capped
+ *  at {@link RESULT_LIMIT} with the uncapped match count alongside. An empty
+ *  query yields the head of the pool, so the palette shows the whole
  *  (sorted) pool immediately. */
 const rank = <T extends { readonly label: string }>(
   pool: readonly T[],
   query: string,
   toItem: (entry: T, matched: readonly number[]) => QuickOpenItem,
 ): RankResult => {
-  if (!query) {
+  const terms = queryTerms(query);
+  if (terms.length === 0) {
     return { items: pool.slice(0, RESULT_LIMIT).map((entry) => toItem(entry, [])), total: pool.length };
   }
-  const results = fuzzysort.go(query, pool, { key: 'label', limit: RESULT_LIMIT });
-  return { items: results.map((r) => toItem(r.obj, Array.from(r.indexes))), total: results.total };
+  const items: QuickOpenItem[] = [];
+  let total = 0;
+  for (const entry of pool) {
+    const m = matchTerms(entry.label, terms);
+    if (m === null) continue;
+    total++;
+    if (items.length < RESULT_LIMIT) items.push(toItem(entry, m.matched));
+  }
+  return { items, total };
 };
 
 /** Rank workspace files. `textOnly` drops non-text files — the verdict rides

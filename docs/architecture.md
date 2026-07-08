@@ -263,12 +263,20 @@ with the bar (they are never model state). Verified in
 
 ## Quick open (Ctrl+P)
 
-A fuzzy picker in one of two MODES — workspace **files** or the open
-**buffers** (tab switching) — split across the process boundary; only plain
-paths cross it.
+A picker in one of FOUR views — workspace **files** / open **buffers** (tab
+switching) by NAME, and each again by CONTENT (検索, a per-line grep) — split
+across the process boundary; only plain paths and offsets cross it.
 
+- **Matching** (`shared/match.ts`, the ONE matcher behind every picker —
+  quick-open names, content grep, the extension quick-pick): an AND of
+  space-separated LITERAL substrings, case-insensitive and NFKC-folded
+  (full-width ＡＢＣ matches abc), each term contiguous, results FILTERED in
+  the caller's order. Deliberately never per-character fuzzy — scatter
+  matches (query あいう hitting あXいXう) read as noise; `fuzzysort` was
+  removed for exactly that.
 - **Index** (main, `main/workspace-index.ts`): `listWorkspaceFiles(roots)`
-  walks each root into one flat `WorkspaceFile` (`{ path, label }`) list,
+  walks each root into one flat `WorkspaceFile` (`{ path, label, isText }`)
+  list,
   SORTED by label — the palette's empty-query view is this list verbatim, and
   raw walk order read as "files are missing". `.gitignore` is honored with the
   `ignore` package: a directory's `.gitignore`
@@ -280,29 +288,49 @@ paths cross it.
   the seam the phase-2 fs watcher will call (dormant until then, so the index
   is a fresh-on-open snapshot). Labels get the root base name prefixed when
   more than one root is open. No `electron` import — unit-tested.
-- **Matcher + store** (renderer, `quick-open.ts`): `rankFiles`/`rankBuffers`
-  run `fuzzysort` over the label into mode-agnostic `QuickOpenItem`s (match
+- **Store** (renderer, `quick-open.ts`): `rankFiles`/`rankBuffers` filter
+  the label pools into mode-agnostic `QuickOpenItem`s (match
   indices for highlighting; `bufferId` when choosing means a tab switch),
   capped at `RESULT_LIMIT` (500) with the uncapped `total` alongside — the
   list footer reports the overflow ("type to narrow"), so nothing silently
   looks missing. An empty query yields the whole (sorted) pool up to the cap.
-  A **text-only** toggle (`textOnly`,
-  kept across opens) first drops known-binary EXTENSIONS (`isTextLabel`, a
-  cosmetic denylist — SVG and extensionless files stay; openability is still
-  content-sniffed on choose); files mode only. The Zustand store snapshots
-  BOTH pools on open (the index async from main, the tab strip synchronously)
-  and re-ranks the active one per keystroke — matching never touches React.
+  A **text-only** checkbox (テキストファイルのみ, `textOnly`,
+  kept across opens) drops non-text files by `WorkspaceFile.isText` — decided
+  in MAIN while indexing (fs-io.ts `isTextFile`: extension denylist → size
+  cap → NUL head sniff, verdicts cached by mtime+size), the same truth the
+  open path uses; files name view only. The Zustand store snapshots
+  BOTH pools on open (the index async from main, the tab strip synchronously
+  — the ACTIVE buffer contributes its LIVE text) and re-ranks the active one
+  per keystroke — matching never touches React.
   `openPalette('buffers')` starts directly in open-file search (the seam for
-  a future shortcut); Ctrl+P always opens files mode, and `setMode` (the two
-  header buttons) switches pools keeping the query.
-- **Overlay** (`components/quick-open.tsx`): a near-fullscreen modal — an
-  input row (mode buttons ファイル/開いているファイル, the input, the
-  text-only toggle) over a two-pane body: the result list (each
-  row the relative path with fuzzy-match highlights) and a **preview** pane that
+  a future shortcut); Ctrl+P always opens files-by-name, and `setView` (the
+  four header buttons) switches views keeping the query.
+- **Content search (検索)**: the two grep views run `shared/grep.ts
+  grepLines` per line (trimming long lines to a window around the match).
+  Files grep runs in MAIN (`grepWorkspaceFiles` over the indexed `isText`
+  files; the overlay debounces 180ms and drops stale replies by sequence;
+  `GREP_TOTAL_CAP` 200), buffers grep synchronously over the snapshot.
+  Choosing a row places the caret ON the match: a ved line IS a paragraph,
+  so `CursorState = { para: line-1, offset: col }` lands via a snapshot
+  dispatched before the switched editor renders; a match inside the
+  currently-RENDERED buffer commits the live text and bumps an epoch in the
+  editor key to force the remount (`app.tsx placeCursor` — safe, the palette
+  owns focus so no editor composition is live). The editor reveals a mounted
+  caret (editor.tsx — the keep-the-caret-in-view invariant from the first
+  paint).
+- **Overlay** (`components/quick-open.tsx`): a near-fullscreen modal — a
+  view row (ファイル / 開いているファイル / ファイルを検索 /
+  開いているファイルを検索, the text-only checkbox at the right edge) over
+  the input on its own row, over a two-pane body: the result list (each
+  row the relative path with match highlights; grep rows prefix path:line)
+  and a **preview** pane that
   reads the selected entry's path on demand (`readFile`, cached per path,
   binary/empty states, char-capped; an untitled buffer has no path — empty
-  pane). Arrow keys + Enter, Esc / backdrop-click to close, hover
-  to select. Choosing dispatches by item: `bufferId` → tab switch, else path →
+  pane), split by a draggable ARIA window-splitter (a store-clamped % of the
+  body, kept across opens). Arrow keys + Enter, Esc / backdrop-click to
+  close, hover
+  to select. Choosing dispatches by item: grep rows jump (see above),
+  `bufferId` → tab switch, else path →
   the content-sniffed open. The input owns focus while open; the editor stays
   MOUNTED underneath, so its selection survives with no save/restore, and
   `closeQuickOpen` just refocuses it (mirrors `closeSearch`). Nav/close keys are

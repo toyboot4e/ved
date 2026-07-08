@@ -84,6 +84,26 @@
   border-color: var(--ved-accent);
 }
 
+// The text-only filter: a labeled checkbox pinned to the mode row's right end
+.textOnly {
+  margin-inline-start: auto;
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 12px;
+  color: var(--ved-fg);
+  cursor: pointer;
+  white-space: nowrap;
+  user-select: none;
+  -webkit-user-select: none;
+
+  input {
+    accent-color: var(--ved-accent);
+    cursor: pointer;
+    margin: 0;
+  }
+}
+
 // The mode switch's segmented group: a fieldset for the group semantics —
 // reset its native box.
 .modes {

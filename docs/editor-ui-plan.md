@@ -416,7 +416,10 @@ Roots/visibility persistence rides Phase 4's `config.json`.
     with each label prefixed by the root base name when several roots are open.
     A `MAX_FILES_PER_ROOT` guard bounds pathological trees. New IPC:
     `listWorkspaceFiles(roots)`.
-  - **Matcher** (renderer, `quick-open.ts`): `fuzzysort` over the label into
+  - **Matcher** (renderer, `quick-open.ts` over `shared/match.ts`): an AND of
+    space-separated LITERAL substrings against the label (case-insensitive,
+    NFKC-folded; never per-character fuzzy — scatter matches read as noise),
+    filtered in pool order into
     mode-agnostic items, capped at `RESULT_LIMIT` (500) with the uncapped
     total alongside (the list footer reports the overflow). An empty query
     shows the whole sorted pool up to the cap. A **text-only** toggle
@@ -455,8 +458,9 @@ Roots/visibility persistence rides Phase 4's `config.json`.
   - *(2026-07-08)* **Content search (検索)** — the header is TWO rows: a
     four-view mode row (ファイル / 開いているファイル / ファイルを検索 /
     開いているファイルを検索 — `setView`, mode × name/content in the store)
-    over the search box. The 検索 views are per-LINE fuzzy grep
-    (shared/grep.ts over fuzzysort; long lines trimmed to a window around the
+    over the search box. The 検索 views are per-LINE grep
+    (shared/grep.ts over the same shared/match.ts AND-of-substrings; long
+    lines trimmed to a window around the
     match). Files grep runs in MAIN over the indexed TEXT files
     (`grepWorkspaceFiles` IPC; reads per settled query — the overlay
     debounces 180ms, replies dropped by sequence; capped at 200 matches),
@@ -589,7 +593,8 @@ the `__vedShellText` seam (xterm renders to canvas — the DOM has no text).
 | Need              | Choice                  | Rejected                              |
 | ----------------- | ----------------------- | ------------------------------------- |
 | shell state       | `zustand`               | context drilling, Redux, Jotai        |
-| fuzzy matching    | `fuzzysort`             | `cmdk` (owns too much UI), `fzf`      |
+| query matching    | hand-rolled AND-of-     | `fuzzysort` (scatter matches = noise, |
+|                   | substrings (`match.ts`) | REMOVED), `cmdk`, `fzf`               |
 | fs watching       | `chokidar` (main)       | raw `fs.watch` (platform quirks)      |
 | gitignore rules   | `ignore`                | spawning ripgrep                      |
 | config schema     | `zod`                   | `electron-store`, hand-rolled checks  |

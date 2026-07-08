@@ -1,6 +1,7 @@
 // Quick open (Ctrl+P, editor UI plan Phase 3): add a workspace root, open the
 // palette, and confirm the index honors .gitignore, filters as you type
-// (fuzzy, non-contiguous), opens the selected file in a tab, and closes on Esc.
+// (AND of substrings — shared/match.ts), opens the selected file in a tab,
+// and closes on Esc.
 // Usage: node test/e2e/quick-open.ts  (after a build; window stays hidden)
 import assert from 'node:assert/strict';
 import { mkdir, writeFile } from 'node:fs/promises';
@@ -90,18 +91,21 @@ try {
   assert.equal(await overlay(), null, 'the palette closes after opening a file');
   step('typing filters, and Enter opens the selected file');
 
-  // A fuzzy, non-contiguous query (d…p) still finds the nested deep.txt.
+  // Space-separated terms AND together in any order ('txt deep' → deep.txt);
+  // scatter queries ('dp') deliberately match nothing.
   await pressMod(page, 'p');
   await page.waitForSelector('[aria-label="Quick open"]');
   await page.fill('#quick-open-input', 'dp');
+  await page.waitForFunction(() => document.querySelectorAll('[role=option]').length === 0);
+  await page.fill('#quick-open-input', 'txt deep');
   await page.waitForFunction(() => {
     const opts = document.querySelectorAll('[role=option]');
-    return opts.length >= 1 && (opts[0]?.textContent?.includes('deep.txt') ?? false);
+    return opts.length === 1 && (opts[0]?.textContent?.includes('deep.txt') ?? false);
   });
   await page.keyboard.press('Enter');
   await page.waitForFunction(() => document.querySelectorAll('[role=tab]').length === 3);
   assert.equal(await editorText(), 'DEEP');
-  step('a fuzzy query matches a nested file');
+  step('terms AND in any order; scatter queries match nothing');
 
   // The "text only" toggle hides binary-extension files (photo.png).
   await pressMod(page, 'p');
