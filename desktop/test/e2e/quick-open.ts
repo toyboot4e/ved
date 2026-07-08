@@ -160,6 +160,34 @@ try {
   await page.keyboard.press('Escape');
   await page.waitForFunction(() => document.querySelector('[aria-label="Quick open"]') === null);
   step('reopening starts in file search');
+
+  // The list/preview divider drags (a store-clamped % of the body), and the
+  // position is a preference — it survives close/reopen.
+  await pressMod(page, 'p');
+  await page.waitForSelector('[aria-label="Quick open"]');
+  const listBox = async () => (await page.$('[role=listbox]'))?.boundingBox();
+  const before = await listBox();
+  assert.ok(before);
+  const handleBox = await (await page.$('[aria-label="Resize file list"]'))?.boundingBox();
+  assert.ok(handleBox);
+  await page.mouse.move(handleBox.x + handleBox.width / 2, handleBox.y + 200);
+  await page.mouse.down();
+  await page.mouse.move(handleBox.x + handleBox.width / 2 + 120, handleBox.y + 200, { steps: 4 });
+  await page.mouse.up();
+  const widened = await listBox();
+  assert.ok(
+    widened && Math.abs(widened.width - (before.width + 120)) <= 8,
+    `list width ${widened?.width} ≉ ${before.width + 120}`,
+  );
+  await page.keyboard.press('Escape');
+  await page.waitForFunction(() => document.querySelector('[aria-label="Quick open"]') === null);
+  await pressMod(page, 'p');
+  await page.waitForSelector('[aria-label="Quick open"]');
+  const reopened = await listBox();
+  assert.ok(reopened && Math.abs(reopened.width - widened.width) <= 2, 'divider position survives reopen');
+  await page.keyboard.press('Escape');
+  await page.waitForFunction(() => document.querySelector('[aria-label="Quick open"]') === null);
+  step('the list/preview divider drags and persists across opens');
 } catch (e) {
   fail(e instanceof Error ? e.message : String(e));
 } finally {

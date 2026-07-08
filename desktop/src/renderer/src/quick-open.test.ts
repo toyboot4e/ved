@@ -106,3 +106,17 @@ describe('isTextLabel', () => {
     expect(isTextLabel('doc.pdf')).toBe(false);
   });
 });
+
+describe('setListWidthPct', () => {
+  it('clamps the divider to sane bounds (one-decimal precision)', () => {
+    const s = () => useQuickOpenStore.getState();
+    expect(s().listWidthPct).toBe(44);
+    s().setListWidthPct(60.24);
+    expect(s().listWidthPct).toBe(60.2);
+    s().setListWidthPct(5);
+    expect(s().listWidthPct).toBe(15);
+    s().setListWidthPct(99);
+    expect(s().listWidthPct).toBe(85);
+    s().setListWidthPct(44); // restore the default for other tests
+  });
+});

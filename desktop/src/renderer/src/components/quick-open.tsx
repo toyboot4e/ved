@@ -15,7 +15,14 @@ import { useEffect, useRef, useState } from 'react';
 import { dispatchBuffers, useBuffersStore } from '../buffers-store';
 import { preserveFocus } from '../focus';
 import { isComposingEvent } from '../ime';
-import { closeQuickOpen, type QuickOpenItem, type QuickOpenMode, useQuickOpenStore } from '../quick-open';
+import {
+  closeQuickOpen,
+  QUICK_OPEN_LIST_MAX_PCT,
+  QUICK_OPEN_LIST_MIN_PCT,
+  type QuickOpenItem,
+  type QuickOpenMode,
+  useQuickOpenStore,
+} from '../quick-open';
 import { useWorkspaceStore } from '../workspace';
 import styles from './quick-open.module.scss';
 
@@ -146,8 +153,10 @@ export const QuickOpen = ({ onOpenFile }: QuickOpenProps): React.JSX.Element => 
   const selected = useQuickOpenStore((s) => s.selected);
   const loading = useQuickOpenStore((s) => s.loading);
   const textOnly = useQuickOpenStore((s) => s.textOnly);
+  const listWidthPct = useQuickOpenStore((s) => s.listWidthPct);
   const inputRef = useRef<HTMLInputElement>(null);
   const listRef = useRef<HTMLDivElement>(null);
+  const bodyRef = useRef<HTMLDivElement>(null);
 
   // Mount == open: snapshot the buffer pool (the tab strip) and the workspace
   // roots, fetch the index, focus the input. `getState()` reads, not
@@ -195,6 +204,27 @@ export const QuickOpen = ({ onOpenFile }: QuickOpenProps): React.JSX.Element => 
       event.preventDefault();
       closeQuickOpen();
     }
+  };
+
+  // Drag the list/preview divider: pointer capture keeps the moves coming
+  // beyond the 7px strip; the width is a % of the body (store-clamped), so it
+  // holds across window resizes. Mirrors the sidebar's resize handle.
+  const handleSplitStart = (event: React.PointerEvent<HTMLDivElement>): void => {
+    event.preventDefault();
+    const handle = event.currentTarget;
+    handle.setPointerCapture(event.pointerId);
+    const onMove = (ev: PointerEvent): void => {
+      const rect = bodyRef.current?.getBoundingClientRect();
+      if (rect && rect.width > 0) {
+        useQuickOpenStore.getState().setListWidthPct(((ev.clientX - rect.left) / rect.width) * 100);
+      }
+    };
+    const onUp = (): void => {
+      handle.removeEventListener('pointermove', onMove);
+      handle.releasePointerCapture(event.pointerId);
+    };
+    handle.addEventListener('pointermove', onMove);
+    handle.addEventListener('pointerup', onUp, { once: true });
   };
 
   const empty =
@@ -264,7 +294,11 @@ export const QuickOpen = ({ onOpenFile }: QuickOpenProps): React.JSX.Element => 
             </button>
           )}
         </div>
-        <div className={styles.body}>
+        <div
+          ref={bodyRef}
+          className={styles.body}
+          style={{ '--quick-open-list-width': `${listWidthPct}%` } as React.CSSProperties}
+        >
           <div ref={listRef} className={styles.list} role='listbox' aria-label='Files'>
             {items.length === 0 ? (
               <div className={styles.emptyNote}>{empty}</div>
@@ -291,6 +325,24 @@ export const QuickOpen = ({ onOpenFile }: QuickOpenProps): React.JSX.Element => 
               </>
             )}
           </div>
+          {/* ARIA window-splitter between the list and the preview */}
+          {/* biome-ignore lint/a11y/useSemanticElements: an <hr> cannot be the interactive window-splitter widget */}
+          <div
+            className={styles.splitHandle}
+            role='separator'
+            tabIndex={0}
+            aria-orientation='vertical'
+            aria-label='Resize file list'
+            aria-valuenow={Math.round(listWidthPct)}
+            aria-valuemin={QUICK_OPEN_LIST_MIN_PCT}
+            aria-valuemax={QUICK_OPEN_LIST_MAX_PCT}
+            onPointerDown={handleSplitStart}
+            onKeyDown={(e) => {
+              if (e.key !== 'ArrowLeft' && e.key !== 'ArrowRight') return;
+              e.preventDefault();
+              useQuickOpenStore.getState().setListWidthPct(listWidthPct + (e.key === 'ArrowRight' ? 2 : -2));
+            }}
+          />
           <PreviewPane item={selectedItem} />
         </div>
       </div>

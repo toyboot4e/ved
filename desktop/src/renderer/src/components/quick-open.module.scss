@@ -94,11 +94,28 @@
 
 .list {
   flex: none;
-  inline-size: 44%;
-  max-inline-size: 640px;
+  // The draggable divider writes this var (store-clamped %; quick-open.tsx)
+  inline-size: var(--quick-open-list-width, 44%);
   padding: 6px;
   overflow-y: auto;
   border-inline-end: 1px solid var(--ved-border-faint);
+}
+
+// The list/preview divider: a 7px grab strip straddling the border, with a
+// ~1px layout footprint (negative margins) — same idea as the sidebar handle.
+.splitHandle {
+  flex: none;
+  width: 7px;
+  margin-inline: -3px;
+  cursor: col-resize;
+  touch-action: none;
+  z-index: 1;
+
+  &:hover,
+  &:focus-visible {
+    background: var(--ved-accent);
+    opacity: 0.4;
+  }
 }
 
 .row {

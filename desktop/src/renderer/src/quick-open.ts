@@ -115,6 +115,9 @@ type QuickOpenStore = {
   readonly selected: number;
   /** Hide known-binary files (files mode; the toggle); kept across opens. */
   readonly textOnly: boolean;
+  /** List-pane width as a % of the two-pane body (the draggable divider);
+   *  a preference like `textOnly`, kept across opens. Clamped. */
+  readonly listWidthPct: number;
   /** Open the palette in `mode` ('files' unless told otherwise — pass
    *  'buffers' to start in open-file search, e.g. from a future shortcut). */
   readonly openPalette: (mode?: QuickOpenMode) => void;
@@ -130,7 +133,11 @@ type QuickOpenStore = {
   /** Move the selection (wraps around). */
   readonly move: (delta: 1 | -1) => void;
   readonly setSelected: (index: number) => void;
+  readonly setListWidthPct: (pct: number) => void;
 };
+
+export const QUICK_OPEN_LIST_MIN_PCT = 15;
+export const QUICK_OPEN_LIST_MAX_PCT = 85;
 
 type PoolState = Pick<QuickOpenStore, 'mode' | 'query' | 'files' | 'buffers' | 'textOnly'>;
 
@@ -152,6 +159,7 @@ export const useQuickOpenStore = create<QuickOpenStore>()((set) => ({
   ...CLOSED,
   mode: 'files',
   textOnly: false,
+  listWidthPct: 44,
   // `set` merges, so `textOnly` survives an open — the toggle is a preference.
   openPalette: (mode = 'files') => set({ ...CLOSED, open: true, loading: mode === 'files', mode }),
   setFiles: (files) => set((s) => (s.open ? { loading: false, files, ...rerank({ ...s, files }), selected: 0 } : {})),
@@ -167,6 +175,10 @@ export const useQuickOpenStore = create<QuickOpenStore>()((set) => ({
   move: (delta) =>
     set((s) => (s.items.length === 0 ? {} : { selected: (s.selected + delta + s.items.length) % s.items.length })),
   setSelected: (index) => set({ selected: index }),
+  setListWidthPct: (pct) =>
+    set({
+      listWidthPct: Math.round(Math.min(QUICK_OPEN_LIST_MAX_PCT, Math.max(QUICK_OPEN_LIST_MIN_PCT, pct)) * 10) / 10,
+    }),
 }));
 
 /** Close the palette and hand focus back to the editor (the overlay input owns

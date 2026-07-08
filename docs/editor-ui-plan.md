@@ -443,6 +443,10 @@ Roots/visibility persistence rides Phase 4's `config.json`.
     registry (step 4 of the architecture notes above).
   - Smoke: `test/e2e/quick-open.ts`. Units: `main/workspace-index.test.ts`,
     `renderer/src/quick-open.test.ts`. See architecture.md "Quick open".
+  - *(2026-07-08)* The list/preview divider is DRAGGABLE (an ARIA
+    window-splitter, pointer-captured drag + arrow keys — the sidebar
+    handle's pattern); the list width is a store-clamped % of the body,
+    kept across opens like the text-only toggle.
 
 The same store/overlay is built to back the **command palette**
 (`Ctrl+Shift+P`) later — "input + generic item provider", hence the store's
