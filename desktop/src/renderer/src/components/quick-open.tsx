@@ -339,18 +339,6 @@ export const QuickOpen = ({
               );
             })}
           </fieldset>
-          {mode === 'files' && !contentSearch && (
-            <label className={styles.textOnly}>
-              <input
-                type='checkbox'
-                checked={textOnly}
-                aria-label='Text files only'
-                onMouseDown={preserveFocus}
-                onChange={() => useQuickOpenStore.getState().toggleTextOnly()}
-              />
-              テキストファイルのみ
-            </label>
-          )}
         </div>
         <div className={styles.inputRow}>
           <input
@@ -365,6 +353,20 @@ export const QuickOpen = ({
             onKeyDown={onKeyDown}
           />
         </div>
+        {mode === 'files' && !contentSearch && (
+          <div className={styles.optionsRow}>
+            <label className={styles.textOnly}>
+              <input
+                type='checkbox'
+                checked={textOnly}
+                aria-label='Text files only'
+                onMouseDown={preserveFocus}
+                onChange={() => useQuickOpenStore.getState().toggleTextOnly()}
+              />
+              テキストファイルのみ
+            </label>
+          </div>
+        )}
         <div
           ref={bodyRef}
           className={styles.body}

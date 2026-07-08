@@ -45,6 +45,21 @@
   gap: 8px;
   padding: 8px;
   border-block-end: 1px solid var(--ved-border-faint);
+
+  // When the options row follows (files name view), IT carries the header's
+  // bottom border instead
+  &:has(+ .optionsRow) {
+    border-block-end: none;
+    padding-block-end: 4px;
+  }
+}
+
+// The line under the search box: the text-only checkbox (right-aligned)
+.optionsRow {
+  flex: none;
+  display: flex;
+  padding: 0 8px 8px;
+  border-block-end: 1px solid var(--ved-border-faint);
 }
 
 .input {
