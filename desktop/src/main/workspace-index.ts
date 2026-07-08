@@ -8,6 +8,7 @@ import { readdir, readFile, stat } from 'node:fs/promises';
 import { basename, join } from 'node:path';
 import ignore, { type Ignore } from 'ignore';
 import type { WorkspaceFile } from '../shared/ipc';
+import { isTextFile } from './fs-io';
 
 // A guard so a pathological tree (symlink loop, a monorepo with no .gitignore)
 // can't hang the walk. A prose workspace is a few thousand files at most.
@@ -76,7 +77,10 @@ const walkRoot = async (root: string): Promise<WorkspaceFile[]> => {
       const childRel = rel === '' ? d.name : `${rel}/${d.name}`;
       if (isIgnored(childRel, kind === 'dir', layered)) continue;
       if (kind === 'dir') await recurse(full, childRel, layered);
-      else files.push({ path: full, label: childRel });
+      // Text-ness rides the index (fs-io.ts isTextFile: denylist → size cap
+      // → head sniff, verdicts cached by mtime+size) — the sniff IO happens
+      // here, once per changed file, not per keystroke.
+      else files.push({ path: full, label: childRel, isText: await isTextFile(full) });
     }
   };
 
@@ -110,7 +114,7 @@ export const listWorkspaceFiles = async (roots: readonly string[]): Promise<Work
       }
       if (!multi) return files;
       const prefix = `${basename(root)}/`;
-      return files.map((f) => ({ path: f.path, label: prefix + f.label }));
+      return files.map((f) => ({ ...f, label: prefix + f.label }));
     }),
   );
 

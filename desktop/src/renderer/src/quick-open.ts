@@ -48,17 +48,6 @@ export type QuickOpenItem = {
  *  shows `total - items.length`). */
 export type RankResult = { readonly items: readonly QuickOpenItem[]; readonly total: number };
 
-// Known-binary extensions the "text files only" toggle hides. A COSMETIC
-// filter — extension, never content — so it's cheap over the whole index;
-// openability is still content-sniffed in main when a row is chosen. SVG is
-// intentionally absent (it is text). Extensionless files (README, LICENSE,
-// Makefile) stay visible, which is the point of a denylist over an allowlist.
-const BINARY_EXT =
-  /\.(png|jpe?g|gif|webp|bmp|ico|avif|tiff?|mp[34]|m4[av]|mov|avi|mkv|webm|wav|flac|ogg|aac|zip|tar|gz|bz2|xz|7z|rar|pdf|docx?|xlsx?|pptx?|ttf|otf|woff2?|eot|exe|dll|so|dylib|bin|dat|wasm|class|o|a|sqlite3?|db)$/i;
-
-/** Does the label look like a text file (not a known-binary extension)? */
-export const isTextLabel = (label: string): boolean => !BINARY_EXT.test(label);
-
 /** Rank a labeled pool against `query`: fuzzy over the label, capped at
  *  {@link RESULT_LIMIT} with the uncapped match count alongside. An empty
  *  query yields the head of the pool unranked, so the palette shows the whole
@@ -75,9 +64,11 @@ const rank = <T extends { readonly label: string }>(
   return { items: results.map((r) => toItem(r.obj, Array.from(r.indexes))), total: results.total };
 };
 
-/** Rank workspace files. `textOnly` first drops known-binary extensions. */
+/** Rank workspace files. `textOnly` drops non-text files — the verdict rides
+ * the index from main (`WorkspaceFile.isText`: denylist → size cap → content
+ * sniff), so the filter is the same truth the open path uses. */
 export const rankFiles = (files: readonly WorkspaceFile[], query: string, textOnly: boolean): RankResult => {
-  const pool = textOnly ? files.filter((f) => isTextLabel(f.label)) : files;
+  const pool = textOnly ? files.filter((f) => f.isText) : files;
   return rank(pool, query, (f, matched) => ({
     key: f.path,
     label: f.label,

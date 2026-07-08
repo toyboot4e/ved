@@ -7,7 +7,10 @@ import {
   compareDirEntries,
   deleteEntry,
   isBinaryContent,
+  isTextFile,
   listDir,
+  looksBinaryName,
+  MAX_TEXT_FILE_BYTES,
   readTextFile,
   readTextFileChecked,
   renameEntry,
@@ -80,6 +83,64 @@ describe('readTextFileChecked / isBinaryContent', () => {
     // 「あ」 in Shift_JIS: 0x82 0xA0 — not valid UTF-8
     await writeFile(path, Buffer.from([0x82, 0xa0, 0x82, 0xa2]));
     expect(await readTextFileChecked(path)).toEqual({ kind: 'binary' });
+  });
+});
+
+describe('looksBinaryName', () => {
+  it('keeps text and extensionless names, drops known binaries', () => {
+    expect(looksBinaryName('a.txt')).toBe(false);
+    expect(looksBinaryName('sub/README')).toBe(false);
+    expect(looksBinaryName('icon.svg')).toBe(false); // SVG is text
+    expect(looksBinaryName('a.png')).toBe(true);
+    expect(looksBinaryName('disc.iso')).toBe(true);
+    expect(looksBinaryName('image.dmg')).toBe(true);
+    expect(looksBinaryName('doc.pdf')).toBe(true);
+  });
+});
+
+describe('isTextFile (layered: denylist → size cap → sniff)', () => {
+  let dir: string;
+  beforeEach(async () => {
+    dir = await mkdtemp(join(tmpdir(), 'ved-fs-io-'));
+  });
+  afterEach(async () => {
+    await rm(dir, { recursive: true, force: true });
+  });
+
+  it('accepts text (Japanese, extensionless) and empty files', async () => {
+    await writeFile(join(dir, 'a.txt'), '|空(そら)は青い\n', 'utf-8');
+    await writeFile(join(dir, 'README'), 'plain', 'utf-8');
+    await writeFile(join(dir, 'empty.txt'), '');
+    expect(await isTextFile(join(dir, 'a.txt'))).toBe(true);
+    expect(await isTextFile(join(dir, 'README'))).toBe(true);
+    expect(await isTextFile(join(dir, 'empty.txt'))).toBe(true);
+  });
+
+  it('rejects a denylisted name without reading it', async () => {
+    // The file does not even exist — the name alone decides
+    expect(await isTextFile(join(dir, 'movie.iso'))).toBe(false);
+  });
+
+  it('rejects an UNKNOWN extension whose content is binary (the .iso case)', async () => {
+    await writeFile(join(dir, 'weird.custom'), Buffer.from([0x43, 0x44, 0x30, 0x30, 0x31, 0x00, 0x01]));
+    expect(await isTextFile(join(dir, 'weird.custom'))).toBe(false);
+  });
+
+  it('rejects oversized files by stat alone', async () => {
+    await writeFile(join(dir, 'huge.txt'), Buffer.alloc(MAX_TEXT_FILE_BYTES + 1, 0x61));
+    expect(await isTextFile(join(dir, 'huge.txt'))).toBe(false);
+  });
+
+  it('rejects a missing path', async () => {
+    expect(await isTextFile(join(dir, 'nope.txt'))).toBe(false);
+  });
+
+  it('re-sniffs when the file changes (verdicts key on mtime+size)', async () => {
+    const path = join(dir, 'flip.txt');
+    await writeFile(path, 'text', 'utf-8');
+    expect(await isTextFile(path)).toBe(true);
+    await writeFile(path, Buffer.from([0x00, 0x01, 0x02])); // different size → cache miss
+    expect(await isTextFile(path)).toBe(false);
   });
 });
 

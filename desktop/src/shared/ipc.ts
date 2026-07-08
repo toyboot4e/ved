@@ -77,6 +77,10 @@ export type DirEntry = {
 export type WorkspaceFile = {
   readonly path: string;
   readonly label: string;
+  /** Decided in main while indexing, by LAYERS: extension denylist → size
+   * cap → content sniff (NUL head check) — the same truth the open path
+   * uses, so the palette's text-only toggle is no longer a label guess. */
+  readonly isText: boolean;
 };
 
 /** A known path read by CONTENT: `binary` means "not UTF-8 text" — sniffed

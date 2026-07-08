@@ -24,6 +24,10 @@ await writeFile(join(tmp, 'ws', 'node_modules', 'pkg.txt'), 'PKG', 'utf-8');
 await writeFile(join(tmp, 'ws', '.gitignore'), 'ignored.txt\nnode_modules/\n', 'utf-8');
 // A binary-extension file (not gitignored) — the "text only" toggle hides it.
 await writeFile(join(tmp, 'ws', 'photo.png'), Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x00, 0x01, 0x02]));
+// An extension the denylist does NOT know, with binary content and a lying
+// text twin: the toggle must decide by CONTENT (main's sniff), not the name.
+await writeFile(join(tmp, 'ws', 'notes.rec'), Buffer.from([0x43, 0x44, 0x00, 0x01, 0x02]));
+await writeFile(join(tmp, 'ws', 'poem.rec'), 'ことばの列\n', 'utf-8');
 // 60 more files: the empty-query view must list the WHOLE index (the old
 // 50-row cap read as "files are missing"), in sorted label order.
 await mkdir(join(tmp, 'ws', 'many'), { recursive: true });
@@ -108,15 +112,22 @@ try {
   await page.waitForFunction(
     () => !Array.from(document.querySelectorAll('[role=option]')).some((e) => e.textContent?.includes('photo.png')),
   );
+  const filtered = await optionTexts();
   assert.ok(
-    (await optionTexts()).some((t) => t.includes('alpha.txt')),
+    filtered.some((t) => t.includes('alpha.txt')),
     'text files remain',
+  );
+  // Content decides unknown extensions: the binary .rec goes, the text .rec stays
+  assert.ok(!filtered.some((t) => t.includes('notes.rec')), 'binary content hidden despite an unknown extension');
+  assert.ok(
+    filtered.some((t) => t.includes('poem.rec')),
+    'text content stays despite the same unknown extension',
   );
   // Toggle back off so the preference does not leak into the next open.
   await page.click('[aria-label="Text files only"]');
   await page.keyboard.press('Escape');
   await page.waitForFunction(() => document.querySelector('[aria-label="Quick open"]') === null);
-  step('the text-only toggle hides binary files');
+  step('the text-only toggle hides binary files by content, not name');
 
   // Esc closes the palette without opening anything.
   await pressMod(page, 'p');

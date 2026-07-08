@@ -1,6 +1,7 @@
 // Plain-node file primitives for the file service. No `electron` import:
 // this module stays unit-testable under vitest.
-import { lstat, readdir, readFile, rename, rm, stat, writeFile } from 'node:fs/promises';
+import type { Stats } from 'node:fs';
+import { lstat, open, readdir, readFile, rename, rm, stat, writeFile } from 'node:fs/promises';
 import { dirname, join } from 'node:path';
 import type { DeletePathResult, DirEntry, ReadFileResult, RenamePathResult } from '../shared/ipc';
 
@@ -34,6 +35,60 @@ export const readTextFileChecked = async (path: string): Promise<ReadFileResult>
   } catch {
     return { kind: 'binary' };
   }
+};
+
+// Known-binary extensions — the zero-IO first layer of `isTextFile` (content
+// decides the rest). SVG is intentionally absent (it is text); extensionless
+// files (README, Makefile) pass through to the sniff, which is the point of a
+// denylist over an allowlist.
+const BINARY_EXT =
+  /\.(png|jpe?g|gif|webp|bmp|ico|avif|tiff?|mp[34]|m4[av]|mov|avi|mkv|webm|wav|flac|ogg|aac|zip|tar|gz|bz2|xz|7z|rar|pdf|docx?|xlsx?|pptx?|ttf|otf|woff2?|eot|exe|dll|so|dylib|bin|dat|wasm|class|o|a|sqlite3?|db|iso|img|dmg|vhdx?|qcow2?|deb|rpm|apk|msi|jar|swf|psd)$/i;
+
+/** Does the NAME alone give the file away as binary? Zero-IO pre-filter. */
+export const looksBinaryName = (name: string): boolean => BINARY_EXT.test(name);
+
+/** Files above this size never count as text for the pickers — prose is
+ * orders of magnitude smaller, and the cap alone excludes disc images
+ * without reading a byte. */
+export const MAX_TEXT_FILE_BYTES = 10 * 1024 * 1024;
+
+const SNIFF_BYTES = 512;
+
+// Text verdicts cached by (mtime, size), so re-walks of an unchanged
+// workspace repeat no sniff IO. Self-invalidating: a changed file misses.
+const textVerdicts = new Map<string, { readonly mtime: number; readonly size: number; readonly isText: boolean }>();
+
+/** Layered "is this file text?" for the quick-open index: extension denylist
+ * (no IO) → size cap (one stat) → NUL sniff of the head (the git heuristic).
+ * CONTENT decides unknown extensions — a .iso full of NULs is excluded by
+ * its bytes (or its size), never by list membership. Missing or unreadable
+ * paths are not text. */
+export const isTextFile = async (path: string): Promise<boolean> => {
+  if (looksBinaryName(path)) return false;
+  let st: Stats;
+  try {
+    st = await stat(path);
+  } catch {
+    return false;
+  }
+  if (st.size > MAX_TEXT_FILE_BYTES) return false;
+  const hit = textVerdicts.get(path);
+  if (hit && hit.mtime === st.mtimeMs && hit.size === st.size) return hit.isText;
+  let isText: boolean;
+  try {
+    const fd = await open(path, 'r');
+    try {
+      const head = Buffer.alloc(SNIFF_BYTES);
+      const { bytesRead } = await fd.read(head, 0, SNIFF_BYTES, 0);
+      isText = !isBinaryContent(head.subarray(0, bytesRead));
+    } finally {
+      await fd.close();
+    }
+  } catch {
+    return false;
+  }
+  textVerdicts.set(path, { mtime: st.mtimeMs, size: st.size, isText });
+  return isText;
 };
 
 /** Sidebar tree order: directories first, then names (Japanese collation). */

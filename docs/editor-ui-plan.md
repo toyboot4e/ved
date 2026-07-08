@@ -420,8 +420,11 @@ Roots/visibility persistence rides Phase 4's `config.json`.
     mode-agnostic items, capped at `RESULT_LIMIT` (500) with the uncapped
     total alongside (the list footer reports the overflow). An empty query
     shows the whole sorted pool up to the cap. A **text-only** toggle
-    (`isTextLabel`, a cosmetic
-    binary-extension denylist) filters first (files mode). Pure
+    filters first (files mode) on `WorkspaceFile.isText`, decided in MAIN
+    while indexing by layers (fs-io.ts `isTextFile`): extension denylist
+    (zero IO) → size cap (one stat; excludes disc images unread) → NUL head
+    sniff, verdicts cached by mtime+size — the same truth the open path
+    uses, so unknown-extension binaries (.iso twins) are excluded by content. Pure
     `rankFiles`/`rankBuffers` + a Zustand store
     holding both pool snapshots taken on open (matching stays out of React).
   - **Modes**: files search and open-file (buffer) search, switched by the two

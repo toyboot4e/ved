@@ -1,8 +1,10 @@
 import { describe, expect, it } from 'vitest';
 import type { WorkspaceFile } from '../../shared/ipc';
-import { type BufferEntry, isTextLabel, RESULT_LIMIT, rankBuffers, rankFiles, useQuickOpenStore } from './quick-open';
+import { type BufferEntry, RESULT_LIMIT, rankBuffers, rankFiles, useQuickOpenStore } from './quick-open';
 
-const files = (...labels: string[]): WorkspaceFile[] => labels.map((label) => ({ path: `/${label}`, label }));
+const files = (...labels: string[]): WorkspaceFile[] =>
+  // A `!bin` suffix stands in for main's "not text" sniff verdict
+  labels.map((label) => ({ path: `/${label}`, label, isText: !label.endsWith('!bin') }));
 
 const buffers = (...labels: (string | null)[]): BufferEntry[] =>
   labels.map((path, i) => ({ id: i + 1, path, label: path ?? '無題' }));
@@ -36,8 +38,8 @@ describe('rankFiles', () => {
     expect(total).toBe(0);
   });
 
-  it('with textOnly, drops known-binary extensions before ranking', () => {
-    const pool = files('notes.txt', 'photo.png', 'README', 'archive.zip');
+  it('with textOnly, drops files main sniffed as non-text before ranking', () => {
+    const pool = files('notes.txt', 'photo.png!bin', 'README', 'movie.iso!bin');
     expect(rankFiles(pool, '', true).items.map((i) => i.label)).toEqual(['notes.txt', 'README']);
     // The filter is off by default.
     expect(rankFiles(pool, '', false).items).toHaveLength(4);
@@ -93,17 +95,6 @@ describe('quick-open store modes', () => {
     expect(after.items.map((i) => i.label)).toEqual(['/ws/beta.txt']);
     expect(after.items[0]?.bufferId).toBe(1);
     s.close();
-  });
-});
-
-describe('isTextLabel', () => {
-  it('keeps text and extensionless files, drops known binaries', () => {
-    expect(isTextLabel('a.txt')).toBe(true);
-    expect(isTextLabel('sub/README')).toBe(true);
-    expect(isTextLabel('icon.svg')).toBe(true); // SVG is text
-    expect(isTextLabel('a.png')).toBe(false);
-    expect(isTextLabel('lib.so')).toBe(false);
-    expect(isTextLabel('doc.pdf')).toBe(false);
   });
 });
 
