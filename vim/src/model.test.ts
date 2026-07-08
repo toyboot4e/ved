@@ -776,6 +776,32 @@ describe('block visual (Ctrl+V)', () => {
     expect(r.text).toBe('X\nab\ncd');
   });
 
+  it('o jumps to the diagonal corner; O to the other corner on the same line', () => {
+    // Block anchor 1 (line 0, col 1) … head 8 (line 1, col 3).
+    const o = play('abcd\nefgh', 1, [cv, 'G', 'l', 'l', 'o']);
+    expect(o.head).toBe(1); // the diagonal: anchor and head fully swap
+    expect(o.anchor).toBe(8);
+    const O = play('abcd\nefgh', 1, [cv, 'G', 'l', 'l', 'O']);
+    expect(O.anchor).toBe(3); // columns swap, lines stay: line 0 col 3…
+    expect(O.head).toBe(6); // …and line 1 col 1
+    // Neither swap changes the rectangle: d cuts the same block.
+    const d = play('abcd\nefgh', 1, [cv, 'G', 'l', 'l', 'O', 'd']);
+    expect(d.text).toBe('a\ne');
+  });
+
+  it('O clamps each swapped corner to its own line end (ragged block)', () => {
+    // anchor 3 (line 0, col 3); G clamps to the short line's end (col 2).
+    const r = play('abcd\nef', 3, [cv, 'G', 'O']);
+    expect(r.anchor).toBe(2); // line 0 takes the head's col 2
+    expect(r.head).toBe(7); // line 1 clamps col 3 to its end
+  });
+
+  it('O outside block visual acts like o', () => {
+    const r = play('abc', 0, ['v', 'l', 'O']);
+    expect(r.anchor).toBe(1);
+    expect(r.head).toBe(0);
+  });
+
   it('IME-committed text (vimRecordText) repeats over the block', () => {
     const r = play('ab\ncd', 0, [cv, 'G', 'I']);
     const st = vimRecordText(r.state, 'あい');

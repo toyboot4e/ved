@@ -442,11 +442,15 @@ try {
   await setCaret(page, 1); // line 0, col 1
   await page.keyboard.press('Control+v');
   await press('j'); // next model line, same column
-  await press('l'); // col 2 → a 2×2 block
+  await press('l'); // col 2 → a 2×2 block (anchor 1, head 7)
   assert.ok((await selRects()) >= 2, 'block selection draws a rect per line');
-  await press('d');
+  await press('O'); // other corner, SAME line: head → line 1, col 1
+  assert.equal(await caretOffset(page), 6, 'O moves the cursor to the same-line corner');
+  await press('o'); // diagonal corner: head ↔ anchor
+  assert.equal(await caretOffset(page), 2, 'o moves the cursor to the diagonal corner');
+  await press('d'); // the swaps never changed the rectangle
   assert.equal(await docText(page), 'ad\neh\nijkl', 'd deletes the 2×2 block');
-  step('Ctrl+V selects a rectangle; d cuts it');
+  step('Ctrl+V selects a rectangle; o/O swap its corners; d cuts it');
 
   await toggleVim();
   await setDoc(page, 'abcd\nefgh');

@@ -49,7 +49,9 @@
 //     top line; after `$`, at every line's end) and Escape repeats the typed
 //     text on the remaining lines — IME-committed text included, via the
 //     same vimRecordText channel as dot-repeat. Block changes are not
-//     dot-repeatable (like all visual changes, v1). `gv` reselects the
+//     dot-repeatable (like all visual changes, v1). `o` jumps to the
+//     diagonal corner, `O` to the other corner on the SAME line (columns
+//     swap, lines stay; outside block, `O` = `o`). `gv` reselects the
 //     selection the last visual mode ended with (kind + $-flag; from inside
 //     visual it SWAPS with the live selection);
 //   - search: / ? n N * # (literal, case-sensitive; command line built in
@@ -1404,6 +1406,27 @@ const pageScroll =
   (dir: 1 | -1, half: boolean): VimAction =>
   (state) => ({ state, effects: [{ kind: 'scrollPage', dir, half }], handled: true });
 
+/** `o`: the cursor to the selection's other end — in block visual, the
+ *  diagonally opposite corner (a full anchor/head swap either way). */
+const swapEnds: VimAction = (state, _env, doc) => ({
+  state,
+  effects: [{ kind: 'select', anchor: doc.head, head: doc.anchor }],
+  handled: true,
+});
+
+/** `O` in block visual: the other corner on the SAME line — the two ends
+ *  exchange their COLUMNS and keep their lines (each clamped to its line's
+ *  end, so a ragged block narrows like any other clamped motion). Outside
+ *  block visual `O` acts like `o` (Vim's rule). */
+const swapCornersSameLine: VimAction = (state, env, doc) => {
+  if (state.visualKind !== 'block') return swapEnds(state, env, doc);
+  const aLs = lineStart(doc.text, doc.anchor);
+  const hLs = lineStart(doc.text, doc.head);
+  const anchor = Math.min(aLs + (doc.head - hLs), lineEnd(doc.text, aLs));
+  const head = Math.min(hLs + (doc.anchor - aLs), lineEnd(doc.text, hLs));
+  return { state, effects: [{ kind: 'select', anchor, head }], handled: true };
+};
+
 /** Visual-mode commands (operators over the selection, kind switches,
  *  end-swap, paste-over). Motions are NOT here — they fall through to the
  *  normal tables and extend from the visual anchor. */
@@ -1418,11 +1441,8 @@ const VISUAL_ACTIONS = {
     state.visualKind === 'line'
       ? exitVisual(state, doc)
       : { state: { ...state, visualKind: 'line' as const }, effects: [], handled: true },
-  'visual.swapEnds': (state, _env, doc) => ({
-    state,
-    effects: [{ kind: 'select', anchor: doc.head, head: doc.anchor }],
-    handled: true,
-  }),
+  'visual.swapEnds': swapEnds,
+  'visual.swapCorners': swapCornersSameLine,
   'visual.delete': (state, _env, doc) =>
     state.visualKind === 'block'
       ? blockOperator(state, 'd', doc)
@@ -1465,6 +1485,7 @@ const VISUAL_BINDINGS: Readonly<Record<string, keyof typeof VISUAL_ACTIONS>> = {
   v: 'visual.toggleChar',
   V: 'visual.toggleLine',
   o: 'visual.swapEnds',
+  O: 'visual.swapCorners',
   x: 'visual.delete',
   d: 'visual.delete',
   y: 'visual.yank',
