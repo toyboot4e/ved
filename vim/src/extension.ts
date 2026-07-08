@@ -18,6 +18,7 @@ import {
   type VimMode,
   type VimState,
   vimKeydown,
+  vimRecordText,
   type WordModel,
 } from './model';
 import { createJapaneseWordModel } from './words-ja';
@@ -58,6 +59,19 @@ const NORMAL_CLASS = 'vedVimNormal';
  *  replay (`50@q` over a long macro); only a cycle realistically hits it. */
 const FEED_BUDGET = 4096;
 
+/** The text a composition ADDED to the document: strip the common prefix and
+ *  suffix of the before/after texts and return the after-side middle. A
+ *  composition that also CONSUMED a selection yields only its insertion —
+ *  a replay re-inserts, it never re-deletes. */
+const insertedText = (before: string, after: string): string => {
+  const shared = Math.min(before.length, after.length);
+  let p = 0;
+  while (p < shared && before[p] === after[p]) p++;
+  let s = 0;
+  while (s < shared - p && before[before.length - 1 - s] === after[after.length - 1 - s]) s++;
+  return after.slice(p, after.length - s);
+};
+
 export const createVimExtension = (options: VimExtensionOptions = {}): EditorExtension => {
   const customActions = options.actions;
   for (const id of Object.keys(customActions ?? {})) {
@@ -83,6 +97,10 @@ export const createVimExtension = (options: VimExtensionOptions = {}): EditorExt
       // composition must never be disturbed (IME-safety invariant) — so let it
       // finish and restore this snapshot at compositionend, an ordinary edit.
       let composeUndo: { text: string; anchor: number; head: number } | null = null;
+      // The pre-composition document when an IME composes IN insert mode —
+      // the dot-repeat text capture: the committed text is diffed out at
+      // compositionend (composing keydowns never reach the reducer).
+      let insertCompose: { text: string } | null = null;
       // The word model for w/b/e — a Japanese segmenter when the option is on
       // (constructed once), else undefined (the reducer's default CLASS_WORDS).
       const words: WordModel | undefined =
@@ -190,10 +208,28 @@ export const createVimExtension = (options: VimExtensionOptions = {}): EditorExt
         }
       };
 
+      // A fed/replayed insert-mode key the reducer leaves to "the editor":
+      // mirror what the editor's own handlers do with a live one — type
+      // printables, break the line on Enter, delete one caret step on
+      // Backspace/Delete. (Live keydowns never come through here — the
+      // editor itself handles them.)
+      const insertUnhandled = (k: VimKey): void => {
+        if (k.ctrl || k.meta || k.alt) return;
+        const sel = ctx.getSelection();
+        if (isPlainKey(k)) ctx.replaceRange(sel.head, sel.head, k.key);
+        else if (k.key === 'Enter') ctx.replaceRange(sel.head, sel.head, '\n');
+        else if (k.key === 'Backspace') {
+          const back = ctx.caretStop(sel.head, -1);
+          if (back < sel.head) ctx.replaceRange(back, sel.head, '');
+        } else if (k.key === 'Delete') {
+          const fwd = ctx.caretStop(sel.head, 1);
+          if (fwd > sel.head) ctx.replaceRange(sel.head, fwd, '');
+        }
+      };
+
       // One key re-entering the loop (a replayed change or a mapping's fed
       // keys), stepping the LIVE document between keys — the reducer can't
-      // within one call. Insert-mode text returns unhandled — the editor
-      // would type it live, so here we insert it ourselves.
+      // within one call.
       const feedOne = (k: VimKey, callOpts: VimKeydownOpts): void => {
         const step = vimKeydown(state, k, docView(), callOpts);
         state = step.state;
@@ -206,18 +242,27 @@ export const createVimExtension = (options: VimExtensionOptions = {}): EditorExt
             applyEffect(e);
           }
           clampLineEnd();
-        } else if (state.mode === 'insert' && isPlainKey(k)) {
-          const sel = ctx.getSelection();
-          ctx.replaceRange(sel.head, sel.head, k.key);
+        } else if (state.mode === 'insert') {
+          insertUnhandled(k);
         }
       };
 
       // Dot-repeat: recorded keys are POST-expansion, so replay skips the
-      // mapping layer (`replay: true`) and is not itself re-recorded.
+      // mapping layer (`replay: true`) and is not itself re-recorded; TEXT
+      // items (the insert phase's literal text) insert as-is at the caret.
       const replayLastChange = (count: number): void => {
-        const keys = state.lastChange;
-        if (!keys) return;
-        for (let n = 0; n < count; n++) for (const k of keys) feedOne(k, { replay: true });
+        const items = state.lastChange;
+        if (!items) return;
+        for (let n = 0; n < count; n++) {
+          for (const it of items) {
+            if (it.kind === 'text') {
+              const sel = ctx.getSelection();
+              ctx.replaceRange(sel.head, sel.head, it.text);
+            } else {
+              feedOne(it.key, { replay: true });
+            }
+          }
+        }
       };
 
       // A mapping's RHS, a macro replay, or a dead-ended walk's swallowed
@@ -276,18 +321,37 @@ export const createVimExtension = (options: VimExtensionOptions = {}): EditorExt
           return step.handled;
         },
         // Belt over the keydown braces: any plain insertion arriving outside
-        // insert mode (programmatic insertText &c.) is blocked.
-        handleTextInput: (): boolean => state.mode !== 'insert',
+        // insert mode (programmatic insertText &c.) is blocked. In insert
+        // mode the data records for dot-repeat — the beforeinput literal is
+        // the faithful source for live typed text (see vimRecordText).
+        handleTextInput: (data: string): boolean => {
+          if (state.mode !== 'insert') return true;
+          state = vimRecordText(state, data);
+          return false;
+        },
         onCompositionStart: (): void => {
           // A composition interrupting an insert-map walk: the typed prefix
           // is LIVE text (the insert walk never swallows), so resetting the
           // walk loses nothing — and stays observation-only.
           if (state.mapPending) state = { ...state, mapPending: null };
-          if (state.mode === 'insert') return;
+          if (state.mode === 'insert') {
+            // Snapshot for the dot-repeat text capture. A chained
+            // composition can fire a second start before the (deferred) end
+            // hook — keep the FIRST snapshot; the final diff covers the
+            // whole chain.
+            insertCompose ??= { text: ctx.getText() };
+            return;
+          }
           const sel = ctx.getSelection();
           composeUndo = { text: ctx.getText(), anchor: sel.anchor, head: sel.head };
         },
         onCompositionEnd: (): void => {
+          if (insertCompose) {
+            // Insert mode accepted the composition: record what it added.
+            state = vimRecordText(state, insertedText(insertCompose.text, ctx.getText()));
+            insertCompose = null;
+            return;
+          }
           if (!composeUndo) return;
           const undo = composeUndo;
           composeUndo = null;

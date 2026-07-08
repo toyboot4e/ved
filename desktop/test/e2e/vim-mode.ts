@@ -284,6 +284,25 @@ try {
   assert.equal(await docText(page), 'X X', 'dot-repeat replays ciw + the typed X at the new word');
   step('dot-repeat: . replays the last change including inserted text');
 
+  // --- dot-repeat of EDITOR-inserted text: insertText bypasses keydown (an
+  // IME commit does the same), so the recording must capture the literal
+  // data, not keys — and a newline typed with Enter must replay too.
+  // Regression: key-based recording left IME text invisible and `.` replayed
+  // a STALE earlier change (typically a lone space). ---
+  await toggleVim();
+  await setDoc(page, 'first');
+  await toggleVim();
+  await setCaret(page, 0);
+  await press('A'); // insert at the line end
+  await page.keyboard.press('Enter');
+  await page.keyboard.insertText('つぎ'); // like an IME commit: no keydowns
+  await page.keyboard.press('Escape');
+  await page.waitForTimeout(60);
+  assert.equal(await docText(page), 'first\nつぎ', 'A + Enter + insertText typed a new line');
+  await press('.');
+  assert.equal(await docText(page), 'first\nつぎ\nつぎ', 'dot-repeat replays the newline AND the inserted text');
+  step('dot-repeat: . replays insertText-inserted text and typed newlines');
+
   // --- w/b/e word motions + Ctrl+A/X increment + V (cursor stays, paragraph
   // highlighted). Fresh doc with Vim off (normal mode blocks typing). ---
   await toggleVim();

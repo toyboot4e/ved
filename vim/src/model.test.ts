@@ -11,6 +11,7 @@ import {
   type VimState,
   type VimStep,
   vimKeydown,
+  vimRecordText,
 } from './model';
 
 /** A doc view over plain text: caretStop = ±1 clamped (no rubies here — the
@@ -61,11 +62,19 @@ const play = (
   const effects: VimEffect[] = [];
   const handled: boolean[] = [];
   const fed: VimKey[] = [];
-  const insertChar = (ch: string): void => {
+  const insertText = (s: string): void => {
     cur = {
-      text: cur.text.slice(0, cur.head) + ch + cur.text.slice(cur.head),
-      head: cur.head + 1,
-      anchor: cur.head + 1,
+      text: cur.text.slice(0, cur.head) + s + cur.text.slice(cur.head),
+      head: cur.head + s.length,
+      anchor: cur.head + s.length,
+    };
+  };
+  const deleteBack = (): void => {
+    if (cur.head === 0) return;
+    cur = {
+      text: cur.text.slice(0, cur.head - 1) + cur.text.slice(cur.head),
+      head: cur.head - 1,
+      anchor: cur.head - 1,
     };
   };
   function applyEffect(e: VimEffect): void {
@@ -81,8 +90,14 @@ const play = (
       for (let i = 0; i < e.count; i++) h = Math.max(0, Math.min(cur.text.length, h + d));
       cur = { ...cur, head: h, anchor: e.extend ? cur.anchor : h };
     } else if (e.kind === 'repeat') {
-      // Mirror the adapter's dot-repeat replay.
-      for (let n = 0; n < e.count; n++) for (const rk of st.lastChange ?? []) feed(rk, { replay: true });
+      // Mirror the adapter's dot-repeat replay: keys re-dispatch, text
+      // items insert as-is at the caret.
+      for (let n = 0; n < e.count; n++) {
+        for (const it of st.lastChange ?? []) {
+          if (it.kind === 'text') insertText(it.text);
+          else feed(it.key, { replay: true });
+        }
+      }
     } else if (e.kind === 'feedKeys') {
       // Mirror the adapter's feed loop (mapping RHS / macro replay; `fed`
       // keys are excluded from macro capture, noremap ones from the user
@@ -94,7 +109,9 @@ const play = (
     }
   }
   // Feed one key. `replay` matches the adapter's suppressed-recording replay;
-  // an unhandled printable in insert mode is inserted by "the editor" (us).
+  // an unhandled printable/Enter/Backspace in insert mode is performed by
+  // "the editor" (us) — a LIVE printable also records its text, mirroring
+  // the editor's beforeinput hook (fed keys were recorded at dispatch).
   function feed(k: VimKey, callOpts: VimKeydownOpts | undefined): void {
     const step: VimStep = vimKeydown(st, k, docOf(cur.text, cur.head, cur.anchor), callOpts);
     st = step.state;
@@ -105,7 +122,16 @@ const play = (
         if (callOpts?.replay && (e.kind === 'repeat' || e.kind === 'feedKeys')) continue;
         applyEffect(e);
       }
-    } else if (st.mode === 'insert' && isPlainKey(k)) insertChar(k.key);
+    } else if (st.mode === 'insert' && !k.ctrl && !k.meta && !k.alt) {
+      if (isPlainKey(k)) {
+        insertText(k.key);
+        if (!callOpts?.replay && !callOpts?.fed) st = vimRecordText(st, k.key);
+      } else if (k.key === 'Enter') {
+        insertText('\n');
+      } else if (k.key === 'Backspace') {
+        deleteBack();
+      }
+    }
   }
   for (const k of keys) feed(typeof k === 'string' ? key(k) : k, baseOpts);
   return { state: st, ...cur, effects, handled, fed };
@@ -629,6 +655,43 @@ describe('dot-repeat (.)', () => {
   it('~ is repeatable', () => {
     expect(play('abc', 0, ['~', '.']).text).toBe('ABc');
   });
+
+  it('. repeats a line-start insert (I…Esc) — the typed text as ONE text item', () => {
+    const r = play('one', 2, ['I', 'a', 'b', 'c', key('Escape'), '.']);
+    expect(r.text).toBe('abcabcone'); // replay inserts abc at the line start again
+    expect(r.state.lastChange).toEqual([
+      { kind: 'key', key: key('I') },
+      { kind: 'text', text: 'abc' },
+      { kind: 'key', key: key('Escape') },
+    ]);
+  });
+
+  it('. repeats a NEWLINE typed in insert mode (A<Enter>x<Esc>)', () => {
+    const r = play('ab', 0, ['A', key('Enter'), 'x', key('Escape'), '.']);
+    expect(r.text).toBe('ab\nx\nx');
+  });
+
+  it('. repeats a Backspace typed in insert mode (the net text)', () => {
+    // iab<BS>c: types 'ab', deletes 'b', types 'c' — net 'ac'. The replay
+    // re-performs the Backspace (a key item between the text items).
+    const r = play('z', 0, ['i', 'a', 'b', key('Backspace'), 'c', key('Escape'), '.']);
+    expect(r.text).toBe('aaccz');
+  });
+
+  it('vimRecordText makes a pure-IME insert THE last change (no stale-change leak)', () => {
+    // A prior direct-key change (x) would be the stale lastChange; an insert
+    // whose text arrives ONLY via vimRecordText (as the adapter's composition
+    // hooks deliver IME commits) must replace it.
+    const r = play('one two', 0, ['x', 'w', 'i']); // x edits; w moves; i enters insert
+    const st = vimRecordText(r.state, 'あいう');
+    const after = `${r.text.slice(0, r.head)}あいう${r.text.slice(r.head)}`; // the IME committed at the caret
+    const esc = vimKeydown(st, key('Escape'), docOf(after, r.head + 3));
+    expect(esc.state.lastChange).toEqual([
+      { kind: 'key', key: key('i') },
+      { kind: 'text', text: 'あいう' },
+      { kind: 'key', key: key('Escape') },
+    ]);
+  });
 });
 
 describe('pending-state hygiene', () => {
@@ -705,7 +768,7 @@ describe('user mapping front layer', () => {
   it('the EXPANSION records, so dot-repeat replays post-expansion keys', () => {
     const r = playMapped({ normal: { X: 'x' } }, 'abc', 0, ['X', '.']);
     expect(r.text).toBe('c'); // X deleted 'a' via x; . replayed the recorded x
-    expect(r.state.lastChange).toEqual([key('x')]);
+    expect(r.state.lastChange).toEqual([{ kind: 'key', key: key('x') }]);
   });
 
   it('noremap RHS does not re-expand (x mapped to itself is the built-in x)', () => {
@@ -829,7 +892,7 @@ describe('builtin sequence layer (K2 — gg / text objects via the trie)', () =>
     // diw deletes 'foo'; '.' repeats diw at the caret (now on the space),
     // deleting the space run too.
     expect(r.text).toBe('bar\nbaz qux');
-    expect(r.state.lastChange?.map((k) => k.key).join('')).toBe('diw');
+    expect(r.state.lastChange?.map((it) => (it.kind === 'key' ? it.key.key : it.text)).join('')).toBe('diw');
   });
 
   it('g then an unbound key swallows and clears pendings (old g-prefix behavior)', () => {

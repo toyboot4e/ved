@@ -577,10 +577,17 @@ the app's window listener) — insert mode leaves those chords to the app.
 pattern accumulates in state, the extension reports it via `onCommandLine` and
 the shell renders the `/pattern` line; literal + case-sensitive, not
 incremental, and not IME-aware (raw keydowns). **Dot-repeat** (`.`): a
-`record()` wrapper keeps the last change's KEY sequence — insert-mode text
-included, since the reducer sees every keydown — as `lastChange`; `.` emits a
-`repeat` effect and the ADAPTER replays those keys (the reducer can't step a
-mutating doc within one call). `gg`/`G` KEEP the column; `Ctrl+A`/`Ctrl+X`
+`record()` wrapper keeps the last change as `lastChange` — normal-mode KEYS
+plus the insert phase's literal TEXT (`VimChangeItem`). Insert text is
+recorded as TEXT because keystrokes cannot represent it: live typed and
+IME-committed text reaches the recording through `vimRecordText`, fed by the
+adapter's `handleTextInput` (the beforeinput literal) and a compositionstart/
+end document diff — composing keydowns are 229-guarded and never reach the
+reducer. Insert-mode Enter/Backspace/Delete stay key items; the adapter's
+feed loop performs them on replay (Enter = `\n`, so repeated changes keep
+their newlines). `.` emits a `repeat` effect and the ADAPTER replays it —
+keys re-dispatched, text inserted as-is (the reducer can't step a mutating
+doc within one call); `mozc/vim-dot-repeat.ts` pins the real-IME loop. `gg`/`G` KEEP the column; `Ctrl+A`/`Ctrl+X`
 increment/decrement the number at the caret; linewise `V` keeps the cursor and
 highlights the paragraph, charwise `v` is inclusive of the anchor cell
 (`setVisualSelection`). **Macros**: `q{reg}`…`q` records the TYPED keys —

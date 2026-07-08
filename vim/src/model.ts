@@ -46,12 +46,16 @@
 //     pattern captures raw keydowns; a composed IME pattern is out of scope);
 //   - the caret may rest AT a line end (Vim's virtualedit=onemore) — ved's
 //     caret is a boundary, not a cell;
-//   - dot-repeat `.`: the record() wrapper keeps the last change's KEY
-//     sequence (incl. insert-mode text — the reducer sees every keydown) as
-//     `lastChange`; `.` emits a `repeat` effect and the ADAPTER replays those
-//     keys (the reducer can't step a mutating doc within one call). `N.`
-//     replays N times. Not recorded: motions, undo/redo, visual-mode changes;
-//     IME-typed insert text is not captured (same caveat as search);
+//   - dot-repeat `.`: the record() wrapper keeps the last change as
+//     `lastChange` — normal-mode KEYS plus the insert phase's literal TEXT
+//     (VimChangeItem). Insert text is recorded as TEXT because keystrokes
+//     cannot represent it: live typed and IME-committed text reaches the
+//     recording through vimRecordText (the adapter calls it from the
+//     editor's text-input/composition hooks — composing keydowns are 229
+//     and never reach the reducer). `.` emits a `repeat` effect and the
+//     ADAPTER replays it — keys re-dispatched, text inserted as-is (the
+//     reducer can't step a mutating doc within one call). `N.` replays N
+//     times. Not recorded: motions, undo/redo, visual-mode changes;
 //   - macros: `q{reg}`…`q` records TYPED keys (fed/replayed keys excluded —
 //     a replay re-expands through mappings), `@{reg}` replays via the same
 //     feedKeys loop as mappings, `@@` repeats, counts multiply. `.` after a
@@ -162,6 +166,13 @@ export type VimEffect =
 
 export type VimRegister = { readonly text: string; readonly linewise: boolean };
 
+/** One item of a recorded change (dot-repeat): a key the replay re-dispatches,
+ *  or literal TEXT the insert phase produced — typed, fed, or IME-committed —
+ *  which the replay inserts as-is, never as keys. */
+export type VimChangeItem =
+  | { readonly kind: 'key'; readonly key: VimKey }
+  | { readonly kind: 'text'; readonly text: string };
+
 type Operator = 'd' | 'c' | 'y';
 type FindOp = 'f' | 'F' | 't' | 'T';
 
@@ -184,12 +195,13 @@ export type VimState = {
   /** The last f/F/t/T, for `;` (repeat) and `,` (reverse). */
   readonly lastFind: { readonly op: FindOp; readonly ch: string } | null;
   readonly register: VimRegister | null;
-  /** The keys of the change currently being recorded (for dot-repeat), and
-   *  whether it has modified the document yet. Null when no command is being
-   *  tracked. Managed by the record() wrapper, not the command handlers. */
-  readonly recording: { readonly keys: readonly VimKey[]; readonly changed: boolean } | null;
-  /** The completed last change's key sequence — what `.` replays. */
-  readonly lastChange: readonly VimKey[] | null;
+  /** The change currently being recorded (for dot-repeat) — keys plus insert
+   *  TEXT items — and whether it has modified the document yet. Null when no
+   *  command is being tracked. Managed by the record() wrapper (plus
+   *  vimRecordText for editor-inserted text), not the command handlers. */
+  readonly recording: { readonly items: readonly VimChangeItem[]; readonly changed: boolean } | null;
+  /** The completed last change — what `.` replays. */
+  readonly lastChange: readonly VimChangeItem[] | null;
   /** Keys accumulated by an in-progress SEQUENCE walk — a user-mapping LHS
    *  prefix (`layer: 'user'`) or a built-in multi-key sequence like `gg` or
    *  `iw` (`layer: 'builtin'`). The walk re-runs from the trie root each
@@ -467,30 +479,89 @@ const NAMED_KEYS: Readonly<Record<string, string>> = {
 const atRest = (s: VimState): boolean =>
   s.mode === 'normal' && !s.operator && !s.charPending && !s.mapPending && !s.commandLine && s.count === null;
 
+/** Append one item to a recorded change, coalescing adjacent text items. */
+const appendItem = (items: readonly VimChangeItem[], item: VimChangeItem): readonly VimChangeItem[] => {
+  const last = items[items.length - 1];
+  if (item.kind === 'text' && last?.kind === 'text') {
+    return [...items.slice(0, -1), { kind: 'text', text: last.text + item.text }];
+  }
+  return [...items, item];
+};
+
+/** Remove the trailing `n` characters of recorded TEXT — the live-typed
+ *  prefix of a matched insert mapping, which the match deletes from the
+ *  document. Stops early if the tail isn't text (an interrupted walk left
+ *  the prefix partly unrecorded) — stripping what exists keeps the replay
+ *  closest to the net change. */
+const stripRecordedText = (items: readonly VimChangeItem[], n: number): readonly VimChangeItem[] => {
+  const out = [...items];
+  let left = n;
+  while (left > 0) {
+    const last = out[out.length - 1];
+    if (!last || last.kind !== 'text') break;
+    if (last.text.length > left) {
+      out[out.length - 1] = { kind: 'text', text: last.text.slice(0, -left) };
+      left = 0;
+    } else {
+      left -= last.text.length;
+      out.pop();
+    }
+  }
+  return out;
+};
+
+/** Insert-mode keys the reducer leaves unhandled but that still EDIT the
+ *  document (the editor performs them) — recorded as key items and executed
+ *  by the adapter's feed loop on replay. */
+const INSERT_EDIT_KEYS: ReadonlySet<string> = new Set(['Enter', 'Backspace', 'Delete']);
+
 /** Maintain the dot-repeat recording around a raw dispatch (model.ts owns
  *  this, not the command handlers): begin recording when a fresh command
  *  starts from a resting normal state, append every subsequent key, and — when
  *  the sequence returns to rest — keep it as `lastChange` if it modified the
- *  document (a replace effect, or text typed in insert mode). Visual mode is
- *  not recorded (v1). */
-const record = (incoming: VimState, key: VimKey, raw: VimStep): VimStep => {
-  const editsNow =
-    raw.effects.some((e) => e.kind === 'replace') || (incoming.mode === 'insert' && !raw.handled && isPlainKey(key));
+ *  document (a replace effect, or text/edit keys in insert mode).
+ *
+ *  INSERT-MODE PRINTABLES become TEXT items, not keys: a FED printable
+ *  appends here (the feed loop inserts it programmatically — no input event
+ *  follows), while a LIVE one appends nothing — its literal text arrives via
+ *  vimRecordText from the editor's beforeinput/composition hooks, the only
+ *  faithful source (IME-composed input has no keydowns the reducer ever
+ *  sees). Enter/Backspace/Delete stay KEY items — they arrive as keydowns on
+ *  every path — and count as edits. Visual mode is not recorded (v1). */
+const record = (incoming: VimState, key: VimKey, raw: VimStep, fed: boolean): VimStep => {
+  const inInsert = incoming.mode === 'insert' && !raw.handled;
+  const insertText = inInsert && isPlainKey(key);
+  const insertEdit = inInsert && !key.ctrl && !key.meta && !key.alt && INSERT_EDIT_KEYS.has(key.key);
+  const editsNow = raw.effects.some((e) => e.kind === 'replace') || insertText || insertEdit;
+  const item: VimChangeItem | null = insertText ? (fed ? { kind: 'text', text: key.key } : null) : { kind: 'key', key };
   let rec = incoming.recording;
   if (rec === null) {
     if (!atRest(incoming)) return raw; // mid-sequence key with no recording (shouldn't happen) — ignore
-    rec = { keys: [key], changed: editsNow };
+    rec = { items: item ? [item] : [], changed: editsNow };
   } else {
-    rec = { keys: [...rec.keys, key], changed: rec.changed || editsNow };
+    rec = { items: item ? appendItem(rec.items, item) : rec.items, changed: rec.changed || editsNow };
   }
   if (raw.state.mode === 'visual') return { ...raw, state: { ...raw.state, recording: null } };
   if (atRest(raw.state)) {
     return {
       ...raw,
-      state: { ...raw.state, recording: null, lastChange: rec.changed ? rec.keys : raw.state.lastChange },
+      state: { ...raw.state, recording: null, lastChange: rec.changed ? rec.items : raw.state.lastChange },
     };
   }
   return { ...raw, state: { ...raw.state, recording: rec } };
+};
+
+/** Append literal insert-phase text to the live dot-repeat recording. The
+ *  adapter calls this from the editor's text-input and composition-end hooks
+ *  — the only faithful sources for LIVE typed and IME-committed text
+ *  (composing keydowns are 229-guarded and never reach vimKeydown). No-op
+ *  outside insert mode or without a live recording. */
+export const vimRecordText = (state: VimState, text: string): VimState => {
+  if (text.length === 0 || state.mode !== 'insert' || state.recording === null) return state;
+  return {
+    ...state,
+    recording: { items: appendItem(state.recording.items, { kind: 'text', text }), changed: true },
+  };
 };
 
 export type VimKeydownOpts = {
@@ -542,10 +613,10 @@ const keydownLayers = (state: VimState, key: VimKey, doc: VimDocView, opts?: Vim
     if (mapped?.kind === 'pass') st = mapped.state; // walk advanced/reset; the key proceeds
   }
   const builtin = builtinLayerKey(st, key, doc);
-  if (builtin?.kind === 'step') return opts?.replay ? builtin.step : record(st, key, builtin.step);
+  if (builtin?.kind === 'step') return opts?.replay ? builtin.step : record(st, key, builtin.step, opts?.fed ?? false);
   if (builtin?.kind === 'pass') st = builtin.state;
   const raw = dispatch(st, key, doc);
-  return opts?.replay ? raw : record(st, key, raw);
+  return opts?.replay ? raw : record(st, key, raw, opts?.fed ?? false);
 };
 
 const isLoneModifier = (key: VimKey): boolean =>
@@ -677,7 +748,7 @@ const insertMappingKey = (
             ...state,
             mapPending: null,
             // The prefix chars recorded so far net to nothing (deleted below).
-            recording: rec ? { ...rec, keys: rec.keys.slice(0, rec.keys.length - base.length) } : rec,
+            recording: rec ? { ...rec, items: stripRecordedText(rec.items, base.length) } : rec,
           },
           effects: [
             ...(base.length > 0

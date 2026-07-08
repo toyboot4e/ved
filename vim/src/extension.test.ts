@@ -125,6 +125,63 @@ describe('vim adapter with a fake context', () => {
   });
 });
 
+describe('dot-repeat over editor-inserted text', () => {
+  /** Mirror the editor typing `s` in insert mode: each char's keydown is
+   *  declined by the reducer, the beforeinput hook sees the literal data
+   *  (recording it), and the editor applies the insertion. */
+  const typeLive = (t: ReturnType<typeof attach>, s: string): void => {
+    for (const ch of s) {
+      t.hooks.handleKey?.(chord(ch));
+      if (t.hooks.handleTextInput?.(ch)) continue; // blocked (not insert mode)
+      t.state.text = t.state.text.slice(0, t.state.head) + ch + t.state.text.slice(t.state.head);
+      t.state.head = t.state.anchor = t.state.head + ch.length;
+    }
+  };
+
+  it('live typed text records via the beforeinput hook and . replays it', () => {
+    const t = attach('one');
+    t.press('I');
+    typeLive(t, 'ab');
+    t.press('Escape', '.');
+    expect(t.state.text).toBe('ababone');
+  });
+
+  it('IME-committed text records at compositionend and . replays it', () => {
+    const t = attach('one');
+    t.press('I');
+    // The composition commits WITHOUT any keydown reaching the extension.
+    t.hooks.onCompositionStart?.();
+    t.state.text = 'あいうone';
+    t.state.head = t.state.anchor = 3;
+    t.hooks.onCompositionEnd?.();
+    t.press('Escape', '.');
+    expect(t.state.text).toBe('あいうあいうone');
+  });
+
+  it('a pure-IME insert REPLACES the previous change — . never replays a stale one', () => {
+    const t = attach('xone');
+    t.press('x'); // the would-be stale change (deletes 'x')
+    t.press('I');
+    t.hooks.onCompositionStart?.();
+    t.state.text = 'あone';
+    t.state.head = t.state.anchor = 1;
+    t.hooks.onCompositionEnd?.();
+    t.press('Escape', '.');
+    expect(t.state.text).toBe('ああone'); // NOT another delete
+  });
+
+  it('a newline typed with Enter in insert mode repeats', () => {
+    const t = attach('ab');
+    t.press('A');
+    t.hooks.handleKey?.(chord('Enter')); // declined; the editor splits the line
+    t.state.text = 'ab\n';
+    t.state.head = t.state.anchor = 3;
+    typeLive(t, 'x');
+    t.press('Escape', '.');
+    expect(t.state.text).toBe('ab\nx\nx');
+  });
+});
+
 describe('{action} RHS through the adapter', () => {
   it('binds a named primitive directly and validates the id at construction', () => {
     const t = attach('abc', { keymap: { normal: { Q: { action: 'delete.charForward' } } } });
