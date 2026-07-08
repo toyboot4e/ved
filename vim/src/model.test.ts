@@ -787,6 +787,47 @@ describe('block visual (Ctrl+V)', () => {
   });
 });
 
+describe('gv (reselect the last visual selection)', () => {
+  const cv = key('v', { ctrl: true });
+
+  it('reselects a charwise selection dropped by Escape', () => {
+    const r = play('abcdef', 0, ['v', 'l', 'l', key('Escape'), 'g', 'v']);
+    expect(r.state.mode).toBe('visual');
+    expect(r.state.visualKind).toBe('char');
+    expect(r.anchor).toBe(0);
+    expect(r.head).toBe(2);
+  });
+
+  it('reselects the last BLOCK after an operator, kind included', () => {
+    // y ends block visual (caret to the top-left); gv restores the block.
+    const r = play('abcd\nefgh', 1, [cv, 'G', 'l', 'y', 'g', 'v']);
+    expect(r.state.mode).toBe('visual');
+    expect(r.state.visualKind).toBe('block');
+    expect(r.anchor).toBe(1);
+    expect(r.head).toBe(7);
+  });
+
+  it('restores the $-block flag', () => {
+    const r = play('ab\ncdef', 0, [cv, 'G', '$', 'y', 'g', 'v']);
+    expect(r.state.visualKind).toBe('block');
+    expect(r.state.visualBlockEol).toBe(true);
+  });
+
+  it('from inside visual mode it swaps with the live selection (gv gv toggles)', () => {
+    const first = play('abcdef', 0, ['v', 'l', key('Escape'), '$', 'v', 'g', 'v']);
+    expect(first.anchor).toBe(0); // the OLD selection is live again
+    expect(first.head).toBe(1);
+    const back = play('abcdef', 0, ['v', 'l', key('Escape'), '$', 'v', 'g', 'v', 'g', 'v']);
+    expect(back.head).toBe(6); // …and gv again swaps back
+  });
+
+  it('swallows without a stored selection', () => {
+    const r = play('abc', 0, ['g', 'v']);
+    expect(r.state.mode).toBe('normal');
+    expect(r.effects).toEqual([]);
+  });
+});
+
 describe('pending-state hygiene', () => {
   it('Escape clears a pending count/operator/find', () => {
     const r = play('abc', 0, ['2', 'd', key('Escape'), 'x']);

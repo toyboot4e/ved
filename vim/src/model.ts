@@ -49,7 +49,9 @@
 //     top line; after `$`, at every line's end) and Escape repeats the typed
 //     text on the remaining lines — IME-committed text included, via the
 //     same vimRecordText channel as dot-repeat. Block changes are not
-//     dot-repeatable (like all visual changes, v1);
+//     dot-repeatable (like all visual changes, v1). `gv` reselects the
+//     selection the last visual mode ended with (kind + $-flag; from inside
+//     visual it SWAPS with the live selection);
 //   - search: / ? n N * # (literal, case-sensitive; command line built in
 //     state — the shell renders it). NOT incremental, and NOT IME-aware (the
 //     pattern captures raw keydowns; a composed IME pattern is out of scope);
@@ -226,6 +228,16 @@ export type VimState = {
   readonly visualBlockEol: boolean;
   /** The block insert pending its Escape-time repeat, or null. */
   readonly blockInsert: VimBlockInsert | null;
+  /** The selection the last visual mode ENDED with (an operator, Escape, a
+   *  toggle-off, block I/A) — what `gv` reselects, kind and $-flag included.
+   *  Plain offsets, NOT edit-adjusted: like Vim's `'<`/`'>` marks, `gv`
+   *  after intervening edits is best-effort (clamped on reselect). */
+  readonly lastVisual: {
+    readonly anchor: number;
+    readonly head: number;
+    readonly kind: VimVisualKind;
+    readonly eol: boolean;
+  } | null;
   /** Pending count digits (`2` of `2dw`), null = none. */
   readonly count: number | null;
   /** Pending operator (`d` of `dw`), waiting for its motion. */
@@ -268,6 +280,7 @@ export const VIM_INITIAL: VimState = {
   visualKind: 'char',
   visualBlockEol: false,
   blockInsert: null,
+  lastVisual: null,
   count: null,
   operator: null,
   charPending: null,
@@ -666,7 +679,30 @@ export const vimKeydown = (state: VimState, key: VimKey, doc: VimDocView, opts?:
   return step;
 };
 
-const keydownLayers = (state: VimState, key: VimKey, doc: VimDocView, opts?: VimKeydownOpts): VimStep => {
+/** `gv`'s memory: when a key ENDS visual mode — an operator, Escape, a
+ *  toggle-off, block I/A — remember the selection it had (the doc view still
+ *  shows it; effects have not applied yet). One choke point instead of one
+ *  per exiting action. */
+const rememberVisualExit = (incoming: VimState, doc: VimDocView, step: VimStep): VimStep =>
+  incoming.mode === 'visual' && step.state.mode !== 'visual'
+    ? {
+        ...step,
+        state: {
+          ...step.state,
+          lastVisual: {
+            anchor: doc.anchor,
+            head: doc.head,
+            kind: incoming.visualKind,
+            eol: incoming.visualBlockEol,
+          },
+        },
+      }
+    : step;
+
+const keydownLayers = (state: VimState, key: VimKey, doc: VimDocView, opts?: VimKeydownOpts): VimStep =>
+  rememberVisualExit(state, doc, keydownLayersInner(state, key, doc, opts));
+
+const keydownLayersInner = (state: VimState, key: VimKey, doc: VimDocView, opts?: VimKeydownOpts): VimStep => {
   let st = state;
   if (opts?.keymap && !opts.noremap && !opts.replay) {
     const mapped = mappingLayerKey(st, key, opts.keymap, doc, opts.customActions);
@@ -857,6 +893,30 @@ const G_SEQUENCES: Readonly<Record<string, VimAction>> = {
   gj: displayWalk('down'),
   gk: displayWalk('up'),
   gl: displayWalk('right'),
+  // gv: reselect the last visual selection (kind and $-flag included). From
+  // INSIDE visual mode it swaps with the live selection, so gv gv toggles
+  // between the two — Vim's rule. Offsets clamp to the current text (they
+  // are not edit-adjusted; see lastVisual).
+  gv: (state, _env, doc) => {
+    const lv = state.lastVisual;
+    if (!lv || state.operator) return swallow(clearPending(state));
+    const clamp = (o: number): number => Math.max(0, Math.min(doc.text.length, o));
+    const swapped =
+      state.mode === 'visual'
+        ? { anchor: doc.anchor, head: doc.head, kind: state.visualKind, eol: state.visualBlockEol }
+        : lv;
+    return {
+      state: {
+        ...clearPending(state),
+        mode: 'visual' as const,
+        visualKind: lv.kind,
+        visualBlockEol: lv.eol,
+        lastVisual: swapped,
+      },
+      effects: [{ kind: 'select', anchor: clamp(lv.anchor), head: clamp(lv.head) }],
+      handled: true,
+    };
+  },
 };
 
 /** Every key `textObjectRange` understands: word/WORD, paragraph, quotes,

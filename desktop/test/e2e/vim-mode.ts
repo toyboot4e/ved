@@ -475,6 +475,24 @@ try {
   assert.equal(await docText(page), 'ab!\ncdef!', 'block $ + A appends at every line end');
   step('block $ + A appends at ragged line ends');
 
+  // --- gv reselects the last visual block: drop a block with Escape, gv
+  // brings back the same rectangle and operators apply to it. ---
+  await toggleVim();
+  await setDoc(page, 'abcd\nefgh');
+  await toggleVim();
+  await setCaret(page, 1);
+  await page.keyboard.press('Control+v');
+  await press('j');
+  await press('l');
+  await page.keyboard.press('Escape');
+  await page.waitForTimeout(60);
+  assert.equal(await selRects(), 0, 'Escape drops the block selection');
+  await press('gv', 120);
+  assert.ok((await selRects()) >= 2, 'gv reselects the block (a rect per line)');
+  await press('d');
+  assert.equal(await docText(page), 'ad\neh', 'the operator applies to the reselected block');
+  step('gv reselects the last visual block');
+
   // Restore the charwise-test doc so the sections below see what they expect.
   await toggleVim();
   await setDoc(page, 'abcde');

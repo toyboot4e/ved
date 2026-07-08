@@ -603,7 +603,11 @@ lines — the text accumulates through the same channels as the dot-repeat
 recording, so IME-committed text repeats too (`mozc/vim-block-ime.ts`).
 Enter/Delete (or Backspacing past the insert start) abort the repeat; block
 changes are not dot-repeatable (like all visual changes, v1) and block-visual
-paste is not supported (v1). **Macros**: `q{reg}`…`q` records the TYPED keys —
+paste is not supported (v1). `gv` reselects the selection the last visual
+mode ENDED with — kind and `$`-flag included; from inside visual mode it
+swaps with the live selection (`gv gv` toggles between the two). The stored
+offsets are not edit-adjusted (Vim's `'<`/`'>` are best-effort there too),
+only clamped on reselect. **Macros**: `q{reg}`…`q` records the TYPED keys —
 capture lives in `vimKeydown` and excludes fed/replayed keys, so a replay
 (`@{reg}`, `@@`, counts multiply) re-expands through user mappings, and `.`
 after a macro repeats the last change WITHIN it, as in Vim; the adapter runs
