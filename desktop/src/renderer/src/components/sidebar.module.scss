@@ -1,5 +1,3 @@
-@use './chrome';
-
 .sidebar {
   // Fixed-width pane docked to either window edge; the editor column takes
   // the rest (app.module.scss). The drag handle below resizes it by writing
@@ -60,10 +58,6 @@
   }
 }
 
-.iconButton {
-  @include chrome.icon-button(20px, 11px, 4px);
-}
-
 // One header cell: full row height, generous width, square (cells tile the
 // row — no chip radius), hover/pressed states fill the whole cell.
 .headerCell {
@@ -99,22 +93,44 @@
   scrollbar-width: thin;
 }
 
+// A row-height cell for the ✕ inside tree/list rows — same edge-to-edge idea
+// as .headerCell, sized to the 24px row it stretches with.
+.rowCell {
+  flex: 0 0 auto;
+  align-self: stretch;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 28px;
+  padding: 0;
+  border: none;
+  border-radius: 0;
+  background: transparent;
+  color: var(--ved-fg-muted);
+  font-size: 11px;
+  cursor: pointer;
+
+  &:hover {
+    background: var(--ved-hover-bg);
+    color: var(--ved-fg);
+  }
+}
+
 .rootSection {
   margin-bottom: 2px;
 }
 
 .rootHeader {
   display: flex;
-  align-items: center;
+  align-items: stretch;
 
   // The remove button appears on hover only (opacity, not visibility: it
   // stays clickable for the e2e driver and focusable for keyboard users)
-  .iconButton {
+  .rowCell {
     opacity: 0;
-    margin-right: 6px;
   }
-  &:hover .iconButton,
-  .iconButton:focus-visible {
+  &:hover .rowCell,
+  .rowCell:focus-visible {
     opacity: 1;
   }
 }
@@ -192,19 +208,18 @@
 // root's remove button (opacity, so it stays clickable/focusable).
 .bufferRow {
   display: flex;
-  align-items: center;
+  align-items: stretch;
 
   .entry {
     flex: 1 1 auto;
     min-width: 0;
   }
 
-  .iconButton {
+  .rowCell {
     opacity: 0;
-    margin-right: 6px;
   }
-  &:hover .iconButton,
-  .iconButton:focus-visible {
+  &:hover .rowCell,
+  .rowCell:focus-visible {
     opacity: 1;
   }
 }

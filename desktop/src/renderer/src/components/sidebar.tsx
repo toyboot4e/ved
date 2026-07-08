@@ -148,7 +148,7 @@ const RootSection = ({
             </button>
             <button
               type='button'
-              className={styles.iconButton}
+              className={styles.rowCell}
               aria-label={`Remove ${fileName(root)}`}
               title='フォルダを閉じる'
               onMouseDown={preserveFocus}
@@ -199,7 +199,7 @@ const BufferList = ({
           </button>
           <button
             type='button'
-            className={styles.iconButton}
+            className={styles.rowCell}
             aria-label={`Close ${fileName(b.path)}`}
             title='閉じる'
             onMouseDown={preserveFocus}
@@ -232,6 +232,8 @@ export const Sidebar = ({ onOpenFile, activeDirty, onCloseBuffer }: SidebarProps
   const removeRoot = useWorkspaceStore((s) => s.removeRoot);
   const flipSide = useWorkspaceStore((s) => s.flipSidebarSide);
   const setView = useWorkspaceStore((s) => s.setSidebarView);
+  // The sidebar only renders while open, so toggling always means closing
+  const closeSidebar = useWorkspaceStore((s) => s.toggleSidebar);
 
   const handleAddFolder = async (): Promise<void> => {
     const path = await window.ved.openDirDialog();
@@ -302,6 +304,16 @@ export const Sidebar = ({ onOpenFile, activeDirty, onCloseBuffer }: SidebarProps
           onClick={flipSide}
         >
           ⇄
+        </button>
+        <button
+          type='button'
+          className={styles.headerCell}
+          aria-label='Close sidebar'
+          title='サイドバーを閉じる'
+          onMouseDown={preserveFocus}
+          onClick={closeSidebar}
+        >
+          ✕
         </button>
       </div>
       <div className={styles.rootList}>

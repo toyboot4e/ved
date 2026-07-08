@@ -135,6 +135,13 @@ try {
   await page.waitForSelector('[aria-label="File browser"][data-side="left"]');
   step('the sidebar docks to the right edge and back');
 
+  // The header ✕ closes the pane; Ctrl+B brings it back
+  await page.click('[aria-label="Close sidebar"]');
+  await page.waitForFunction(() => document.querySelector('[aria-label="File browser"]') === null);
+  await pressMod(page, 'b');
+  await page.waitForSelector('[aria-label="File browser"]');
+  step('the header close button hides the sidebar');
+
   // Ctrl+B hides it again
   await pressMod(page, 'b');
   await page.waitForFunction(() => document.querySelector('[aria-label="File browser"]') === null);
