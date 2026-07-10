@@ -377,6 +377,23 @@ try {
   assert.ok((await docText(page)).includes('ab cd'), 'J joins Latin lines with a space');
   step('J: 全角 no space, Latin a space (data-driven)');
 
+  // --- gJ joins with the newline only; visual J joins the selected lines. ---
+  await toggleVim();
+  await setDoc(page, 'ab\n  cd');
+  await toggleVim();
+  await setCaret(page, 0);
+  await press('gJ', 120);
+  assert.equal(await docText(page), 'ab  cd', 'gJ removes only the newline (indent kept, no space)');
+  await toggleVim();
+  await setDoc(page, 'aa\nbb\ncc');
+  await toggleVim();
+  await setCaret(page, 0);
+  await press('V');
+  await press('G'); // extend the linewise selection to the last line (synchronous motion)
+  await press('J');
+  assert.equal(await docText(page), 'aa bb cc', 'visual J joins every selected line');
+  step('gJ newline-only join; visual J joins the selection');
+
   await toggleVim();
   await setDoc(page, 'あ、い。う');
   await toggleVim();

@@ -923,7 +923,7 @@
       "keys": "CTRL-E",
       "mode": "normal",
       "action": "scroll N lines upwards (N lines Extra)",
-      "api": "",
+      "api": "action 'scroll.lineDown'",
       "status": "todo",
       "category": "Scrolling",
       "tag": "CTRL-E"
@@ -1130,7 +1130,7 @@
       "keys": "CTRL-Y",
       "mode": "normal",
       "action": "scroll N lines downwards",
-      "api": "",
+      "api": "action 'scroll.lineUp'",
       "status": "todo",
       "category": "Scrolling",
       "tag": "CTRL-Y"
@@ -1220,7 +1220,7 @@
       "keys": "\"{register}",
       "mode": "normal",
       "action": "use {register} for next delete, yank or put",
-      "api": "",
+      "api": "\"{register} prefix — a registers map in VimState",
       "status": "todo",
       "category": "Registers",
       "tag": "quote"
@@ -1364,18 +1364,18 @@
       "keys": "(",
       "mode": "normal",
       "action": "cursor N sentences backward",
-      "api": "",
+      "api": "MotionId 'sentenceBack' — 。！？-aware (config.ts, Japanese-first)",
       "status": "todo",
-      "category": "Normal mode — other",
+      "category": "Motions",
       "tag": "("
     },
     {
       "keys": ")",
       "mode": "normal",
       "action": "cursor N sentences forward",
-      "api": "",
+      "api": "MotionId 'sentenceForward' — 。！？-aware (config.ts)",
       "status": "todo",
-      "category": "Normal mode — other",
+      "category": "Motions",
       "tag": ")"
     },
     {
@@ -1391,9 +1391,9 @@
       "keys": "+",
       "mode": "normal",
       "action": "same as <CR>",
-      "api": "",
-      "status": "todo",
-      "category": "Normal mode — other",
+      "api": "linewiseDown",
+      "status": "done",
+      "category": "Motions",
       "tag": "+"
     },
     {
@@ -1418,9 +1418,9 @@
       "keys": "-",
       "mode": "normal",
       "action": "cursor to the first CHAR N lines higher",
-      "api": "",
-      "status": "todo",
-      "category": "Normal mode — other",
+      "api": "linewiseUp",
+      "status": "done",
+      "category": "Motions",
       "tag": "-"
     },
     {
@@ -1742,7 +1742,7 @@
       "keys": "H",
       "mode": "normal",
       "action": "cursor to line N from top of screen",
-      "api": "MotionId 'screenTop' — to the top line of the window",
+      "api": "MotionId 'screenTop' — needs a viewport seam in VimDocView",
       "status": "todo",
       "category": "Motions",
       "tag": "H"
@@ -1778,7 +1778,7 @@
       "keys": "L",
       "mode": "normal",
       "action": "cursor to line N from bottom of screen",
-      "api": "MotionId 'screenBottom' — to the bottom line of the window",
+      "api": "MotionId 'screenBottom' — needs a viewport seam in VimDocView",
       "status": "todo",
       "category": "Motions",
       "tag": "L"
@@ -1787,7 +1787,7 @@
       "keys": "M",
       "mode": "normal",
       "action": "cursor to middle line of screen",
-      "api": "MotionId 'screenMiddle' — to the middle line of the window",
+      "api": "MotionId 'screenMiddle' — needs a viewport seam in VimDocView",
       "status": "todo",
       "category": "Motions",
       "tag": "M"
@@ -1823,7 +1823,7 @@
       "keys": "R",
       "mode": "normal",
       "action": "enter replace mode: overtype existing",
-      "api": "action 'replace.enter' — enter Replace mode",
+      "api": "action 'replace.enter' — overtype; Esc restores mode",
       "status": "todo",
       "category": "Mode entry",
       "tag": "R"
@@ -1940,9 +1940,9 @@
       "keys": "_",
       "mode": "normal",
       "action": "cursor to the first CHAR N - 1 lines lower",
-      "api": "",
-      "status": "todo",
-      "category": "Normal mode — other",
+      "api": "linewiseHere",
+      "status": "done",
+      "category": "Motions",
       "tag": "_"
     },
     {
@@ -2183,7 +2183,7 @@
       "keys": "m{A-Za-z}",
       "mode": "normal",
       "action": "set mark {A-Za-z} at cursor position",
-      "api": "",
+      "api": "m{a-z} + `{a-z}/'{a-z} — plain-offset marks, edit-adjusted",
       "status": "todo",
       "category": "Marks",
       "tag": "m"
@@ -2372,9 +2372,9 @@
       "keys": "|",
       "mode": "normal",
       "action": "cursor to column N",
-      "api": "",
-      "status": "todo",
-      "category": "Normal mode — other",
+      "api": "column",
+      "status": "done",
+      "category": "Motions",
       "tag": "bar"
     },
     {
@@ -4271,9 +4271,9 @@
       "keys": "gE",
       "mode": "normal",
       "action": "go backwards to the end of the previous",
-      "api": "",
+      "api": "MotionId 'bigWordEndBack' — backward to the end of a WORD",
       "status": "todo",
-      "category": "Normal mode — other",
+      "category": "Motions",
       "tag": "gE"
     },
     {
@@ -4298,9 +4298,9 @@
       "keys": "gJ",
       "mode": "normal",
       "action": "join lines without inserting space",
-      "api": "",
-      "status": "todo",
-      "category": "Normal mode — other",
+      "api": "gJ",
+      "status": "done",
+      "category": "Editing",
       "tag": "gJ"
     },
     {
@@ -4316,7 +4316,7 @@
       "keys": "[\"x]gP",
       "mode": "normal",
       "action": "put the text [from register x] before the",
-      "api": "",
+      "api": "paste variant — cursor AFTER the pasted text",
       "status": "todo",
       "category": "Registers",
       "tag": "gP"
@@ -4415,9 +4415,9 @@
       "keys": "ge",
       "mode": "normal",
       "action": "go backwards to the end of the previous",
-      "api": "",
+      "api": "MotionId 'wordEndBack' — backward to the end of a word",
       "status": "todo",
-      "category": "Normal mode — other",
+      "category": "Motions",
       "tag": "ge"
     },
     {
@@ -4460,9 +4460,9 @@
       "keys": "gi",
       "mode": "normal",
       "action": "like \"i\", but first move to the |'^| mark",
-      "api": "",
+      "api": "action 'insert.atLastInsert' — needs the ^-mark equivalent",
       "status": "todo",
-      "category": "Marks",
+      "category": "Mode entry",
       "tag": "gi"
     },
     {
@@ -4523,7 +4523,7 @@
       "keys": "[\"x]gp",
       "mode": "normal",
       "action": "put the text [from register x] after the",
-      "api": "",
+      "api": "paste variant — cursor AFTER the pasted text",
       "status": "todo",
       "category": "Registers",
       "tag": "gp"
@@ -4883,9 +4883,9 @@
       "keys": "zb",
       "mode": "normal",
       "action": "redraw, cursor line at bottom of window",
-      "api": "",
+      "api": "action 'scroll.cursorBottom'",
       "status": "todo",
-      "category": "Windows",
+      "category": "Scrolling",
       "tag": "zb"
     },
     {
@@ -5045,9 +5045,9 @@
       "keys": "zt",
       "mode": "normal",
       "action": "redraw, cursor line at top of window",
-      "api": "",
+      "api": "action 'scroll.cursorTop'",
       "status": "todo",
-      "category": "Windows",
+      "category": "Scrolling",
       "tag": "zt"
     },
     {
@@ -5126,9 +5126,9 @@
       "keys": "zz",
       "mode": "normal",
       "action": "redraw, cursor line at center of window",
-      "api": "",
+      "api": "action 'scroll.cursorCenter'",
       "status": "todo",
-      "category": "Windows",
+      "category": "Scrolling",
       "tag": "zz"
     },
     {
@@ -5369,9 +5369,9 @@
       "keys": "J",
       "mode": "visual",
       "action": "join the highlighted lines",
-      "api": "",
-      "status": "todo",
-      "category": "Visual mode — other",
+      "api": "visual.join",
+      "status": "done",
+      "category": "Editing",
       "tag": "v_J"
     },
     {
@@ -5423,9 +5423,9 @@
       "keys": "U",
       "mode": "visual",
       "action": "make highlighted area uppercase",
-      "api": "",
+      "api": "action 'visual.uppercase'",
       "status": "todo",
-      "category": "Visual mode — other",
+      "category": "Editing",
       "tag": "v_U"
     },
     {
@@ -5657,9 +5657,9 @@
       "keys": "gJ",
       "mode": "visual",
       "action": "join the highlighted lines without",
-      "api": "",
-      "status": "todo",
-      "category": "Visual mode — other",
+      "api": "gJ",
+      "status": "done",
+      "category": "Editing",
       "tag": "v_gJ"
     },
     {
@@ -5864,9 +5864,9 @@
       "keys": "r",
       "mode": "visual",
       "action": "replace highlighted area with a character",
-      "api": "",
-      "status": "todo",
-      "category": "Visual mode — other",
+      "api": "visual.replaceChar",
+      "status": "done",
+      "category": "Editing",
       "tag": "v_r"
     },
     {
@@ -5882,9 +5882,9 @@
       "keys": "u",
       "mode": "visual",
       "action": "make highlighted area lowercase",
-      "api": "",
+      "api": "action 'visual.lowercase'",
       "status": "todo",
-      "category": "Visual mode — other",
+      "category": "Editing",
       "tag": "v_u"
     },
     {
@@ -5918,9 +5918,9 @@
       "keys": "~",
       "mode": "visual",
       "action": "swap case for the highlighted area",
-      "api": "",
+      "api": "action 'visual.toggleCase' — swap case over the selection",
       "status": "todo",
-      "category": "Visual mode — other",
+      "category": "Editing",
       "tag": "v_~"
     },
     {

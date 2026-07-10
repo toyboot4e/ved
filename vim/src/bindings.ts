@@ -1,8 +1,8 @@
-// The declared catalog of every key binding @ved/vim implements, assembled
-// from the SAME dispatch tables the reducer runs on (model.ts) — so it can
-// never drift from behavior. `scripts/gen-keybindings.ts` joins this against
-// Vim's own runtime `index.txt` to render the reference doc (what we have vs.
-// what Vim defines). Nothing here executes the reducer; it reads its tables.
+/** The declared catalog of every key binding @ved/vim implements, assembled
+ *  from the SAME dispatch tables the reducer runs on (model.ts) — so it can
+ *  never drift from behavior. `scripts/gen-keybindings.ts` joins this against
+ *  Vim's own runtime `index.txt` to render the reference doc (what we have vs.
+ *  what Vim defines). Nothing here executes the reducer; it reads its tables. */
 
 import {
   FIND_BINDINGS,
@@ -100,10 +100,14 @@ const buildBindings = (): VimBinding[] => {
   }
 
   // g-sequences: gg is already the gotoFirst motion above; gh/gj/gk/gl are the
-  // display walks; gv reselects the last visual.
+  // display walks; gv reselects the last visual; gJ is the plain join. All of
+  // them run in visual mode too, but only gJ has its own visual index row
+  // (v_gJ) to match.
   for (const keys of Object.keys(G_SEQUENCES)) {
     if (keys === 'gg') continue;
-    out.push({ keys, mode: 'normal', kind: keys === 'gv' ? 'misc' : 'motion', id: keys });
+    const kind = keys === 'gv' ? 'misc' : keys === 'gJ' ? 'edit' : 'motion';
+    out.push({ keys, mode: 'normal', kind, id: keys });
+    if (keys === 'gJ') out.push({ keys, mode: 'visual', kind, id: keys });
   }
 
   // Text objects — i/a × every object key (operator-pending and visual).

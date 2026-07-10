@@ -398,6 +398,35 @@ describe('edits', () => {
     expect(play('abc', 1, ['J']).text).toBe('abc'); // nothing to join
   });
 
+  it('gJ removes only the newline — no space, leading whitespace kept', () => {
+    const r = play('ab\n  cd', 0, ['g', 'J']);
+    expect(r.text).toBe('ab  cd'); // the two spaces are cd's own indent, untouched
+    expect(r.head).toBe(2); // the seam
+    expect(play('a\nb\nc', 0, ['3', 'g', 'J']).text).toBe('abc');
+    expect(play('abc', 0, ['g', 'J']).text).toBe('abc'); // nothing to join
+  });
+
+  it('gJ is dot-repeatable (a builtin walk records)', () => {
+    expect(play('a\nb\nc', 0, ['g', 'J', '.']).text).toBe('abc');
+  });
+
+  it('visual J joins every selected line; single-line selections join once', () => {
+    const r = play('a\nb\nc', 0, ['v', 'G', 'J']);
+    expect(r.text).toBe('a b c'); // 3 lines spanned → 2 joins, policy spacing
+    expect(r.head).toBe(1); // the first seam
+    expect(r.state.mode).toBe('normal');
+    expect(play('a\nb', 0, ['v', 'J']).text).toBe('a b'); // one-line selection → J-like
+  });
+
+  it('visual gJ joins the selected lines with newline-only splices', () => {
+    expect(play('a\nb\nc', 0, ['v', 'G', 'g', 'J']).text).toBe('abc');
+  });
+
+  it('block visual J joins the block’s line span too', () => {
+    const cv = key('v', { ctrl: true });
+    expect(play('ああ\nいい', 0, [cv, 'G', 'J']).text).toBe('ああいい');
+  });
+
   it('~ toggles case and advances; counts extend it', () => {
     expect(play('abc', 0, ['~']).text).toBe('Abc');
     expect(play('abc', 0, ['~']).head).toBe(1);

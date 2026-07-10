@@ -1,96 +1,97 @@
-// The Vim MODEL: a pure reducer over (state, key, document view) → (state,
-// effects). No editor, no DOM, no @ved/editor import — the view/adapter
-// (extension.ts) owns all editor access, so this whole file unit-tests as
-// plain functions and the modal semantics stay legible in one place.
-//
-// The document view is ved's identity model: the plain text, the selection as
-// plain offsets, and `caretStop` — the editor's own character-step rule
-// (injected, so ruby caret stops apply without this module knowing rubies
-// exist). Offsets index the plain string, markup characters included.
-//
-// MOVEMENT IS SPATIAL. Bare h/j/k/l are the ARROW KEYS — h=left, j=down,
-// k=up, l=right — emitted as `moveVisual` effects; the EDITOR resolves each
-// screen direction to the right axis per writing mode. So in VERTICAL writing
-// (tategaki) h/l walk the LINE axis (between 行) and j/k the characters up/down
-// the column, while in HORIZONTAL writing h/l walk the characters and j/k the
-// line axis. The line-axis move is a LOGICAL PARAGRAPH walk in both modes (a
-// ved line IS a paragraph — actual paragraphs at the same column, not wrapped
-// display columns/rows), decided by the editor (moveCaretVisual). As OPERATOR
-// TARGETS h/l stay pure character motions (`dh`/`dl` = one caret step); a
-// spatial line step cannot be expressed as an offset, so `dj`/`dk` are not
-// bound.
-//
-// Scope and deliberate deviations from Vim:
-//   - modes: normal / insert / visual (character-wise 'v' AND line-wise 'V');
-//   - counts; motions h j k l (spatial) g+hjkl (display-line walk) w b e W B E
-//     (ruby-aware: a word target snaps out of a collapsed ruby's markup; word
-//     granularity is a pluggable WordModel via doc.words — default CLASS_WORDS
-//     is char-class runs, the JP option segments kana/kanji)
-//     0 ^ $ gg G (KEEP the column; count gg/G = goto line) f F t T ; , % { };
-//     f/F/t/T also take a Ctrl-chord shortcut (config.ts FIND_CHORDS: Ctrl+j
-//     → 、, Ctrl+l → 。);
-//   - % and the bracket text objects use config.ts BRACKET_PAIRS (Japanese
-//     「」（）【】… included);
-//   - operators d c y (dd cc yy, charwise/linewise motions) with TEXT OBJECTS
-//     i/a + w W ( ) [ ] { } < > b B " ' ` p; x X s S r D C Y (y$) J o O i a
-//     I A p P (normal + visual p) ~ Ctrl+A/Ctrl+X (increment/decrement)
-//     u Ctrl+r. J inserts a joining space per config.ts joinNeedsSpace (a
-//     space for Latin, NONE between 全角);
-//   - charwise visual `v` is INCLUSIVE of both ends — the anchor cell stays
-//     selected as the head moves before it; linewise visual `V` KEEPS the
-//     cursor (a collapsed selection at the caret) and highlights the whole
-//     paragraph. Both shape the render via setVisualSelection; operators still
-//     take whole lines for V (visualRange). `r{char}` overwrites every
-//     selected character (newlines survive); the searches (`/` `?` `n` `N`
-//     `*` `#`) stay live in visual mode and EXTEND the selection;
-//   - BLOCK visual `Ctrl+V`: the rectangle between anchor and head (lines ×
-//     character columns, both inclusive — ved's cell grid, a deviation from
-//     Vim's screen columns). d/x/c/s/y take the per-line segments (blockwise
-//     register; `p`/`P` re-insert them as a column, padding short lines);
-//     `I`/`A` insert on the TOP line (A after the right edge, padding a short
-//     top line; after `$`, at every line's end) and Escape repeats the typed
-//     text on the remaining lines — IME-committed text included, via the
-//     same vimRecordText channel as dot-repeat. Block changes are not
-//     dot-repeatable (like all visual changes, v1). `o` jumps to the
-//     diagonal corner, `O` to the other corner on the SAME line (columns
-//     swap, lines stay; outside block, `O` = `o`). `gv` reselects the
-//     selection the last visual mode ended with (kind + $-flag; from inside
-//     visual it SWAPS with the live selection);
-//   - search: / ? n N * # (literal, case-sensitive; command line built in
-//     state — the shell renders it). NOT incremental, and NOT IME-aware (the
-//     pattern captures raw keydowns; a composed IME pattern is out of scope);
-//   - the caret may rest AT a line end (Vim's virtualedit=onemore) — ved's
-//     caret is a boundary, not a cell;
-//   - dot-repeat `.`: the record() wrapper keeps the last change as
-//     `lastChange` — normal-mode KEYS plus the insert phase's literal TEXT
-//     (VimChangeItem). Insert text is recorded as TEXT because keystrokes
-//     cannot represent it: live typed and IME-committed text reaches the
-//     recording through vimRecordText (the adapter calls it from the
-//     editor's text-input/composition hooks — composing keydowns are 229
-//     and never reach the reducer). `.` emits a `repeat` effect and the
-//     ADAPTER replays it — keys re-dispatched, text inserted as-is (the
-//     reducer can't step a mutating doc within one call). `N.` replays N
-//     times. Not recorded: motions, undo/redo, visual-mode changes;
-//   - macros: `q{reg}`…`q` records TYPED keys (fed/replayed keys excluded —
-//     a replay re-expands through mappings), `@{reg}` replays via the same
-//     feedKeys loop as mappings, `@@` repeats, counts multiply. `.` after a
-//     macro repeats the last change WITHIN it, like Vim;
-//   - one unnamed register (plus the macro registers); NO marks, named yank
-//     registers, or ex commands (`:`) yet;
-//   - USER MAPPINGS (keymap.ts; docs/architecture.md "Extensions"): a front layer in
-//     vimKeydown walks per-map-mode tries (nmap/xmap/omap/imap) BEFORE this
-//     dispatch; a match feeds its RHS keys back through the adapter
-//     (noremap by default), a dead-ended walk replays what it swallowed.
-//     Inactive during the command line and char arguments. The INSERT walk
-//     types its prefix LIVE and deletes it on a match (`jj` → Esc; IME/
-//     click-safe — see insertMappingKey);
-//   - BUILT-IN SEQUENCES (`gg`, `g`+hjkl, the text objects) are entries in
-//     per-context tries walked by the same discipline (builtinLayerKey) —
-//     always active, so fed and replayed keys resolve them identically.
-//
-// All configurable, data-driven behavior (bracket pairs, find-chord targets,
-// join spacing) lives in ONE place — config.ts; user KEY mappings ride the
-// keymap option (extension.ts).
+/** The Vim MODEL: a pure reducer over (state, key, document view) → (state,
+ *  effects). No editor, no DOM, no @ved/editor import — the view/adapter
+ *  (extension.ts) owns all editor access, so this whole file unit-tests as
+ *  plain functions and the modal semantics stay legible in one place.
+ *
+ *  The document view is ved's identity model: the plain text, the selection as
+ *  plain offsets, and `caretStop` — the editor's own character-step rule
+ *  (injected, so ruby caret stops apply without this module knowing rubies
+ *  exist). Offsets index the plain string, markup characters included.
+ *
+ *  MOVEMENT IS SPATIAL. Bare h/j/k/l are the ARROW KEYS — h=left, j=down,
+ *  k=up, l=right — emitted as `moveVisual` effects; the EDITOR resolves each
+ *  screen direction to the right axis per writing mode. So in VERTICAL writing
+ *  (tategaki) h/l walk the LINE axis (between 行) and j/k the characters up/down
+ *  the column, while in HORIZONTAL writing h/l walk the characters and j/k the
+ *  line axis. The line-axis move is a LOGICAL PARAGRAPH walk in both modes (a
+ *  ved line IS a paragraph — actual paragraphs at the same column, not wrapped
+ *  display columns/rows), decided by the editor (moveCaretVisual). As OPERATOR
+ *  TARGETS h/l stay pure character motions (`dh`/`dl` = one caret step); a
+ *  spatial line step cannot be expressed as an offset, so `dj`/`dk` are not
+ *  bound.
+ *
+ *  Scope and deliberate deviations from Vim:
+ *    - modes: normal / insert / visual (character-wise 'v' AND line-wise 'V');
+ *    - counts; motions h j k l (spatial) g+hjkl (display-line walk) w b e W B E
+ *      (ruby-aware: a word target snaps out of a collapsed ruby's markup; word
+ *      granularity is a pluggable WordModel via doc.words — default CLASS_WORDS
+ *      is char-class runs, the JP option segments kana/kanji)
+ *      0 ^ $ gg G (KEEP the column; count gg/G = goto line) f F t T ; , % { };
+ *      f/F/t/T also take a Ctrl-chord shortcut (config.ts FIND_CHORDS: Ctrl+j
+ *      → 、, Ctrl+l → 。);
+ *    - % and the bracket text objects use config.ts BRACKET_PAIRS (Japanese
+ *      「」（）【】… included);
+ *    - operators d c y (dd cc yy, charwise/linewise motions) with TEXT OBJECTS
+ *      i/a + w W ( ) [ ] { } < > b B " ' ` p; x X s S r D C Y (y$) J o O i a
+ *      I A p P (normal + visual p) ~ Ctrl+A/Ctrl+X (increment/decrement)
+ *      u Ctrl+r. J inserts a joining space per config.ts joinNeedsSpace (a
+ *      space for Latin, NONE between 全角); gJ removes only the newline; both
+ *      work over a visual selection (all kinds — the spanned lines join);
+ *    - charwise visual `v` is INCLUSIVE of both ends — the anchor cell stays
+ *      selected as the head moves before it; linewise visual `V` KEEPS the
+ *      cursor (a collapsed selection at the caret) and highlights the whole
+ *      paragraph. Both shape the render via setVisualSelection; operators still
+ *      take whole lines for V (visualRange). `r{char}` overwrites every
+ *      selected character (newlines survive); the searches (`/` `?` `n` `N`
+ *      `*` `#`) stay live in visual mode and EXTEND the selection;
+ *    - BLOCK visual `Ctrl+V`: the rectangle between anchor and head (lines ×
+ *      character columns, both inclusive — ved's cell grid, a deviation from
+ *      Vim's screen columns). d/x/c/s/y take the per-line segments (blockwise
+ *      register; `p`/`P` re-insert them as a column, padding short lines);
+ *      `I`/`A` insert on the TOP line (A after the right edge, padding a short
+ *      top line; after `$`, at every line's end) and Escape repeats the typed
+ *      text on the remaining lines — IME-committed text included, via the
+ *      same vimRecordText channel as dot-repeat. Block changes are not
+ *      dot-repeatable (like all visual changes, v1). `o` jumps to the
+ *      diagonal corner, `O` to the other corner on the SAME line (columns
+ *      swap, lines stay; outside block, `O` = `o`). `gv` reselects the
+ *      selection the last visual mode ended with (kind + $-flag; from inside
+ *      visual it SWAPS with the live selection);
+ *    - search: / ? n N * # (literal, case-sensitive; command line built in
+ *      state — the shell renders it). NOT incremental, and NOT IME-aware (the
+ *      pattern captures raw keydowns; a composed IME pattern is out of scope);
+ *    - the caret may rest AT a line end (Vim's virtualedit=onemore) — ved's
+ *      caret is a boundary, not a cell;
+ *    - dot-repeat `.`: the record() wrapper keeps the last change as
+ *      `lastChange` — normal-mode KEYS plus the insert phase's literal TEXT
+ *      (VimChangeItem). Insert text is recorded as TEXT because keystrokes
+ *      cannot represent it: live typed and IME-committed text reaches the
+ *      recording through vimRecordText (the adapter calls it from the
+ *      editor's text-input/composition hooks — composing keydowns are 229
+ *      and never reach the reducer). `.` emits a `repeat` effect and the
+ *      ADAPTER replays it — keys re-dispatched, text inserted as-is (the
+ *      reducer can't step a mutating doc within one call). `N.` replays N
+ *      times. Not recorded: motions, undo/redo, visual-mode changes;
+ *    - macros: `q{reg}`…`q` records TYPED keys (fed/replayed keys excluded —
+ *      a replay re-expands through mappings), `@{reg}` replays via the same
+ *      feedKeys loop as mappings, `@@` repeats, counts multiply. `.` after a
+ *      macro repeats the last change WITHIN it, like Vim;
+ *    - one unnamed register (plus the macro registers); NO marks, named yank
+ *      registers, or ex commands (`:`) yet;
+ *    - USER MAPPINGS (keymap.ts; docs/architecture.md "Extensions"): a front layer in
+ *      vimKeydown walks per-map-mode tries (nmap/xmap/omap/imap) BEFORE this
+ *      dispatch; a match feeds its RHS keys back through the adapter
+ *      (noremap by default), a dead-ended walk replays what it swallowed.
+ *      Inactive during the command line and char arguments. The INSERT walk
+ *      types its prefix LIVE and deletes it on a match (`jj` → Esc; IME/
+ *      click-safe — see insertMappingKey);
+ *    - BUILT-IN SEQUENCES (`gg`, `g`+hjkl, the text objects) are entries in
+ *      per-context tries walked by the same discipline (builtinLayerKey) —
+ *      always active, so fed and replayed keys resolve them identically.
+ *
+ *  All configurable, data-driven behavior (bracket pairs, find-chord targets,
+ *  join spacing) lives in ONE place — config.ts; user KEY mappings ride the
+ *  keymap option (extension.ts). */
 
 import { BRACKET_PAIRS, FIND_CHORDS, joinNeedsSpace } from './config';
 import {
@@ -1079,6 +1080,13 @@ export const G_SEQUENCES: Readonly<Record<string, VimAction>> = {
   gj: displayWalk('down'),
   gk: displayWalk('up'),
   gl: displayWalk('right'),
+  // gJ: join without inserting a space (removes only the newline; the next
+  // line's leading whitespace survives). In visual mode it joins the
+  // selected lines, like J there.
+  gJ: (state, env, doc) =>
+    state.mode === 'visual'
+      ? visualJoin(clearPending(state), doc, true)
+      : joinLines(clearPending(state), doc, env.count, true),
   // gv: reselect the last visual selection (kind and $-flag included). From
   // INSIDE visual mode it swaps with the live selection, so gv gv toggles
   // between the two — Vim's rule. Offsets clamp to the current text (they
@@ -1663,6 +1671,9 @@ const VISUAL_ACTIONS = {
     effects: [],
     handled: true,
   }),
+  // J: join every selected line with the policy spacing (gJ — the plain,
+  // newline-only join — rides the g-sequence layer, visual included).
+  'visual.join': (state, _env, doc) => visualJoin(state, doc, false),
   'visual.delete': (state, _env, doc) =>
     state.visualKind === 'block'
       ? blockOperator(state, 'd', doc)
@@ -1707,6 +1718,7 @@ export const VISUAL_BINDINGS: Readonly<Record<string, keyof typeof VISUAL_ACTION
   o: 'visual.swapEnds',
   O: 'visual.swapCorners',
   r: 'visual.replaceChar',
+  J: 'visual.join',
   x: 'visual.delete',
   d: 'visual.delete',
   y: 'visual.yank',
@@ -1853,7 +1865,7 @@ const NORMAL_ACTIONS = {
   // Yank from the caret to the paragraph (line) end — like D/C (Neovim's
   // default; Vim's own Y is `yy`, but this pairs with D and C).
   'yank.toLineEnd': toLineEnd('y'),
-  'line.join': (state, env, doc) => joinLines(state, doc, env.count),
+  'line.join': (state, env, doc) => joinLines(state, doc, env.count, false),
   'operator.delete': (state, env) => pendOperator(state, 'd', env),
   'operator.change': (state, env) => pendOperator(state, 'c', env),
   'operator.yank': (state, env) => pendOperator(state, 'y', env),
@@ -2020,27 +2032,29 @@ const deleteSteps = (state: VimState, doc: VimDocView, count: number, forward: b
   return { state: next, effects, handled: true };
 };
 
-/** J: splice the following line(s) onto this one. Strips the next line's
- *  leading whitespace and inserts a joining space per the data policy
- *  (`joinNeedsSpace` — a space between Latin text, NONE between fullwidth/全角
- *  characters). `count` joins count−1 newlines like Vim (3J = one line of
- *  three). The caret lands at the (first) join seam. */
-const joinLines = (state: VimState, doc: VimDocView, count: number): VimStep => {
-  const joins = Math.max(1, count - 1);
+/** Splice `joins` following lines onto the line at `at`. The default (J)
+ *  strips each next line's leading whitespace and inserts a joining space
+ *  per the data policy (`joinNeedsSpace` — a space between Latin text, NONE
+ *  between fullwidth/全角 characters); `plain` (gJ) removes ONLY the
+ *  newline, touching nothing else. The caret lands at the (first) join
+ *  seam. */
+const joinFrom = (state: VimState, doc: VimDocView, at: number, joins: number, plain: boolean): VimStep => {
   let virtual = doc.text;
   const effects: VimEffect[] = [];
   let firstSeam = -1;
-  const cursor = doc.head;
   for (let i = 0; i < joins; i++) {
-    const le = lineEnd(virtual, cursor);
+    const le = lineEnd(virtual, at);
     if (le >= virtual.length) break; // no next line
-    // Strip the next line's leading whitespace.
     let nb = le + 1;
-    const nextEnd = lineEnd(virtual, nb);
-    while (nb < nextEnd && isBlank(virtual[nb]!)) nb++;
-    const left = le > 0 && virtual[le - 1] !== '\n' ? virtual[le - 1]! : '';
-    const right = nb < nextEnd ? virtual[nb]! : '';
-    const sep = joinNeedsSpace(left, right) ? ' ' : '';
+    let sep = '';
+    if (!plain) {
+      // Strip the next line's leading whitespace.
+      const nextEnd = lineEnd(virtual, nb);
+      while (nb < nextEnd && isBlank(virtual[nb]!)) nb++;
+      const left = le > 0 && virtual[le - 1] !== '\n' ? virtual[le - 1]! : '';
+      const right = nb < nextEnd ? virtual[nb]! : '';
+      sep = joinNeedsSpace(left, right) ? ' ' : '';
+    }
     if (firstSeam < 0) firstSeam = le;
     effects.push({ kind: 'replace', from: le, to: nb, text: sep });
     virtual = virtual.slice(0, le) + sep + virtual.slice(nb);
@@ -2049,6 +2063,21 @@ const joinLines = (state: VimState, doc: VimDocView, count: number): VimStep => 
   if (effects.length === 0) return swallow(state);
   effects.push({ kind: 'select', anchor: firstSeam, head: firstSeam });
   return { state, effects, handled: true };
+};
+
+/** J / gJ at the caret: `count` joins count−1 newlines like Vim (3J = one
+ *  line of three; 1J and 2J both join once). */
+const joinLines = (state: VimState, doc: VimDocView, count: number, plain: boolean): VimStep =>
+  joinFrom(state, doc, doc.head, Math.max(1, count - 1), plain);
+
+/** Visual J / gJ: join every line the selection spans (one join when it
+ *  sits on a single line), exit visual, caret at the first seam. */
+const visualJoin = (state: VimState, doc: VimDocView, plain: boolean): VimStep => {
+  const a = Math.min(doc.anchor, doc.head);
+  const b = Math.max(doc.anchor, doc.head);
+  let joins = 0;
+  for (let i = doc.text.indexOf('\n', a); i >= 0 && i < b; i = doc.text.indexOf('\n', i + 1)) joins++;
+  return joinFrom({ ...state, mode: 'normal' }, doc, a, Math.max(1, joins), plain);
 };
 
 /** `dd`/`cc`/`yy` (with count): whole lines. */
