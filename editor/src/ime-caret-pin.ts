@@ -1,26 +1,32 @@
-// KEEP THE IME CANDIDATE WINDOW BY THE COMPOSITION'S LINE (vertical writing).
-// The system IME places its candidate window from the caret rect Chromium
-// reports, and Blink re-seats the DOM caret to the preedit's END after every
-// composition update. In vertical writing the end of a WRAPPED preedit sits
-// at the TOP of the next line — a whole line length up from where the user
-// is typing, and across a page boundary when the wrap is one — so the
-// candidate list jumps out of the reading flow the moment a composition
-// spans lines (reported as "the candidates go up" in VerticalColumns).
+// KEEP THE IME CANDIDATE WINDOW PAST THE PREEDIT (vertical writing). The
+// system IME places its candidate window from the caret rect Chromium
+// reports, and in vertical writing the window opens DOWNWARD from that rect —
+// over whatever preedit text sits below the caret in the column. Blink
+// re-seats the DOM caret to mozc's composition cursor on every update, and
+// that cursor is NOT always the preedit end:
+//   - a WRAPPED preedit's end sits at the TOP of the next line — another page
+//     when the wrap crosses a page boundary — so the candidate list jumped a
+//     page up out of the reading flow ("the candidates go up");
+//   - a CONVERSION (Space) parks the cursor at the ACTIVE SEGMENT — offset 0
+//     for the first segment — so the candidate window opened ON TOP of the
+//     preedit's first characters (worst in an empty document, where that is
+//     the column top and the window covered the whole word).
 //
-// The repair: while composing in a vertical mode, when the DOM caret has
-// left the composition's starting line, re-seat it — WITHIN the composition
-// text — to the last preedit position still on that line. Only the caret
-// (the IME's cursor-rect anchor) moves; the composition range is Blink's own
-// and is untouched: mozc keeps composing, converting, and committing through
-// a re-seated caret, and the candidate window opens at the re-seated rect on
-// its next update (mozc-verified; mozc/candidate-window-pos.ts guards it).
-// Blink re-tails the caret on every update, so the pin re-applies per
+// The repair: while composing in a vertical mode, re-seat the DOM caret —
+// WITHIN the composition text — to the preedit's true END, clamped to the
+// last position still on the composition's starting line when the preedit
+// wraps. Only the caret (the IME's cursor-rect anchor) moves; the composition
+// range is Blink's own and is untouched: mozc keeps composing, converting,
+// and committing through a re-seated caret, and the candidate window opens at
+// the re-seated rect on its next update (mozc-verified;
+// mozc/candidate-window-pos.ts + mozc/ime-compose-visible.ts guard it).
+// Blink re-seats the caret on every update, so the pin re-applies per
 // `input` event — the same post-flush hook ime-survival.ts uses. Install it
 // AFTER installCompositionSurvival: its null-selection repair must run
 // first, and the pin must be the last writer of the selection.
 import { TextSelection } from 'prosemirror-state';
 import type { EditorView } from 'prosemirror-view';
-import { offsetToPos, posToOffset } from './pm/model';
+import { offsetToPos, serialize } from './pm/model';
 import { caretCoords } from './scroll-reveal';
 
 export type ImeCaretPinDeps = {
@@ -28,8 +34,14 @@ export type ImeCaretPinDeps = {
    *  while composing so the whole IME word anchors at its start. The
    *  compositionend re-seat below writes it back (see there). */
   readonly beforeOffsetRef: { current: number };
+  /** The last COMMITTED text (frozen while composing) — the preedit is the
+   *  serialized doc's surplus over it, so its true END is `anchor + surplus`.
+   *  The live DOM caret cannot stand in for it: it is mozc's composition
+   *  cursor, which a conversion parks at the active segment (offset 0 for the
+   *  first). Same recipe as ime-cell-pad.ts. */
+  readonly lastTextRef: { readonly current: string };
   /** Live writing-mode check; the pin only applies to vertical writing (a
-   *  horizontal wrap moves the caret one line pitch — no jump to repair). */
+   *  horizontal window opens BELOW the line, over no preedit text). */
   readonly isVertical: () => boolean;
 };
 
@@ -51,9 +63,26 @@ export const installImeCaretPin = (view: EditorView, deps: ImeCaretPinDeps): (()
     try {
       const doc = view.state.doc;
       const anchorOff = deps.beforeOffsetRef.current;
-      const tailPos = view.state.selection.head;
-      const tailOff = posToOffset(doc, tailPos);
-      if (tailOff <= anchorOff) return;
+      // The preedit's TRUE end. The model selection head is mozc's cursor —
+      // after a conversion that is the ACTIVE SEGMENT's position (0 for the
+      // first segment), not the end. Composing over a selection leaves
+      // lastTextRef ahead of the doc (the IME-entry deletion is history-
+      // deferred) and the surplus underestimates — the pin then bails or
+      // clamps short, never past the preedit.
+      const preeditLen = serialize(doc).length - deps.lastTextRef.current.length;
+      if (preeditLen <= 0) return;
+      const tailOff = anchorOff + preeditLen;
+      const tailPos = offsetToPos(doc, tailOff);
+      // At a PARAGRAPH end (empty doc: the preedit is the whole content)
+      // domAtPos answers at the ELEMENT level ({<p>, childIndex}); re-home
+      // into the preceding text node — the pin needs a text-node caret (an
+      // element-level caret kills fcitx5's IM context).
+      let tailDom: { node: Node; offset: number } = view.domAtPos(tailPos);
+      if (tailDom.node.nodeType !== Node.TEXT_NODE) {
+        const before = tailDom.node.childNodes[tailDom.offset - 1];
+        if (before?.nodeType !== Node.TEXT_NODE) return; // no text home — native placement
+        tailDom = { node: before, offset: (before as Text).length };
+      }
       const aRect = caretCoords(view, offsetToPos(doc, anchorOff));
       const contentCs = getComputedStyle(view.dom);
       const fontSize = Number.parseFloat(contentCs.fontSize) || 18;
@@ -66,31 +95,39 @@ export const installImeCaretPin = (view: EditorView, deps: ImeCaretPinDeps): (()
       const mid = (r: { left: number; right: number }): number => (r.left + r.right) / 2;
       const onLine = (r: { left: number; right: number; top: number }): boolean =>
         Math.abs(mid(r) - mid(aRect)) <= linePitch / 2 && Math.abs(r.top - aRect.top) <= lineLen;
-      // The tail is the LIVE DOM caret (Blink parks it at the preedit end).
-      // Measure its ACTUAL range rect, not coordsAtPos: at the DOCUMENT end
-      // coordsAtPos reports the empty NEXT column (the multicol end-of-text
-      // artifact — a ~cell horizontal shift), which read as a spurious wrap
-      // and re-seated the caret BACKWARD, hiding the preedit tail under the
-      // candidate window (VerticalColumns; mozc/ime-compose-visible). The DOM
-      // rect is also exactly what the IME positions its window by.
-      const dr = sel.getRangeAt(0).getBoundingClientRect();
+      // The tail's rect from a collapsed DOM Range AT the tail, not
+      // coordsAtPos: at the DOCUMENT end coordsAtPos reports the empty NEXT
+      // column (the multicol end-of-text artifact — a ~cell horizontal
+      // shift), which read as a spurious wrap and re-seated the caret
+      // BACKWARD, hiding the preedit tail under the candidate window
+      // (VerticalColumns; mozc/ime-compose-visible).
+      const range = view.dom.ownerDocument.createRange();
+      range.setStart(tailDom.node, tailDom.offset);
+      range.collapse(true);
+      const dr = range.getBoundingClientRect();
       const degenerate = dr.top === 0 && dr.bottom === 0 && dr.left === 0 && dr.right === 0;
       const tailRect = degenerate ? caretCoords(view, tailPos) : { left: dr.left, right: dr.right, top: dr.top };
-      if (onLine(tailRect)) return; // no wrap — leave the caret at the preedit end
-      // Wrapped: the last preedit offset still on the starting line (offsets
-      // leave the line monotonically, so the boundary binary-searches; the
-      // walk is bounded by the preedit length and runs only while composing).
-      let lo = anchorOff;
-      let hi = tailOff;
-      while (hi - lo > 1) {
-        const m = (lo + hi) >> 1;
-        if (onLine(caretCoords(view, offsetToPos(doc, m)))) lo = m;
-        else hi = m;
+      // Target: the preedit end, clamped — when the preedit wraps off the
+      // starting line — to the last offset still on it (offsets leave the
+      // line monotonically, so the boundary binary-searches; the walk is
+      // bounded by the preedit length and runs only while composing).
+      let target = tailOff;
+      if (!onLine(tailRect)) {
+        let lo = anchorOff;
+        let hi = tailOff;
+        while (hi - lo > 1) {
+          const m = (lo + hi) >> 1;
+          if (onLine(caretCoords(view, offsetToPos(doc, m)))) lo = m;
+          else hi = m;
+        }
+        target = lo;
       }
-      const pin = view.domAtPos(offsetToPos(doc, lo));
+      const pin = target === tailOff ? tailDom : view.domAtPos(offsetToPos(doc, target));
       // Only a real text-node home keeps the IM context alive (an element-
       // level caret kills fcitx5's context) — bail to native placement.
       if (pin.node.nodeType !== Node.TEXT_NODE) return;
+      // Already there (plain typing: Blink tails the caret itself) — no-op.
+      if (sel.focusNode === pin.node && sel.focusOffset === pin.offset) return;
       sel.collapse(pin.node, pin.offset);
       pinnedAnchor = anchorOff;
     } catch {

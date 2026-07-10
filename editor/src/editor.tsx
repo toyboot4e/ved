@@ -448,6 +448,7 @@ export const VedEditor = (props: VedEditorProps): React.JSX.Element => {
     // the null-selection repair runs first, the pin is the last writer.
     const teardownImeCaretPin = installImeCaretPin(view, {
       beforeOffsetRef,
+      lastTextRef,
       isVertical: () => live.current.writingMode !== WritingMode.Horizontal,
     });
     const imeCellPad = createImeCellPad(view, {

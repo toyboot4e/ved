@@ -1,16 +1,19 @@
-// REAL mozc (VerticalColumns): composing a SECOND segment after existing text
-// must keep the WHOLE preedit visible — the caret must stay at the preedit
-// END, so the candidate window (drawn past the caret, downward in vertical
-// writing) sits below the preedit instead of covering its tail.
+// REAL mozc (VerticalColumns): the WHOLE preedit stays visible while
+// composing — the DOM caret (the rect the IME opens its window from; the
+// window opens DOWNWARD in vertical writing) must sit at the preedit END, so
+// the window never covers preedit text. Two regressions pinned:
 //
-// Bug: with existing text いい感じ, composing いいかん (preedit いいかｎ, the
-// trailing ｎ a pending romaji) left the caret at offset 7 (after か, before
-// ｎ) — the candidate window then covered the ｎ. Cause: ime-caret-pin's
-// "did the preedit wrap?" check measured the tail with coordsAtPos, which at
-// the DOCUMENT end reports the empty NEXT column (a ~cell horizontal shift in
-// multicol) — a SPURIOUS wrap — and the pin re-seated the caret backward onto
-// the starting line. The pin now measures the tail's real DOM caret rect, so a
-// non-wrapping preedit is left at its end.
+// 1. Composing a SECOND segment after existing text (いい感じ + いいかん →
+//    preedit いいかｎ, trailing ｎ a pending romaji) left the caret at offset
+//    7 — the window covered the ｎ. Cause: the pin's "did the preedit wrap?"
+//    check measured the tail with coordsAtPos, which at the DOCUMENT end
+//    reports the empty NEXT column (a ~cell shift in multicol) — a SPURIOUS
+//    wrap — and re-seated the caret backward onto the starting line.
+// 2. CONVERSION (Space) parks mozc's cursor at the ACTIVE SEGMENT — offset 0
+//    for the first — so in an empty document the candidate window opened at
+//    the column top, covering the word. The pin now computes the preedit's
+//    true end from the committed-text surplus (the live selection head IS
+//    mozc's cursor, useless for this) and re-seats the caret there.
 //
 // Linux + fcitx5 + mozc + xdotool only; SKIPS elsewhere. STEALS X focus while
 // it runs. Run: `node test/e2e/mozc/ime-compose-visible.ts`.
@@ -54,6 +57,26 @@ try {
   assert.equal(s.model, s.text.length, 'the caret stays at the preedit end (not re-seated backward)');
   assert.equal(s.dom, s.model, 'the DOM caret matches the model caret');
 
+  await m.escape();
+
+  // CONVERSION in an EMPTY document: Space parks mozc's cursor at the ACTIVE
+  // SEGMENT — offset 0 for the first — and the candidate window then opened ON
+  // the preedit's first characters (the column top: it covered the word). The
+  // pin must re-seat the caret to the preedit end on the conversion update.
+  // The converted text varies with mozc's learning state — assert the caret
+  // INVARIANT (at the preedit end), never the picked candidate.
+  await page.evaluate(() => getSelection()!.selectAllChildren(document.getElementById('editor-content')!));
+  await page.keyboard.press('Backspace');
+  await page.waitForTimeout(120);
+  await m.type('iikan');
+  await m.convert();
+  const c = await caretPair();
+  step(`converted (empty doc): text=${JSON.stringify(c.text)} model=${c.model} dom=${c.dom}`);
+  assert.ok(c.text.length > 0, 'the conversion produced a preedit');
+  assert.equal(c.model, c.text.length, 'the caret re-seats to the preedit end on conversion (not the segment start)');
+  assert.equal(c.dom, c.model, 'the DOM caret matches the model caret after conversion');
+
+  await m.escape();
   await m.escape();
 } catch (e) {
   fail(e instanceof Error ? e.message : String(e));
