@@ -157,6 +157,7 @@
               nodejs_26
               pnpm
               pinact
+              watchexec
               zizmor
             ];
 

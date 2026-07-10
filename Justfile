@@ -127,6 +127,20 @@ doc-check:
 doc-open:
     pnpm run api-docs:open
 
+[private]
+alias do := doc-open
+
+# regenerates the API reference whenever a documented source changes. The
+# ignore matters: the generator drops a shadow copy of @ved/editor's entry
+# into the watched tree on every run — watching it would self-trigger forever.
+doc-watch:
+    watchexec --watch editor/src --watch vim/src --watch desktop/src/shared \
+        --watch scripts/gen-api-docs.ts --exts ts,tsx \
+        --ignore '**/.api-docs-entry.ts' -- pnpm run api-docs
+
+[private]
+alias dw := doc-watch
+
 # regenerates the Vim keybinding reference (vim/docs/keybindings.{json,md}) by
 # joining Vim's own index.txt against @ved/vim's declared binding catalog
 vim-keys:
