@@ -136,6 +136,7 @@ const createUserExtension = (id: string, fileName: string): UserExtension => {
   };
 
   const hookSets = new Set<EditorHooks>();
+  // biome-ignore lint/suspicious/noConfusingVoidType: mirrors the public `register` type — `void` keeps side-effect-only handlers assignable.
   const commands = new Map<EditorCommandId, () => boolean | void | Promise<unknown>>();
   // The live editor seam while an editor is mounted (there is one editor;
   // tab switches remount it, re-running attach).
@@ -161,6 +162,7 @@ const createUserExtension = (id: string, fileName: string): UserExtension => {
 
   // The seam's EditorCommand wrapper: user handlers may be async (the seam
   // is sync) and must never throw into the editor's key path.
+  // biome-ignore lint/suspicious/noConfusingVoidType: mirrors the public `register` type — `void` keeps side-effect-only handlers assignable.
   const wrapCommand = (fullId: EditorCommandId, run: () => boolean | void | Promise<unknown>) => (): boolean => {
     try {
       const result = run();

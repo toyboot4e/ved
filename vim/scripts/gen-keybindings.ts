@@ -94,8 +94,21 @@ const normalizeKey = (rawChar: string): { token: string; args: string[]; registe
   return { token: s.trim(), args, register };
 };
 
-/** Parse index.txt into rows: tag-led lines only (every real command has a
- *  tag; "not used" rows and wrapped-description continuations do not). */
+/** Parse one tag-led index.txt line into a row, or null (every real command
+ *  has a tag; "not used" rows and wrapped-description continuations do not). */
+const parseIndexRow = (line: string, mode: Mode): VimRow | null => {
+  const m = line.match(/^\|([^|]+)\|\s+(\S.*)$/);
+  if (!m) return null;
+  const [, tag, rest] = m;
+  const split = rest.match(/^(.*?)(?:\t+| {2,})(.*)$/);
+  const rawChar = (split ? split[1] : rest).trim();
+  let action = (split ? split[2] : '').trim();
+  if (mode !== 'insert') action = action.replace(/^[12]\s+/, ''); // drop the note digit
+  const { token, args, register } = normalizeKey(rawChar);
+  return { tag, mode, rawChar, token, args, register, desc: action };
+};
+
+/** Parse index.txt into rows, section by section (parseIndexRow per line). */
 const parseIndex = (text: string): VimRow[] => {
   const lines = text.split('\n');
   const bounds = SECTIONS.map(([tag, mode]) => ({ mode, start: lines.findIndex((l) => l.includes(tag)) }));
@@ -105,15 +118,8 @@ const parseIndex = (text: string): VimRow[] => {
     if (start < 0) continue;
     const end = i + 1 < bounds.length && bounds[i + 1].start >= 0 ? bounds[i + 1].start : lines.length;
     for (const line of lines.slice(start + 1, end)) {
-      const m = line.match(/^\|([^|]+)\|\s+(\S.*)$/);
-      if (!m) continue;
-      const [, tag, rest] = m;
-      const split = rest.match(/^(.*?)(?:\t+| {2,})(.*)$/);
-      const rawChar = (split ? split[1] : rest).trim();
-      let action = (split ? split[2] : '').trim();
-      if (mode !== 'insert') action = action.replace(/^[12]\s+/, ''); // drop the note digit
-      const { token, args, register } = normalizeKey(rawChar);
-      rows.push({ tag, mode, rawChar, token, args, register, desc: action });
+      const row = parseIndexRow(line, mode);
+      if (row) rows.push(row);
     }
   }
   return rows;
@@ -158,6 +164,33 @@ type Entry = {
   tag: string;
 };
 
+/** One Vim index row joined against our catalog hit (if any) + the overlay. */
+const vimRowEntry = (row: VimRow, hit: (typeof VIM_BINDINGS)[number] | undefined): Entry => {
+  const ov = OVERLAY[row.tag] ?? {};
+  const status: Entry['status'] = hit ? 'done' : ov.scope === 'out' ? 'out' : 'todo';
+  const category = ov.category ?? (hit ? KIND_CATEGORY[hit.kind] : categoryFromDesc(row.mode, row.desc));
+  return {
+    keys: row.rawChar,
+    mode: row.mode,
+    action: row.desc,
+    api: hit?.id ?? ov.api ?? '',
+    status,
+    category,
+    tag: row.tag,
+  };
+};
+
+/** One of our bindings with no Vim row (a ved extension). */
+const extensionEntry = (b: (typeof VIM_BINDINGS)[number]): Entry => ({
+  keys: b.keys,
+  mode: b.mode,
+  action: b.desc ?? '(ved extension)',
+  api: b.id ?? '',
+  status: 'ext',
+  category: KIND_CATEGORY[b.kind] ?? 'Misc',
+  tag: '',
+});
+
 const build = (rows: VimRow[]): Entry[] => {
   const catalog = new Map<string, (typeof VIM_BINDINGS)[number]>();
   for (const b of VIM_BINDINGS) catalog.set(`${b.mode}:${b.keys}`, b);
@@ -166,33 +199,14 @@ const build = (rows: VimRow[]): Entry[] => {
 
   for (const row of rows) {
     const hit = catalog.get(`${row.mode}:${row.token}`);
-    const ov = OVERLAY[row.tag] ?? {};
     if (hit) usedCatalog.add(`${row.mode}:${row.token}`);
-    const status: Entry['status'] = hit ? 'done' : ov.scope === 'out' ? 'out' : 'todo';
-    const category = ov.category ?? (hit ? KIND_CATEGORY[hit.kind] : categoryFromDesc(row.mode, row.desc));
-    entries.push({
-      keys: row.rawChar,
-      mode: row.mode,
-      action: row.desc,
-      api: hit?.id ?? ov.api ?? '',
-      status,
-      category,
-      tag: row.tag,
-    });
+    entries.push(vimRowEntry(row, hit));
   }
 
   // Our bindings with no Vim row (ved extensions: Japanese brackets, etc.).
   for (const b of VIM_BINDINGS) {
     if (usedCatalog.has(`${b.mode}:${b.keys}`)) continue;
-    entries.push({
-      keys: b.keys,
-      mode: b.mode,
-      action: b.desc ?? '(ved extension)',
-      api: b.id ?? '',
-      status: 'ext',
-      category: KIND_CATEGORY[b.kind] ?? 'Misc',
-      tag: '',
-    });
+    entries.push(extensionEntry(b));
   }
   return entries;
 };

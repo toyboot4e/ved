@@ -1,9 +1,14 @@
-// Backend-neutral plain-text undo history: a document is always a plain
-// string and a caret is a {para, offset} plain position, so undo lives
-// entirely outside the editor tree — it would survive an editor-backend swap.
+/** Backend-neutral plain-text undo history: a document is always a plain
+ *  string and a caret is a {para, offset} plain position, so undo lives
+ *  entirely outside the editor tree — it would survive an editor-backend swap. */
 
 /** A caret position in plain-offset terms: paragraph index + offset within it. */
-export type CursorState = { para: number; offset: number };
+export type CursorState = {
+  /** 0-based paragraph (ved line) index. */
+  para: number;
+  /** Offset within the paragraph's plain text. */
+  offset: number;
+};
 
 export type HistoryEntry = {
   text: string;
@@ -15,6 +20,10 @@ export type HistoryEntry = {
   cursorBefore?: CursorState | null;
 };
 
+/** The undo history: full-text entries with caret positions, debounce-batched
+ *  typing, and explicit groups for modal editing. Owned by the SHELL, one per
+ *  buffer (`VedEditorProps.history`), so undo survives editor remounts and
+ *  tab switches. */
 export class PlainTextHistory {
   private entries: HistoryEntry[];
   private pointer: number;
@@ -30,11 +39,16 @@ export class PlainTextHistory {
    *  timed batch happened to precede the group. */
   private groupHasEntry: boolean = false;
 
+  /** Seed with the document's initial text — entry 0, the floor undo
+   *  returns to. */
   constructor(initialText: string) {
     this.entries = [{ text: initialText, cursor: null }];
     this.pointer = 0;
   }
 
+  /** Record a new document state. Merges into the newest entry inside the
+   *  debounce window or an open group (so typing batches); otherwise appends,
+   *  truncating any redo tail. */
   push(entry: HistoryEntry): void {
     const atLast = this.pointer === this.entries.length - 1;
     if (this.groupDepth > 0) {
@@ -64,7 +78,6 @@ export class PlainTextHistory {
   /** Replace the newest entry (batch), preserving the batch's ORIGINAL
    *  pre-edit caret so undoing the whole batch returns there. */
   private merge(entry: HistoryEntry): void {
-    // biome-ignore lint/style/noNonNullAssertion: callers check atLast ⇒ entry exists
     const keepBefore = this.entries[this.pointer]!.cursorBefore;
     if (keepBefore !== undefined) entry.cursorBefore = keepBefore;
     this.entries[this.pointer] = entry;
@@ -112,31 +125,31 @@ export class PlainTextHistory {
     this.lastPushTime = 0;
   }
 
+  /** Step back: the state to restore, or `null` at the initial entry. The
+   *  returned caret is where the user was BEFORE the undone edit. */
   undo(): HistoryEntry | null {
     this.closeGroups();
     if (this.pointer <= 0) return null;
-    // biome-ignore lint/style/noNonNullAssertion: bounds checked
     const undone = this.entries[this.pointer]!;
     this.pointer--;
-    // biome-ignore lint/style/noNonNullAssertion: bounds checked
     const target = this.entries[this.pointer]!;
     // Restore the previous text, but place the caret where it was BEFORE the
     // undone edit (in that previous text), not where the earlier edit left it.
     return { text: target.text, cursor: undone.cursorBefore ?? target.cursor };
   }
 
+  /** Step forward: the state to restore, or `null` at the newest entry. */
   redo(): HistoryEntry | null {
     this.closeGroups();
     if (this.pointer >= this.entries.length - 1) return null;
     this.pointer++;
-    // biome-ignore lint/style/noNonNullAssertion: bounds checked
     const target = this.entries[this.pointer]!;
     // Re-applying the edit lands the caret where it left off (the after-caret).
     return { text: target.text, cursor: target.cursor };
   }
 
+  /** The entry at the pointer — what the document should read right now. */
   current(): HistoryEntry {
-    // biome-ignore lint/style/noNonNullAssertion: always at least one entry
     return this.entries[this.pointer]!;
   }
 }

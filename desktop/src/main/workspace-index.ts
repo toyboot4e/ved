@@ -54,39 +54,51 @@ const entryKind = async (
   }
 };
 
+/** `readdir` tolerating an unreadable directory (permissions, removed
+ * underfoot) — null instead of a throw. */
+const readDirents = async (dir: string): Promise<Dirent[] | null> => {
+  try {
+    return await readdir(dir, { withFileTypes: true });
+  } catch {
+    return null;
+  }
+};
+
+/** Stack a .gitignore in THIS directory onto the layers — it governs the
+ * subtree from here down. */
+const withGitignoreLayer = async (dir: string, rel: string, layers: readonly Layer[]): Promise<readonly Layer[]> => {
+  const gi = await readGitignore(dir);
+  return gi ? [...layers, { dir: rel, ig: ignore().add(gi) }] : layers;
+};
+
+/** Depth-first walk of `dir` (at `rel` from the root) into `files`, capped at
+ * MAX_FILES_PER_ROOT. */
+const walkDir = async (files: WorkspaceFile[], dir: string, rel: string, layers: readonly Layer[]): Promise<void> => {
+  if (files.length >= MAX_FILES_PER_ROOT) return;
+  const dirents = await readDirents(dir);
+  if (!dirents) return;
+  const layered = await withGitignoreLayer(dir, rel, layers);
+
+  for (const d of dirents) {
+    if (files.length >= MAX_FILES_PER_ROOT) return;
+    const full = join(dir, d.name);
+    const kind = await entryKind(full, d);
+    if (kind === 'skip') continue;
+    const childRel = rel === '' ? d.name : `${rel}/${d.name}`;
+    if (isIgnored(childRel, kind === 'dir', layered)) continue;
+    if (kind === 'dir') await walkDir(files, full, childRel, layered);
+    // Text-ness rides the index (fs-io.ts isTextFile: denylist → size cap
+    // → head sniff, verdicts cached by mtime+size) — the sniff IO happens
+    // here, once per changed file, not per keystroke.
+    else files.push({ path: full, label: childRel, isText: await isTextFile(full) });
+  }
+};
+
 const walkRoot = async (root: string): Promise<WorkspaceFile[]> => {
   const files: WorkspaceFile[] = [];
-
-  const recurse = async (dir: string, rel: string, layers: readonly Layer[]): Promise<void> => {
-    if (files.length >= MAX_FILES_PER_ROOT) return;
-    let dirents: Dirent[];
-    try {
-      dirents = await readdir(dir, { withFileTypes: true });
-    } catch {
-      return; // unreadable directory (permissions, removed underfoot)
-    }
-    // A .gitignore in THIS directory governs its subtree from here down.
-    const gi = await readGitignore(dir);
-    const layered = gi ? [...layers, { dir: rel, ig: ignore().add(gi) }] : layers;
-
-    for (const d of dirents) {
-      if (files.length >= MAX_FILES_PER_ROOT) return;
-      const full = join(dir, d.name);
-      const kind = await entryKind(full, d);
-      if (kind === 'skip') continue;
-      const childRel = rel === '' ? d.name : `${rel}/${d.name}`;
-      if (isIgnored(childRel, kind === 'dir', layered)) continue;
-      if (kind === 'dir') await recurse(full, childRel, layered);
-      // Text-ness rides the index (fs-io.ts isTextFile: denylist → size cap
-      // → head sniff, verdicts cached by mtime+size) — the sniff IO happens
-      // here, once per changed file, not per keystroke.
-      else files.push({ path: full, label: childRel, isText: await isTextFile(full) });
-    }
-  };
-
   // `.git` is skipped at every depth (a plain rule matches the basename); the
-  // root's own .gitignore is picked up by the first `recurse` call.
-  await recurse(root, '', [{ dir: '', ig: ignore().add('.git') }]);
+  // root's own .gitignore is picked up by the first `walkDir` call.
+  await walkDir(files, root, '', [{ dir: '', ig: ignore().add('.git') }]);
   // Sorted by label: the palette's empty-query view IS this list, and raw
   // walk order (readdir order, depth-first) reads as "files are missing".
   return files.sort((a, b) => (a.label < b.label ? -1 : a.label > b.label ? 1 : 0));

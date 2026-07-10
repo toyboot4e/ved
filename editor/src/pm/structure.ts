@@ -27,7 +27,6 @@ export const repair = (state: EditorState): Transaction | null => {
   });
 
   for (let i = paras.length - 1; i >= 0; i--) {
-    // biome-ignore lint/style/noNonNullAssertion: index bounded
     const p = paras[i]!;
     const desired = Fragment.fromArray(inlineNodesFor(p.line));
     if (!p.content.eq(desired)) {

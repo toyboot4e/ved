@@ -1,7 +1,7 @@
 import { clsx } from 'clsx';
 import { baseKeymap } from 'prosemirror-commands';
 import { keymap } from 'prosemirror-keymap';
-import { EditorState, Plugin, TextSelection } from 'prosemirror-state';
+import { EditorState, Plugin, type Selection, TextSelection, type Transaction } from 'prosemirror-state';
 import { EditorView } from 'prosemirror-view';
 import type React from 'react';
 import { useEffect, useRef } from 'react';
@@ -47,11 +47,15 @@ export { WritingMode } from './writing-mode';
 
 /** A buffer's editor state captured on unmount, to restore on switch-back. */
 export type EditorSnapshot = {
+  /** The document's exact plain text (ruby markup included). */
   readonly text: string;
+  /** The caret (the selection HEAD) in plain position terms. */
   readonly cursor: CursorState | null;
   /** The selection's OTHER end — equals `cursor` when collapsed. A snapshot
    *  drops neither end, so a tab switch preserves a range selection. */
   readonly anchor: CursorState | null;
+  /** The scroller's scroll offsets, verbatim (`left` is negative in the
+   *  leftward-growing vertical modes). */
   readonly scroll: { top: number; left: number };
 };
 
@@ -75,11 +79,24 @@ export type EditorSearchOps = {
   readonly replaceAll: (ranges: readonly SearchRange[], replacement: string) => boolean;
 };
 
+/** Props of `VedEditor`. The document crosses this boundary only as a plain
+ *  string: the editor owns the rich document while mounted; the shell owns
+ *  the plain text, the history, and the view state around it. */
 export type VedEditorProps = {
+  /** The document at mount, as the plain string (ruby markup `|base(reading)`
+   *  included — the editor parses it). The editor is UNCONTROLLED: later
+   *  changes to this prop are ignored; remount (new `key`) to load anew. */
   readonly initialText: string;
+  /** The undo history. Owned by the SHELL, one per buffer, so undo survives
+   *  editor remounts and tab switches. */
   readonly history: PlainTextHistory;
+  /** The writing mode (orientation × paging) to render. Controlled. */
   readonly writingMode: WritingMode;
+  /** How ruby markup renders (collapsed/expanded — commands.ts). Controlled;
+   *  pair with `setAppearPolicy`. */
   readonly appearPolicy: AppearPolicy;
+  /** Called when an EDITOR command (the policy keybindings) wants a policy
+   *  change — the shell owns the state, the editor requests. */
   readonly setAppearPolicy: (_: AppearPolicy) => void;
   /** Chord → command table for editor shortcuts; defaults to
    *  DEFAULT_KEYBINDINGS (commands.ts). The user-configuration seam. */
@@ -88,15 +105,23 @@ export type VedEditorProps = {
    *  detached when removed. Keep the array identity STABLE across renders
    *  (module constant / memo); a new identity re-syncs attachments. */
   readonly extensions?: readonly EditorExtension[];
+  /** Fired after every document change with the full serialized plain text
+   *  (never during an IME composition — the commit fires once, at the end). */
   readonly onTextChange?: (text: string) => void;
   /** Fired after any transaction that may have moved the selection (edits
    *  included), never during an IME composition. A payload-free PING: pull
    *  the offsets through the extension seam (`getSelection`) only when
    *  someone actually listens — that keeps caret moves O(1) otherwise. */
   readonly onSelectionChange?: () => void;
+  /** The caret to restore at mount (an `EditorSnapshot.cursor`). */
   readonly initialCursor?: CursorState | null;
+  /** The selection anchor to restore with `initialCursor` — restores a range
+   *  selection, not just the caret. */
   readonly initialAnchor?: CursorState | null;
+  /** The scroll offsets to restore at mount (an `EditorSnapshot.scroll`). */
   readonly initialScroll?: { top: number; left: number };
+  /** Receives the buffer's captured state at unmount — the shell stores it
+   *  and feeds it back through the `initial*` props on switch-back. */
   readonly onSnapshot?: (snapshot: EditorSnapshot) => void;
   /** Any value that CHANGES when the shell's view config changes (the config
    *  object itself works). The overlay/page-gap measures re-run on layout
@@ -142,6 +167,100 @@ const CONTENT_CLASS = (vert: boolean, multiCol: boolean, rows: boolean, grow: bo
 
 const NO_INVISIBLES: Invisibles = { newline: false, whitespace: false };
 
+/** The boundary-caret WIDGET's box, when it is the visible caret. Wherever
+ *  the head has no text-node home — the seam between two collapsed rubies,
+ *  i.e. EVERY position of an all-ruby line, its end included — its box is the
+ *  cursor the user sees: at a seam ENDING a line it paints at that line's
+ *  end, while the model anchors below (head+2, into the next ruby's base)
+ *  name the NEXT line — the highlight sat one line off the visible caret
+ *  (`line-highlight-wrap-end.ts`). Bar shape only: the block caret covers the
+ *  character AFTER the caret and keeps that character's line. */
+const boundaryCaretBox = (view: EditorView): CaretRect | null => {
+  const b = view.dom.querySelector('.vedBoundaryCaret')?.getBoundingClientRect();
+  if (b && (b.width > 1 || b.height > 1)) {
+    return { top: b.top, bottom: b.bottom, left: b.left, right: b.right };
+  }
+  return null;
+};
+
+/** Where the line-pick anchors for the overlay highlight.
+ *  A caret at a ruby's LEADING boundary (the next node is a ruby): at a
+ *  soft wrap that boundary is ambiguous and `coordsAtPos(head)` can
+ *  report the PREVIOUS visual row's end — the highlight then slips one
+ *  line back when a ruby starts the 2nd+ row of a wrapped paragraph.
+ *  The ruby's base GLYPH is unambiguously in the ruby's real row, so
+ *  anchor into it (`rubyStart + 2` = base content start). Safe off a
+ *  wrap too (same row as the boundary).
+ *  At `atParaEnd`, anchor to the last character (`head - 1`), which is
+ *  reliably inside the real last column — EXCEPT when the paragraph ends
+ *  with a ruby: `head - 1` lands inside the ruby's content (the reading
+ *  `<rt>` end), whose rect is the superscript — a different column — so the
+ *  highlight slips one column back. Anchor into the trailing ruby's BASE
+ *  instead (`rubyStart + 2` = its content start), which renders in the
+ *  ruby's real column. */
+const highlightAnchorPos = (sel: Selection, atParaEnd: boolean): number => {
+  const head = sel.head;
+  const after = sel.empty ? sel.$head.nodeAfter : null;
+  const before = atParaEnd ? sel.$head.nodeBefore : null;
+  if (after?.type.name === 'ruby') return head + 2;
+  if (before?.type.name === 'ruby') return head - before.nodeSize + 2;
+  return atParaEnd ? head - 1 : head;
+};
+
+/** The steady (non-composing) highlight anchor rect: the boundary-caret
+ *  widget where it is the visible caret, then the model anchor
+ *  (`highlightAnchorPos`), disambiguated at a soft-wrap seam by the bar's
+ *  real paint (`softWrapBarRect`). */
+const steadyCaretRect = (view: EditorView, caretShape: CaretShape): CaretRect | null => {
+  const sel = view.state.selection;
+  const head = sel.head;
+  if (sel.empty && caretShape === 'bar') {
+    const b = boundaryCaretBox(view);
+    if (b) return b;
+  }
+  // At the END of a non-empty paragraph whose last visual line is FULL,
+  // `coordsAtPos(head)` (both sides) returns the START of the empty next
+  // column/page — the PREVIOUS reading column from where the native caret
+  // actually renders (the end of the last line). The line-numbers
+  // highlight would then land one column back ("previous line"). Anchor
+  // the line-pick to the last character (`head - 1`), which is reliably
+  // inside the real last column. Harmless when the last line isn't full
+  // (same line as `head`). Only the overlay uses this; the native-caret
+  // seam (`__vedCaretRect`) is unaffected.
+  const atParaEnd = sel.empty && head === sel.$head.end() && head > sel.$head.start();
+  const anchor = highlightAnchorPos(sel, atParaEnd);
+  if (anchor === head && sel.empty && !atParaEnd && caretShape === 'bar') {
+    const seam = softWrapBarRect(view, head);
+    if (seam) return seam;
+  }
+  return view.coordsAtPos(anchor);
+};
+
+/** A caret at a mid-paragraph SOFT-WRAP seam is one model position on
+ *  two lines: `coordsAtPos` (side 1) reports the NEXT line's start,
+ *  while the native BAR paints at the previous line's end — the
+ *  highlight sat one line off the visible cursor. When the two sides
+ *  disagree across lines, follow the caret's real paint: the DOM
+ *  selection rect for the bar (its non-degenerate rect IS the bar).
+ *  Null when the sides agree (the caller keeps its anchor). The BLOCK
+ *  cursor covers the character AFTER the caret — the next line's first
+ *  character — so it keeps the side-1 line (the caller never asks). */
+const softWrapBarRect = (view: EditorView, head: number): CaretRect | null => {
+  const r1 = view.coordsAtPos(head);
+  const r0 = view.coordsAtPos(head, -1);
+  const pitch = Number.parseFloat(getComputedStyle(view.dom).lineHeight) || 28;
+  const disagree = Math.abs(r1.left - r0.left) > pitch / 2 || Math.abs(r1.top - r0.top) > pitch / 2;
+  if (!disagree) return null;
+  const ds = view.dom.ownerDocument.getSelection();
+  const dr = ds?.rangeCount && ds.isCollapsed ? ds.getRangeAt(0).getBoundingClientRect() : null;
+  return dr && (dr.width > 0 || dr.height > 0 || dr.top !== 0 || dr.left !== 0)
+    ? { top: dr.top, bottom: dr.bottom, left: dr.left, right: dr.right }
+    : r0;
+};
+
+/** The ved editor: Japanese vertical writing (tategaki) with ruby, behind a
+ *  plain-string interface (`VedEditorProps`). Uncontrolled — it owns the
+ *  document while mounted; the shell supplies initial state and listens. */
 export const VedEditor = (props: VedEditorProps): React.JSX.Element => {
   const { writingMode, appearPolicy } = props;
   const vert = isVerticalMode(writingMode);
@@ -310,6 +429,55 @@ export const VedEditor = (props: VedEditorProps): React.JSX.Element => {
     const handleKeyDown = createKeyHandler({ session, commands, commandCtx, live, policyClassRef, goalInlineRef });
     const onBeforeInput = createBeforeInputHandler(session, policyClassRef);
 
+    /** dispatchTransaction's measurement tail (same flush as the update).
+     *  An edit re-wraps lines → full re-measure. A caret-only move keeps the
+     *  geometry → SYNCHRONOUS highlight-only pass from the cached lines (no
+     *  O(doc) re-measure, and no rAF wait — the highlight lands in the same
+     *  frame as the caret instead of one frame behind it). A composing edit
+     *  first pads the preedit to whole cells (the raw romaji letter is a HALF
+     *  cell and the wrap point would flip per key — ime-cell-pad.ts), THEN
+     *  measures the page gaps against the padded layout. An edit's layout
+     *  change starts at its own line — suffix re-measure. */
+    const scheduleMeasuresOnDispatch = (tr: Transaction): void => {
+      if (tr.docChanged) lineNumbersRef.current?.schedule();
+      if (tr.docChanged && view.composing) imeCellPadRef.current?.update();
+      if (tr.docChanged) pageGapsRef.current?.schedule(false);
+      else if (tr.selectionSet) lineNumbersRef.current?.refreshCaret();
+    };
+    /** dispatchTransaction's commit tail: caret reveal (PM's scrollIntoView
+     *  doesn't survive the post-commit repair, nor handle vertical-rl
+     *  multicol) and history. History/onTextChange are skipped DURING
+     *  composition (view.composing); the committed IME text is recorded by
+     *  onCompositionEnd instead. */
+    const commitOnDispatch = (tr: Transaction, next: EditorState): void => {
+      if (tr.docChanged && !view.composing) revealSoon();
+      if (tr.docChanged && !view.composing && !rebuildingRef.current) {
+        session.commitHistory(next);
+      }
+    };
+    /** dispatchTransaction's last step: the undo anchor and the selection ping. */
+    const trackSelectionOnDispatch = (tr: Transaction, next: EditorState): void => {
+      // Track the caret as the pre-edit anchor for the NEXT edit's undo target.
+      // Frozen while composing so the WHOLE IME word's anchor is its start —
+      // and equally while the doc is AHEAD of the committed baseline: an IME
+      // commit can land in a still-composing transaction (history rightly
+      // skipped), and a selection-only transaction in the gap before the
+      // deferred compositionend commit would otherwise re-anchor with an
+      // offset measured in the NEW text. That entry's undo then restored a
+      // caret INSIDE the old text's collapsed ruby markup — not a caret
+      // stop, so the cursor vanished until the next move surfaced it at the
+      // ruby's end (mozc/ruby-undo-caret.ts). `beforeOffsetRef` indexes
+      // lastTextRef's text BY CONTRACT; only update when they agree
+      // (serialize is doc-identity memoized — O(1) here).
+      if (!view.composing && serialize(next.doc) === lastTextRef.current) {
+        beforeOffsetRef.current = posToOffset(next.doc, next.selection.head);
+      }
+      // A PING, deliberately payload-free: whoever listens pulls offsets
+      // lazily through the extension seam, so a caret move with no
+      // listeners costs O(1) here (no posToOffset). Never mid-composition.
+      if ((tr.selectionSet || tr.docChanged) && !view.composing) live.current.onSelectionChange?.();
+    };
+
     const view = new EditorView(mount, {
       state,
       // The ruby renders via the schema's toDOM (markup shown as pseudo-elements
@@ -328,46 +496,9 @@ export const VedEditor = (props: VedEditorProps): React.JSX.Element => {
           if (fix) next = next.apply(fix);
         }
         view.updateState(next);
-        // An edit re-wraps lines → full re-measure. A caret-only move keeps the
-        // geometry → SYNCHRONOUS highlight-only pass from the cached lines (no
-        // O(doc) re-measure, and no rAF wait — the highlight lands in the same
-        // frame as the caret instead of one frame behind it).
-        if (tr.docChanged) lineNumbersRef.current?.schedule();
-        // A composing edit first pads the preedit to whole cells (the raw
-        // romaji letter is a HALF cell and the wrap point would flip per
-        // key — ime-cell-pad.ts), THEN measures the page gaps against the
-        // padded layout. Both run in this same flush.
-        if (tr.docChanged && view.composing) imeCellPadRef.current?.update();
-        // An edit's layout change starts at its own line — suffix re-measure.
-        if (tr.docChanged) pageGapsRef.current?.schedule(false);
-        else if (tr.selectionSet) lineNumbersRef.current?.refreshCaret();
-        // Keep the caret in view after edits — PM's scrollIntoView doesn't
-        // survive the post-commit repair, nor handle vertical-rl multicol.
-        if (tr.docChanged && !view.composing) revealSoon();
-        // History/onTextChange are skipped DURING composition (view.composing);
-        // the committed IME text is recorded by onCompositionEnd instead.
-        if (tr.docChanged && !view.composing && !rebuildingRef.current) {
-          session.commitHistory(next);
-        }
-        // Track the caret as the pre-edit anchor for the NEXT edit's undo target.
-        // Frozen while composing so the WHOLE IME word's anchor is its start —
-        // and equally while the doc is AHEAD of the committed baseline: an IME
-        // commit can land in a still-composing transaction (history rightly
-        // skipped), and a selection-only transaction in the gap before the
-        // deferred compositionend commit would otherwise re-anchor with an
-        // offset measured in the NEW text. That entry's undo then restored a
-        // caret INSIDE the old text's collapsed ruby markup — not a caret
-        // stop, so the cursor vanished until the next move surfaced it at the
-        // ruby's end (mozc/ruby-undo-caret.ts). `beforeOffsetRef` indexes
-        // lastTextRef's text BY CONTRACT; only update when they agree
-        // (serialize is doc-identity memoized — O(1) here).
-        if (!view.composing && serialize(next.doc) === lastTextRef.current) {
-          beforeOffsetRef.current = posToOffset(next.doc, next.selection.head);
-        }
-        // A PING, deliberately payload-free: whoever listens pulls offsets
-        // lazily through the extension seam, so a caret move with no
-        // listeners costs O(1) here (no posToOffset). Never mid-composition.
-        if ((tr.selectionSet || tr.docChanged) && !view.composing) live.current.onSelectionChange?.();
+        scheduleMeasuresOnDispatch(tr);
+        commitOnDispatch(tr, next);
+        trackSelectionOnDispatch(tr, next);
       },
       handleKeyDown,
       handleDOMEvents: {
@@ -501,122 +632,54 @@ export const VedEditor = (props: VedEditorProps): React.JSX.Element => {
     // handlers. The highlight follows the caret, so it needs the caret's
     // viewport rect — coordsAtPos can throw mid-update, hence the guard.
     // The last composing highlight anchor — a sticky hold, reset per
-    // composition (see the composing branch below).
+    // composition (see composingCaretRect).
     let composingHl: CaretRect | null = null;
+    /** WHILE COMPOSING (vertical modes), anchor the highlight to the
+     *  COMPOSITION'S TAIL computed from the MODEL — the composition start
+     *  plus the preedit's length — never the live selection head: the
+     *  head flips per keystroke between the tail and the pinned caret
+     *  (Blink re-tails it, ime-caret-pin re-seats it) and a frame paints
+     *  between the two, so the current-line highlight visibly flickered
+     *  across the page boundary on every key. The model tail is stable
+     *  per key and follows the typing point. On top of that, HOLD the
+     *  previous line on a backward line flip: the tail's LAST character
+     *  wraps back and forth while the raw fullwidth romaji converts to
+     *  kana at a line's end, which would flip the picked line per key —
+     *  the hold lets the highlight cross a boundary exactly once,
+     *  forward. (Mozc-verified: candidate-window-pos.ts.) */
+    const composingCaretRect = (): CaretRect => {
+      const doc = view.state.doc;
+      const preedit = Math.max(0, serialize(doc).length - lastTextRef.current.length);
+      const pos = offsetToPos(doc, beforeOffsetRef.current + preedit);
+      // A tail at its PARAGRAPH'S END can report a caret rect ON the
+      // boundary between its own band and the previous one (the after-side
+      // rect of the last char) — the overlay's band pick then ties into
+      // the PREVIOUS column, and the composing steady hold below (rightly,
+      // for jitter) refuses the correction for the rest of the composition:
+      // the highlight sat one line back while typing at the end of an
+      // all-ruby multi-row paragraph (mozc/ruby-hl-compose.ts). Anchor to
+      // the last preedit char's LEADING edge (`pos - 1`, side 1) instead —
+      // interior to the tail's real column by construction, and still the
+      // NEW column when the tail char itself wraps (forward crossing).
+      const atEnd = preedit > 0 && pos === doc.resolve(pos).end();
+      const r = caretCoords(view, atEnd ? pos - 1 : pos);
+      if (composingHl) {
+        const pitch = Number.parseFloat(getComputedStyle(view.dom).lineHeight) || 28;
+        const mid = (a: CaretRect): number => (a.left + a.right) / 2;
+        const sameLine = Math.abs(mid(r) - mid(composingHl)) <= pitch / 2;
+        // Forward = the next column (leftward in vertical-rl) or a band
+        // wrap (a jump far down the block axis).
+        const forward = composingHl.left - r.left > pitch / 2 || r.top > composingHl.top + pitch * 2;
+        if (!sameLine && !forward) return composingHl;
+      }
+      composingHl = r;
+      return r;
+    };
     const caretRect = (): CaretRect | null => {
       try {
-        // WHILE COMPOSING (vertical modes), anchor the highlight to the
-        // COMPOSITION'S TAIL computed from the MODEL — the composition start
-        // plus the preedit's length — never the live selection head: the
-        // head flips per keystroke between the tail and the pinned caret
-        // (Blink re-tails it, ime-caret-pin re-seats it) and a frame paints
-        // between the two, so the current-line highlight visibly flickered
-        // across the page boundary on every key. The model tail is stable
-        // per key and follows the typing point. On top of that, HOLD the
-        // previous line on a backward line flip: the tail's LAST character
-        // wraps back and forth while the raw fullwidth romaji converts to
-        // kana at a line's end, which would flip the picked line per key —
-        // the hold lets the highlight cross a boundary exactly once,
-        // forward. (Mozc-verified: candidate-window-pos.ts.)
-        if (view.composing && isVerticalMode(live.current.writingMode)) {
-          const doc = view.state.doc;
-          const preedit = Math.max(0, serialize(doc).length - lastTextRef.current.length);
-          const pos = offsetToPos(doc, beforeOffsetRef.current + preedit);
-          // A tail at its PARAGRAPH'S END can report a caret rect ON the
-          // boundary between its own band and the previous one (the after-side
-          // rect of the last char) — the overlay's band pick then ties into
-          // the PREVIOUS column, and the composing steady hold below (rightly,
-          // for jitter) refuses the correction for the rest of the composition:
-          // the highlight sat one line back while typing at the end of an
-          // all-ruby multi-row paragraph (mozc/ruby-hl-compose.ts). Anchor to
-          // the last preedit char's LEADING edge (`pos - 1`, side 1) instead —
-          // interior to the tail's real column by construction, and still the
-          // NEW column when the tail char itself wraps (forward crossing).
-          const atEnd = preedit > 0 && pos === doc.resolve(pos).end();
-          const r = caretCoords(view, atEnd ? pos - 1 : pos);
-          if (composingHl) {
-            const pitch = Number.parseFloat(getComputedStyle(view.dom).lineHeight) || 28;
-            const mid = (a: CaretRect): number => (a.left + a.right) / 2;
-            const sameLine = Math.abs(mid(r) - mid(composingHl)) <= pitch / 2;
-            // Forward = the next column (leftward in vertical-rl) or a band
-            // wrap (a jump far down the block axis).
-            const forward = composingHl.left - r.left > pitch / 2 || r.top > composingHl.top + pitch * 2;
-            if (!sameLine && !forward) return composingHl;
-          }
-          composingHl = r;
-          return r;
-        }
+        if (view.composing && isVerticalMode(live.current.writingMode)) return composingCaretRect();
         composingHl = null;
-        const sel = view.state.selection;
-        const head = sel.head;
-        // The boundary-caret WIDGET is the visible caret wherever the head
-        // has no text-node home — the seam between two collapsed rubies,
-        // i.e. EVERY position of an all-ruby line, its end included. Its box
-        // is the cursor the user sees: at a seam ENDING a line it paints at
-        // that line's end, while the model anchors below (head+2, into the
-        // next ruby's base) name the NEXT line — the highlight sat one line
-        // off the visible caret (`line-highlight-wrap-end.ts`). Bar shape
-        // only: the block caret covers the character AFTER the caret and
-        // keeps that character's line.
-        if (sel.empty && caretShapeRef.current === 'bar') {
-          const b = view.dom.querySelector('.vedBoundaryCaret')?.getBoundingClientRect();
-          if (b && (b.width > 1 || b.height > 1)) {
-            return { top: b.top, bottom: b.bottom, left: b.left, right: b.right };
-          }
-        }
-        // At the END of a non-empty paragraph whose last visual line is FULL,
-        // `coordsAtPos(head)` (both sides) returns the START of the empty next
-        // column/page — the PREVIOUS reading column from where the native caret
-        // actually renders (the end of the last line). The line-numbers
-        // highlight would then land one column back ("previous line"). Anchor
-        // the line-pick to the last character (`head - 1`), which is reliably
-        // inside the real last column. Harmless when the last line isn't full
-        // (same line as `head`). Only the overlay uses this; the native-caret
-        // seam (`__vedCaretRect`) is unaffected.
-        const atParaEnd = sel.empty && head === sel.$head.end() && head > sel.$head.start();
-        // A caret at a ruby's LEADING boundary (the next node is a ruby): at a
-        // soft wrap that boundary is ambiguous and `coordsAtPos(head)` can
-        // report the PREVIOUS visual row's end — the highlight then slips one
-        // line back when a ruby starts the 2nd+ row of a wrapped paragraph.
-        // The ruby's base GLYPH is unambiguously in the ruby's real row, so
-        // anchor into it (`rubyStart + 2` = base content start). Safe off a
-        // wrap too (same row as the boundary).
-        const after = sel.empty ? sel.$head.nodeAfter : null;
-        // EXCEPT when the paragraph ends with a ruby: `head - 1` lands inside the
-        // ruby's content (the reading `<rt>` end), whose rect is the superscript —
-        // a different column — so the highlight slips one column back. Anchor into
-        // the trailing ruby's BASE instead (`rubyStart + 2` = its content start),
-        // which renders in the ruby's real column.
-        const before = atParaEnd ? sel.$head.nodeBefore : null;
-        const anchor =
-          after?.type.name === 'ruby'
-            ? head + 2
-            : before?.type.name === 'ruby'
-              ? head - before.nodeSize + 2
-              : atParaEnd
-                ? head - 1
-                : head;
-        // A caret at a mid-paragraph SOFT-WRAP seam is one model position on
-        // two lines: `coordsAtPos` (side 1) reports the NEXT line's start,
-        // while the native BAR paints at the previous line's end — the
-        // highlight sat one line off the visible cursor. When the two sides
-        // disagree across lines, follow the caret's real paint: the DOM
-        // selection rect for the bar (its non-degenerate rect IS the bar).
-        // The BLOCK cursor covers the character AFTER the caret — the next
-        // line's first character — so it keeps the side-1 line.
-        if (anchor === head && sel.empty && !atParaEnd && caretShapeRef.current === 'bar') {
-          const r1 = view.coordsAtPos(head);
-          const r0 = view.coordsAtPos(head, -1);
-          const pitch = Number.parseFloat(getComputedStyle(view.dom).lineHeight) || 28;
-          if (Math.abs(r1.left - r0.left) > pitch / 2 || Math.abs(r1.top - r0.top) > pitch / 2) {
-            const ds = view.dom.ownerDocument.getSelection();
-            const dr = ds?.rangeCount && ds.isCollapsed ? ds.getRangeAt(0).getBoundingClientRect() : null;
-            return dr && (dr.width > 0 || dr.height > 0 || dr.top !== 0 || dr.left !== 0)
-              ? { top: dr.top, bottom: dr.bottom, left: dr.left, right: dr.right }
-              : r0;
-          }
-        }
-        return view.coordsAtPos(anchor);
+        return steadyCaretRect(view, caretShapeRef.current);
       } catch {
         return null;
       }
@@ -741,25 +804,16 @@ export const VedEditor = (props: VedEditorProps): React.JSX.Element => {
       pointerDraggingRef.current = false;
       walker.endGesture();
     };
-    // A press ends any line-move run and arms a drag (left button): cache the glyph
-    // geometry, record the anchor, and listen for the move/release.
-    const onPointerDown = (e: MouseEvent): void => {
-      goalInlineRef.current = null;
-      endDrag();
-      if (e.button !== 0) return;
-      // NO glyph measurement here: a plain in-content click never consumes the
-      // cache. Record the press point; the anchor (and the cache) resolve on the
-      // first drag move — or right below, for an empty-area press.
-      walker.beginGesture(e.clientX, e.clientY);
-      // A press on the EMPTY scroller area — outside the content element, e.g.
-      // left of the last line in Vertical/VerticalRows, whose content box hugs
-      // its text (Horizontal/VerticalColumns cover their page box, so there the
-      // browser resolves such clicks itself) — never reaches the contenteditable
-      // and moves no caret. Resolve it against the glyph cache (nearest glyph in
-      // reading order: past the document end → the document end) and set the
-      // model selection ourselves, snapping outside a collapsed ruby exactly
-      // like createSelectionBetween does for in-content clicks. Coordinates are
-      // checked against the client area so scrollbar presses stay untouched.
+    // A press on the EMPTY scroller area — outside the content element, e.g.
+    // left of the last line in Vertical/VerticalRows, whose content box hugs
+    // its text (Horizontal/VerticalColumns cover their page box, so there the
+    // browser resolves such clicks itself) — never reaches the contenteditable
+    // and moves no caret. Resolve it against the glyph cache (nearest glyph in
+    // reading order: past the document end → the document end) and set the
+    // model selection ourselves, snapping outside a collapsed ruby exactly
+    // like createSelectionBetween does for in-content clicks. Coordinates are
+    // checked against the client area so scrollbar presses stay untouched.
+    const resolveEmptyAreaPress = (e: MouseEvent): void => {
       const r = mount.getBoundingClientRect();
       const inClientArea =
         e.clientX - r.left - mount.clientLeft < mount.clientWidth &&
@@ -777,6 +831,18 @@ export const VedEditor = (props: VedEditorProps): React.JSX.Element => {
           view.focus();
         }
       }
+    };
+    // A press ends any line-move run and arms a drag (left button): cache the glyph
+    // geometry, record the anchor, and listen for the move/release.
+    const onPointerDown = (e: MouseEvent): void => {
+      goalInlineRef.current = null;
+      endDrag();
+      if (e.button !== 0) return;
+      // NO glyph measurement here: a plain in-content click never consumes the
+      // cache. Record the press point; the anchor (and the cache) resolve on the
+      // first drag move — or in resolveEmptyAreaPress, for an empty-area press.
+      walker.beginGesture(e.clientX, e.clientY);
+      resolveEmptyAreaPress(e);
       window.addEventListener('mousemove', onDragMove);
       window.addEventListener('mouseup', endDrag);
     };

@@ -70,14 +70,10 @@ export const useKeepScrollPosition = (
 /** The span of the PAGE containing the caret on the PAGED axis, or null
  *  outside the paged modes. Reveal target for revealCaretInScroller. The
  *  paged axis is vertical in VerticalColumns/HorizontalRows and horizontal in
- *  VerticalRows/HorizontalColumns (see pagedAxisIsY).
- *  - `columns` paging: the band (page row) is a real multicol fragment —
- *    physically periodic (colsPagePitch) — so its span is exact arithmetic
- *    over the content box.
- *  - `rows` paging: pages are arithmetic LINES whose physical positions drift
- *    with paragraph paddings, so the boundaries are read from the
- *    MEASURED `.ved-page-gap` widgets already in the DOM — each widget's rect
- *    spans its fattened last line + gap, so its center lies in the gap blank. */
+ *  VerticalRows/HorizontalColumns (see pagedAxisIsY); the span comes from
+ *  arithmetic bands (columnsPageSpan) or the measured gap widgets — each
+ *  widget's rect spans its fattened last line + gap, so its center lies in
+ *  the gap blank (rowsPageSpan). */
 const caretPageSpan = (
   scroller: HTMLElement,
   view: EditorView,
@@ -88,24 +84,47 @@ const caretPageSpan = (
   if (paging === 'continuous') return null;
   const vertical = isVerticalMode(mode);
   const content = view.dom.getBoundingClientRect();
-  if (paging === 'columns') {
-    // Bands stack along the inline axis: downward (vertical-rl) or rightward
-    // (horizontal-tb).
-    const pitch = measureGeom(scroller).colsPagePitch;
-    const cs = getComputedStyle(view.dom);
-    // padding-inline-start = the first band's head margin (top in vertical-rl,
-    // left in horizontal); the band period then repeats via column-gap.
-    const gutter = Number.parseFloat(vertical ? cs.paddingTop : cs.paddingLeft) || 0;
-    const pageExtent = pitch - (Number.parseFloat(cs.columnGap) || 0);
-    const mid = vertical ? (caret.top + caret.bottom) / 2 : (caret.left + caret.right) / 2;
-    const origin = vertical ? content.top : content.left;
-    const band = Math.max(0, Math.floor((mid - origin - gutter) / pitch));
-    const bandStart = origin + gutter + band * pitch;
-    return { lo: bandStart, hi: bandStart + pageExtent };
-  }
-  // rows paging: the page span between the two measured gap centers around
-  // the caret (the content edges at the ends). Pages tile leftward in
-  // vertical-rl, downward in horizontal-tb; order-independent either way.
+  return paging === 'columns'
+    ? columnsPageSpan(scroller, view, vertical, caret, content)
+    : rowsPageSpan(view, vertical, caret, content);
+};
+
+/** `columns` paging: the band is a real multicol fragment — physically
+ *  periodic (colsPagePitch) — so its span is exact arithmetic over the
+ *  content box. Bands stack along the inline axis: downward (vertical-rl)
+ *  or rightward (horizontal-tb). */
+const columnsPageSpan = (
+  scroller: HTMLElement,
+  view: EditorView,
+  vertical: boolean,
+  caret: { top: number; bottom: number; left: number; right: number },
+  content: DOMRect,
+): { lo: number; hi: number } => {
+  const pitch = measureGeom(scroller).colsPagePitch;
+  const cs = getComputedStyle(view.dom);
+  // padding-inline-start = the first band's head margin (top in vertical-rl,
+  // left in horizontal); the band period then repeats via column-gap.
+  const gutter = Number.parseFloat(vertical ? cs.paddingTop : cs.paddingLeft) || 0;
+  const pageExtent = pitch - (Number.parseFloat(cs.columnGap) || 0);
+  const mid = vertical ? (caret.top + caret.bottom) / 2 : (caret.left + caret.right) / 2;
+  const origin = vertical ? content.top : content.left;
+  const band = Math.max(0, Math.floor((mid - origin - gutter) / pitch));
+  const bandStart = origin + gutter + band * pitch;
+  return { lo: bandStart, hi: bandStart + pageExtent };
+};
+
+/** `rows` paging: the page span between the two measured `.ved-page-gap`
+ *  widget centers around the caret (the content edges at the ends) — pages
+ *  are arithmetic LINES whose physical positions drift with paragraph
+ *  paddings, so the boundaries are read from the widgets already in the DOM.
+ *  Pages tile leftward in vertical-rl, downward in horizontal-tb;
+ *  order-independent either way. */
+const rowsPageSpan = (
+  view: EditorView,
+  vertical: boolean,
+  caret: { top: number; bottom: number; left: number; right: number },
+  content: DOMRect,
+): { lo: number; hi: number } => {
   const mid = vertical ? (caret.left + caret.right) / 2 : (caret.top + caret.bottom) / 2;
   let lo = vertical ? content.left : content.top;
   let hi = vertical ? content.right : content.bottom;

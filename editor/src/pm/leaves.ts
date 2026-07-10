@@ -8,7 +8,7 @@
 // real characters in the text, a hidden delimiter still occupies a real
 // offset: a ruby boundary needs no synthetic pair of same-pixel caret points —
 // it is just two adjacent offsets separated by the (zero-width) delimiter.
-import { parse } from '../parse';
+import { parse, type Ruby } from '../parse';
 
 export type Appear = 'rich' | 'plain' | 'paragraph' | 'char';
 
@@ -32,6 +32,36 @@ export type Leaf = {
 // whole text — these run on every caret move (decorations, caret model).
 let leavesCache: { doc: string; leaves: Leaf[] } | null = null;
 
+/** Push one parsed ruby's leaves in offset order — lead delimiter, base body,
+ *  mid delimiter, reading, trail delimiter (an empty base/reading span emits
+ *  no leaf). `base` is the line's document offset, `li` its index, `r` the
+ *  ruby's id. */
+const pushRubyLeaves = (out: Leaf[], fmt: Ruby, base: number, li: number, r: number): void => {
+  out.push({
+    kind: 'delim',
+    from: base + fmt.delimFront[0],
+    to: base + fmt.delimFront[1],
+    line: li,
+    ruby: r,
+    edge: 'lead',
+  });
+  if (fmt.text[1] > fmt.text[0]) {
+    out.push({ kind: 'body', from: base + fmt.text[0], to: base + fmt.text[1], line: li, ruby: r, edge: null });
+  }
+  out.push({ kind: 'delim', from: base + fmt.sepMid[0], to: base + fmt.sepMid[1], line: li, ruby: r, edge: null });
+  if (fmt.ruby[1] > fmt.ruby[0]) {
+    out.push({ kind: 'rt', from: base + fmt.ruby[0], to: base + fmt.ruby[1], line: li, ruby: r, edge: null });
+  }
+  out.push({
+    kind: 'delim',
+    from: base + fmt.delimEnd[0],
+    to: base + fmt.delimEnd[1],
+    line: li,
+    ruby: r,
+    edge: 'trail',
+  });
+};
+
 /** All leaves of a document in offset order, including a `nl` leaf per line
  *  break so caret movement crosses paragraphs uniformly. Memoized on the text
  *  (one slot — callers pass the memoized `serialize` result). */
@@ -42,37 +72,13 @@ export const docLeaves = (doc: string): Leaf[] => {
   let base = 0;
   let rubyId = 0;
   for (let li = 0; li < lines.length; li++) {
-    // biome-ignore lint/style/noNonNullAssertion: index bounded by split length
     const line = lines[li]!;
     let cursor = 0;
     for (const fmt of parse(line)) {
       if (fmt.delimFront[0] > cursor) {
         out.push({ kind: 'plain', from: base + cursor, to: base + fmt.delimFront[0], line: li, ruby: -1, edge: null });
       }
-      const r = rubyId++;
-      out.push({
-        kind: 'delim',
-        from: base + fmt.delimFront[0],
-        to: base + fmt.delimFront[1],
-        line: li,
-        ruby: r,
-        edge: 'lead',
-      });
-      if (fmt.text[1] > fmt.text[0]) {
-        out.push({ kind: 'body', from: base + fmt.text[0], to: base + fmt.text[1], line: li, ruby: r, edge: null });
-      }
-      out.push({ kind: 'delim', from: base + fmt.sepMid[0], to: base + fmt.sepMid[1], line: li, ruby: r, edge: null });
-      if (fmt.ruby[1] > fmt.ruby[0]) {
-        out.push({ kind: 'rt', from: base + fmt.ruby[0], to: base + fmt.ruby[1], line: li, ruby: r, edge: null });
-      }
-      out.push({
-        kind: 'delim',
-        from: base + fmt.delimEnd[0],
-        to: base + fmt.delimEnd[1],
-        line: li,
-        ruby: r,
-        edge: 'trail',
-      });
+      pushRubyLeaves(out, fmt, base, li, rubyId++);
       cursor = fmt.delimEnd[1];
     }
     if (cursor < line.length) {

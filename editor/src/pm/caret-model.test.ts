@@ -72,6 +72,17 @@ const genDoc = (seed: number): string => {
   return out;
 };
 
+/** The nearest stop strictly beyond `offset` in the direction (for a caret NOT
+ *  on a stop — the recovery snap), or null past the last one. */
+const specNearestBeyond = (stops: number[], offset: number, reverse: boolean): number | null => {
+  if (reverse) {
+    for (let i = stops.length - 1; i >= 0; i--) if (stops[i]! < offset) return stops[i]!;
+  } else {
+    for (let i = 0; i < stops.length; i++) if (stops[i]! > offset) return stops[i]!;
+  }
+  return null;
+};
+
 /** The ORIGINAL whole-list algorithm, as the oracle. */
 const specNext = (doc: string, offset: number, policy: (typeof POLICIES)[number], reverse: boolean): number => {
   const stops = caretStops(doc, offset, policy);
@@ -82,12 +93,7 @@ const specNext = (doc: string, offset: number, policy: (typeof POLICIES)[number]
     if (t < 0 || t >= stops.length) return offset;
     return stops[t]!;
   }
-  if (reverse) {
-    for (let i = stops.length - 1; i >= 0; i--) if (stops[i]! < offset) return stops[i]!;
-  } else {
-    for (let i = 0; i < stops.length; i++) if (stops[i]! > offset) return stops[i]!;
-  }
-  return offset;
+  return specNearestBeyond(stops, offset, reverse) ?? offset;
 };
 
 describe('local queries ≡ the caretStops spec', () => {

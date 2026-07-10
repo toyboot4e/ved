@@ -27,6 +27,180 @@ export type PageGapMeasure = {
   readonly cancel: () => void;
 };
 
+/** The suffix cache of one measure pass: the layout key it is valid under
+ *  (text + pitch + orientation + page shape) and the measured visual-line
+ *  END offsets — offsets, never rects: an offset is frame-independent,
+ *  immune to scrolls and widget-induced shifts. */
+type GapCache = {
+  text: string;
+  pitch: number;
+  vertical: boolean;
+  linesPerPage: number;
+  pagesPerBand: number;
+  lineEnds: number[];
+};
+
+// Each measured boundary: its placement plus the neighboring visual-line
+// end offsets (the composing relocation keeps a trapped gap on the right
+// line with them).
+type MeasuredGap = { g: PageGapPos; prevLineEnd: number; nextLineEnd: number | undefined };
+
+/** The reusable prefix: cached visual-line ends strictly before the first
+ *  changed model line. `serialize` is memoized per doc version (same string
+ *  instance), so the identity check catches a text-preserving transaction
+ *  (ruby repair, decoration meta) outright — measure nothing. Sound only
+ *  while the expanded set is caret-INDEPENDENT (Rich: none; Plain: all) and
+ *  the layout key is unchanged; anything else measures from line 0. */
+const reusablePrefix = (
+  cache: GapCache | null,
+  policy: Appear,
+  cur: Pick<GapCache, 'text' | 'pitch' | 'vertical' | 'linesPerPage' | 'pagesPerBand'>,
+  lineCount: number,
+): { fromLine: number; fromOff: number; prefixEnds: number[] } => {
+  const usable =
+    cache !== null &&
+    (policy === 'rich' || policy === 'plain') &&
+    cache.pitch === cur.pitch &&
+    cache.vertical === cur.vertical &&
+    cache.linesPerPage === cur.linesPerPage &&
+    cache.pagesPerBand === cur.pagesPerBand;
+  if (!usable || cache === null) return { fromLine: 0, fromOff: 0, prefixEnds: [] };
+  if (cache.text === cur.text) return { fromLine: lineCount, fromOff: 0, prefixEnds: cache.lineEnds };
+  const old = cache.text;
+  const text = cur.text;
+  const n = Math.min(old.length, text.length);
+  let i = 0;
+  while (i < n && old.charCodeAt(i) === text.charCodeAt(i)) i++;
+  const fromOff = text.lastIndexOf('\n', i - 1) + 1; // start of the first changed line
+  return { fromLine: lineOf(text, fromOff), fromOff, prefixEnds: cache.lineEnds.filter((e) => e < fromOff) };
+};
+
+/** Glyph-measure the suffix model lines (`fromLine`.., starting at plain
+ *  offset `fromOff`) into per-glyph LineItems. Empty paragraphs are visual
+ *  lines with no glyphs — they contribute their own offset instead. */
+const measureSuffixItems = (
+  view: EditorView,
+  walker: Pick<GlyphWalker, 'paraGlyphs' | 'lineGlyphOffsets'>,
+  lines: readonly string[],
+  fromLine: number,
+  fromOff: number,
+  vertical: boolean,
+): LineItem[] => {
+  const byLine = walker.lineGlyphOffsets();
+  const paras = view.dom.querySelectorAll(':scope > p');
+  const items: LineItem[] = [];
+  const buf: Glyph[] = [];
+  let off = fromOff;
+  for (let i = fromLine; i < lines.length && i < paras.length; i++) {
+    const p = paras[i]!;
+    if (lines[i]!.length === 0)
+      items.push({ endOff: off, b: vertical ? p.getBoundingClientRect().left : p.getBoundingClientRect().top });
+    else if (byLine[i]?.length) {
+      buf.length = 0;
+      walker.paraGlyphs(p, byLine[i]!, buf);
+      for (const g of buf) items.push({ endOff: g.off + 1, b: vertical ? g.rect.left : g.rect.top });
+    }
+    off += lines[i]!.length + 1;
+  }
+  return items;
+};
+
+/** While composing, relocate any boundary trapped INSIDE the composition
+ *  text node — a widget positioned there cannot render (PM's composition
+ *  protection re-covers the node whole, dropping the widget — verified
+ *  against real mozc), so it is rendered at a node EDGE, picked by line. The
+ *  node's END — the first renderable spot, one line late — is the right home
+ *  only while it sits on the boundary's NEXT line: rendered as a gap-BEFORE
+ *  widget (ved-page-gap-before) whose extra width opens toward the PREVIOUS
+ *  line, the gap still appears between the right lines. A long composition
+ *  running further would drag the gap lines away and the next page's first
+ *  line jammed against the previous page — then prefer the node's START:
+ *  when it sits on the boundary's OWN line, a normal widget there fattens
+ *  exactly that line. A node engulfing both lines keeps the (late) end
+ *  fallback: renderable and stable beats absent. Returns null when the
+ *  preedit can't be located (no DOM selection during a conversion
+ *  transient) — the caller skips this round; the next update retries.
+ *  Verified end to end against real mozc (mozc/gap-compose.ts). */
+const relocateComposingGaps = (view: EditorView, measured: MeasuredGap[]): PageGapPos[] | null => {
+  const sel = view.dom.ownerDocument.getSelection();
+  let focus = sel?.focusNode && sel.focusNode.nodeType === 3 ? sel.focusNode : null;
+  // Mid-composition the DOM selection can sit at the ELEMENT level (a
+  // seam between rubies); the observer's last-changed text node is the
+  // composition node then — the same PM internal ime-survival.ts leans
+  // on (mozc/space-convert.ts guards that contract). Skipping the round
+  // here instead left the STALE mapped widget in place, and one inside
+  // the composition node cannot render — the page gap vanished and the
+  // next page's first line jammed against the previous page.
+  focus ??= (view as unknown as { domObserver: { lastChangedTextNode: Text | null } }).domObserver.lastChangedTextNode;
+  if (!(focus && focus.nodeType === 3 && view.dom.contains(focus))) return null;
+  try {
+    const from = view.posAtDOM(focus, 0);
+    const to = from + (focus.nodeValue?.length ?? 0);
+    const fromOff = posToOffset(view.state.doc, from);
+    const toOff = posToOffset(view.state.doc, to);
+    return measured.map(({ g, prevLineEnd, nextLineEnd }) => {
+      if (!(g.pos > from && g.pos < to)) return g;
+      if (nextLineEnd === undefined || toOff <= nextLineEnd) return { pos: to, before: true };
+      if (fromOff > prevLineEnd) return { pos: from };
+      return { pos: to, before: true };
+    });
+  } catch {
+    return null;
+  }
+};
+
+/** Pages per band for the current mode — rows: one endless band (every page
+ *  boundary gets a widget); columns with pages-per-row > 1: widgets at
+ *  INTRA-band boundaries only (the band break itself separates pages via
+ *  fragmentation); 0: no gap widgets (the set empties, nothing measured). */
+const gapPagesPerBand = (rowsHere: boolean, multiColHere: boolean, pagesPerRow: number): number => {
+  if (rowsHere) return Number.POSITIVE_INFINITY;
+  return multiColHere && pagesPerRow > 1 ? pagesPerRow : 0;
+};
+
+/** The widget positions for this round: the measured placements — relocated
+ *  around a live composition (relocateComposingGaps); null skips the round. */
+const resolveGaps = (view: EditorView, measured: MeasuredGap[]): PageGapPos[] | null =>
+  view.composing ? relocateComposingGaps(view, measured) : measured.map((m) => m.g);
+
+/** Rows: the block-end padding RESERVING the remainder of a partial last
+ *  page, so the page exists as a whole (scrollable blank space) and the
+ *  folio centers on the entire page. Padding never re-wraps lines (it
+ *  extends the box past them), so one pass is stable. */
+const rowsReserve = (view: EditorView, mount: HTMLElement, measuredLineCount: number): string => {
+  const linesPerPage = Number.parseFloat(getComputedStyle(mount).getPropertyValue('--page-lines')) || 20;
+  const pitch = Number.parseFloat(getComputedStyle(view.dom).lineHeight) || 28;
+  const deficit = (linesPerPage - (measuredLineCount % linesPerPage)) % linesPerPage;
+  return deficit > 0 ? `${deficit * pitch}px` : '';
+};
+
+/** Apply the reserve on the block-end side (left in vertical-rl, bottom in
+ *  horizontal-tb), clearing the OTHER side's stale reserve (a mode switch
+ *  flips the block-end axis). Returns whether the reserve changed. */
+const applyReserve = (view: EditorView, reserve: string): boolean => {
+  const verticalHere = getComputedStyle(view.dom).writingMode.startsWith('vertical');
+  const reserveProp = verticalHere ? 'paddingLeft' : 'paddingBottom';
+  const staleProp = verticalHere ? 'paddingBottom' : 'paddingLeft';
+  if (view.dom.style[staleProp] !== '') view.dom.style[staleProp] = '';
+  const reserveChanged = view.dom.style[reserveProp] !== reserve;
+  if (reserveChanged) view.dom.style[reserveProp] = reserve;
+  return reserveChanged;
+};
+
+/** Whether `gaps` matches the LIVE widget identities (the plugin maps its
+ *  set through edits between dispatches) — a cached copy of the last
+ *  dispatch goes stale the moment an edit maps the widgets, and a stale
+ *  "unchanged" would leave a drifted gap in place (composing edits hit
+ *  exactly that: the measured boundary offset is often numerically
+ *  identical while the mapped widget has moved). */
+const gapSetMatchesLive = (view: EditorView, gaps: readonly PageGapPos[]): boolean => {
+  const wanted = gaps.map(pageGapDecoKey);
+  const live = (pageGapKey.getState(view.state)?.find() ?? []).map((d) =>
+    pageGapDecoKey({ pos: d.from, before: `${(d.spec as { key?: string }).key}`.endsWith('-before') }),
+  );
+  return wanted.length === live.length && wanted.every((k, i) => k === live[i]);
+};
+
 export const createPageGapMeasure = (
   view: EditorView,
   mount: HTMLElement,
@@ -61,18 +235,7 @@ export const createPageGapMeasure = (
   // schedules with `full`, dropping the cache.
   let pageGapRaf = 0;
   let measuredLineCount = 0; // visual lines seen by the last measurePageGaps
-  let gapCache: {
-    text: string;
-    pitch: number;
-    vertical: boolean;
-    linesPerPage: number;
-    pagesPerBand: number;
-    lineEnds: number[];
-  } | null = null;
-  // Each measured boundary: its placement plus the neighboring visual-line
-  // end offsets (the composing relocation keeps a trapped gap on the right
-  // line with them).
-  type MeasuredGap = { g: PageGapPos; prevLineEnd: number; nextLineEnd: number | undefined };
+  let gapCache: GapCache | null = null;
   const measurePageGaps = (pagesPerBand: number): MeasuredGap[] => {
     const linesPerPage = Number.parseFloat(getComputedStyle(mount).getPropertyValue('--page-lines')) || 20;
     const contentCs = getComputedStyle(view.dom);
@@ -83,53 +246,13 @@ export const createPageGapMeasure = (
     const vertical = contentCs.writingMode.startsWith('vertical');
     const text = serialize(view.state.doc);
     const lines = text.split('\n');
-    const policy = getPolicy();
-    const usable =
-      gapCache !== null &&
-      (policy === 'rich' || policy === 'plain') &&
-      gapCache.pitch === pitch &&
-      gapCache.vertical === vertical &&
-      gapCache.linesPerPage === linesPerPage &&
-      gapCache.pagesPerBand === pagesPerBand;
-    // The reusable prefix: cached visual-line ends strictly before the first
-    // changed model line. `serialize` is memoized per doc version (same
-    // string instance), so the identity check catches a text-preserving
-    // transaction (ruby repair, decoration meta) outright — measure nothing.
-    let fromLine = 0;
-    let fromOff = 0;
-    let prefixEnds: number[] = [];
-    if (usable && gapCache) {
-      if (gapCache.text === text) {
-        fromLine = lines.length;
-        prefixEnds = gapCache.lineEnds;
-      } else {
-        const old = gapCache.text;
-        const n = Math.min(old.length, text.length);
-        let i = 0;
-        while (i < n && old.charCodeAt(i) === text.charCodeAt(i)) i++;
-        fromOff = text.lastIndexOf('\n', i - 1) + 1; // start of the first changed line
-        fromLine = lineOf(text, fromOff);
-        prefixEnds = gapCache.lineEnds.filter((e) => e < fromOff);
-      }
-    }
-    // Glyph-measure the suffix lines. Empty paragraphs are visual lines with
-    // no glyphs — they contribute their own offset instead.
-    const byLine = walker.lineGlyphOffsets();
-    const paras = view.dom.querySelectorAll(':scope > p');
-    const items: LineItem[] = [];
-    const buf: Glyph[] = [];
-    let off = fromOff;
-    for (let i = fromLine; i < lines.length && i < paras.length; i++) {
-      const p = paras[i]!;
-      if (lines[i]!.length === 0)
-        items.push({ endOff: off, b: vertical ? p.getBoundingClientRect().left : p.getBoundingClientRect().top });
-      else if (byLine[i]?.length) {
-        buf.length = 0;
-        walker.paraGlyphs(p, byLine[i]!, buf);
-        for (const g of buf) items.push({ endOff: g.off + 1, b: vertical ? g.rect.left : g.rect.top });
-      }
-      off += lines[i]!.length + 1;
-    }
+    const { fromLine, fromOff, prefixEnds } = reusablePrefix(
+      gapCache,
+      getPolicy(),
+      { text, pitch, vertical, linesPerPage, pagesPerBand },
+      lines.length,
+    );
+    const items = measureSuffixItems(view, walker, lines, fromLine, fromOff, vertical);
     const lineEnds = prefixEnds.concat(visualLineEnds(items, pitch, vertical));
     // Test seams: `__vedGapLines` counts the model lines glyph-measured per
     // gap pass (an end-of-doc edit must measure only the tail, not the
@@ -157,101 +280,24 @@ export const createPageGapMeasure = (
     clearTimeout(pageGapTimer);
     pageGapRaf = 0;
     pageGapTimer = 0;
-    // Rows: one endless band — every page boundary gets a widget. Columns
-    // with pages-per-row > 1: widgets at INTRA-band boundaries only (the
-    // band break itself separates pages via fragmentation).
     const rowsHere = view.dom.classList.contains(styles.rowsMode ?? '');
     const multiColHere = view.dom.classList.contains(styles.multiColMode ?? '');
     const pagesPerRow = Number.parseFloat(getComputedStyle(mount).getPropertyValue('--pages-per-row')) || 1;
-    const measured = rowsHere
-      ? measurePageGaps(Number.POSITIVE_INFINITY)
-      : multiColHere && pagesPerRow > 1
-        ? measurePageGaps(pagesPerRow)
-        : [];
-    const positions = measured.map((m) => m.g);
+    const pagesPerBand = gapPagesPerBand(rowsHere, multiColHere, pagesPerRow);
+    const measured = pagesPerBand > 0 ? measurePageGaps(pagesPerBand) : [];
     // COMPOSING is measured too: the preedit re-wraps the page's last line,
     // and a stale widget (riding the edit's mapping) drifts onto the NEXT
     // page's first line — that line then jams against this page's last for
     // the whole composition, with a double gap after it. The dispatch below
     // is composition-safe (the preedit text node survives a redraw — see the
     // conversion repair at view creation) EXCEPT a widget positioned INSIDE
-    // the composition TEXT NODE: it cannot render there (PM's composition
-    // protection re-covers the node whole, dropping the widget — verified
-    // against real mozc). A boundary trapped inside it is therefore rendered
-    // at the node's END — the first renderable spot, one line late — as a
-    // gap-BEFORE widget (ved-page-gap-before), whose extra width opens
-    // toward the PREVIOUS line: the gap still appears between the right
-    // lines. If the preedit can't be located (no DOM selection during a
-    // conversion transient), skip this round; the next update retries.
-    // Verified end to end against real mozc (mozc/gap-compose.ts).
-    let gaps: PageGapPos[] = positions;
-    if (view.composing) {
-      const sel = view.dom.ownerDocument.getSelection();
-      let focus = sel?.focusNode && sel.focusNode.nodeType === 3 ? sel.focusNode : null;
-      // Mid-composition the DOM selection can sit at the ELEMENT level (a
-      // seam between rubies); the observer's last-changed text node is the
-      // composition node then — the same PM internal ime-survival.ts leans
-      // on (mozc/space-convert.ts guards that contract). Skipping the round
-      // here instead left the STALE mapped widget in place, and one inside
-      // the composition node cannot render — the page gap vanished and the
-      // next page's first line jammed against the previous page.
-      focus ??= (view as unknown as { domObserver: { lastChangedTextNode: Text | null } }).domObserver
-        .lastChangedTextNode;
-      if (!(focus && focus.nodeType === 3 && view.dom.contains(focus))) return;
-      try {
-        const from = view.posAtDOM(focus, 0);
-        const to = from + (focus.nodeValue?.length ?? 0);
-        const fromOff = posToOffset(view.state.doc, from);
-        const toOff = posToOffset(view.state.doc, to);
-        gaps = measured.map(({ g, prevLineEnd, nextLineEnd }) => {
-          if (!(g.pos > from && g.pos < to)) return g;
-          // Trapped inside the composition node. The node's END is the right
-          // home only while it sits on the boundary's NEXT line (the
-          // gap-before opens back across the boundary); a long composition
-          // running further would drag the gap lines away and the next
-          // page's first line jammed against the previous page. Then prefer
-          // the node's START — when it sits on the boundary's OWN line, a
-          // normal widget there fattens exactly that line. A node engulfing
-          // both lines keeps the (late) end fallback: renderable and stable
-          // beats absent.
-          if (nextLineEnd === undefined || toOff <= nextLineEnd) return { pos: to, before: true };
-          if (fromOff > prevLineEnd) return { pos: from };
-          return { pos: to, before: true };
-        });
-      } catch {
-        return;
-      }
-    }
-    // Rows: RESERVE the remainder of a partial last page as block-end
-    // padding (left in vertical-rl, bottom in horizontal-tb), so the page
-    // exists as a whole (scrollable blank space) and the folio centers on
-    // the entire page. Padding never re-wraps lines (it extends the box
-    // past them), so one pass is stable.
-    let reserve = '';
-    if (rowsHere && measuredLineCount > 0) {
-      const linesPerPage = Number.parseFloat(getComputedStyle(mount).getPropertyValue('--page-lines')) || 20;
-      const pitch = Number.parseFloat(getComputedStyle(view.dom).lineHeight) || 28;
-      const deficit = (linesPerPage - (measuredLineCount % linesPerPage)) % linesPerPage;
-      if (deficit > 0) reserve = `${deficit * pitch}px`;
-    }
-    const verticalHere = getComputedStyle(view.dom).writingMode.startsWith('vertical');
-    const reserveProp = verticalHere ? 'paddingLeft' : 'paddingBottom';
-    const staleProp = verticalHere ? 'paddingBottom' : 'paddingLeft';
-    // A mode switch flips the block-end axis — clear the other side's reserve.
-    if (view.dom.style[staleProp] !== '') view.dom.style[staleProp] = '';
-    const reserveChanged = view.dom.style[reserveProp] !== reserve;
-    if (reserveChanged) view.dom.style[reserveProp] = reserve;
-    // Compare against the LIVE widget identities (the plugin maps its set
-    // through edits between dispatches) — a cached copy of the last
-    // dispatch goes stale the moment an edit maps the widgets, and a stale
-    // "unchanged" here would leave a drifted gap in place (composing edits
-    // hit exactly that: the measured boundary offset is often numerically
-    // identical while the mapped widget has moved).
-    const wanted = gaps.map(pageGapDecoKey);
-    const live = (pageGapKey.getState(view.state)?.find() ?? []).map((d) =>
-      pageGapDecoKey({ pos: d.from, before: `${(d.spec as { key?: string }).key}`.endsWith('-before') }),
-    );
-    if (!reserveChanged && wanted.length === live.length && wanted.every((k, i) => k === live[i])) return;
+    // the composition TEXT NODE — relocateComposingGaps moves those to a
+    // renderable node edge, or reports null to skip the round.
+    const gaps = resolveGaps(view, measured);
+    if (!gaps) return;
+    const reserve = rowsHere && measuredLineCount > 0 ? rowsReserve(view, mount, measuredLineCount) : '';
+    const reserveChanged = applyReserve(view, reserve);
+    if (!reserveChanged && gapSetMatchesLive(view, gaps)) return;
     view.dispatch(pageGapTr(view.state, gaps));
     // The widgets/reservation shift the layout — re-measure the numbers.
     onLayoutShift();

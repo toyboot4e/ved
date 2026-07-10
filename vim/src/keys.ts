@@ -1,6 +1,6 @@
-// Key representation and Vim key notation. The bottom of the package's import
-// DAG (keys → keymap → model → extension): no imports, so both the keymap
-// compiler and the reducer can share VimKey without a cycle.
+/** Key representation and Vim key notation. The bottom of the package's import
+ *  DAG (keys → keymap → model → extension): no imports, so both the keymap
+ *  compiler and the reducer can share VimKey without a cycle. */
 
 /** The keydown fields the reducer reads (structural; the adapter maps a
  *  ChordEvent onto it). Shift is deliberately ABSENT: a printable character
@@ -8,9 +8,13 @@
  *  the adapter drops `event.shiftKey`, so a shifted and unshifted arrival of
  *  the same character are the same key on purpose. */
 export type VimKey = {
+  /** `KeyboardEvent.key`: the logical key, carrying its own case (`'H'`). */
   readonly key: string;
+  /** Ctrl held. */
   readonly ctrl: boolean;
+  /** Meta (Cmd/Win) held. */
   readonly meta: boolean;
+  /** Alt held. */
   readonly alt: boolean;
 };
 
@@ -40,6 +44,29 @@ const SPECIAL_KEYS: Readonly<Record<string, string>> = {
   lt: '<',
 };
 
+/** Parse the inside of one `<…>` special: modifier prefixes <C-x>, <A-x>,
+ *  <M-x>, stackable (<C-A-x>), then a named key or a single character. Throws
+ *  on an unknown name (`notation` names the offending mapping). */
+const parseSpecial = (inner: string, notation: string): VimKey => {
+  let ctrl = false;
+  let alt = false;
+  let meta = false;
+  let rest = inner;
+  for (;;) {
+    const m = /^([CAM])-(.+)$/i.exec(rest);
+    if (!m) break;
+    const mod = (m[1] as string).toLowerCase();
+    if (mod === 'c') ctrl = true;
+    else if (mod === 'a') alt = true;
+    else meta = true;
+    rest = m[2] as string;
+  }
+  const named = SPECIAL_KEYS[rest.toLowerCase()];
+  const key = named ?? (rest.length === 1 ? rest : null);
+  if (key === null) throw new Error(`vim keymap: unknown key <${inner}> in "${notation}"`);
+  return { key, ctrl, alt, meta };
+};
+
 /** Parse Vim key notation (`"gg"`, `"<C-l>"`, `"x<Esc>"`, `"<Leader>w"`) into
  *  the key sequence it denotes. Throws with the offending notation on any
  *  unknown `<…>` special or dangling `<`. */
@@ -61,24 +88,7 @@ export const parseKeys = (notation: string, leader = '\\'): readonly VimKey[] =>
       for (const k of parseKeys(leader)) keys.push(k);
       continue;
     }
-    // Modifier prefixes: <C-x>, <A-x>, <M-x>, stackable (<C-A-x>).
-    let ctrl = false;
-    let alt = false;
-    let meta = false;
-    let rest = inner;
-    for (;;) {
-      const m = /^([CAM])-(.+)$/i.exec(rest);
-      if (!m) break;
-      const mod = (m[1] as string).toLowerCase();
-      if (mod === 'c') ctrl = true;
-      else if (mod === 'a') alt = true;
-      else meta = true;
-      rest = m[2] as string;
-    }
-    const named = SPECIAL_KEYS[rest.toLowerCase()];
-    const key = named ?? (rest.length === 1 ? rest : null);
-    if (key === null) throw new Error(`vim keymap: unknown key <${inner}> in "${notation}"`);
-    keys.push({ key, ctrl, alt, meta });
+    keys.push(parseSpecial(inner, notation));
   }
   return keys;
 };

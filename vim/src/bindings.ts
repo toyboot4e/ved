@@ -38,10 +38,15 @@ export type VimBindingKind =
  *  notation (`w`, `iw`, `gg`, `C-r`); `id` is the motion/action primitive it
  *  resolves to, when one exists. */
 export type VimBinding = {
+  /** The trigger, in our notation (`w`, `iw`, `gg`, `C-r`). */
   readonly keys: string;
+  /** The dispatch context (index.txt section) it belongs to. */
   readonly mode: VimBindingMode;
+  /** Coarse grouping for the reference doc. */
   readonly kind: VimBindingKind;
+  /** The motion/action primitive it resolves to, when one exists. */
   readonly id?: string;
+  /** Human-readable summary (the reference doc's description column). */
   readonly desc?: string;
 };
 
@@ -68,47 +73,63 @@ const kindOfActionId = (id: string): VimBindingKind => {
   return 'edit';
 };
 
-const buildBindings = (): VimBinding[] => {
+/** Motions — the cursor walk, then the rest of MOTION_BINDINGS (h/l are the
+ *  walk rows; they also back dh/dl but need no second row). */
+const motionRows = (): VimBinding[] => {
   const out: VimBinding[] = [];
-
-  // Motions — the cursor walk, then the rest of MOTION_BINDINGS (h/l are the
-  // walk rows above; they also back dh/dl but need no second row).
   for (const [keys, desc] of WALK_KEYS) out.push({ keys, mode: 'normal', kind: 'motion', desc });
   for (const [keys, id] of Object.entries(MOTION_BINDINGS)) {
     if (keys === 'h' || keys === 'l') continue;
     out.push({ keys, mode: 'normal', kind: 'motion', id, desc: MOTIONS[id].desc });
   }
+  return out;
+};
 
-  // Find family (f/F/t/T take a char; ;/, repeat).
-  for (const [keys, def] of Object.entries(FIND_BINDINGS)) {
-    out.push({ keys, mode: 'normal', kind: 'find', desc: def.desc });
-  }
-
-  // Normal-mode command keys (single keys and Ctrl chords) → their primitives.
-  // An operator also has a DOUBLED whole-line form (`dd`/`cc`/`yy`), which Vim
-  // lists as its own index row.
+/** Normal-mode command keys (single keys and Ctrl chords) → their primitives.
+ *  An operator also has a DOUBLED whole-line form (`dd`/`cc`/`yy`), which Vim
+ *  lists as its own index row. */
+const normalCommandRows = (): VimBinding[] => {
+  const out: VimBinding[] = [];
   for (const [keys, id] of Object.entries(NORMAL_BINDINGS)) {
     out.push({ keys, mode: 'normal', kind: kindOfActionId(id), id });
     if (id.startsWith('operator.')) {
       out.push({ keys: keys + keys, mode: 'normal', kind: 'operator', id, desc: 'operate on N whole lines' });
     }
   }
+  return out;
+};
 
-  // Visual-mode command keys.
-  for (const [keys, id] of Object.entries(VISUAL_BINDINGS)) {
-    out.push({ keys, mode: 'visual', kind: kindOfActionId(id), id });
-  }
-
-  // g-sequences: gg is already the gotoFirst motion above; gh/gj/gk/gl are the
-  // display walks; gv reselects the last visual; gJ is the plain join. All of
-  // them run in visual mode too, but only gJ has its own visual index row
-  // (v_gJ) to match.
+/** g-sequences: gg is already the gotoFirst motion; gh/gj/gk/gl are the
+ *  display walks; gv reselects the last visual; gJ is the plain join. All of
+ *  them run in visual mode too, but only gJ has its own visual index row
+ *  (v_gJ) to match. */
+const gSequenceRows = (): VimBinding[] => {
+  const out: VimBinding[] = [];
   for (const keys of Object.keys(G_SEQUENCES)) {
     if (keys === 'gg') continue;
     const kind = keys === 'gv' ? 'misc' : keys === 'gJ' ? 'edit' : 'motion';
     out.push({ keys, mode: 'normal', kind, id: keys });
     if (keys === 'gJ') out.push({ keys, mode: 'visual', kind, id: keys });
   }
+  return out;
+};
+
+const buildBindings = (): VimBinding[] => {
+  const out: VimBinding[] = [...motionRows()];
+
+  // Find family (f/F/t/T take a char; ;/, repeat).
+  for (const [keys, def] of Object.entries(FIND_BINDINGS)) {
+    out.push({ keys, mode: 'normal', kind: 'find', desc: def.desc });
+  }
+
+  out.push(...normalCommandRows());
+
+  // Visual-mode command keys.
+  for (const [keys, id] of Object.entries(VISUAL_BINDINGS)) {
+    out.push({ keys, mode: 'visual', kind: kindOfActionId(id), id });
+  }
+
+  out.push(...gSequenceRows());
 
   // Text objects — i/a × every object key (operator-pending and visual).
   for (const scope of ['i', 'a'] as const) {

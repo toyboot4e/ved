@@ -15,6 +15,37 @@
 // only character movement is here, and it is a pure function of the document.
 import { type Appear, activeRuby, docLeaves, isHidden, type Leaf, lineOf, rubyCollapsed, snapToGlyph } from './leaves';
 
+/** The stops one VISIBLE leaf contributes: every offset it touches (edges and
+ *  interiors; duplicate offsets at a same-pixel junction collapse for free).
+ *  EXCEPT: a COLLAPSED ruby's base contributes only its INTERIOR (strictly between
+ *  base chars), so the caret steps through a multi-char base one character at a
+ *  time. Its START/END edges coincide with the ruby's outer boundary — the hidden
+ *  delimiters are zero-width — so the caret there is logically OUTSIDE the ruby
+ *  (typing/IME lands outside; expand the markup to edit the edges). A single-char
+ *  base has no interior, so the caret steps from before it to after it (over the
+ *  one glyph). This holds for EVERY collapsed ruby — leading, adjacent, or
+ *  mid-paragraph: the base is navigable char-by-char. (IME safety at a boundary
+ *  with no outside text anchor is handled by `pm/decorations.ts`, which keeps an
+ *  atom ruby's base read-only UNTIL the caret is inside it — not by dropping the
+ *  interior caret stops here.) */
+const addVisibleLeafStops = (stops: Set<number>, leaf: Leaf, policy: Appear, activeLine: number, active: number) => {
+  if (isHidden(leaf, policy, activeLine, active)) return;
+  if (leaf.kind === 'body' && rubyCollapsed(leaf, policy, activeLine, active)) {
+    for (let o = leaf.from + 1; o <= leaf.to - 1; o++) stops.add(o);
+    return;
+  }
+  for (let o = leaf.from; o <= leaf.to; o++) stops.add(o);
+};
+
+/** A hidden ruby edge delimiter still needs its OUTER boundary reachable, so
+ *  the user can sit before/after a collapsed ruby (e.g. at the document edge,
+ *  or between two adjacent rubies where no plain text covers the gap). */
+const addHiddenEdgeStops = (stops: Set<number>, leaf: Leaf, policy: Appear, activeLine: number, active: number) => {
+  if (!isHidden(leaf, policy, activeLine, active)) return;
+  if (leaf.edge === 'lead') stops.add(leaf.from);
+  if (leaf.edge === 'trail') stops.add(leaf.to);
+};
+
 /** Sorted, unique caret-stop offsets for the whole document under `policy`,
  *  given where the caret currently is (which fixes the active paragraph/ruby
  *  for ByParagraph/ByCharacter visibility). THE SPEC: the per-query movers
@@ -26,36 +57,8 @@ export const caretStops = (doc: string, offset: number, policy: Appear): number[
   const activeLine = lineOf(doc, offset);
   const active = activeRuby(leaves, offset);
   const stops = new Set<number>();
-
-  // Visible leaves contribute a stop at every offset they touch (edges and
-  // interiors). Duplicate offsets at a same-pixel junction collapse for free.
-  for (const leaf of leaves) {
-    if (isHidden(leaf, policy, activeLine, active)) continue;
-    // A COLLAPSED ruby's base contributes only its INTERIOR (strictly between base
-    // chars), so the caret steps through a multi-char base one character at a time.
-    // Its START/END edges coincide with the ruby's outer boundary — the hidden
-    // delimiters are zero-width — so the caret there is logically OUTSIDE the ruby
-    // (typing/IME lands outside; expand the markup to edit the edges). A single-char
-    // base has no interior, so the caret steps from before it to after it (over the
-    // one glyph). This holds for EVERY collapsed ruby — leading, adjacent, or
-    // mid-paragraph: the base is navigable char-by-char. (IME safety at a boundary
-    // with no outside text anchor is handled by `pm/decorations.ts`, which keeps an
-    // atom ruby's base read-only UNTIL the caret is inside it — not by dropping the
-    // interior caret stops here.)
-    if (leaf.kind === 'body' && rubyCollapsed(leaf, policy, activeLine, active)) {
-      for (let o = leaf.from + 1; o <= leaf.to - 1; o++) stops.add(o);
-      continue;
-    }
-    for (let o = leaf.from; o <= leaf.to; o++) stops.add(o);
-  }
-  // A hidden ruby edge delimiter still needs its OUTER boundary reachable, so
-  // the user can sit before/after a collapsed ruby (e.g. at the document edge,
-  // or between two adjacent rubies where no plain text covers the gap).
-  for (const leaf of leaves) {
-    if (!isHidden(leaf, policy, activeLine, active)) continue;
-    if (leaf.edge === 'lead') stops.add(leaf.from);
-    if (leaf.edge === 'trail') stops.add(leaf.to);
-  }
+  for (const leaf of leaves) addVisibleLeafStops(stops, leaf, policy, activeLine, active);
+  for (const leaf of leaves) addHiddenEdgeStops(stops, leaf, policy, activeLine, active);
   return [...stops].sort((a, b) => a - b);
 };
 

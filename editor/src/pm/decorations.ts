@@ -91,21 +91,36 @@ const newlineMark = roSpan('vedNewline');
 /** Which invisibles are shown. A pure view flag threaded from the shell; both
  *  default off. Whitespace markers are inline decoration CLASSES over the real
  *  whitespace text (copy-safe); the newline marker is a widget (above). */
-export type Invisibles = { readonly newline: boolean; readonly whitespace: boolean };
+export type Invisibles = {
+  /** Show a marker at every paragraph end (the newline widget). */
+  readonly newline: boolean;
+  /** Mark spaces, fullwidth spaces, and tabs (classes over the real chars). */
+  readonly whitespace: boolean;
+};
 const NO_INVISIBLES: Invisibles = { newline: false, whitespace: false };
 
 /** A search match as a PLAIN-OFFSET range — the shell searches the plain
  *  string (a document is always a string outside the editor core) and the
  *  offsets are mapped to PM positions here, through the same pos map every
  *  other offset-addressed decoration uses. */
-export type SearchRange = { readonly from: number; readonly to: number };
+export type SearchRange = {
+  /** Start of the match, a plain offset (half-open `[from, to)`). */
+  readonly from: number;
+  /** End of the match (exclusive). */
+  readonly to: number;
+};
 
 /** Which search matches to highlight — a pure view flag threaded from the
  *  shell like the invisibles. `active` indexes `ranges` (-1 = none); the
  *  active match stacks a stronger class. View-only decorations — never model
  *  state, so closing the search bar just passes null and the text is
  *  untouched. */
-export type SearchHighlights = { readonly ranges: readonly SearchRange[]; readonly active: number };
+export type SearchHighlights = {
+  /** Every match to highlight, as plain-offset ranges. */
+  readonly ranges: readonly SearchRange[];
+  /** Index into `ranges` of the active (stronger-styled) match; -1 = none. */
+  readonly active: number;
+};
 
 /** Whitespace char → its marker class (ruby.css paints the glyph as a
  *  background so the real character — and thus copy — is untouched). */
@@ -189,6 +204,88 @@ const parseDoc = (doc: PMNode): Parse => {
   return { doc, text, leavesByLine, allRubies, posMap, span, rubies };
 };
 
+/** Plain offset → PM position, over the parse's pos map. */
+type OffsetToPos = (o: number) => number;
+
+/** One line's inline-format decorations: each RULES format (markers hidden via
+ *  `syn`, the inner text classed) plus the 縦中横 digit runs. */
+const pushLineFormats = (decos: Decoration[], line: string, base: number, at: OffsetToPos): void => {
+  for (const { re, cls } of RULES) {
+    re.lastIndex = 0;
+    for (let m = re.exec(line); m; m = re.exec(line)) {
+      const s = base + m.index;
+      const e = s + m[0].length;
+      decos.push(Decoration.inline(at(s), at(s + 1), { class: 'syn' }));
+      decos.push(Decoration.inline(at(s + 1), at(e - 1), { class: cls }));
+      decos.push(Decoration.inline(at(e - 1), at(e), { class: 'syn' }));
+    }
+  }
+  TCY.lastIndex = 0;
+  for (let m = TCY.exec(line); m; m = TCY.exec(line)) {
+    decos.push(Decoration.inline(at(base + m.index), at(base + m.index + m[0].length), { class: 'tcy' }));
+  }
+};
+
+/** Whitespace markers: one inline decoration per whitespace char, adding a
+ *  class to the EXISTING text — the character stays in the model, so copy is
+ *  plain. Per-char (not per-run) keeps the offset math trivial. */
+const pushWhitespaceMarks = (decos: Decoration[], line: string, base: number, at: OffsetToPos): void => {
+  for (let i = 0; i < line.length; i++) {
+    const cls = wsClass(line[i]!);
+    if (cls) decos.push(Decoration.inline(at(base + i), at(base + i + 1), { class: cls }));
+  }
+};
+
+/** Newline markers: a zero-inline-size widget at each paragraph's content end,
+ *  except the final paragraph (no trailing `\n`). `doc.forEach` yields each
+ *  top-level paragraph's position. side 1 (AFTER the position): a caret at
+ *  the paragraph end must keep REAL content as its previous DOM sibling —
+ *  with the marker before the caret (side -1), fcitx5's IM context anchored
+ *  on the contenteditable=false span and confirmed every composed character
+ *  raw (mozc-verified at the page-boundary line end). */
+const pushNewlineMarks = (decos: Decoration[], doc: PMNode): void => {
+  const last = doc.childCount - 1;
+  doc.forEach((para, offset, index) => {
+    if (index === last) return;
+    const contentEnd = offset + 1 + para.content.size;
+    decos.push(Decoration.widget(contentEnd, newlineMark, { side: 1, key: `nl-${index}`, ignoreSelection: true }));
+  });
+};
+
+/** Search-match highlights: an inline class over the matched text (the shell's
+ *  plain-offset ranges, mapped through the pos map like every format above).
+ *  Background-only styling (ruby.css), so no metric — and thus no cached
+ *  measurement — can change. A range may cross a ruby (the plain string
+ *  contains the markup): the interior offsets map into the base/reading text
+ *  and the boundary offsets outside the node, so the paint lands on whatever
+ *  matched text is visible. */
+const pushSearchMarks = (decos: Decoration[], search: SearchHighlights, text: string, at: OffsetToPos): void => {
+  search.ranges.forEach((r, i) => {
+    const from = Math.max(0, Math.min(r.from, text.length));
+    const to = Math.max(from, Math.min(r.to, text.length));
+    if (from === to) return;
+    const cls = i === search.active ? 'vedSearchMatch vedSearchActive' : 'vedSearchMatch';
+    decos.push(Decoration.inline(at(from), at(to), { class: cls }));
+  });
+};
+
+/** Extension highlights (the seam's setDecorations): plain-offset ranges
+ *  with caller-namespaced classes, folded exactly like the search matches —
+ *  clamped, offset-mapped, background-only by contract. */
+const pushExtensionMarks = (
+  decos: Decoration[],
+  extension: readonly ExtensionDecorationRange[],
+  text: string,
+  at: OffsetToPos,
+): void => {
+  for (const r of extension) {
+    const from = Math.max(0, Math.min(r.from, text.length));
+    const to = Math.max(from, Math.min(r.to, text.length));
+    if (from === to) continue;
+    decos.push(Decoration.inline(at(from), at(to), { class: r.cls }));
+  }
+};
+
 /** The BULK, caret- and policy-independent decorations: the inline formats
  *  (bold/italic/縦中横) plus the invisibles markers (whitespace classes + newline
  *  widgets) plus the search-match highlights. Fully determined by
@@ -201,81 +298,19 @@ const buildBase = (
   extension: readonly ExtensionDecorationRange[] | null,
 ): DecorationSet => {
   const { doc, text, posMap } = parse;
-  const at = (o: number) => posMap[o]!;
+  const at: OffsetToPos = (o) => posMap[o]!;
   const decos: Decoration[] = [];
 
   let base = 0;
   for (const line of text.split('\n')) {
-    for (const { re, cls } of RULES) {
-      re.lastIndex = 0;
-      for (let m = re.exec(line); m; m = re.exec(line)) {
-        const s = base + m.index;
-        const e = s + m[0].length;
-        decos.push(Decoration.inline(at(s), at(s + 1), { class: 'syn' }));
-        decos.push(Decoration.inline(at(s + 1), at(e - 1), { class: cls }));
-        decos.push(Decoration.inline(at(e - 1), at(e), { class: 'syn' }));
-      }
-    }
-    TCY.lastIndex = 0;
-    for (let m = TCY.exec(line); m; m = TCY.exec(line)) {
-      decos.push(Decoration.inline(at(base + m.index), at(base + m.index + m[0].length), { class: 'tcy' }));
-    }
-    // Whitespace markers: one inline decoration per whitespace char, adding a
-    // class to the EXISTING text — the character stays in the model, so copy is
-    // plain. Per-char (not per-run) keeps the offset math trivial.
-    if (invis.whitespace) {
-      for (let i = 0; i < line.length; i++) {
-        const cls = wsClass(line[i]!);
-        if (cls) decos.push(Decoration.inline(at(base + i), at(base + i + 1), { class: cls }));
-      }
-    }
+    pushLineFormats(decos, line, base, at);
+    if (invis.whitespace) pushWhitespaceMarks(decos, line, base, at);
     base += line.length + 1;
   }
 
-  // Newline markers: a zero-inline-size widget at each paragraph's content end,
-  // except the final paragraph (no trailing `\n`). `doc.forEach` yields each
-  // top-level paragraph's position. side 1 (AFTER the position): a caret at
-  // the paragraph end must keep REAL content as its previous DOM sibling —
-  // with the marker before the caret (side -1), fcitx5's IM context anchored
-  // on the contenteditable=false span and confirmed every composed character
-  // raw (mozc-verified at the page-boundary line end).
-  if (invis.newline) {
-    const last = doc.childCount - 1;
-    doc.forEach((para, offset, index) => {
-      if (index === last) return;
-      const contentEnd = offset + 1 + para.content.size;
-      decos.push(Decoration.widget(contentEnd, newlineMark, { side: 1, key: `nl-${index}`, ignoreSelection: true }));
-    });
-  }
-
-  // Search-match highlights: an inline class over the matched text (the shell's
-  // plain-offset ranges, mapped through the pos map like every format above).
-  // Background-only styling (ruby.css), so no metric — and thus no cached
-  // measurement — can change. A range may cross a ruby (the plain string
-  // contains the markup): the interior offsets map into the base/reading text
-  // and the boundary offsets outside the node, so the paint lands on whatever
-  // matched text is visible.
-  if (search) {
-    search.ranges.forEach((r, i) => {
-      const from = Math.max(0, Math.min(r.from, text.length));
-      const to = Math.max(from, Math.min(r.to, text.length));
-      if (from === to) return;
-      const cls = i === search.active ? 'vedSearchMatch vedSearchActive' : 'vedSearchMatch';
-      decos.push(Decoration.inline(at(from), at(to), { class: cls }));
-    });
-  }
-
-  // Extension highlights (the seam's setDecorations): plain-offset ranges
-  // with caller-namespaced classes, folded exactly like the search matches
-  // above — clamped, offset-mapped, background-only by contract.
-  if (extension) {
-    for (const r of extension) {
-      const from = Math.max(0, Math.min(r.from, text.length));
-      const to = Math.max(from, Math.min(r.to, text.length));
-      if (from === to) continue;
-      decos.push(Decoration.inline(at(from), at(to), { class: r.cls }));
-    }
-  }
+  if (invis.newline) pushNewlineMarks(decos, doc);
+  if (search) pushSearchMarks(decos, search, text, at);
+  if (extension) pushExtensionMarks(decos, extension, text, at);
 
   return DecorationSet.create(doc, decos);
 };
@@ -554,6 +589,170 @@ export const buildDecorations = (
   return add.length ? set.add(doc, add) : set;
 };
 
+/** Is `offset` STRICTLY INSIDE ruby `ruby`'s markup span — between the markup
+ *  edges, not on them (the boundary offsets map OUTSIDE the node in
+ *  pm/model.ts; the highlight, the read-only-base toggle, and the insertion
+ *  mapping share this rule so they can't drift)? At most ONE ruby can contain
+ *  an offset strictly, and `activeRuby` (edge-inclusive) finds it if it
+ *  exists. `ruby` may be -1 (no ruby). */
+const strictlyInside = (parse: Parse, ruby: number, offset: number): boolean => {
+  const sp = ruby >= 0 ? parse.span.get(ruby) : undefined;
+  return !!sp && offset > sp[0] && offset < sp[1];
+};
+
+/** The active-ruby part of the delta — while the caret sits strictly inside a
+ *  ruby's markup span:
+ *   - The `rubyActive` tint marks the ruby the EDITING caret sits in. Suppress
+ *     it while a non-empty selection is active (`selFrom !== selTo`): there is
+ *     no single editing position then, and its (yellow) tint would clash with —
+ *     and visually override — the (blue) text-selection highlight on that ruby.
+ *   - An atom ruby's base un-locks while the caret is strictly inside it (the
+ *     IME then edits the base char-by-char) — drop its cached read-only deco. */
+const pushActiveRubyDelta = (
+  parse: Parse,
+  ctx: CaretContext,
+  selFrom: number,
+  selTo: number,
+  atomBase: ReadonlyMap<number, Decoration>,
+  add: Decoration[],
+  remove: Decoration[],
+): void => {
+  const { headOffset, active } = ctx;
+  if (!strictlyInside(parse, active, headOffset)) return;
+  const r = parse.rubies[active];
+  if (!r) return;
+  if (selFrom === selTo) add.push(Decoration.node(r.pos, r.pos + r.size, { class: 'rubyActive' }));
+  const ab = atomBase.get(active);
+  if (ab) remove.push(ab);
+};
+
+/** The unlock honors the selection's OTHER endpoint too: a drag/extend can
+ *  anchor strictly inside a DIFFERENT atom ruby's base, and a still-locked
+ *  base leaves the DOM selection anchored in contenteditable=false — the IM
+ *  context can't establish over a read-only anchor, and the first composing
+ *  key falls through RAW (mozc/selection-composition, the adjacent-rubies
+ *  case). Same strict-inside rule as the head, so the two can't drift. */
+const pushAnchorAtomUnlock = (
+  parse: Parse,
+  doc: PMNode,
+  head: number,
+  selFrom: number,
+  selTo: number,
+  active: number,
+  atomBase: ReadonlyMap<number, Decoration>,
+  remove: Decoration[],
+): void => {
+  if (selFrom === selTo) return;
+  const anchor = head === selFrom ? selTo : selFrom;
+  const aOff = posToOffset(doc, anchor);
+  const aRuby = activeRuby(parse.leavesByLine[lineOf(parse.text, aOff)] ?? [], aOff);
+  if (aRuby < 0 || aRuby === active || !strictlyInside(parse, aRuby, aOff)) return;
+  const ab = atomBase.get(aRuby);
+  if (ab) remove.push(ab);
+};
+
+/** Suppress the native caret on the caret's paragraph (.vedNativeCaretOff) —
+ *  the widget/block caret branches render their own caret, so exactly one
+ *  shows and it is always glyph-sized. */
+const pushNativeCaretOff = (add: Decoration[], doc: PMNode, head: number): void => {
+  const $h = doc.resolve(head);
+  if ($h.depth >= 1) add.push(Decoration.node($h.before(1), $h.after(1), { class: 'vedNativeCaretOff' }));
+};
+
+/** Block caret (extension-set, extension.ts setCaretShape) — the caret is
+ *  a block at EVERY position: where a visible character sits under the
+ *  caret in ONE leaf — plain text, or a base INTERIOR (a base-START offset
+ *  maps OUTSIDE the ruby, so head+1 would span the node's open token, not
+ *  the character) — an inline decoration tints it; everywhere else
+ *  (paragraph end, a ruby boundary/seam, an empty line) a WIDGET paints an
+ *  empty cell (`blockCaretBox`, which also REPLACES the boundary bar — one
+ *  caret, always a block). Native bar suppressed either way. Part of the
+ *  per-move DELTA: O(line), no cached layer is touched. */
+const pushBlockCaret = (
+  parse: Parse,
+  doc: PMNode,
+  policy: Appear,
+  head: number,
+  ctx: CaretContext,
+  add: Decoration[],
+): void => {
+  const { text } = parse;
+  const { headOffset, activeLine, lineLeaves, active } = ctx;
+  const under = lineLeaves.find(
+    (l) =>
+      headOffset >= l.from &&
+      headOffset < l.to &&
+      text[headOffset] !== '\n' &&
+      (l.kind === 'plain' || (l.kind === 'body' && headOffset > l.from)),
+  );
+  if (under) {
+    // Within one text leaf, PM positions are contiguous with offsets, so
+    // the character under `headOffset` spans exactly [head, head+1).
+    add.push(Decoration.inline(head, head + 1, { class: 'vedBlockCaret' }));
+  } else {
+    // A collapsed ruby's LEADING seam (every position of an all-ruby
+    // line): the character under a Vim block cursor is the next VISIBLE
+    // glyph — the ruby's first base character, behind hidden markup.
+    // Tint IT, like `under` (Vim's cursor sits ON the next character; at
+    // a line end that is the NEXT line's first character, matching the
+    // highlight's head+2 anchor). The base-start OFFSET maps outside the
+    // node, so address the base content through the ruby node instead.
+    // No next glyph on the line (paragraph end, empty line) — or visible
+    // markup (a widget, not tintable text) — keeps the empty-cell box.
+    let off = headOffset;
+    let leaf = lineLeaves.find((l) => l.from === off);
+    while (leaf && leaf.kind === 'delim' && isHidden(leaf, policy, activeLine, active)) {
+      off = leaf.to;
+      leaf = lineLeaves.find((l) => l.from === off);
+    }
+    const r = leaf && leaf.kind === 'body' && leaf.from === off ? parse.rubies[leaf.ruby] : undefined;
+    if (r) add.push(Decoration.inline(r.pos + 2, r.pos + 3, { class: 'vedBlockCaret' }));
+    else add.push(Decoration.widget(head, blockCaretBox, { key: `blkcaret-${head}`, side: 0, ignoreSelection: true }));
+  }
+  pushNativeCaretOff(add, doc, head);
+};
+
+/** Boundary caret: a COLLAPSED caret with NO text-node home — the seam BETWEEN
+ *  two adjacent collapsed rubies, or a PARAGRAPH EDGE against hidden ruby
+ *  markup. The DOM caret at such a spot is ELEMENT-level; the native caret is
+ *  then invisible (the seam) or drawn from element geometry (the edge) — and
+ *  when the position sits at a multicol PAGE break, Chromium derives that
+ *  element-level caret rect from cross-fragment union geometry and paints a
+ *  bar spanning the page gap. Render our own caret at the head and suppress
+ *  the native one on the caret's paragraph (.vedNativeCaretOff), so exactly
+ *  one caret shows and it is always glyph-sized. Plain text or an expanded
+ *  ruby beside the head is renderable → the native caret stays, no widget. */
+const pushBoundaryCaret = (
+  parse: Parse,
+  doc: PMNode,
+  policy: Appear,
+  head: number,
+  ctx: CaretContext,
+  add: Decoration[],
+): void => {
+  const { text } = parse;
+  const { headOffset, activeLine, lineLeaves, active } = ctx;
+  const hidden = (l?: Leaf): boolean => !!l && l.kind === 'delim' && isHidden(l, policy, activeLine, active);
+  // Delimiter leaves never cross a `\n`, so both neighbours of the head sit on
+  // the head's own line — scan just that line.
+  const lb = lineLeaves.find((l) => l.to === headOffset);
+  const la = lineLeaves.find((l) => l.from === headOffset);
+  const seam = hidden(lb) && hidden(la) && lb?.ruby !== la?.ruby;
+  const atStart = headOffset === 0 || text[headOffset - 1] === '\n';
+  const atEnd = headOffset === text.length || text[headOffset] === '\n';
+  const edge = (atStart && hidden(la)) || (atEnd && hidden(lb));
+  if (seam || edge) {
+    // side 0 (AFTER the position): the caret's previous DOM sibling must
+    // stay REAL content — with the widget before the caret, fcitx5's IM
+    // context anchors on a contenteditable=false span and dies after the
+    // first composed character (mozc-verified at the page-boundary line).
+    // coordsAtPos flattening at the widget is handled by the caller-side
+    // fallback (editor.tsx caretCoords), not by flipping this side.
+    add.push(Decoration.widget(head, boundaryCaret, { key: `bcaret-${head}`, side: 0, ignoreSelection: true }));
+    pushNativeCaretOff(add, doc, head);
+  }
+};
+
 /** The per-caret-move DELTA — O(active ruby + selection), not O(rubies): the
  *  `rubyActive` tint, the active atom-base unlock (returned in `remove` — the
  *  cached read-only decorations to drop from the static set), and the
@@ -569,134 +768,22 @@ const caretDelta = (
   ctx: CaretContext,
   atomBase: ReadonlyMap<number, Decoration>,
 ): { readonly add: Decoration[]; readonly remove: Decoration[] } => {
-  const { text, leavesByLine } = parse;
-  const { headOffset, activeLine, lineLeaves, active } = ctx;
-  const delta: Decoration[] = [];
+  const add: Decoration[] = [];
   const remove: Decoration[] = [];
-  // "Strictly inside" — the caret offset is between the markup edges, not on
-  // them (the boundary offsets map OUTSIDE the node in pm/model.ts; the
-  // highlight, the read-only-base toggle, and the insertion mapping share this
-  // rule so they can't drift). At most ONE ruby can contain the offset strictly,
-  // and `activeRuby` (edge-inclusive) finds it if it exists.
-  const sp = active >= 0 ? parse.span.get(active) : undefined;
-  const caretInside = !!sp && headOffset > sp[0] && headOffset < sp[1];
-  if (caretInside) {
-    const r = parse.rubies[active];
-    if (r) {
-      // The `rubyActive` tint marks the ruby the EDITING caret sits in. Suppress
-      // it while a non-empty selection is active (`selFrom !== selTo`): there is
-      // no single editing position then, and its (yellow) tint would clash with —
-      // and visually override — the (blue) text-selection highlight on that ruby.
-      if (selFrom === selTo) delta.push(Decoration.node(r.pos, r.pos + r.size, { class: 'rubyActive' }));
-      // An atom ruby's base un-locks while the caret is strictly inside it (the
-      // IME then edits the base char-by-char) — drop its cached read-only deco.
-      const ab = atomBase.get(active);
-      if (ab) remove.push(ab);
-    }
-  }
-  // The unlock honors the selection's OTHER endpoint too: a drag/extend can
-  // anchor strictly inside a DIFFERENT atom ruby's base, and a still-locked
-  // base leaves the DOM selection anchored in contenteditable=false — the IM
-  // context can't establish over a read-only anchor, and the first composing
-  // key falls through RAW (mozc/selection-composition, the adjacent-rubies
-  // case). Same strict-inside rule as the head, so the two can't drift.
-  if (selFrom !== selTo) {
-    const anchor = head === selFrom ? selTo : selFrom;
-    const aOff = posToOffset(doc, anchor);
-    const aRuby = activeRuby(leavesByLine[lineOf(text, aOff)] ?? [], aOff);
-    const asp = aRuby >= 0 && aRuby !== active ? parse.span.get(aRuby) : undefined;
-    if (asp && aOff > asp[0] && aOff < asp[1]) {
-      const ab = atomBase.get(aRuby);
-      if (ab) remove.push(ab);
-    }
-  }
+  pushActiveRubyDelta(parse, ctx, selFrom, selTo, atomBase, add, remove);
+  pushAnchorAtomUnlock(parse, doc, head, selFrom, selTo, ctx.active, atomBase, remove);
   // (Selected shown markup needs NO decoration: the selection overlay
   // (editor.tsx walkGlyphsLines) measures the delimiter widgets and the inline
   // reading like any other visible glyph, so they get the SAME overlay tint —
   // a separate CSS tint stacked on the overlay rect and painted them darker.)
 
-  // Boundary caret: a COLLAPSED caret with NO text-node home — the seam BETWEEN
-  // two adjacent collapsed rubies, or a PARAGRAPH EDGE against hidden ruby
-  // markup. The DOM caret at such a spot is ELEMENT-level; the native caret is
-  // then invisible (the seam) or drawn from element geometry (the edge) — and
-  // when the position sits at a multicol PAGE break, Chromium derives that
-  // element-level caret rect from cross-fragment union geometry and paints a
-  // bar spanning the page gap. Render our own caret at the head and suppress
-  // the native one on the caret's paragraph (.vedNativeCaretOff), so exactly
-  // one caret shows and it is always glyph-sized. Plain text or an expanded
-  // ruby beside the head is renderable → the native caret stays, no widget.
+  // A COLLAPSED caret renders its own caret where the native one has no
+  // text-node home (pushBoundaryCaret), or as a block everywhere when the
+  // extension asks for one (pushBlockCaret).
   if (selFrom === selTo) {
-    const suppressNativeCaret = (): void => {
-      const $h = doc.resolve(head);
-      if ($h.depth >= 1) delta.push(Decoration.node($h.before(1), $h.after(1), { class: 'vedNativeCaretOff' }));
-    };
-    // Block caret (extension-set, extension.ts setCaretShape) — the caret is
-    // a block at EVERY position: where a visible character sits under the
-    // caret in ONE leaf — plain text, or a base INTERIOR (a base-START offset
-    // maps OUTSIDE the ruby, so head+1 would span the node's open token, not
-    // the character) — an inline decoration tints it; everywhere else
-    // (paragraph end, a ruby boundary/seam, an empty line) a WIDGET paints an
-    // empty cell (`blockCaretBox`, which also REPLACES the boundary bar — one
-    // caret, always a block). Native bar suppressed either way. Part of the
-    // per-move DELTA: O(line), no cached layer is touched.
-    if (caretShape === 'block') {
-      const under = lineLeaves.find(
-        (l) =>
-          headOffset >= l.from &&
-          headOffset < l.to &&
-          text[headOffset] !== '\n' &&
-          (l.kind === 'plain' || (l.kind === 'body' && headOffset > l.from)),
-      );
-      if (under) {
-        // Within one text leaf, PM positions are contiguous with offsets, so
-        // the character under `headOffset` spans exactly [head, head+1).
-        delta.push(Decoration.inline(head, head + 1, { class: 'vedBlockCaret' }));
-      } else {
-        // A collapsed ruby's LEADING seam (every position of an all-ruby
-        // line): the character under a Vim block cursor is the next VISIBLE
-        // glyph — the ruby's first base character, behind hidden markup.
-        // Tint IT, like `under` (Vim's cursor sits ON the next character; at
-        // a line end that is the NEXT line's first character, matching the
-        // highlight's head+2 anchor). The base-start OFFSET maps outside the
-        // node, so address the base content through the ruby node instead.
-        // No next glyph on the line (paragraph end, empty line) — or visible
-        // markup (a widget, not tintable text) — keeps the empty-cell box.
-        let off = headOffset;
-        let leaf = lineLeaves.find((l) => l.from === off);
-        while (leaf && leaf.kind === 'delim' && isHidden(leaf, policy, activeLine, active)) {
-          off = leaf.to;
-          leaf = lineLeaves.find((l) => l.from === off);
-        }
-        const r = leaf && leaf.kind === 'body' && leaf.from === off ? parse.rubies[leaf.ruby] : undefined;
-        if (r) delta.push(Decoration.inline(r.pos + 2, r.pos + 3, { class: 'vedBlockCaret' }));
-        else
-          delta.push(
-            Decoration.widget(head, blockCaretBox, { key: `blkcaret-${head}`, side: 0, ignoreSelection: true }),
-          );
-      }
-      suppressNativeCaret();
-    } else {
-      const hidden = (l?: Leaf): boolean => !!l && l.kind === 'delim' && isHidden(l, policy, activeLine, active);
-      // Delimiter leaves never cross a `\n`, so both neighbours of the head sit on
-      // the head's own line — scan just that line.
-      const lb = lineLeaves.find((l) => l.to === headOffset);
-      const la = lineLeaves.find((l) => l.from === headOffset);
-      const seam = hidden(lb) && hidden(la) && lb?.ruby !== la?.ruby;
-      const atStart = headOffset === 0 || text[headOffset - 1] === '\n';
-      const atEnd = headOffset === text.length || text[headOffset] === '\n';
-      const edge = (atStart && hidden(la)) || (atEnd && hidden(lb));
-      if (seam || edge) {
-        // side 0 (AFTER the position): the caret's previous DOM sibling must
-        // stay REAL content — with the widget before the caret, fcitx5's IM
-        // context anchors on a contenteditable=false span and dies after the
-        // first composed character (mozc-verified at the page-boundary line).
-        // coordsAtPos flattening at the widget is handled by the caller-side
-        // fallback (editor.tsx caretCoords), not by flipping this side.
-        delta.push(Decoration.widget(head, boundaryCaret, { key: `bcaret-${head}`, side: 0, ignoreSelection: true }));
-        suppressNativeCaret();
-      }
-    }
+    if (caretShape === 'block') pushBlockCaret(parse, doc, policy, head, ctx, add);
+    else pushBoundaryCaret(parse, doc, policy, head, ctx, add);
   }
 
-  return { add: delta, remove };
+  return { add, remove };
 };

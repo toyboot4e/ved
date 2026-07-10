@@ -1,7 +1,7 @@
-// User keymap: config → compiled per-map-mode tries, and the walk the reducer
-// runs over them (the mapping FRONT LAYER — consulted before the built-in
-// dispatch; see vimKeydown). The config is deliberately JSON-serializable:
-// this type IS the future config-file schema (docs/architecture.md "Extensions").
+/** User keymap: config → compiled per-map-mode tries, and the walk the reducer
+ *  runs over them (the mapping FRONT LAYER — consulted before the built-in
+ *  dispatch; see vimKeydown). The config is deliberately JSON-serializable:
+ *  this type IS the future config-file schema (docs/architecture.md "Extensions"). */
 
 import { keyToken, parseKeys, type VimKey } from './keys';
 
@@ -17,11 +17,18 @@ export type VimKeymapRhs = string | { readonly rhs: string; readonly remap?: boo
 /** Vim's nmap / xmap / omap / imap. */
 export type VimMapMode = 'normal' | 'visual' | 'operatorPending' | 'insert';
 
+/** A user keymap: per-map-mode tables of LHS (Vim key notation) → RHS.
+ *  JSON-serializable by design — this type IS the future config-file schema.
+ *  Compile with `compileKeymap` to validate, or pass to
+ *  `createVimExtension({keymap})` (which throws on errors). */
 export type VimKeymapConfig = {
   /** Substituted for `<Leader>` in both LHS and RHS. Default `'\'`. */
   readonly leader?: string;
+  /** Normal-mode maps (Vim's `nmap`). */
   readonly normal?: Readonly<Record<string, VimKeymapRhs>>;
+  /** Visual-mode maps (Vim's `xmap`). */
   readonly visual?: Readonly<Record<string, VimKeymapRhs>>;
+  /** Operator-pending maps (Vim's `omap`) — active after `d`/`c`/`y`. */
   readonly operatorPending?: Readonly<Record<string, VimKeymapRhs>>;
   /** Insert-mode maps (`jj` → `<Esc>`). LHS keys must be PLAIN printable
    *  characters (compile error otherwise): the insert walk lets the prefix
@@ -91,6 +98,89 @@ export type CompileKeymapOpts = {
   readonly knownActions?: Readonly<Partial<Record<VimMapMode, ReadonlySet<string>>>>;
 };
 
+/** Parse + validate one LHS: non-empty, and (insert mode) plain printable
+ *  characters only — the insert walk inserts the prefix live and deletes it
+ *  on a match, so chords cannot participate. */
+const parseLhs = (mode: VimMapMode, lhs: string, leader: string): readonly VimKey[] => {
+  const lhsKeys = parseKeys(lhs, leader);
+  if (lhsKeys.length === 0) throw new Error(`vim keymap (${mode}): empty LHS`);
+  if (mode === 'insert' && lhsKeys.some((k) => k.key.length !== 1 || k.ctrl || k.alt || k.meta)) {
+    throw new Error(
+      `vim keymap (insert): "${lhs}" — insert LHS keys must be plain printable characters ` +
+        '(the walk inserts the prefix live and deletes it on a match; chords insert nothing)',
+    );
+  }
+  return lhsKeys;
+};
+
+/** Compile one `{action}` RHS: normal/visual only, and (when the caller
+ *  provided the tables) a known action id. */
+const compileActionBinding = (
+  mode: VimMapMode,
+  lhs: string,
+  action: string,
+  opts?: CompileKeymapOpts,
+): KeymapBinding => {
+  if (mode === 'operatorPending' || mode === 'insert') {
+    throw new Error(`vim keymap (${mode}): "${lhs}" — {action} RHS is only available in normal and visual modes`);
+  }
+  const known = opts?.knownActions?.[mode];
+  if (known && !known.has(action)) {
+    throw new Error(`vim keymap (${mode}): "${lhs}" — unknown action "${action}"`);
+  }
+  return { kind: 'action', action };
+};
+
+/** Compile one RHS spec — a named action or a (possibly remap) key sequence —
+ *  into its binding. */
+const compileBinding = (
+  mode: VimMapMode,
+  lhs: string,
+  rhsSpec: VimKeymapRhs,
+  leader: string,
+  opts?: CompileKeymapOpts,
+): KeymapBinding => {
+  if (typeof rhsSpec !== 'string' && 'action' in rhsSpec) {
+    return compileActionBinding(mode, lhs, rhsSpec.action, opts);
+  }
+  const rhs = typeof rhsSpec === 'string' ? rhsSpec : rhsSpec.rhs;
+  const remap = typeof rhsSpec === 'string' ? false : (rhsSpec.remap ?? false);
+  const rhsKeys = parseKeys(rhs, leader);
+  if (rhsKeys.length === 0) throw new Error(`vim keymap (${mode}): empty RHS for "${lhs}"`);
+  return { kind: 'keys', keys: rhsKeys, remap };
+};
+
+/** Insert one compiled mapping into the mode's trie, rejecting the prefix
+ *  conflicts a pure reducer cannot disambiguate (no timeouts): an LHS that
+ *  extends, duplicates, or is a prefix of another mapping. */
+const insertMapping = (
+  root: MutableTrie<KeymapBinding>,
+  mode: VimMapMode,
+  lhs: string,
+  lhsKeys: readonly VimKey[],
+  binding: KeymapBinding,
+): void => {
+  let node = root;
+  for (const [i, k] of lhsKeys.entries()) {
+    if (node.value) {
+      throw new Error(`vim keymap (${mode}): "${lhs}" conflicts with a mapping that is its prefix`);
+    }
+    let child = node.children.get(keyToken(k));
+    if (!child) {
+      child = emptyNode();
+      node.children.set(keyToken(k), child);
+    }
+    node = child;
+    if (i === lhsKeys.length - 1) {
+      if (node.value) throw new Error(`vim keymap (${mode}): duplicate mapping "${lhs}"`);
+      if (node.children.size > 0) {
+        throw new Error(`vim keymap (${mode}): "${lhs}" is a prefix of another mapping`);
+      }
+      node.value = binding;
+    }
+  }
+};
+
 /** Compile a user keymap, or throw a descriptive error: bad notation, an
  *  empty LHS/RHS, an `{action}` where none can run, or one LHS being a
  *  strict prefix of another in the same map mode (a pure reducer cannot time
@@ -101,50 +191,8 @@ export const compileKeymap = (config: VimKeymapConfig, opts?: CompileKeymapOpts)
   for (const mode of MAP_MODES) {
     const root = emptyNode<KeymapBinding>();
     for (const [lhs, rhsSpec] of Object.entries(config[mode] ?? {})) {
-      const lhsKeys = parseKeys(lhs, leader);
-      if (lhsKeys.length === 0) throw new Error(`vim keymap (${mode}): empty LHS`);
-      if (mode === 'insert' && lhsKeys.some((k) => k.key.length !== 1 || k.ctrl || k.alt || k.meta)) {
-        throw new Error(
-          `vim keymap (insert): "${lhs}" — insert LHS keys must be plain printable characters ` +
-            '(the walk inserts the prefix live and deletes it on a match; chords insert nothing)',
-        );
-      }
-      let binding: KeymapBinding;
-      if (typeof rhsSpec !== 'string' && 'action' in rhsSpec) {
-        if (mode === 'operatorPending' || mode === 'insert') {
-          throw new Error(`vim keymap (${mode}): "${lhs}" — {action} RHS is only available in normal and visual modes`);
-        }
-        const known = opts?.knownActions?.[mode];
-        if (known && !known.has(rhsSpec.action)) {
-          throw new Error(`vim keymap (${mode}): "${lhs}" — unknown action "${rhsSpec.action}"`);
-        }
-        binding = { kind: 'action', action: rhsSpec.action };
-      } else {
-        const rhs = typeof rhsSpec === 'string' ? rhsSpec : rhsSpec.rhs;
-        const remap = typeof rhsSpec === 'string' ? false : (rhsSpec.remap ?? false);
-        const rhsKeys = parseKeys(rhs, leader);
-        if (rhsKeys.length === 0) throw new Error(`vim keymap (${mode}): empty RHS for "${lhs}"`);
-        binding = { kind: 'keys', keys: rhsKeys, remap };
-      }
-      let node = root;
-      for (const [i, k] of lhsKeys.entries()) {
-        if (node.value) {
-          throw new Error(`vim keymap (${mode}): "${lhs}" conflicts with a mapping that is its prefix`);
-        }
-        let child = node.children.get(keyToken(k));
-        if (!child) {
-          child = emptyNode();
-          node.children.set(keyToken(k), child);
-        }
-        node = child;
-        if (i === lhsKeys.length - 1) {
-          if (node.value) throw new Error(`vim keymap (${mode}): duplicate mapping "${lhs}"`);
-          if (node.children.size > 0) {
-            throw new Error(`vim keymap (${mode}): "${lhs}" is a prefix of another mapping`);
-          }
-          node.value = binding;
-        }
-      }
+      const lhsKeys = parseLhs(mode, lhs, leader);
+      insertMapping(root, mode, lhs, lhsKeys, compileBinding(mode, lhs, rhsSpec, leader, opts));
     }
     compiled[mode] = root;
   }

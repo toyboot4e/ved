@@ -126,6 +126,8 @@ import {
   wordUnder,
 } from './text';
 
+/** The active modal state. `'visual'` covers all visual kinds —
+ *  `VimVisualKind` distinguishes charwise/linewise/block. */
 export type VimMode = 'normal' | 'insert' | 'visual';
 export type VimVisualKind = 'char' | 'line' | 'block';
 
@@ -137,8 +139,11 @@ export { CLASS_WORDS } from './text';
 /** The document as the reducer sees it: ved's plain text + plain-offset
  *  selection, and the editor's caret-step rule. */
 export type VimDocView = {
+  /** The exact plain text (ruby markup included). */
   readonly text: string;
+  /** The selection's fixed end, a plain offset. */
   readonly anchor: number;
+  /** The caret (the selection's moving end), a plain offset. */
   readonly head: number;
   /** Next legal caret stop (ruby-aware). Returns `offset` at a document edge. */
   readonly caretStop: (offset: number, dir: 1 | -1) => number;
@@ -345,7 +350,6 @@ const runSearch = (state: VimState, pattern: string, forward: boolean, doc: VimD
 /** A keystroke while the `/`?`?` command line is open: build the pattern,
  *  execute on Enter, cancel on Escape / empty Backspace. */
 const commandLineKey = (state: VimState, key: VimKey, doc: VimDocView): VimStep => {
-  // biome-ignore lint/style/noNonNullAssertion: only called while commandLine is set
   const cl = state.commandLine!;
   if (key.key === 'Escape') return { state: { ...state, commandLine: null }, effects: [], handled: true };
   if (key.key === 'Enter') return runSearch(state, cl.text, cl.forward, doc);
@@ -651,25 +655,39 @@ export const FIND_BINDINGS: Readonly<Record<string, { readonly desc: string; rea
   ',': { desc: 'repeat the last f/F/t/T in the opposite direction', takesChar: false },
 };
 
-/** f/F/t/T within the caret's line. Forward finds are INCLUSIVE motions
- *  (`dfx` eats the x, `dtx` eats up to before it); backward ones exclusive. */
-const findTarget = (text: string, from: number, op: FindOp, ch: string, count: number): Motion | null => {
-  const ls = lineStart(text, from);
-  const le = lineEnd(text, from);
-  if (op === 'f' || op === 't') {
-    let i = from;
-    for (let n = 0; n < count; n++) {
-      i = text.indexOf(ch, i + 1);
-      if (i < 0 || i >= le) return null;
-    }
-    const target = op === 't' ? i - 1 : i;
-    return target < from ? null : { target, inclusive: true, linewise: false };
+/** The N-th occurrence of `ch` to the RIGHT of `from`, before the line end
+ *  `le`; null when the line runs out. */
+const findCharForward = (text: string, from: number, le: number, ch: string, count: number): number | null => {
+  let i = from;
+  for (let n = 0; n < count; n++) {
+    i = text.indexOf(ch, i + 1);
+    if (i < 0 || i >= le) return null;
   }
+  return i;
+};
+
+/** The N-th occurrence of `ch` to the LEFT of `from`, at or after the line
+ *  start `ls`; null when the line runs out. */
+const findCharBackward = (text: string, from: number, ls: number, ch: string, count: number): number | null => {
   let i = from;
   for (let n = 0; n < count; n++) {
     i = i <= ls ? -1 : text.lastIndexOf(ch, i - 1);
     if (i < ls) return null;
   }
+  return i;
+};
+
+/** f/F/t/T within the caret's line. Forward finds are INCLUSIVE motions
+ *  (`dfx` eats the x, `dtx` eats up to before it); backward ones exclusive. */
+const findTarget = (text: string, from: number, op: FindOp, ch: string, count: number): Motion | null => {
+  if (op === 'f' || op === 't') {
+    const i = findCharForward(text, from, lineEnd(text, from), ch, count);
+    if (i == null) return null;
+    const target = op === 't' ? i - 1 : i;
+    return target < from ? null : { target, inclusive: true, linewise: false };
+  }
+  const i = findCharBackward(text, from, lineStart(text, from), ch, count);
+  if (i == null) return null;
   return { target: op === 'T' ? i + 1 : i, inclusive: false, linewise: false };
 };
 
@@ -776,27 +794,36 @@ const INSERT_EDIT_KEYS: ReadonlySet<string> = new Set(['Enter', 'Backspace', 'De
  *  faithful source (IME-composed input has no keydowns the reducer ever
  *  sees). Enter/Backspace/Delete stay KEY items — they arrive as keydowns on
  *  every path — and count as edits. Visual mode is not recorded (v1). */
-const record = (incoming: VimState, key: VimKey, raw: VimStep, fed: boolean): VimStep => {
-  const inInsert = incoming.mode === 'insert' && !raw.handled;
-  const insertText = inInsert && isPlainKey(key);
-  const insertEdit = inInsert && !key.ctrl && !key.meta && !key.alt && INSERT_EDIT_KEYS.has(key.key);
-  const editsNow = raw.effects.some((e) => e.kind === 'replace') || insertText || insertEdit;
-  const item: VimChangeItem | null = insertText ? (fed ? { kind: 'text', text: key.key } : null) : { kind: 'key', key };
-  // A FED printable also feeds a pending block insert (live ones arrive via
-  // vimRecordText; the feed loop inserts fed keys programmatically, so no
-  // input event follows).
-  const bi = raw.state.blockInsert;
-  const step =
-    fed && insertText && bi?.valid
-      ? { ...raw, state: { ...raw.state, blockInsert: { ...bi, text: bi.text + key.key } } }
-      : raw;
-  let rec = incoming.recording;
-  if (rec === null) {
-    if (!atRest(incoming)) return step; // mid-sequence key with no recording (shouldn't happen) — ignore
-    rec = { items: item ? [item] : [], changed: editsNow };
-  } else {
-    rec = { items: item ? appendItem(rec.items, item) : rec.items, changed: rec.changed || editsNow };
+/** Append fed text to a pending block insert (live text arrives via
+ *  vimRecordText instead; the feed loop inserts fed keys programmatically, so
+ *  no input event follows). */
+const appendBlockInsertText = (step: VimStep, text: string): VimStep => {
+  const bi = step.state.blockInsert;
+  if (!bi?.valid) return step;
+  return { ...step, state: { ...step.state, blockInsert: { ...bi, text: bi.text + text } } };
+};
+
+/** Advance the recording by one dispatched key: begin one when a fresh
+ *  command starts from a resting normal state, else append (a null item —
+ *  a live insert printable — still counts toward `changed`). Null = a
+ *  mid-sequence key arrived with no recording (shouldn't happen) — ignore. */
+const advanceRecording = (
+  recording: VimState['recording'],
+  wasAtRest: boolean,
+  item: VimChangeItem | null,
+  editsNow: boolean,
+): VimState['recording'] => {
+  if (recording === null) {
+    if (!wasAtRest) return null;
+    return { items: item ? [item] : [], changed: editsNow };
   }
+  return { items: item ? appendItem(recording.items, item) : recording.items, changed: recording.changed || editsNow };
+};
+
+/** Settle the recording onto the stepped state: dropped in visual mode (not
+ *  recorded, v1), kept as `lastChange` when the sequence returns to rest and
+ *  modified the document, else carried forward. */
+const settleRecording = (step: VimStep, rec: NonNullable<VimState['recording']>): VimStep => {
   if (step.state.mode === 'visual') return { ...step, state: { ...step.state, recording: null } };
   if (atRest(step.state)) {
     return {
@@ -805,6 +832,19 @@ const record = (incoming: VimState, key: VimKey, raw: VimStep, fed: boolean): Vi
     };
   }
   return { ...step, state: { ...step.state, recording: rec } };
+};
+
+const record = (incoming: VimState, key: VimKey, raw: VimStep, fed: boolean): VimStep => {
+  const inInsert = incoming.mode === 'insert' && !raw.handled;
+  const insertText = inInsert && isPlainKey(key);
+  const insertEdit = inInsert && !key.ctrl && !key.meta && !key.alt && INSERT_EDIT_KEYS.has(key.key);
+  const editsNow = raw.effects.some((e) => e.kind === 'replace') || insertText || insertEdit;
+  const item: VimChangeItem | null = insertText ? (fed ? { kind: 'text', text: key.key } : null) : { kind: 'key', key };
+  // A FED printable also feeds a pending block insert.
+  const step = fed && insertText ? appendBlockInsertText(raw, key.key) : raw;
+  const rec = advanceRecording(incoming.recording, atRest(incoming), item, editsNow);
+  if (rec === null) return step;
+  return settleRecording(step, rec);
 };
 
 /** Append literal insert-phase text to the live dot-repeat recording. The
@@ -906,6 +946,15 @@ const keydownLayersInner = (state: VimState, key: VimKey, doc: VimDocView, opts?
 const isLoneModifier = (key: VimKey): boolean =>
   key.key === 'Control' || key.key === 'Shift' || key.key === 'Alt' || key.key === 'Meta';
 
+/** The map-mode CONTEXT of a normal/visual key (insert mode has its own
+ *  walk): a pending operator outranks the mode. */
+const mapModeOf = (state: VimState): 'normal' | 'visual' | 'operatorPending' =>
+  state.operator ? 'operatorPending' : state.mode === 'visual' ? 'visual' : 'normal';
+
+/** The action env from the pending state: the resolved count and whether one
+ *  was actually typed. */
+const actionEnv = (state: VimState): VimActionEnv => ({ count: state.count ?? 1, hasCount: state.count !== null });
+
 /** What the mapping layer decided for one key: consume it with a full step,
  *  or PASS it to the built-in dispatch (optionally with walk state advanced —
  *  the insert walk lets prefix keys type live). Null = pass unchanged. */
@@ -935,7 +984,7 @@ const mappingLayerKey = (
     // Cancel the walk, discarding the swallowed keys (as Vim does).
     return { kind: 'step', step: { state: { ...state, mapPending: null }, effects: [], handled: true } };
   }
-  const mode: VimMapMode = state.operator ? 'operatorPending' : state.mode === 'visual' ? 'visual' : 'normal';
+  const mode: VimMapMode = mapModeOf(state);
   const keys = [...pending, key];
   const walk = walkKeymap(keymap[mode], keys);
   if (walk.kind === 'pending') {
@@ -981,7 +1030,7 @@ const runBinding = (
       handled: true,
     };
   }
-  const env: VimActionEnv = { count: state.count ?? 1, hasCount: state.count !== null };
+  const env = actionEnv(state);
   const custom = customActions?.[binding.action];
   if (custom) return { state: clearPending(base), effects: custom(doc, env), handled: true };
   const table: Readonly<Record<string, VimAction>> = mode === 'visual' ? VISUAL_ACTIONS : NORMAL_ACTIONS;
@@ -998,6 +1047,35 @@ const runBinding = (
  *  A liveness check (the prefix must still sit before the caret) invalidates
  *  the match after any caret move. Prefix keys RECORD as typed text; a match
  *  strips them from the recording, so `.` replays only the net expansion. */
+/** Drop an in-progress walk, PASSING the key on to the dispatch (any typed
+ *  prefix stays); null when no walk was live — the key is simply not ours. */
+const abortWalk = (state: VimState, pending: readonly VimKey[]): MappingResult =>
+  pending.length ? { kind: 'pass', state: { ...state, mapPending: null } } : null;
+
+/** The step for a MATCHED insert mapping: delete the live-typed prefix from
+ *  the document, strip it from the dot-repeat recording (the prefix chars
+ *  recorded so far net to nothing), and feed the RHS. */
+const insertMappingMatch = (
+  state: VimState,
+  base: readonly VimKey[],
+  binding: Extract<KeymapBinding, { kind: 'keys' }>,
+  doc: VimDocView,
+): VimStep => {
+  const rec = state.recording;
+  return {
+    state: {
+      ...state,
+      mapPending: null,
+      recording: rec ? { ...rec, items: stripRecordedText(rec.items, base.length) } : rec,
+    },
+    effects: [
+      ...(base.length > 0 ? [{ kind: 'replace', from: doc.head - base.length, to: doc.head, text: '' } as const] : []),
+      { kind: 'feedKeys', keys: binding.keys, noremap: !binding.remap },
+    ],
+    handled: true,
+  };
+};
+
 const insertMappingKey = (
   state: VimState,
   key: VimKey,
@@ -1005,10 +1083,8 @@ const insertMappingKey = (
   doc: VimDocView,
 ): MappingResult => {
   const pending = state.mapPending?.layer === 'user' ? state.mapPending.keys : [];
-  if (!isPlainKey(key)) {
-    // Chords / Escape / named keys abort the walk; the typed prefix stays.
-    return pending.length ? { kind: 'pass', state: { ...state, mapPending: null } } : null;
-  }
+  // Chords / Escape / named keys abort the walk; the typed prefix stays.
+  if (!isPlainKey(key)) return abortWalk(state, pending);
   const typedText = pending.map((k) => k.key).join('');
   const prefixLive =
     pending.length > 0 &&
@@ -1024,28 +1100,10 @@ const insertMappingKey = (
     if (walk.kind === 'match' && walk.binding.kind === 'keys') {
       // (compile rejects {action} RHS in insert mode, so `keys` is the only
       // reachable binding kind here.)
-      const rec = state.recording;
-      return {
-        kind: 'step',
-        step: {
-          state: {
-            ...state,
-            mapPending: null,
-            // The prefix chars recorded so far net to nothing (deleted below).
-            recording: rec ? { ...rec, items: stripRecordedText(rec.items, base.length) } : rec,
-          },
-          effects: [
-            ...(base.length > 0
-              ? [{ kind: 'replace', from: doc.head - base.length, to: doc.head, text: '' } as const]
-              : []),
-            { kind: 'feedKeys', keys: walk.binding.keys, noremap: !walk.binding.remap },
-          ],
-          handled: true,
-        },
-      };
+      return { kind: 'step', step: insertMappingMatch(state, base, walk.binding, doc) };
     }
   }
-  return pending.length ? { kind: 'pass', state: { ...state, mapPending: null } } : null;
+  return abortWalk(state, pending);
 };
 
 // ---------------------------------------------------------------------------
@@ -1117,7 +1175,7 @@ export const G_SEQUENCES: Readonly<Record<string, VimAction>> = {
  *  `b`/`B` aliases, and BOTH chars of every bracket pair (config.ts —
  *  Japanese brackets included). */
 export const TEXT_OBJECT_KEYS: readonly string[] = [
-  ...new Set(['w', 'W', 'b', 'B', '"', "'", '`', 'p', ...BRACKET_PAIRS.flatMap(([o, c]) => [o, c])]),
+  ...new Set(['w', 'W', 'b', 'B', '"', "'", '`', 'p', ...BRACKET_PAIRS.flat()]),
 ];
 
 const textObjectSequences = (): Record<string, VimAction> => {
@@ -1149,14 +1207,13 @@ const builtinLayerKey = (state: VimState, key: VimKey, doc: VimDocView): Mapping
   if (key.ctrl || key.meta || key.alt || key.key === 'Escape') {
     // Never sequence material: drop the walk; the dispatch still sees the
     // key itself (Escape exits modes, chords bubble to the app).
-    return pending.length ? { kind: 'pass', state: { ...state, mapPending: null } } : null;
+    return abortWalk(state, pending);
   }
   const k = NAMED_KEYS[key.key] ?? key.key;
   if (k.length !== 1) return null; // arrows &c. — the editor's own handlers
-  const context = state.operator ? 'operatorPending' : state.mode === 'visual' ? 'visual' : 'normal';
   const keys = [...pending, { ...key, key: k }];
   const walk = walkTrie(
-    BUILTIN_TRIES[context],
+    BUILTIN_TRIES[mapModeOf(state)],
     keys.map((kk) => kk.key),
   );
   if (walk.kind === 'pending') {
@@ -1166,11 +1223,42 @@ const builtinLayerKey = (state: VimState, key: VimKey, doc: VimDocView): Mapping
     };
   }
   if (walk.kind === 'match') {
-    const env: VimActionEnv = { count: state.count ?? 1, hasCount: state.count !== null };
-    return { kind: 'step', step: walk.value({ ...state, mapPending: null }, env, doc) };
+    return { kind: 'step', step: walk.value({ ...state, mapPending: null }, actionEnv(state), doc) };
   }
   if (pending.length === 0) return null; // the key starts no sequence — the dispatch's business
   return { kind: 'step', step: swallow({ ...clearPending(state), mapPending: null }) };
+};
+
+/** A Ctrl chord outside insert mode. While a char argument is pending it may
+ *  be its shortcut (FIND_CHORDS — e.g. Ctrl+j → 、, Ctrl+l → 。); anything
+ *  else cancels. Otherwise Ctrl chords resolve through the SAME
+ *  bindings→actions tables as plain keys, keyed by their chord token (keys.ts
+ *  keyToken: `C-r`) — so redo, increment, and the page scrolls are named
+ *  actions, remappable and bindable as `{action}` RHS like everything else.
+ *  CONSUMED when bound so Vim outranks the app bindings on the same chords
+ *  (Ctrl+F search, Ctrl+B sidebar) while normal mode is on; insert mode never
+ *  reaches here, so the app keeps them there. */
+const ctrlChordKey = (state: VimState, key: VimKey, doc: VimDocView): VimStep => {
+  if (state.charPending) {
+    const target = FIND_CHORDS[key.key];
+    return target ? resolveCharKey(state, target, doc) : unhandled(clearPending(state));
+  }
+  const id = NORMAL_BINDINGS[keyToken(key)];
+  if (id) return NORMAL_ACTIONS[id](clearPending(state), actionEnv(state), doc);
+  return unhandled(clearPending(state));
+};
+
+/** Count digits accumulate (`2` then `3` = 23); '0' only EXTENDS a pending
+ *  count — with none pending it is the line-start motion. Null = not a count
+ *  digit here. */
+const countDigitKey = (state: VimState, k: string): VimStep | null => {
+  if (k >= '1' && k <= '9') {
+    return { state: { ...state, count: (state.count ?? 0) * 10 + (k.charCodeAt(0) - 48) }, effects: [], handled: true };
+  }
+  if (k === '0' && state.count !== null) {
+    return { state: { ...state, count: state.count * 10 }, effects: [], handled: true };
+  }
+  return null;
 };
 
 const dispatch = (state: VimState, key: VimKey, doc: VimDocView): VimStep => {
@@ -1183,27 +1271,7 @@ const dispatch = (state: VimState, key: VimKey, doc: VimDocView): VimStep => {
   if (isLoneModifier(key)) return unhandled(state);
   if (key.meta || key.alt) return unhandled(state);
   if (state.mode === 'insert') return insertKey(state, key, doc);
-  if (key.ctrl) {
-    if (state.charPending) {
-      // A Ctrl-chord shortcut for the pending find/replace's char argument
-      // (FIND_CHORDS — e.g. Ctrl+j → 、, Ctrl+l → 。); anything else cancels.
-      const target = FIND_CHORDS[key.key];
-      return target ? resolveCharKey(state, target, doc) : unhandled(clearPending(state));
-    }
-    // Ctrl chords resolve through the SAME bindings→actions tables as plain
-    // keys, keyed by their chord token (keys.ts keyToken: `C-r`) — so redo,
-    // increment, and the page scrolls are named actions, remappable and
-    // bindable as `{action}` RHS like everything else. CONSUMED here so Vim
-    // outranks the app bindings on the same chords (Ctrl+F search, Ctrl+B
-    // sidebar) while normal mode is on; insert mode returned above, so the
-    // app keeps them there.
-    const id = NORMAL_BINDINGS[keyToken(key)];
-    if (id) {
-      const env: VimActionEnv = { count: state.count ?? 1, hasCount: state.count !== null };
-      return NORMAL_ACTIONS[id](clearPending(state), env, doc);
-    }
-    return unhandled(clearPending(state));
-  }
+  if (key.ctrl) return ctrlChordKey(state, key, doc);
   if (key.key === 'Escape') {
     const effects: VimEffect[] = state.mode === 'visual' ? [{ kind: 'select', anchor: doc.head, head: doc.head }] : [];
     return { state: { ...clearPending(state), mode: 'normal' }, effects, handled: true };
@@ -1214,13 +1282,8 @@ const dispatch = (state: VimState, key: VimKey, doc: VimDocView): VimStep => {
   }
   const k = NAMED_KEYS[key.key] ?? key.key;
   if (k.length !== 1) return unhandled(state);
-  // Count digits accumulate; '0' is a motion when no count is pending.
-  if (k >= '1' && k <= '9') {
-    return { state: { ...state, count: (state.count ?? 0) * 10 + (k.charCodeAt(0) - 48) }, effects: [], handled: true };
-  }
-  if (k === '0' && state.count !== null) {
-    return { state: { ...state, count: state.count * 10 }, effects: [], handled: true };
-  }
+  const counted = countDigitKey(state, k);
+  if (counted) return counted;
   // Multi-key built-ins (g-sequences, text objects) were consumed by
   // builtinLayerKey before this point.
   return commandKey(state, k, doc);
@@ -1257,52 +1320,64 @@ const insertKey = (state: VimState, key: VimKey, doc: VimDocView): VimStep => {
   return unhandled(state);
 };
 
-/** The character argument of a pending `r`/`f`/`F`/`t`/`T`. */
-const resolveCharKey = (state: VimState, ch: string, doc: VimDocView): VimStep => {
-  const pending = state.charPending;
-  const count = state.count ?? 1;
-  const hadOperator = state.operator;
+/** `r{char}`: replace the character (caret step — a collapsed ruby replaces
+ *  whole) under the caret; the caret stays on it. Visual r overwrites every
+ *  selected character instead (blockwise: per segment). */
+const replaceCharStep = (state: VimState, ch: string, doc: VimDocView): VimStep => {
   const cleared = clearPending(state);
-  if (pending === 'r') {
-    // Visual r: overwrite every selected character (blockwise: per segment).
-    if (state.mode === 'visual') return visualReplaceChar(cleared, ch, doc);
-    // Replace the character (caret step — a collapsed ruby replaces whole)
-    // under the caret; the caret stays on it.
-    const next = doc.caretStop(doc.head, 1);
-    if (next === doc.head || next > lineEnd(doc.text, doc.head)) return swallow(cleared);
-    return {
-      state: cleared,
-      effects: [
-        { kind: 'replace', from: doc.head, to: next, text: ch },
-        { kind: 'select', anchor: doc.head, head: doc.head },
-      ],
-      handled: true,
-    };
-  }
-  if (pending === 'q') {
-    // Start recording into the register (any single character names one).
-    return { state: { ...cleared, macroRecording: { reg: ch, keys: [] } }, effects: [], handled: true };
-  }
-  if (pending === '@') {
-    // Replay a macro: feed its TYPED keys back (through mappings — that is
-    // what typing them would do), count times. `@@` = the last replayed one.
-    const reg = ch === '@' ? state.lastMacro : ch;
-    const macro = reg ? state.macros[reg] : undefined;
-    if (!reg || !macro || macro.length === 0) return swallow(cleared);
-    const keys: VimKey[] = [];
-    for (let n = 0; n < count; n++) keys.push(...macro);
-    return {
-      state: { ...cleared, lastMacro: reg },
-      effects: [{ kind: 'feedKeys', keys, noremap: false }],
-      handled: true,
-    };
-  }
-  if (pending === null) return swallow(cleared);
-  const withFind = { ...cleared, lastFind: { op: pending, ch } };
-  const motion = findTarget(doc.text, doc.head, pending, ch, count);
+  if (state.mode === 'visual') return visualReplaceChar(cleared, ch, doc);
+  const next = doc.caretStop(doc.head, 1);
+  if (next === doc.head || next > lineEnd(doc.text, doc.head)) return swallow(cleared);
+  return {
+    state: cleared,
+    effects: [
+      { kind: 'replace', from: doc.head, to: next, text: ch },
+      { kind: 'select', anchor: doc.head, head: doc.head },
+    ],
+    handled: true,
+  };
+};
+
+/** `@{char}`: replay a macro — feed its TYPED keys back (through mappings —
+ *  that is what typing them would do), count times. `@@` = the last replayed
+ *  one. */
+const macroPlayStep = (state: VimState, ch: string, count: number): VimStep => {
+  const cleared = clearPending(state);
+  const reg = ch === '@' ? state.lastMacro : ch;
+  const macro = reg ? state.macros[reg] : undefined;
+  if (!reg || !macro || macro.length === 0) return swallow(cleared);
+  const keys: VimKey[] = [];
+  for (let n = 0; n < count; n++) keys.push(...macro);
+  return {
+    state: { ...cleared, lastMacro: reg },
+    effects: [{ kind: 'feedKeys', keys, noremap: false }],
+    handled: true,
+  };
+};
+
+/** The char argument of a pending f/F/t/T: record it for `;`/`,`, resolve
+ *  the find, and run the pending operator over it if one was staged. */
+const findCharStep = (state: VimState, op: FindOp, ch: string, count: number, doc: VimDocView): VimStep => {
+  const hadOperator = state.operator;
+  const withFind = { ...clearPending(state), lastFind: { op, ch } };
+  const motion = findTarget(doc.text, doc.head, op, ch, count);
   if (!motion) return swallow(withFind);
   if (hadOperator) return applyOperator(withFind, hadOperator, operatorRange(motion, doc, doc.head), doc);
   return motionStep(withFind, motion, doc);
+};
+
+/** The character argument of a pending `r`/`f`/`F`/`t`/`T` (or `q`/`@`). */
+const resolveCharKey = (state: VimState, ch: string, doc: VimDocView): VimStep => {
+  const pending = state.charPending;
+  const count = state.count ?? 1;
+  if (pending === 'r') return replaceCharStep(state, ch, doc);
+  if (pending === 'q') {
+    // Start recording into the register (any single character names one).
+    return { state: { ...clearPending(state), macroRecording: { reg: ch, keys: [] } }, effects: [], handled: true };
+  }
+  if (pending === '@') return macroPlayStep(state, ch, count);
+  if (pending === null) return swallow(clearPending(state));
+  return findCharStep(state, pending, ch, count, doc);
 };
 
 /** Perform a resolved charwise/linewise motion: move, or extend in visual. */
@@ -1311,25 +1386,36 @@ const motionStep = (state: VimState, motion: Motion, doc: VimDocView): VimStep =
   return { state, effects: [{ kind: 'select', anchor, head: motion.target }], handled: true };
 };
 
+/** Operator pending: this key is the operator's target (a motion, the
+ *  doubled operator = whole lines, or a find prefix; text objects were
+ *  consumed by the builtin sequence layer). Anything else cancels the
+ *  operator. */
+const operatorTargetKey = (
+  state: VimState,
+  op: Operator,
+  k: string,
+  count: number,
+  hasCount: boolean,
+  doc: VimDocView,
+): VimStep => {
+  const cleared = clearPending(state);
+  if (k === op) return linewiseOperator(cleared, op, count, doc);
+  if (k === 'f' || k === 'F' || k === 't' || k === 'T') {
+    return { state: { ...state, charPending: k }, effects: [], handled: true };
+  }
+  const viaLast = k === ';' || k === ',' ? repeatFind(state, k, count, doc) : null;
+  if (viaLast) return viaLast;
+  const motion = motionTarget(k, count, hasCount, doc, doc.head);
+  if (motion) return applyOperator(cleared, op, operatorRange(motion, doc, doc.head), doc);
+  return swallow(cleared);
+};
+
 /** A resolved (post-count, post-`g`) normal/visual key. */
 const commandKey = (state: VimState, k: string, doc: VimDocView): VimStep => {
   const count = state.count ?? 1;
   const hasCount = state.count !== null;
+  if (state.operator) return operatorTargetKey(state, state.operator, k, count, hasCount, doc);
   const cleared = clearPending(state);
-  // Operator pending: this key is its target (a motion, the doubled operator
-  // = whole lines, or a find prefix; text objects were consumed by the
-  // builtin sequence layer). Anything else cancels the operator.
-  if (state.operator) {
-    if (k === state.operator) return linewiseOperator(cleared, state.operator, count, doc);
-    if (k === 'f' || k === 'F' || k === 't' || k === 'T') {
-      return { state: { ...state, charPending: k }, effects: [], handled: true };
-    }
-    const viaLast = k === ';' || k === ',' ? repeatFind(state, k, count, doc) : null;
-    if (viaLast) return viaLast;
-    const motion = motionTarget(k, count, hasCount, doc, doc.head);
-    if (motion) return applyOperator(cleared, state.operator, operatorRange(motion, doc, doc.head), doc);
-    return swallow(cleared);
-  }
   if (state.mode === 'visual') {
     const visual = visualKey(cleared, k, count, hasCount, doc);
     if (visual) return visual;
@@ -1574,7 +1660,13 @@ const flushBlockInsert = (state: VimState, doc: VimDocView): { state: VimState; 
 // ---------------------------------------------------------------------------
 
 /** What an action reads besides the state and doc: the resolved count. */
-export type VimActionEnv = { readonly count: number; readonly hasCount: boolean };
+export type VimActionEnv = {
+  /** The resolved count (1 when none was typed; `3dd` sees 3). */
+  readonly count: number;
+  /** Whether a count was actually typed — for count-sensitive semantics
+   *  (`G` alone goes to the last line, `3G` to line 3). */
+  readonly hasCount: boolean;
+};
 type VimAction = (state: VimState, env: VimActionEnv, doc: VimDocView) => VimStep;
 
 /** A USER-SUPPLIED primitive (`createVimExtension({actions})`), bindable as
@@ -1769,18 +1861,20 @@ const VISUAL_PASS_ACTIONS: ReadonlySet<string> = new Set([
   'search.wordBackward',
 ]);
 
+/** $-block bookkeeping (block visual only — every other state passes
+ *  through): `$` extends the block to every line's end; a column-absolute
+ *  motion re-shapes it back to a rectangle (blockEolOf). */
+const withBlockEol = (state: VimState, k: string): VimState => {
+  if (state.mode !== 'visual' || state.visualKind !== 'block') return state;
+  const eol = blockEolOf(k);
+  if (eol === 'set') return { ...state, visualBlockEol: true };
+  if (eol === 'reset' && state.visualBlockEol) return { ...state, visualBlockEol: false };
+  return state;
+};
+
 const normalKey = (rawState: VimState, k: string, count: number, hasCount: boolean, doc: VimDocView): VimStep => {
   const visual = rawState.mode === 'visual';
-  // $-block bookkeeping (block visual only): `$` extends the block to every
-  // line's end; a column-absolute motion re-shapes it back to a rectangle.
-  const inBlock = visual && rawState.visualKind === 'block';
-  const eol = inBlock ? blockEolOf(k) : 'keep';
-  const state =
-    eol === 'set'
-      ? { ...rawState, visualBlockEol: true }
-      : eol === 'reset' && rawState.visualBlockEol
-        ? { ...rawState, visualBlockEol: false }
-        : rawState;
+  const state = withBlockEol(rawState, k);
 
   // The spatial walk (arrow keys; extends the selection in visual mode).
   if (k === 'h' || k === 'j' || k === 'k' || k === 'l') {
@@ -2038,6 +2132,20 @@ const deleteSteps = (state: VimState, doc: VimDocView, count: number, forward: b
  *  between fullwidth/全角 characters); `plain` (gJ) removes ONLY the
  *  newline, touching nothing else. The caret lands at the (first) join
  *  seam. */
+/** One join seam at the line end `le`: where the joined text resumes on the
+ *  next line (past its leading whitespace, unless `plain`) and the joining
+ *  separator per the data policy (joinNeedsSpace). */
+const joinSeam = (virtual: string, le: number, plain: boolean): { nb: number; sep: string } => {
+  let nb = le + 1;
+  if (plain) return { nb, sep: '' };
+  // Strip the next line's leading whitespace.
+  const nextEnd = lineEnd(virtual, nb);
+  while (nb < nextEnd && isBlank(virtual[nb]!)) nb++;
+  const left = le > 0 && virtual[le - 1] !== '\n' ? virtual[le - 1]! : '';
+  const right = nb < nextEnd ? virtual[nb]! : '';
+  return { nb, sep: joinNeedsSpace(left, right) ? ' ' : '' };
+};
+
 const joinFrom = (state: VimState, doc: VimDocView, at: number, joins: number, plain: boolean): VimStep => {
   let virtual = doc.text;
   const effects: VimEffect[] = [];
@@ -2045,16 +2153,7 @@ const joinFrom = (state: VimState, doc: VimDocView, at: number, joins: number, p
   for (let i = 0; i < joins; i++) {
     const le = lineEnd(virtual, at);
     if (le >= virtual.length) break; // no next line
-    let nb = le + 1;
-    let sep = '';
-    if (!plain) {
-      // Strip the next line's leading whitespace.
-      const nextEnd = lineEnd(virtual, nb);
-      while (nb < nextEnd && isBlank(virtual[nb]!)) nb++;
-      const left = le > 0 && virtual[le - 1] !== '\n' ? virtual[le - 1]! : '';
-      const right = nb < nextEnd ? virtual[nb]! : '';
-      sep = joinNeedsSpace(left, right) ? ' ' : '';
-    }
+    const { nb, sep } = joinSeam(virtual, le, plain);
     if (firstSeam < 0) firstSeam = le;
     effects.push({ kind: 'replace', from: le, to: nb, text: sep });
     virtual = virtual.slice(0, le) + sep + virtual.slice(nb);
@@ -2169,6 +2268,37 @@ const blockPaste = (state: VimState, doc: VimDocView, count: number, after: bool
   return { state, effects, handled: true };
 };
 
+/** Linewise `p`/`P`: register content is the line body (no trailing
+ *  newline); paste as whole lines below (p) / above (P), caret to the pasted
+ *  text's first line. */
+const linewisePaste = (state: VimState, doc: VimDocView, body: string, after: boolean): VimStep => {
+  const { text, head } = doc;
+  const ls = lineStart(text, head);
+  const le = lineEnd(text, head);
+  if (after) {
+    const atDocEnd = le >= text.length;
+    const from = atDocEnd ? text.length : le + 1;
+    const data = atDocEnd ? `\n${body}` : `${body}\n`;
+    const caret = atDocEnd ? from + 1 : from;
+    return {
+      state,
+      effects: [
+        { kind: 'replace', from, to: from, text: data },
+        { kind: 'select', anchor: caret, head: caret },
+      ],
+      handled: true,
+    };
+  }
+  return {
+    state,
+    effects: [
+      { kind: 'replace', from: ls, to: ls, text: `${body}\n` },
+      { kind: 'select', anchor: ls, head: ls },
+    ],
+    handled: true,
+  };
+};
+
 const paste = (state: VimState, doc: VimDocView, count: number, after: boolean): VimStep => {
   const reg = state.register;
   if (!reg || reg.text.length === 0) return swallow(state);
@@ -2176,34 +2306,7 @@ const paste = (state: VimState, doc: VimDocView, count: number, after: boolean):
   const { text, head, caretStop } = doc;
   // Linewise copies are LINES — joined by newlines, not concatenated.
   const body = reg.linewise ? Array.from({ length: count }, () => reg.text).join('\n') : reg.text.repeat(count);
-  if (reg.linewise) {
-    const ls = lineStart(text, head);
-    const le = lineEnd(text, head);
-    // Register content is the line body (no trailing newline); paste as whole
-    // lines below (p) / above (P), caret to the pasted text's first line.
-    if (after) {
-      const atDocEnd = le >= text.length;
-      const from = atDocEnd ? text.length : le + 1;
-      const data = atDocEnd ? `\n${body}` : `${body}\n`;
-      const caret = atDocEnd ? from + 1 : from;
-      return {
-        state,
-        effects: [
-          { kind: 'replace', from, to: from, text: data },
-          { kind: 'select', anchor: caret, head: caret },
-        ],
-        handled: true,
-      };
-    }
-    return {
-      state,
-      effects: [
-        { kind: 'replace', from: ls, to: ls, text: `${body}\n` },
-        { kind: 'select', anchor: ls, head: ls },
-      ],
-      handled: true,
-    };
-  }
+  if (reg.linewise) return linewisePaste(state, doc, body, after);
   // Charwise: after the character under the caret (p) or at the caret (P);
   // the caret lands ON the last pasted character.
   const le = lineEnd(text, head);

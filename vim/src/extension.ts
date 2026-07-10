@@ -1,9 +1,9 @@
-// The Vim VIEW/adapter: binds the pure reducer (model.ts) onto the editor's
-// extension seam. This file owns ALL editor access — the reducer never sees
-// the context — so the split is: model decides, adapter executes.
-//
-// Built ONLY on @ved/editor's public entry: this package is the living proof
-// that the extension API suffices for a third-party modal editing layer.
+/** The Vim VIEW/adapter: binds the pure reducer (model.ts) onto the editor's
+ *  extension seam. This file owns ALL editor access — the reducer never sees
+ *  the context — so the split is: model decides, adapter executes.
+ *
+ *  Built ONLY on @ved/editor's public entry: this package is the living proof
+ *  that the extension API suffices for a third-party modal editing layer. */
 
 import type { ChordEvent, EditorExtension, EditorExtensionContext } from '@ved/editor';
 import { compileKeymap, type VimKeymapConfig } from './keymap';
@@ -23,6 +23,9 @@ import {
 } from './model';
 import { createJapaneseWordModel } from './words-ja';
 
+/** Options for `createVimExtension`: shell observers (mode / command line /
+ *  macro indicators), the word-model choice, user key mappings, and custom
+ *  action primitives. All optional. */
 export type VimExtensionOptions = {
   /** Observes mode changes (drive a mode indicator / statusline from it).
    *  Called once at attach with the initial mode. */
@@ -59,6 +62,66 @@ const NORMAL_CLASS = 'vedVimNormal';
  *  replay (`50@q` over a long macro); only a cycle realistically hits it. */
 const FEED_BUDGET = 4096;
 
+/** Vim never RESTS the cursor past a line's last character in normal or
+ *  visual mode — that column exists only in insert mode. The reducer's own
+ *  targets respect this, but bare h/j/k/l resolve as `moveVisual` in the
+ *  EDITOR (which happily stops at a paragraph end), so the rule is enforced
+ *  here, after each handled step: a head at a non-empty line's end steps back
+ *  one caret stop. An EMPTY line keeps its one position (Vim's column 0). */
+const clampLineEnd = (ctx: EditorExtensionContext, mode: VimMode): void => {
+  if (mode !== 'normal' && mode !== 'visual') return;
+  const text = ctx.getText();
+  const sel = ctx.getSelection();
+  const atEnd = sel.head >= text.length || text[sel.head] === '\n';
+  if (!atEnd) return;
+  const ls = text.lastIndexOf('\n', sel.head - 1) + 1;
+  if (sel.head <= ls) return; // empty line
+  const back = ctx.caretStop(sel.head, -1);
+  if (back >= ls && back !== sel.head) {
+    ctx.setSelection(mode === 'visual' ? sel.anchor : back, back);
+  }
+};
+
+/** A fed/replayed insert-mode key the reducer leaves to "the editor": mirror
+ *  what the editor's own handlers do with a live one — type printables, break
+ *  the line on Enter, delete one caret step on Backspace/Delete. (Live
+ *  keydowns never come through here — the editor itself handles them.) */
+const insertUnhandled = (ctx: EditorExtensionContext, k: VimKey): void => {
+  if (k.ctrl || k.meta || k.alt) return;
+  const { head } = ctx.getSelection();
+  if (isPlainKey(k)) {
+    ctx.replaceRange(head, head, k.key);
+    return;
+  }
+  if (k.key === 'Enter') {
+    ctx.replaceRange(head, head, '\n');
+    return;
+  }
+  if (k.key !== 'Backspace' && k.key !== 'Delete') return;
+  const other = ctx.caretStop(head, k.key === 'Backspace' ? -1 : 1);
+  if (other !== head) ctx.replaceRange(Math.min(head, other), Math.max(head, other), '');
+};
+
+/** Apply a handled step's effects. A replayed change never re-runs nested
+ *  feeders (`repeat`/`feedKeys`): skipping them makes `.` after `@a` repeat
+ *  the last change WITHIN the macro (its fed keys were recorded), exactly
+ *  like Vim. */
+const applyStepEffects = (
+  effects: readonly VimEffect[],
+  replay: boolean | undefined,
+  apply: (effect: VimEffect) => void,
+): void => {
+  for (const e of effects) {
+    if (replay && (e.kind === 'repeat' || e.kind === 'feedKeys')) continue;
+    apply(e);
+  }
+};
+
+/** Keydown opts for FED keys: marked `fed` (a live macro recording excludes
+ *  them); noremap keys additionally skip the user mapping layer. */
+const fedKeyOpts = (base: VimKeydownOpts, noremap: boolean): VimKeydownOpts =>
+  noremap ? { ...base, noremap: true, fed: true } : { ...base, fed: true };
+
 /** The text a composition ADDED to the document: strip the common prefix and
  *  suffix of the before/after texts and return the after-side middle. A
  *  composition that also CONSUMED a selection yields only its insertion —
@@ -72,6 +135,10 @@ const insertedText = (before: string, after: string): string => {
   return after.slice(p, after.length - s);
 };
 
+/** The Vim extension — list it in `VedEditorProps.extensions`. Throws right
+ *  here on a broken `keymap` or a custom action id colliding with a built-in
+ *  (compile-eager: catch it and fall back to defaults; an attach-time failure
+ *  would be silent). */
 export const createVimExtension = (options: VimExtensionOptions = {}): EditorExtension => {
   const customActions = options.actions;
   for (const id of Object.keys(customActions ?? {})) {
@@ -158,27 +225,6 @@ export const createVimExtension = (options: VimExtensionOptions = {}): EditorExt
         };
       };
 
-      // Vim never RESTS the cursor past a line's last character in normal or
-      // visual mode — that column exists only in insert mode. The reducer's
-      // own targets respect this, but bare h/j/k/l resolve as `moveVisual`
-      // in the EDITOR (which happily stops at a paragraph end), so the rule
-      // is enforced here, after each handled step: a head at a non-empty
-      // line's end steps back one caret stop. An EMPTY line keeps its one
-      // position (Vim's column 0).
-      const clampLineEnd = (): void => {
-        if (state.mode !== 'normal' && state.mode !== 'visual') return;
-        const text = ctx.getText();
-        const sel = ctx.getSelection();
-        const atEnd = sel.head >= text.length || text[sel.head] === '\n';
-        if (!atEnd) return;
-        const ls = text.lastIndexOf('\n', sel.head - 1) + 1;
-        if (sel.head <= ls) return; // empty line
-        const back = ctx.caretStop(sel.head, -1);
-        if (back >= ls && back !== sel.head) {
-          ctx.setSelection(state.mode === 'visual' ? sel.anchor : back, back);
-        }
-      };
-
       const applyEffect = (effect: VimEffect): void => {
         switch (effect.kind) {
           case 'select':
@@ -209,27 +255,6 @@ export const createVimExtension = (options: VimExtensionOptions = {}): EditorExt
         }
       };
 
-      // A fed/replayed insert-mode key the reducer leaves to "the editor":
-      // mirror what the editor's own handlers do with a live one — type
-      // printables, break the line on Enter, delete one caret step on
-      // Backspace/Delete. (Live keydowns never come through here — the
-      // editor itself handles them.)
-      const insertUnhandled = (k: VimKey): void => {
-        if (k.ctrl || k.meta || k.alt) return;
-        const { head } = ctx.getSelection();
-        if (isPlainKey(k)) {
-          ctx.replaceRange(head, head, k.key);
-          return;
-        }
-        if (k.key === 'Enter') {
-          ctx.replaceRange(head, head, '\n');
-          return;
-        }
-        if (k.key !== 'Backspace' && k.key !== 'Delete') return;
-        const other = ctx.caretStop(head, k.key === 'Backspace' ? -1 : 1);
-        if (other !== head) ctx.replaceRange(Math.min(head, other), Math.max(head, other), '');
-      };
-
       // One key re-entering the loop (a replayed change or a mapping's fed
       // keys), stepping the LIVE document between keys — the reducer can't
       // within one call.
@@ -237,16 +262,10 @@ export const createVimExtension = (options: VimExtensionOptions = {}): EditorExt
         const step = vimKeydown(state, k, docView(), callOpts);
         state = step.state;
         if (step.handled) {
-          for (const e of step.effects) {
-            // A replayed change never re-runs nested feeders: skipping
-            // `feedKeys` makes `.` after `@a` repeat the last change WITHIN
-            // the macro (its fed keys were recorded), exactly like Vim.
-            if (callOpts.replay && (e.kind === 'repeat' || e.kind === 'feedKeys')) continue;
-            applyEffect(e);
-          }
-          clampLineEnd();
+          applyStepEffects(step.effects, callOpts.replay, applyEffect);
+          clampLineEnd(ctx, state.mode);
         } else if (state.mode === 'insert') {
-          insertUnhandled(k);
+          insertUnhandled(ctx, k);
         }
       };
 
@@ -278,20 +297,23 @@ export const createVimExtension = (options: VimExtensionOptions = {}): EditorExt
       // the order recursion would give).
       const feedQueue: { k: VimKey; opts: VimKeydownOpts }[] = [];
       let feeding = false;
+      const drainFeedQueue = (): void => {
+        while (feedQueue.length > 0) {
+          if (--feedBudget < 0) {
+            feedQueue.length = 0;
+            return;
+          }
+          const next = feedQueue.shift();
+          if (next) feedOne(next.k, next.opts);
+        }
+      };
       const feedKeys = (keys: readonly VimKey[], noremap: boolean): void => {
-        const opts: VimKeydownOpts = noremap ? { ...keyOpts, noremap: true, fed: true } : { ...keyOpts, fed: true };
+        const opts = fedKeyOpts(keyOpts, noremap);
         feedQueue.unshift(...keys.map((k) => ({ k, opts })));
         if (feeding) return; // the active pump drains the front-inserted keys
         feeding = true;
         try {
-          while (feedQueue.length > 0) {
-            if (--feedBudget < 0) {
-              feedQueue.length = 0;
-              return;
-            }
-            const next = feedQueue.shift();
-            if (next) feedOne(next.k, next.opts);
-          }
+          drainFeedQueue();
         } finally {
           feeding = false;
         }
@@ -316,7 +338,7 @@ export const createVimExtension = (options: VimExtensionOptions = {}): EditorExt
           );
           state = step.state;
           for (const effect of step.effects) applyEffect(effect);
-          if (step.handled) clampLineEnd();
+          if (step.handled) clampLineEnd(ctx, state.mode);
           if (state.mode !== prevMode) syncMode(state.mode);
           syncCommandLine();
           syncVisual();

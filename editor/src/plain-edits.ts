@@ -176,37 +176,43 @@ export const deleteSelectionForIme = (view: EditorView): void => {
   if (!sel.empty) deleteRangeForIme(view, sel.from, sel.to);
 };
 
+/** Enter at a COLLAPSED caret INSIDE a ruby: baseKeymap's splitBlock cannot
+ *  split an inline ruby node, so Enter was a NO-OP there. EXPANDED (markup
+ *  visible): exact split AT the caret — the plain string gains the '\n'
+ *  exactly where it sits, and the torn markup renders literally, the same as
+ *  if it had been typed. COLLAPSED (Rich &c. — the markup is invisible):
+ *  split OUTSIDE the ruby (`rubyPasteOutsidePos`, the paste rule) — tearing
+ *  markup the user cannot see leaves invisible `|`/`(` debris. A caret in
+ *  plain text returns false → baseKeymap splits normally. */
+const enterInsideRuby = (
+  state: EditorState,
+  dispatch: ((tr: Transaction) => void) | undefined,
+  view: EditorView | undefined,
+): boolean => {
+  const $h = state.selection.$head;
+  if ($h.depth <= 1) return false; // plain text — baseKeymap splits normally
+  if (dispatch && view) {
+    const domNode = view.domAtPos($h.pos).node;
+    const el = domNode.nodeType === Node.TEXT_NODE ? domNode.parentElement : (domNode as Element);
+    const expanded = !!el?.closest('ruby')?.classList.contains('rubyExpanded');
+    const at = expanded ? $h.pos : (rubyPasteOutsidePos($h) ?? $h.pos);
+    const tr = plainDeleteTr(state, at, at, true);
+    if (tr) dispatch(tr.scrollIntoView());
+  }
+  return true;
+};
+
 /** Enter must REPLACE a non-empty selection with a paragraph split. PM's
  *  baseKeymap `splitBlock` only deletes a TextSelection first, so Enter was a
  *  NO-OP on the Ctrl+A `AllSelection` (and on a programmatic select-all whose DOM
  *  selection leads the model). Delete the range (DOM selection first, like
- *  `deleteChar`, else the model selection), then split at the caret. A collapsed
- *  caret in plain text returns false → baseKeymap splits normally; a collapsed
- *  caret INSIDE a ruby takes the exact split below (splitBlock can't split
+ *  `deleteChar`, else the model selection), then split at the caret. A
+ *  collapsed caret takes `enterInsideRuby` instead (splitBlock can't split
  *  the inline ruby node, so Enter was a no-op there). */
 export const enterReplacingSelection: Command = (state, dispatch, view) => {
   let range: [number, number] | null = view ? domLedRange(view) : null;
   if (!range && !state.selection.empty) range = [state.selection.from, state.selection.to];
-  if (!range) {
-    // Collapsed caret INSIDE a ruby: baseKeymap's splitBlock cannot split an
-    // inline ruby node, so Enter was a NO-OP there. EXPANDED (markup visible):
-    // exact split AT the caret — the plain string gains the '\n' exactly
-    // where it sits, and the torn markup renders literally, the same as if it
-    // had been typed. COLLAPSED (Rich &c. — the markup is invisible): split
-    // OUTSIDE the ruby (`rubyPasteOutsidePos`, the paste rule) — tearing
-    // markup the user cannot see leaves invisible `|`/`(` debris.
-    const $h = state.selection.$head;
-    if ($h.depth <= 1) return false; // plain text — baseKeymap splits normally
-    if (dispatch && view) {
-      const domNode = view.domAtPos($h.pos).node;
-      const el = domNode.nodeType === Node.TEXT_NODE ? domNode.parentElement : (domNode as Element);
-      const expanded = !!el?.closest('ruby')?.classList.contains('rubyExpanded');
-      const at = expanded ? $h.pos : (rubyPasteOutsidePos($h) ?? $h.pos);
-      const tr = plainDeleteTr(state, at, at, true);
-      if (tr) dispatch(tr.scrollIntoView());
-    }
-    return true;
-  }
+  if (!range) return enterInsideRuby(state, dispatch, view);
   if (dispatch) {
     // Exact: the plain range is replaced by a paragraph break (the
     // same canonical rebuild as every selection deletion — plainDeleteTr).

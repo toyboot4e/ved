@@ -77,6 +77,34 @@ const play = (
       anchor: cur.head - 1,
     };
   };
+  // moveVisual left/right = a ±1 character step (horizontal reading);
+  // up/down (line steps) move nothing — the editor measures those.
+  const applyMoveVisual = (e: Extract<VimEffect, { kind: 'moveVisual' }>): void => {
+    if (e.direction !== 'left' && e.direction !== 'right') return;
+    const d = e.direction === 'right' ? 1 : -1;
+    let h = cur.head;
+    for (let i = 0; i < e.count; i++) h = Math.max(0, Math.min(cur.text.length, h + d));
+    cur = { ...cur, head: h, anchor: e.extend ? cur.anchor : h };
+  };
+  // Mirror the adapter's dot-repeat replay: keys re-dispatch, text items
+  // insert as-is at the caret.
+  const replayLastChange = (count: number): void => {
+    for (let n = 0; n < count; n++) {
+      for (const it of st.lastChange ?? []) {
+        if (it.kind === 'text') insertText(it.text);
+        else feed(it.key, { replay: true });
+      }
+    }
+  };
+  // Mirror the adapter's feed loop (mapping RHS / macro replay; `fed` keys
+  // are excluded from macro capture, noremap ones from the user mapping
+  // layer).
+  const feedMapped = (keys: readonly VimKey[], noremap: boolean): void => {
+    for (const fk of keys) {
+      fed.push(fk);
+      feed(fk, noremap ? { ...baseOpts, noremap: true, fed: true } : { ...baseOpts, fed: true });
+    }
+  };
   function applyEffect(e: VimEffect): void {
     effects.push(e);
     if (e.kind === 'replace') {
@@ -84,53 +112,45 @@ const play = (
       cur = { text: cur.text.slice(0, e.from) + e.text + cur.text.slice(e.to), head: after, anchor: after };
     } else if (e.kind === 'select') {
       cur = { ...cur, anchor: e.anchor, head: e.head };
-    } else if (e.kind === 'moveVisual' && (e.direction === 'left' || e.direction === 'right')) {
-      const d = e.direction === 'right' ? 1 : -1;
-      let h = cur.head;
-      for (let i = 0; i < e.count; i++) h = Math.max(0, Math.min(cur.text.length, h + d));
-      cur = { ...cur, head: h, anchor: e.extend ? cur.anchor : h };
+    } else if (e.kind === 'moveVisual') {
+      applyMoveVisual(e);
     } else if (e.kind === 'repeat') {
-      // Mirror the adapter's dot-repeat replay: keys re-dispatch, text
-      // items insert as-is at the caret.
-      for (let n = 0; n < e.count; n++) {
-        for (const it of st.lastChange ?? []) {
-          if (it.kind === 'text') insertText(it.text);
-          else feed(it.key, { replay: true });
-        }
-      }
+      replayLastChange(e.count);
     } else if (e.kind === 'feedKeys') {
-      // Mirror the adapter's feed loop (mapping RHS / macro replay; `fed`
-      // keys are excluded from macro capture, noremap ones from the user
-      // mapping layer).
-      for (const fk of e.keys) {
-        fed.push(fk);
-        feed(fk, e.noremap ? { ...baseOpts, noremap: true, fed: true } : { ...baseOpts, fed: true });
-      }
+      feedMapped(e.keys, e.noremap);
     }
   }
-  // Feed one key. `replay` matches the adapter's suppressed-recording replay;
-  // an unhandled printable/Enter/Backspace in insert mode is performed by
+  // Apply a handled step's effects; a replay never re-runs nested feeders
+  // (mirror the adapter).
+  const applyStepEffects = (step: VimStep, replay: boolean): void => {
+    for (const e of step.effects) {
+      if (replay && (e.kind === 'repeat' || e.kind === 'feedKeys')) continue;
+      applyEffect(e);
+    }
+  };
+  // An unhandled printable/Enter/Backspace in insert mode is performed by
   // "the editor" (us) — a LIVE printable also records its text, mirroring
   // the editor's beforeinput hook (fed keys were recorded at dispatch).
+  const editorInsertKey = (k: VimKey, live: boolean): void => {
+    if (isPlainKey(k)) {
+      insertText(k.key);
+      if (live) st = vimRecordText(st, k.key);
+    } else if (k.key === 'Enter') {
+      insertText('\n');
+    } else if (k.key === 'Backspace') {
+      deleteBack();
+    }
+  };
+  // Feed one key. `replay` matches the adapter's suppressed-recording replay.
   function feed(k: VimKey, callOpts: VimKeydownOpts | undefined): void {
     const step: VimStep = vimKeydown(st, k, docOf(cur.text, cur.head, cur.anchor), callOpts);
     st = step.state;
-    if (!callOpts?.replay && !callOpts?.fed) handled.push(step.handled);
+    const live = !callOpts?.replay && !callOpts?.fed;
+    if (live) handled.push(step.handled);
     if (step.handled) {
-      for (const e of step.effects) {
-        // Mirror the adapter: a replay never re-runs nested feeders.
-        if (callOpts?.replay && (e.kind === 'repeat' || e.kind === 'feedKeys')) continue;
-        applyEffect(e);
-      }
+      applyStepEffects(step, callOpts?.replay ?? false);
     } else if (st.mode === 'insert' && !k.ctrl && !k.meta && !k.alt) {
-      if (isPlainKey(k)) {
-        insertText(k.key);
-        if (!callOpts?.replay && !callOpts?.fed) st = vimRecordText(st, k.key);
-      } else if (k.key === 'Enter') {
-        insertText('\n');
-      } else if (k.key === 'Backspace') {
-        deleteBack();
-      }
+      editorInsertKey(k, live);
     }
   }
   for (const k of keys) feed(typeof k === 'string' ? key(k) : k, baseOpts);

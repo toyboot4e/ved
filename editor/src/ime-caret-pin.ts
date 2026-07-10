@@ -55,6 +55,114 @@ export type ImeCaretPinDeps = {
   readonly onCaretRect?: (rect: { left: number; top: number; right: number; bottom: number } | null) => void;
 };
 
+/** The preedit tail's DOM home as a TEXT-node caret. At a PARAGRAPH end
+ *  (empty doc: the preedit is the whole content) domAtPos answers at the
+ *  ELEMENT level ({<p>, childIndex}); re-home into the preceding text node —
+ *  the pin needs a text-node caret (an element-level caret kills fcitx5's IM
+ *  context). Null when no text home exists — native placement. */
+const tailTextHome = (view: EditorView, tailPos: number): { node: Node; offset: number } | null => {
+  const at = view.domAtPos(tailPos);
+  if (at.node.nodeType === Node.TEXT_NODE) return at;
+  const before = at.node.childNodes[at.offset - 1];
+  if (before?.nodeType !== Node.TEXT_NODE) return null;
+  return { node: before, offset: (before as Text).length };
+};
+
+/** The same-visual-line test against the composition's starting rect: same
+ *  column strip (half-pitch tolerance, the shared rect-grouping rule) and
+ *  within one line length on the flow axis (two bands' lines can share a
+ *  strip in VerticalColumns). */
+const makeOnLine = (
+  view: EditorView,
+  scroller: HTMLElement,
+  aRect: { left: number; right: number; top: number },
+): ((r: { left: number; right: number; top: number }) => boolean) => {
+  const contentCs = getComputedStyle(view.dom);
+  const fontSize = Number.parseFloat(contentCs.fontSize) || 18;
+  const linePitch = Number.parseFloat(contentCs.lineHeight) || fontSize + 2;
+  const lineLen =
+    (Number.parseFloat(getComputedStyle(scroller).getPropertyValue('--page-line-chars')) || 40) * fontSize;
+  const mid = (r: { left: number; right: number }): number => (r.left + r.right) / 2;
+  return (r) => Math.abs(mid(r) - mid(aRect)) <= linePitch / 2 && Math.abs(r.top - aRect.top) <= lineLen;
+};
+
+/** The tail's rect from a collapsed DOM Range AT the tail, not coordsAtPos:
+ *  at the DOCUMENT end coordsAtPos reports the empty NEXT column (the
+ *  multicol end-of-text artifact — a ~cell horizontal shift), which read as a
+ *  spurious wrap and re-seated the caret BACKWARD, hiding the preedit tail
+ *  under the candidate window (VerticalColumns; mozc/ime-compose-visible). */
+const tailRectAt = (
+  view: EditorView,
+  tailDom: { node: Node; offset: number },
+  tailPos: number,
+): { left: number; right: number; top: number } => {
+  const range = view.dom.ownerDocument.createRange();
+  range.setStart(tailDom.node, tailDom.offset);
+  range.collapse(true);
+  const dr = range.getBoundingClientRect();
+  const degenerate = dr.top === 0 && dr.bottom === 0 && dr.left === 0 && dr.right === 0;
+  return degenerate ? caretCoords(view, tailPos) : { left: dr.left, right: dr.right, top: dr.top };
+};
+
+/** The last offset still on the composition's starting line (offsets leave
+ *  the line monotonically, so the boundary binary-searches; the walk is
+ *  bounded by the preedit length and runs only while composing). */
+const lastOffsetOnLine = (
+  view: EditorView,
+  anchorOff: number,
+  tailOff: number,
+  onLine: (r: { left: number; right: number; top: number }) => boolean,
+): number => {
+  let lo = anchorOff;
+  let hi = tailOff;
+  while (hi - lo > 1) {
+    const m = (lo + hi) >> 1;
+    if (onLine(caretCoords(view, offsetToPos(view.state.doc, m)))) lo = m;
+    else hi = m;
+  }
+  return lo;
+};
+
+/** Re-seat the DOM caret to the preedit's TRUE end, clamped to the starting
+ *  line on a wrap. Returns the composition's starting offset when a re-seat
+ *  happened; null when the pin bails to native placement or the caret is
+ *  already there. */
+const seatCaretAtPreeditEnd = (
+  view: EditorView,
+  deps: ImeCaretPinDeps,
+  sel: Selection,
+  scroller: HTMLElement,
+): number | null => {
+  const doc = view.state.doc;
+  const anchorOff = deps.beforeOffsetRef.current;
+  // The preedit's TRUE end. The model selection head is mozc's cursor —
+  // after a conversion that is the ACTIVE SEGMENT's position (0 for the
+  // first segment), not the end. Composing over a selection leaves
+  // lastTextRef ahead of the doc (the IME-entry deletion is history-
+  // deferred) and the surplus underestimates — the pin then bails or
+  // clamps short, never past the preedit.
+  const preeditLen = serialize(doc).length - deps.lastTextRef.current.length;
+  if (preeditLen <= 0) return null;
+  const tailOff = anchorOff + preeditLen;
+  const tailPos = offsetToPos(doc, tailOff);
+  const tailDom = tailTextHome(view, tailPos);
+  if (!tailDom) return null;
+  const aRect = caretCoords(view, offsetToPos(doc, anchorOff));
+  const onLine = makeOnLine(view, scroller, aRect);
+  const tailRect = tailRectAt(view, tailDom, tailPos);
+  // Target: the preedit end, clamped — when the preedit wraps off the
+  // starting line — to the last position still on it.
+  const target = onLine(tailRect) ? tailOff : lastOffsetOnLine(view, anchorOff, tailOff, onLine);
+  const pin = target === tailOff ? tailDom : view.domAtPos(offsetToPos(doc, target));
+  // Only a real text-node home keeps the IM context alive (an element-
+  // level caret kills fcitx5's context) — bail to native placement.
+  if (pin.node.nodeType !== Node.TEXT_NODE) return null;
+  // Already there (plain typing: Blink tails the caret itself) — no-op.
+  if (sel.focusNode === pin.node && sel.focusOffset === pin.offset) return null;
+  sel.collapse(pin.node, pin.offset);
+  return anchorOff;
+};
+
 /** Install the composition caret pin on a mounted view; returns the teardown. */
 export const installImeCaretPin = (view: EditorView, deps: ImeCaretPinDeps): (() => void) => {
   // Set while the ACTIVE composition's caret is pinned: the composition's
@@ -85,75 +193,8 @@ export const installImeCaretPin = (view: EditorView, deps: ImeCaretPinDeps): (()
     const scroller = view.dom.parentElement;
     if (!scroller) return;
     try {
-      const doc = view.state.doc;
-      const anchorOff = deps.beforeOffsetRef.current;
-      // The preedit's TRUE end. The model selection head is mozc's cursor —
-      // after a conversion that is the ACTIVE SEGMENT's position (0 for the
-      // first segment), not the end. Composing over a selection leaves
-      // lastTextRef ahead of the doc (the IME-entry deletion is history-
-      // deferred) and the surplus underestimates — the pin then bails or
-      // clamps short, never past the preedit.
-      const preeditLen = serialize(doc).length - deps.lastTextRef.current.length;
-      if (preeditLen <= 0) return;
-      const tailOff = anchorOff + preeditLen;
-      const tailPos = offsetToPos(doc, tailOff);
-      // At a PARAGRAPH end (empty doc: the preedit is the whole content)
-      // domAtPos answers at the ELEMENT level ({<p>, childIndex}); re-home
-      // into the preceding text node — the pin needs a text-node caret (an
-      // element-level caret kills fcitx5's IM context).
-      let tailDom: { node: Node; offset: number } = view.domAtPos(tailPos);
-      if (tailDom.node.nodeType !== Node.TEXT_NODE) {
-        const before = tailDom.node.childNodes[tailDom.offset - 1];
-        if (before?.nodeType !== Node.TEXT_NODE) return; // no text home — native placement
-        tailDom = { node: before, offset: (before as Text).length };
-      }
-      const aRect = caretCoords(view, offsetToPos(doc, anchorOff));
-      const contentCs = getComputedStyle(view.dom);
-      const fontSize = Number.parseFloat(contentCs.fontSize) || 18;
-      const linePitch = Number.parseFloat(contentCs.lineHeight) || fontSize + 2;
-      const lineLen =
-        (Number.parseFloat(getComputedStyle(scroller).getPropertyValue('--page-line-chars')) || 40) * fontSize;
-      // Same visual line = same column strip (half-pitch tolerance, the
-      // shared rect-grouping rule) and within one line length on the flow
-      // axis (two bands' lines can share a strip in VerticalColumns).
-      const mid = (r: { left: number; right: number }): number => (r.left + r.right) / 2;
-      const onLine = (r: { left: number; right: number; top: number }): boolean =>
-        Math.abs(mid(r) - mid(aRect)) <= linePitch / 2 && Math.abs(r.top - aRect.top) <= lineLen;
-      // The tail's rect from a collapsed DOM Range AT the tail, not
-      // coordsAtPos: at the DOCUMENT end coordsAtPos reports the empty NEXT
-      // column (the multicol end-of-text artifact — a ~cell horizontal
-      // shift), which read as a spurious wrap and re-seated the caret
-      // BACKWARD, hiding the preedit tail under the candidate window
-      // (VerticalColumns; mozc/ime-compose-visible).
-      const range = view.dom.ownerDocument.createRange();
-      range.setStart(tailDom.node, tailDom.offset);
-      range.collapse(true);
-      const dr = range.getBoundingClientRect();
-      const degenerate = dr.top === 0 && dr.bottom === 0 && dr.left === 0 && dr.right === 0;
-      const tailRect = degenerate ? caretCoords(view, tailPos) : { left: dr.left, right: dr.right, top: dr.top };
-      // Target: the preedit end, clamped — when the preedit wraps off the
-      // starting line — to the last offset still on it (offsets leave the
-      // line monotonically, so the boundary binary-searches; the walk is
-      // bounded by the preedit length and runs only while composing).
-      let target = tailOff;
-      if (!onLine(tailRect)) {
-        let lo = anchorOff;
-        let hi = tailOff;
-        while (hi - lo > 1) {
-          const m = (lo + hi) >> 1;
-          if (onLine(caretCoords(view, offsetToPos(doc, m)))) lo = m;
-          else hi = m;
-        }
-        target = lo;
-      }
-      const pin = target === tailOff ? tailDom : view.domAtPos(offsetToPos(doc, target));
-      // Only a real text-node home keeps the IM context alive (an element-
-      // level caret kills fcitx5's context) — bail to native placement.
-      if (pin.node.nodeType !== Node.TEXT_NODE) return;
-      // Already there (plain typing: Blink tails the caret itself) — no-op.
-      if (sel.focusNode === pin.node && sel.focusOffset === pin.offset) return;
-      sel.collapse(pin.node, pin.offset);
-      pinnedAnchor = anchorOff;
+      const anchored = seatCaretAtPreeditEnd(view, deps, sel, scroller);
+      if (anchored != null) pinnedAnchor = anchored;
     } catch {
       // A mid-flush mapping can miss; skip this update — the next re-pins.
     }

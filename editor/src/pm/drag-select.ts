@@ -9,6 +9,9 @@
  *  block (the line/column axis) and inline (along the line) coordinates. */
 export type DragGlyph = { off: number; bLo: number; bHi: number; iLo: number; iHi: number };
 
+/** Distance from a coordinate to the `[lo, hi]` interval (0 inside it). */
+const axisGap = (p: number, lo: number, hi: number): number => (p < lo ? lo - p : p > hi ? p - hi : 0);
+
 /** The model offset (a caret BOUNDARY) nearest a viewport point, given the
  *  measured glyphs. The block axis dominates — it picks the cursor's line/column —
  *  then the inline axis; the boundary is before or after the glyph depending on
@@ -19,9 +22,7 @@ export const nearestGlyphOffset = (glyphs: DragGlyph[], px: number, py: number, 
   let bestDist = Number.POSITIVE_INFINITY;
   let best: number | null = null;
   for (const g of glyphs) {
-    const blockGap = pB < g.bLo ? g.bLo - pB : pB > g.bHi ? pB - g.bHi : 0;
-    const inlineGap = pI < g.iLo ? g.iLo - pI : pI > g.iHi ? pI - g.iHi : 0;
-    const dist = blockGap * 10 + inlineGap;
+    const dist = axisGap(pB, g.bLo, g.bHi) * 10 + axisGap(pI, g.iLo, g.iHi);
     if (dist < bestDist) {
       bestDist = dist;
       best = pI > (g.iLo + g.iHi) / 2 ? g.off + 1 : g.off;

@@ -30,7 +30,7 @@ const near = (actual: number, expected: number, what: string) =>
 // The VerticalColumns content height = page height + start padding, where
 // the padding is gap A ONLY (page 1's head margin, 1 cell at the default) —
 // no gutter, no border (the phantom lattice tile is masked).
-const GUTTER = 2.2 * 18;
+const _GUTTER = 2.2 * 18;
 const leadPad = (cell: number): number => cell;
 
 try {

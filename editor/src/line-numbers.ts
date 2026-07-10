@@ -140,22 +140,8 @@ export const mountLineNumbers = (
 
     const multiCol = content.classList.contains(styles.multiColMode ?? '');
     const paged = multiCol || content.classList.contains(styles.rowsMode ?? '');
-    const grid: BandGrid = {
-      vertical,
-      multiCol,
-      bandPeriod: multiCol ? (Number.parseFloat(cs.columnWidth) || 0) + (Number.parseFloat(cs.columnGap) || 0) : 0,
-      bandStart0: lines.length > 0 ? Math.min(...lines.slice(0, 8).map((ln) => (vertical ? ln.top : ln.left))) : 0,
-    };
-    // Registered @property lengths — evaluated px (editor.module.scss).
-    const gapTop = paged ? Number.parseFloat(cs.getPropertyValue('--page-gap-top')) || 0 : 0;
-    const gapBottom = paged ? Number.parseFloat(cs.getPropertyValue('--page-gap-bottom')) || 0 : 0;
-    const marks: PageMarkMetrics = {
-      linesPerPage: paged ? Number.parseFloat(cs.getPropertyValue('--page-lines')) || 20 : 0,
-      bandLen,
-      pitch: readPitch(cs),
-      cell: readCell(cs),
-      sepShift: (gapTop - gapBottom) / 2,
-    };
+    const grid = readBandGrid(cs, vertical, multiCol, lines);
+    const marks = readPageMarkMetrics(cs, paged, bandLen);
 
     placeNumbers(overlay, pool, lines, grid);
     placePageMarks(overlay, pagePool, sepPool, lines, grid, marks);
@@ -190,34 +176,13 @@ export const mountLineNumbers = (
     // Same visual line as the last paint (the cached objects are stable between
     // full measures, so identity suffices) → the styles are already right.
     if (hit === lastHit) return;
-    // Steady hold (see the isSteady param): same COLUMN as the last paint →
-    // keep the painted geometry (half a pitch is the shared same-line bound).
-    if (hit && lastHit && isSteady?.()) {
-      const mid = (a: VisualLine): number => (vertical ? (a.left + a.right) / 2 : (a.top + a.bottom) / 2);
-      if (Math.abs(mid(hit) - mid(lastHit)) <= steadyTol) return;
-      // The pick flipped but the CARET itself barely moved (same half-pitch
-      // bound): band-boundary jitter, not a line change — an all-ruby
-      // column outgrows the plain pitch (line-height is a minimum), so the
-      // preedit tail's rect hops across the fat column's edge per keystroke
-      // and the picked band alternated one pitch back and forth per
-      // composed character (mozc/ruby-hl-compose.ts). Hold the paint; a
-      // real wrap moves the caret a full pitch and repaints once.
-      if (caretMid !== null && lastCaretMid !== null && Math.abs(caretMid - lastCaretMid) <= steadyTol) return;
-    }
+    // Steady hold (see the isSteady param): while composing, keep the painted
+    // geometry unless the line really changed (holdsSteady).
+    if (hit && lastHit && isSteady?.() && holdsSteady(hit, lastHit, caretMid, lastCaretMid, vertical, steadyTol))
+      return;
     lastHit = hit;
     lastCaretMid = caretMid;
-    if (hit) {
-      // Anchor at the line's start corner (its top-left character) — for a
-      // column that is the page's content top, so the band fills the current
-      // page only — and extend the INLINE axis to the full line length
-      // (`bandLen`), the block axis to the line's own width.
-      highlight.style.display = '';
-      highlight.style.transform = `translate(${hit.left}px, ${hit.top}px)`;
-      highlight.style.inlineSize = `${vertical ? hit.right - hit.left : hit.bandLen}px`;
-      highlight.style.blockSize = `${vertical ? hit.bandLen : hit.bottom - hit.top}px`;
-    } else {
-      highlight.style.display = 'none';
-    }
+    paintHighlight(highlight, hit, vertical);
   };
 
   // Custom TEXT-SELECTION highlight, rendered BASE-ONLY from the MODEL selection.
@@ -303,11 +268,64 @@ const bandStartAt = (grid: BandGrid, ln: VisualLine): number => {
     : grid.bandStart0;
 };
 
+/** Read the band lattice off the live computed style: physically periodic in
+ *  the multicol modes (columnWidth + columnGap along the inline axis),
+ *  anchored at the first lines' measured inline start otherwise. Reads only —
+ *  the placement writes come after every measured input. */
+const readBandGrid = (
+  cs: CSSStyleDeclaration,
+  vertical: boolean,
+  multiCol: boolean,
+  lines: readonly VisualLine[],
+): BandGrid => ({
+  vertical,
+  multiCol,
+  bandPeriod: multiCol ? (Number.parseFloat(cs.columnWidth) || 0) + (Number.parseFloat(cs.columnGap) || 0) : 0,
+  bandStart0: lines.length > 0 ? Math.min(...lines.slice(0, 8).map((ln) => (vertical ? ln.top : ln.left))) : 0,
+});
+
 const centerX = (ln: VisualLine): number => (ln.left + ln.right) / 2;
 /** The line's BLOCK-axis center — its column's x in vertical-rl, its row's y
  *  in horizontal-tb. */
 const centerBlock = (ln: VisualLine, vertical: boolean): number =>
   vertical ? (ln.left + ln.right) / 2 : (ln.top + ln.bottom) / 2;
+
+/** The composing steady hold (refreshHighlight): a pick in the same COLUMN as
+ *  the last paint — half a pitch, the shared same-line bound — keeps the
+ *  painted geometry. So does a pick that flipped while the CARET itself
+ *  barely moved (the same bound): band-boundary jitter, not a line change —
+ *  an all-ruby column outgrows the plain pitch (line-height is a minimum), so
+ *  the preedit tail's rect hops across the fat column's edge per keystroke
+ *  and the picked band alternated one pitch back and forth per composed
+ *  character (mozc/ruby-hl-compose.ts). A real wrap moves the caret a full
+ *  pitch and repaints once. */
+const holdsSteady = (
+  hit: VisualLine,
+  lastHit: VisualLine,
+  caretMid: number | null,
+  lastCaretMid: number | null,
+  vertical: boolean,
+  tol: number,
+): boolean => {
+  if (Math.abs(centerBlock(hit, vertical) - centerBlock(lastHit, vertical)) <= tol) return true;
+  return caretMid !== null && lastCaretMid !== null && Math.abs(caretMid - lastCaretMid) <= tol;
+};
+
+/** Paint the highlight over `hit` — anchored at the line's start corner (its
+ *  top-left character; for a column that is the page's content top, so the
+ *  band fills the current page only), the INLINE axis extended to the full
+ *  line length (`bandLen`), the block axis to the line's own width — or hide
+ *  it when no line holds the caret. */
+const paintHighlight = (highlight: HTMLElement, hit: VisualLine | null, vertical: boolean): void => {
+  if (!hit) {
+    highlight.style.display = 'none';
+    return;
+  }
+  highlight.style.display = '';
+  highlight.style.transform = `translate(${hit.left}px, ${hit.top}px)`;
+  highlight.style.inlineSize = `${vertical ? hit.right - hit.left : hit.bandLen}px`;
+  highlight.style.blockSize = `${vertical ? hit.bandLen : hit.bottom - hit.top}px`;
+};
 
 /** Place one number per visual line — at its measured column center in
  *  vertical modes (above the column, on the band's gutter line) or left of
@@ -359,6 +377,109 @@ type PageMarkMetrics = {
   readonly sepShift: number;
 };
 
+/** Read the page-mark inputs off the live computed style. The gap knobs are
+ *  registered @property lengths — evaluated px (editor.module.scss); a
+ *  non-paged layout zeroes `linesPerPage`, hiding every chip/separator. */
+const readPageMarkMetrics = (cs: CSSStyleDeclaration, paged: boolean, bandLen: number): PageMarkMetrics => {
+  const gapTop = paged ? Number.parseFloat(cs.getPropertyValue('--page-gap-top')) || 0 : 0;
+  const gapBottom = paged ? Number.parseFloat(cs.getPropertyValue('--page-gap-bottom')) || 0 : 0;
+  return {
+    linesPerPage: paged ? Number.parseFloat(cs.getPropertyValue('--page-lines')) || 20 : 0,
+    bandLen,
+    pitch: readPitch(cs),
+    cell: readCell(cs),
+    sepShift: (gapTop - gapBottom) / 2,
+  };
+};
+
+/** The measured line step of one page, signed toward the reading direction
+ *  (leftward in vertical-rl, downward in horizontal-tb); a single-line page
+ *  falls back to the pitch. */
+const pageLineStep = (first: VisualLine, last: VisualLine, count: number, vertical: boolean, pitch: number): number =>
+  count >= 2
+    ? (vertical
+        ? centerBlock(first, vertical) - centerBlock(last, vertical)
+        : centerBlock(last, vertical) - centerBlock(first, vertical)) /
+      (count - 1)
+    : pitch;
+
+/** Place one page separator: the midpoint between the two pages' edge lines,
+ *  shifted toward the earlier page (larger x in vertical-rl, smaller y in
+ *  horizontal-tb). */
+const placeSeparator = (
+  el: HTMLElement,
+  prev: VisualLine,
+  first: VisualLine,
+  grid: BandGrid,
+  m: PageMarkMetrics,
+  bandAnchor: number,
+): void => {
+  const { vertical } = grid;
+  const c = (centerBlock(prev, vertical) + centerBlock(first, vertical)) / 2 + (vertical ? 1 : -1) * m.sepShift;
+  el.style.transform = vertical ? `translate(${c}px, ${bandAnchor}px)` : `translate(${bandAnchor}px, ${c}px)`;
+  el.style.width = vertical ? '1px' : `${m.bandLen}px`;
+  el.style.height = vertical ? `${m.bandLen}px` : '1px';
+  el.style.display = '';
+};
+
+/** Place one folio chip, centered on the WHOLE page area at the page's OWN
+ *  measured line step (`pageLineStep` — a real-pitch deviation stays
+ *  page-local). Vertical folios sit past the line length: columns center in
+ *  the RESERVED STRIP — the first cell of the band gap, right under the page
+ *  (gap下 then runs folio → border) — the other vertical modes right under
+ *  the page. Horizontal folios sit bottom-center — under the page's
+ *  (extrapolated) last row, centered on the line length. */
+const placeFolio = (
+  chip: HTMLElement,
+  first: VisualLine,
+  grid: BandGrid,
+  m: PageMarkMetrics,
+  bandAnchor: number,
+  step: number,
+): void => {
+  const { vertical } = grid;
+  if (vertical) {
+    const chipX = centerBlock(first, vertical) - (step * (m.linesPerPage - 1)) / 2;
+    chip.style.transform = grid.multiCol
+      ? `translate(${chipX}px, ${bandAnchor + m.bandLen + m.cell / 2}px) translate(-50%, -50%)`
+      : `translate(${chipX}px, ${bandAnchor + m.bandLen}px) translate(-50%, 0) translateY(0.4em)`;
+  } else {
+    const blockEnd = centerBlock(first, vertical) + step * (m.linesPerPage - 1) + m.cell / 2;
+    chip.style.transform = `translate(${bandAnchor + m.bandLen / 2}px, ${blockEnd}px) translate(-50%, 0) translateY(0.4em)`;
+  }
+};
+
+/** Place page `p`'s marks — its separator (only when the previous page's last
+ *  line shares the band: a multiCol band break separates pages physically,
+ *  the scroller lattice draws the border there; see editor.module.scss) and
+ *  its folio chip — bumping the pool cursors in `counts`. */
+const placeMarksForPage = (
+  overlay: HTMLElement,
+  pagePool: HTMLElement[],
+  sepPool: HTMLElement[],
+  lines: readonly VisualLine[],
+  grid: BandGrid,
+  m: PageMarkMetrics,
+  p: number,
+  counts: { chips: number; seps: number },
+): void => {
+  const { linesPerPage } = m;
+  const count = Math.min((p + 1) * linesPerPage, lines.length) - p * linesPerPage;
+  const first = lines[p * linesPerPage] as VisualLine;
+  const last = lines[p * linesPerPage + count - 1] as VisualLine;
+  const prev = p > 0 ? (lines[p * linesPerPage - 1] as VisualLine) : null;
+  const bandAnchor = bandStartAt(grid, first);
+  if (prev && (!grid.multiCol || bandStartAt(grid, prev) === bandAnchor)) {
+    placeSeparator(sepPool[counts.seps] ?? makePageSeparator(overlay, sepPool), prev, first, grid, m, bandAnchor);
+    counts.seps++;
+  }
+  const chip = pagePool[counts.chips] ?? makePageNumber(overlay, pagePool);
+  placeFolio(chip, first, grid, m, bandAnchor, pageLineStep(first, last, count, grid.vertical, m.pitch));
+  chip.textContent = `${p + 1}`;
+  chip.style.display = '';
+  counts.chips++;
+};
+
 /** Place the page separators and folios, from the same measured lines. The
  *  gap knobs are the PAGE'S MARGINS around the border: gap下 = the earlier
  *  page's side (its folio → the border), gap上 = the border → the next
@@ -384,58 +505,13 @@ const placePageMarks = (
   grid: BandGrid,
   m: PageMarkMetrics,
 ): void => {
-  const { linesPerPage, bandLen } = m;
-  const { vertical } = grid;
-  let chips = 0;
-  let seps = 0;
-  if (linesPerPage > 0 && lines.length > 0) {
-    for (let p = 0; p * linesPerPage < lines.length; p++) {
-      const count = Math.min((p + 1) * linesPerPage, lines.length) - p * linesPerPage;
-      const first = lines[p * linesPerPage] as VisualLine;
-      const last = lines[p * linesPerPage + count - 1] as VisualLine;
-      const prev = p > 0 ? (lines[p * linesPerPage - 1] as VisualLine) : null;
-      const bandAnchor = bandStartAt(grid, first);
-      if (prev && (!grid.multiCol || bandStartAt(grid, prev) === bandAnchor)) {
-        const el = sepPool[seps] ?? makePageSeparator(overlay, sepPool);
-        // Midpoint between the two pages' edge lines, shifted toward the
-        // earlier page (larger x in vertical-rl, smaller y in horizontal-tb).
-        const c = (centerBlock(prev, vertical) + centerBlock(first, vertical)) / 2 + (vertical ? 1 : -1) * m.sepShift;
-        el.style.transform = vertical ? `translate(${c}px, ${bandAnchor}px)` : `translate(${bandAnchor}px, ${c}px)`;
-        el.style.width = vertical ? '1px' : `${bandLen}px`;
-        el.style.height = vertical ? `${bandLen}px` : '1px';
-        el.style.display = '';
-        seps++;
-      }
-      const chip = pagePool[chips] ?? makePageNumber(overlay, pagePool);
-      // The measured line step, signed toward the reading direction (leftward
-      // in vertical-rl, downward in horizontal-tb).
-      const step =
-        count >= 2
-          ? (vertical
-              ? centerBlock(first, vertical) - centerBlock(last, vertical)
-              : centerBlock(last, vertical) - centerBlock(first, vertical)) /
-            (count - 1)
-          : m.pitch;
-      if (vertical) {
-        const chipX = centerBlock(first, vertical) - (step * (linesPerPage - 1)) / 2;
-        // Columns: the folio centers in its RESERVED STRIP — the first cell of
-        // the band gap, right under the page (gap下 then runs folio → border).
-        chip.style.transform = grid.multiCol
-          ? `translate(${chipX}px, ${bandAnchor + bandLen + m.cell / 2}px) translate(-50%, -50%)`
-          : `translate(${chipX}px, ${bandAnchor + bandLen}px) translate(-50%, 0) translateY(0.4em)`;
-      } else {
-        // Horizontal: bottom-center — under the page's (extrapolated) last
-        // row, centered on the line length.
-        const blockEnd = centerBlock(first, vertical) + step * (linesPerPage - 1) + m.cell / 2;
-        chip.style.transform = `translate(${bandAnchor + bandLen / 2}px, ${blockEnd}px) translate(-50%, 0) translateY(0.4em)`;
-      }
-      chip.textContent = `${p + 1}`;
-      chip.style.display = '';
-      chips++;
-    }
+  const counts = { chips: 0, seps: 0 };
+  if (m.linesPerPage > 0 && lines.length > 0) {
+    for (let p = 0; p * m.linesPerPage < lines.length; p++)
+      placeMarksForPage(overlay, pagePool, sepPool, lines, grid, m, p, counts);
   }
-  for (const el of pagePool.slice(chips)) el.style.display = 'none';
-  for (const el of sepPool.slice(seps)) el.style.display = 'none';
+  for (const el of pagePool.slice(counts.chips)) el.style.display = 'none';
+  for (const el of sepPool.slice(counts.seps)) el.style.display = 'none';
 };
 
 /** Group each paragraph's line-box rects (`Range.getClientRects`) into visual

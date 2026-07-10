@@ -309,8 +309,6 @@ export const QuickOpen = ({
 
   return (
     // Backdrop click closes; the panel stops the click from bubbling to it.
-    // biome-ignore lint/a11y/useKeyWithClickEvents: Esc closes via the input; the backdrop is a pointer convenience
-    // biome-ignore lint/a11y/noStaticElementInteractions: the dialog backdrop is a plain dismiss target
     <div
       className={styles.overlay}
       role='dialog'

@@ -1,20 +1,20 @@
-// The `ved` module: the typed surface a user extension imports.
-//
-// This file is the SINGLE SOURCE of the user-extension API. It is
-// types-only and self-contained (no imports), because its raw source is
-// written verbatim to `<configDir>/extensions/ved.d.ts` at startup — that is
-// how a user extension gets full typing with no package setup (the generated
-// tsconfig.json maps the `ved` specifier here). The renderer's extension
-// host (renderer/src/extension-host.ts) implements `VedContext` against
-// these same types, so the declaration users see cannot drift from the
-// implementation.
-//
-// At runtime the `ved` module does not exist: everything below is a type,
-// imported with `import type` (the generated tsconfig enforces
-// verbatimModuleSyntax, and the loader strips type-only imports away). Every
-// capability arrives as the `VedContext` handed to `activate` — bound to the
-// extension's id, which is how command namespacing is enforced by
-// construction (docs/extensions.md).
+/** The `ved` module: the typed surface a user extension imports.
+ *
+ *  This file is the SINGLE SOURCE of the user-extension API. It is
+ *  types-only and self-contained (no imports), because its raw source is
+ *  written verbatim to `<configDir>/extensions/ved.d.ts` at startup — that is
+ *  how a user extension gets full typing with no package setup (the generated
+ *  tsconfig.json maps the `ved` specifier here). The renderer's extension
+ *  host (renderer/src/extension-host.ts) implements `VedContext` against
+ *  these same types, so the declaration users see cannot drift from the
+ *  implementation.
+ *
+ *  At runtime the `ved` module does not exist: everything below is a type,
+ *  imported with `import type` (the generated tsconfig enforces
+ *  verbatimModuleSyntax, and the loader strips type-only imports away). Every
+ *  capability arrives as the `VedContext` handed to `activate` — bound to the
+ *  extension's id, which is how command namespacing is enforced by
+ *  construction (docs/extensions.md). */
 
 /** Something to undo — a registration, a listener, a UI contribution. Every
  *  registration on `VedContext` returns one AND is tracked by the context,
@@ -22,24 +22,34 @@
  *  early only to retract one contribution while staying active. Disposing
  *  twice is a no-op. */
 export type Disposable = {
+  /** Undo the registration. Idempotent. */
   readonly dispose: () => void;
 };
 
 /** A selection in plain-text offsets. `anchor` is the fixed end, `head` the
  *  moving end; they are equal for a collapsed caret. */
 export type SelectionOffsets = {
+  /** The fixed end. */
   readonly anchor: number;
+  /** The moving end; equals `anchor` for a collapsed caret. */
   readonly head: number;
 };
 
 /** The keydown fields a key hook reads (a DOM `KeyboardEvent` satisfies it). */
 export type ChordEvent = {
+  /** `KeyboardEvent.key`: the logical key, carrying its own case (`'K'`). */
   readonly key: string;
+  /** Ctrl held. */
   readonly ctrlKey: boolean;
+  /** Meta (Cmd/Win) held. */
   readonly metaKey: boolean;
+  /** Shift held. */
   readonly shiftKey: boolean;
+  /** Alt held. */
   readonly altKey: boolean;
+  /** Inside an IME composition (such keydowns never reach a key hook). */
   readonly isComposing: boolean;
+  /** Legacy key code; 229 marks a composing keydown. */
   readonly keyCode: number;
 };
 
@@ -125,6 +135,7 @@ export type EditorHandle = {
 
 /** What `activate` receives: every capability, bound to this extension's id. */
 export type VedContext = {
+  /** This extension's identity. */
   readonly extension: {
     /** The extension's id — the manifest `ved.id`, or the filename for a
      *  single-file extension (`reflow.ts` → `"reflow"`). Prefixes every
@@ -132,12 +143,14 @@ export type VedContext = {
     readonly id: string;
   };
 
+  /** Command registration (own namespace) and execution (any namespace). */
   readonly commands: {
     /** Register a command as `<extension id>.<name>` — the prefix is applied
      *  by ved, so an extension can only ever register inside its own
      *  namespace. `name` must not contain dots. A handler may be async; a
      *  sync `false` return means "did nothing" (the key that invoked it
      *  keeps bubbling). */
+    // biome-ignore lint/suspicious/noConfusingVoidType: `void` keeps side-effect-only handlers (`() => { … }`) assignable; `undefined` would reject them.
     readonly register: (name: string, run: () => boolean | void | Promise<unknown>) => Disposable;
     /** Run any command by FULL id — built-ins (`history.undo`), other
      *  extensions' (`vim.…`), or your own. Executing foreign commands is
@@ -146,6 +159,7 @@ export type VedContext = {
     readonly execute: (id: string) => Promise<boolean>;
   };
 
+  /** Chord bindings into the editor's single binding table. */
   readonly keybindings: {
     /** Bind a chord to a command id in the editor's single binding table.
      *  `chord` is `"Mod+K"` / `"Shift+Mod+K"` (case-insensitive; Mod = Cmd
@@ -161,8 +175,10 @@ export type VedContext = {
    *  handle transparently). */
   readonly editor: EditorHandle;
 
+  /** Shell UI surfaces (status bar, panels, quick pick, notices). */
   readonly ui: UiHandle;
 
+  /** This extension's persistent file storage. */
   readonly storage: StorageHandle;
 };
 
@@ -176,8 +192,11 @@ export type StatusItemHandle = Disposable & {
  *  the extension — render anything into it, with any framework, at any time;
  *  it stays alive (and keeps its content) across `show`/`hide`. */
 export type PanelHandle = Disposable & {
+  /** The panel body — render into it freely; ved never touches its content. */
   readonly element: HTMLElement;
+  /** Dock the panel visible. */
   readonly show: () => void;
+  /** Hide the panel (content and element state survive). */
   readonly hide: () => void;
 };
 
@@ -209,6 +228,7 @@ export type UiHandle = {
 export type StorageHandle = {
   /** The file's text, or `null` when it does not exist yet. */
   readonly read: (file: string) => Promise<string | null>;
+  /** Write (create or overwrite) the file. */
   readonly write: (file: string, data: string) => Promise<void>;
 };
 
@@ -216,6 +236,9 @@ export type StorageHandle = {
  *  and optionally `export function deactivate() {…}` for cleanup beyond the
  *  automatically-swept registrations. */
 export type ExtensionModule = {
+  /** Called once at load with the extension's bound context. */
   readonly activate: (ctx: VedContext) => void | Promise<void>;
+  /** Called at unload/reload, BEFORE the tracked registrations are swept —
+   *  only for cleanup beyond them (timers, external resources). */
   readonly deactivate?: () => void;
 };

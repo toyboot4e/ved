@@ -17,10 +17,32 @@
 // requestAnimationFrame, which hidden Electron windows throttle.
 // Usage: node test/e2e/horizontal-pages.ts  (after a build)
 import assert from 'node:assert/strict';
-import { clickWritingMode, docText, fail, finish, launchVed, setCaret, setDoc, step } from './harness.ts';
+import {
+  caretOffset,
+  clickWritingMode,
+  docText,
+  fail,
+  finish,
+  launchVed,
+  type ModelSeams,
+  pressLineMove,
+  setCaret,
+  setDoc,
+  step,
+} from './harness.ts';
 
 const ved = await launchVed({ env: () => ({ VED_SMOKE_CLOSE_RESPONSE: 'discard', VED_SMOKE_HIDDEN: '' }) });
 const { page } = ved;
+
+/** Distinct values of an ascending-sorted list, collapsing neighbors closer
+ *  than `tolerance` (px) into the first of their run. */
+const dedupeSorted = (values: number[], tolerance: number): number[] => {
+  const out: number[] = [];
+  for (const x of values) {
+    if (out.length === 0 || x - out[out.length - 1]! >= tolerance) out.push(x);
+  }
+  return out;
+};
 
 /** Visual lines of the horizontal-tb content: per-glyph rects clustered by
  *  their TOP (block axis), plus empty paragraphs by their own box — the same
@@ -30,27 +52,37 @@ const measureLines = () =>
     const content = document.getElementById('editor-content')!;
     const cs = getComputedStyle(content);
     const linePitch = Number.parseFloat(cs.lineHeight);
-    const range = document.createRange();
-    const walker = document.createTreeWalker(content, NodeFilter.SHOW_TEXT);
     const lines: { top: number; bottom: number; left: number; right: number }[] = [];
     let cur: (typeof lines)[number] | null = null;
-    for (let n = walker.nextNode(); n; n = walker.nextNode()) {
-      const t = n as Text;
-      for (let i = 0; i < t.length; i++) {
-        range.setStart(t, i);
-        range.setEnd(t, i + 1);
-        const r = range.getBoundingClientRect();
-        if (r.width === 0 || r.height === 0) continue;
-        if (!cur || Math.abs(r.top - cur.top) > linePitch / 2) {
-          cur = { top: r.top, bottom: r.bottom, left: r.left, right: r.right };
-          lines.push(cur);
-        } else {
-          cur.bottom = Math.max(cur.bottom, r.bottom);
-          cur.left = Math.min(cur.left, r.left);
-          cur.right = Math.max(cur.right, r.right);
+    // Fold one glyph rect into the current visual line — a TOP step past half
+    // a pitch starts a new line, anything closer widens the current one.
+    const addGlyphRect = (r: DOMRect): void => {
+      if (!cur || Math.abs(r.top - cur.top) > linePitch / 2) {
+        cur = { top: r.top, bottom: r.bottom, left: r.left, right: r.right };
+        lines.push(cur);
+      } else {
+        cur.bottom = Math.max(cur.bottom, r.bottom);
+        cur.left = Math.min(cur.left, r.left);
+        cur.right = Math.max(cur.right, r.right);
+      }
+    };
+    // Every rendered glyph's rect, in DOM (= reading) order; zero-sized rects
+    // (collapsed markup) are skipped.
+    const walkGlyphs = (): void => {
+      const range = document.createRange();
+      const walker = document.createTreeWalker(content, NodeFilter.SHOW_TEXT);
+      for (let n = walker.nextNode(); n; n = walker.nextNode()) {
+        const t = n as Text;
+        for (let i = 0; i < t.length; i++) {
+          range.setStart(t, i);
+          range.setEnd(t, i + 1);
+          const r = range.getBoundingClientRect();
+          if (r.width === 0 || r.height === 0) continue;
+          addGlyphRect(r);
         }
       }
-    }
+    };
+    walkGlyphs();
     for (const p of content.querySelectorAll('p')) {
       if (!p.textContent) {
         const r = p.getBoundingClientRect();
@@ -205,10 +237,10 @@ try {
 
   // Pages tile RIGHTWARD: with 6 lines per band the visual lines fill 5
   // bands whose lefts step by one band pitch; rows within a band share x.
-  const lefts = cols.lines
-    .map((l) => l.left)
-    .sort((a, z) => a - z)
-    .reduce<number[]>((acc, x) => (acc.length && x - acc[acc.length - 1]! < 5 ? acc : [...acc, x]), []);
+  const lefts = dedupeSorted(
+    cols.lines.map((l) => l.left).sort((a, z) => a - z),
+    5,
+  );
   assert.ok(lefts.length >= 3, `three page bands (distinct line lefts: ${lefts.map((x) => x.toFixed(0)).join(', ')})`);
   const bandPitch = lefts[1]! - lefts[0]!;
   assert.ok(bandPitch > 12 * 18, `band pitch spans a page width (+ gap): ${bandPitch}px`);
@@ -248,10 +280,10 @@ try {
   await page.waitForTimeout(600);
   const grid = await measureLines();
   assert.ok(grid.widgets > 0, `pagesPerRow=2 places intra-band gap widgets (got ${grid.widgets})`);
-  const gridLefts = grid.lines
-    .map((l) => l.left)
-    .sort((a, z) => a - z)
-    .reduce<number[]>((acc, x) => (acc.length && x - acc[acc.length - 1]! < 5 ? acc : [...acc, x]), []);
+  const gridLefts = dedupeSorted(
+    grid.lines.map((l) => l.left).sort((a, z) => a - z),
+    5,
+  );
   assert.ok(
     gridLefts.length < lefts.length,
     `two pages per band halve the band count (${gridLefts.length} < ${lefts.length})`,
@@ -259,6 +291,53 @@ try {
   step('pagesPerRow stacks pages within a horizontal band');
   await page.fill('#view-config-pagesPerRow', '1');
   await page.waitForTimeout(300);
+
+  // Caret line moves ACROSS the band break. Paragraph p3 straddles it: its
+  // 36 chars wrap to visual lines 5–7 at 12字, and the 6-line page boundary
+  // falls after visual line 6 — p3's middle wrapped line closes band 1, its
+  // last opens band 2. ArrowDown must step exactly one visual line (+12 model
+  // chars, column kept), and the crossing press must land PHYSICALLY in the
+  // next band: one band pitch rightward, back at the band top. ArrowUp
+  // re-crosses. Points are content-relative (rect + scroll) so a caret-reveal
+  // scroll between presses can't skew them.
+  const caretPoint = () =>
+    page.evaluate(() => {
+      const r = (window as unknown as ModelSeams).__vedCaretRect();
+      const scroller = document.getElementById('editor-content')!.parentElement!;
+      return r && { x: r.left + scroller.scrollLeft, y: r.top + scroller.scrollTop };
+    });
+  const P3 = paras.slice(0, 3).join('\n').length + 1; // p3's start offset
+  const COL = 6; // mid-line, so the kept column is unambiguous
+  await page.click('#editor-content'); // pagesPerRow's fill left focus on the input
+  await setCaret(page, P3 + COL);
+  assert.equal(await caretOffset(page), P3 + COL, 'caret seated mid-p3, two lines above the band break');
+  await pressLineMove(page, 'ArrowDown');
+  const inBand1 = { off: await caretOffset(page), pt: (await caretPoint())! };
+  await pressLineMove(page, 'ArrowDown');
+  const inBand2 = { off: await caretOffset(page), pt: (await caretPoint())! };
+  assert.equal(inBand1.off, P3 + COL + 12, `first ArrowDown steps one wrapped line within band 1 (got ${inBand1.off})`);
+  assert.equal(
+    inBand2.off,
+    P3 + COL + 24,
+    `the crossing ArrowDown steps ONE line over the band break (got ${inBand2.off})`,
+  );
+  assert.ok(
+    inBand2.pt.x - inBand1.pt.x > bandPitch / 2,
+    `…landing one band rightward (Δx=${(inBand2.pt.x - inBand1.pt.x).toFixed(0)}px vs pitch ${bandPitch.toFixed(0)}px)`,
+  );
+  assert.ok(
+    inBand2.pt.y < inBand1.pt.y,
+    `…back at the band top (y ${inBand2.pt.y.toFixed(0)} < ${inBand1.pt.y.toFixed(0)})`,
+  );
+  step('ArrowDown crosses the band break one visual line at a time');
+  const backOff = await pressLineMove(page, 'ArrowUp');
+  const back = { off: backOff, pt: (await caretPoint())! };
+  assert.equal(back.off, P3 + COL + 12, `ArrowUp re-crosses to band 1's last line (got ${back.off})`);
+  assert.ok(
+    inBand2.pt.x - back.pt.x > bandPitch / 2,
+    `…one band leftward (Δx=${(inBand2.pt.x - back.pt.x).toFixed(0)}px)`,
+  );
+  step('ArrowUp crosses back');
 
   // Round-trip sanity: orientation switches keep the paging axis.
   await page.click('button[aria-label="Vertical"]');

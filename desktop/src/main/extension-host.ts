@@ -290,7 +290,7 @@ export const watchExtensions = (
 
   // Top level: single-file extensions (generated files filtered out).
   tryWatch(dir, {}, (fileName) => {
-    if (!fileName || !fileName.endsWith('.ts') || fileName.endsWith('.d.ts')) return;
+    if (!fileName?.endsWith('.ts') || fileName.endsWith('.d.ts')) return;
     const target = scanned.find((s) => s.kind === 'file' && s.fileName === fileName);
     if (target) queue(target);
   });

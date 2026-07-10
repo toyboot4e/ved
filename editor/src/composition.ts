@@ -10,6 +10,19 @@ import type { Appear } from './pm/leaves';
 import { posToOffset, rubyEdgeOutsidePos } from './pm/model';
 import type { EditorSession } from './session';
 
+/** Single-line insertText. New spec: in Rich a ruby's base EDGE writes
+ *  OUTSIDE the ruby. The caret rests at the boundary, but the browser's
+ *  affinity can drop the DOM caret (and thus PM's synced model selection) at
+ *  the base START inside the ruby — so redirect the insert to before/after
+ *  the ruby. (Only when collapsed: in expanded policies the edges are
+ *  editable.) */
+const insertSingleLine = (v: EditorView, data: string, policy: Appear): void => {
+  const sel = v.state.selection;
+  const outside = sel.empty && policy === 'rich' ? rubyEdgeOutsidePos(sel.$head) : null;
+  const tr = outside != null ? v.state.tr.insertText(data, outside, outside) : v.state.tr.insertText(data);
+  v.dispatch(tr.scrollIntoView());
+};
+
 // Take over plain text insertion at the beforeinput level. With hidden
 // markup at display:none, PM's own text-input reconciliation derives the
 // inserted string from a DOM diff that the browser can REORDER next to a
@@ -42,15 +55,7 @@ export const createBeforeInputHandler =
       // structural replaceSelection left phantom markup; plainInsertTr).
       v.dispatch(plainInsertTr(v.state, ie.data, policyClassRef.current).scrollIntoView());
     } else {
-      // New spec: in Rich a ruby's base EDGE writes OUTSIDE the ruby. The
-      // caret rests at the boundary, but the browser's affinity can drop the
-      // DOM caret (and thus PM's synced model selection) at the base START
-      // inside the ruby — so redirect the insert to before/after the ruby.
-      // (Only when collapsed: in expanded policies the edges are editable.)
-      const sel = v.state.selection;
-      const outside = sel.empty && policyClassRef.current === 'rich' ? rubyEdgeOutsidePos(sel.$head) : null;
-      const tr = outside != null ? v.state.tr.insertText(ie.data, outside, outside) : v.state.tr.insertText(ie.data);
-      v.dispatch(tr.scrollIntoView());
+      insertSingleLine(v, ie.data, policyClassRef.current);
     }
     return true;
   };

@@ -1,9 +1,9 @@
-// Pure plain-text geometry for the Vim reducer: lines, words, brackets,
-// paragraphs, text objects, literal search. Every function here maps
-// (text, offset) → offset/range with NO modal-state (VimState) dependency —
-// model.ts layers the mode machine on top. Offsets index the plain string,
-// markup characters included (ruby-aware snapping is the caller's job, via
-// the injected doc view).
+/** Pure plain-text geometry for the Vim reducer: lines, words, brackets,
+ *  paragraphs, text objects, literal search. Every function here maps
+ *  (text, offset) → offset/range with NO modal-state (VimState) dependency —
+ *  model.ts layers the mode machine on top. Offsets index the plain string,
+ *  markup characters included (ruby-aware snapping is the caller's job, via
+ *  the injected doc view). */
 
 import { BRACKET_PAIRS } from './config';
 
@@ -114,6 +114,17 @@ export const BIG_WORDS: WordModel = wordTrio((c) => (isBlank(c) ? 0 : 1));
 const OPEN_TO_CLOSE = new Map(BRACKET_PAIRS.map(([o, c]) => [o, c]));
 const CLOSE_TO_OPEN = new Map(BRACKET_PAIRS.map(([o, c]) => [c, o]));
 
+/** Scan from the bracket `ch` at `i` toward its `mate` in direction `step`,
+ *  counting nesting. The mate's index, or `null` when unbalanced. */
+const scanBracket = (text: string, i: number, ch: string, mate: string, step: 1 | -1): number | null => {
+  let depth = 0;
+  for (let j = i; j >= 0 && j < text.length; j += step) {
+    if (text[j] === ch) depth++;
+    else if (text[j] === mate && --depth === 0) return j;
+  }
+  return null;
+};
+
 /** `%`: from the FIRST bracket at/after the caret on its line, the position of
  *  its match (scanning with nesting). `null` if none / unbalanced. */
 export const matchBracket = (text: string, from: number): number | null => {
@@ -123,48 +134,45 @@ export const matchBracket = (text: string, from: number): number | null => {
   if (i >= le) return null;
   const ch = text[i]!;
   const close = OPEN_TO_CLOSE.get(ch);
-  if (close !== undefined) {
-    let depth = 0;
-    for (let j = i; j < text.length; j++) {
-      if (text[j] === ch) depth++;
-      else if (text[j] === close && --depth === 0) return j;
-    }
-    return null;
-  }
-  const open = CLOSE_TO_OPEN.get(ch)!;
+  if (close !== undefined) return scanBracket(text, i, ch, close, 1);
+  return scanBracket(text, i, ch, CLOSE_TO_OPEN.get(ch)!, -1);
+};
+
+/** The unmatched `open` at/left of `from` (`from` itself counts as an opener,
+ *  never as a close), scanning left with nesting. `-1` if none. */
+const unmatchedOpenLeft = (text: string, from: number, open: string, close: string): number => {
   let depth = 0;
-  for (let j = i; j >= 0; j--) {
-    if (text[j] === ch) depth++;
-    else if (text[j] === open && --depth === 0) return j;
+  for (let i = from; i >= 0; i--) {
+    if (text[i] === close && i !== from) depth++;
+    else if (text[i] === open) {
+      if (depth === 0) return i;
+      depth--;
+    }
   }
-  return null;
+  return -1;
+};
+
+/** The `close` matching the opener at `openIdx`, scanning right with nesting.
+ *  `-1` when unbalanced. */
+const matchingCloseRight = (text: string, openIdx: number, open: string, close: string): number => {
+  let depth = 0;
+  for (let i = openIdx + 1; i < text.length; i++) {
+    if (text[i] === open) depth++;
+    else if (text[i] === close) {
+      if (depth === 0) return i;
+      depth--;
+    }
+  }
+  return -1;
 };
 
 /** The bracket pair (open index, close index) ENCLOSING `from` for `open`.
  *  Scans left for an unmatched opener, then right for its close. */
 const enclosingPair = (text: string, from: number, open: string, close: string): [number, number] | null => {
-  let depth = 0;
-  let openIdx = -1;
-  for (let i = from; i >= 0; i--) {
-    if (text[i] === close && i !== from) depth++;
-    else if (text[i] === open) {
-      if (depth === 0) {
-        openIdx = i;
-        break;
-      }
-      depth--;
-    }
-  }
+  const openIdx = unmatchedOpenLeft(text, from, open, close);
   if (openIdx < 0) return null;
-  depth = 0;
-  for (let i = openIdx + 1; i < text.length; i++) {
-    if (text[i] === open) depth++;
-    else if (text[i] === close) {
-      if (depth === 0) return [openIdx, i];
-      depth--;
-    }
-  }
-  return null;
+  const closeIdx = matchingCloseRight(text, openIdx, open, close);
+  return closeIdx < 0 ? null : [openIdx, closeIdx];
 };
 
 /** The quote pair around `from` on its line for the delimiter `q` (the pair
@@ -229,51 +237,63 @@ const paragraphRange = (text: string, from: number, around: boolean): { from: nu
   return { from: rangeFrom, to: rangeTo };
 };
 
+/** `aw`: widen the word `[a, to)` with trailing whitespace when present, else
+ *  leading — Vim's around-word rule, bounded to the caret's line `[ls, le)`. */
+const widenAroundWord = (text: string, ls: number, le: number, a: number, to: number): [number, number] => {
+  let hadTrail = false;
+  while (to < le && isBlank(text[to]!)) {
+    to++;
+    hadTrail = true;
+  }
+  if (!hadTrail) while (a > ls && isBlank(text[a - 1]!)) a--;
+  return [a, to];
+};
+
+/** `iw`/`aw` (and the WORD forms): the same-class run under the caret,
+ *  line-bounded; `a` widens by whitespace (widenAroundWord). */
+const wordObjectRange = (text: string, from: number, big: boolean, around: boolean): VimRange | null => {
+  const cls = (c: string): number => (big ? (isBlank(c) ? 0 : 1) : classOf(c));
+  if (from >= text.length) return null;
+  const ls = lineStart(text, from);
+  const le = lineEnd(text, from);
+  const k = cls(text[from]!);
+  let a = from;
+  let b = from;
+  while (a > ls && cls(text[a - 1]!) === k) a--;
+  while (b + 1 < le && cls(text[b + 1]!) === k) b++;
+  if (around) {
+    const [wa, wto] = widenAroundWord(text, ls, le, a, b + 1);
+    return { from: wa, to: wto, linewise: false };
+  }
+  return { from: a, to: b + 1, linewise: false };
+};
+
+/** The opener a bracket object key selects: the open OR the close char
+ *  itself, or the b/B aliases for ()/{}. `undefined` when `obj` names no
+ *  bracket pair. */
+const bracketOpenerOf = (obj: string): string | undefined =>
+  OPEN_TO_CLOSE.has(obj) ? obj : obj === 'b' ? '(' : obj === 'B' ? '{' : CLOSE_TO_OPEN.get(obj);
+
+/** A found delimiter pair as an object range: `a`(round) includes both
+ *  delimiters, `i`(nner) excludes them. */
+const pairObjectRange = (around: boolean, pair: readonly [number, number] | null): VimRange | null => {
+  if (!pair) return null;
+  return around
+    ? { from: pair[0], to: pair[1] + 1, linewise: false }
+    : { from: pair[0] + 1, to: pair[1], linewise: false };
+};
+
 /** A text object's range for `i`(nner)/`a`(round) + object key. `linewise`
  *  for `ip`/`ap` (whole lines, like Vim). `null` when not found at the caret. */
 export const textObjectRange = (kind: 'i' | 'a', obj: string, text: string, from: number): VimRange | null => {
   const around = kind === 'a';
   // Word / WORD.
-  if (obj === 'w' || obj === 'W') {
-    const big = obj === 'W';
-    const cls = (c: string): number => (big ? (isBlank(c) ? 0 : 1) : classOf(c));
-    if (from >= text.length) return null;
-    const ls = lineStart(text, from);
-    const le = lineEnd(text, from);
-    const k = cls(text[from]!);
-    let a = from;
-    let b = from;
-    while (a > ls && cls(text[a - 1]!) === k) a--;
-    while (b + 1 < le && cls(text[b + 1]!) === k) b++;
-    let to = b + 1;
-    if (around) {
-      // `aw`: add trailing whitespace, else leading.
-      let hadTrail = false;
-      while (to < le && isBlank(text[to]!)) {
-        to++;
-        hadTrail = true;
-      }
-      if (!hadTrail) while (a > ls && isBlank(text[a - 1]!)) a--;
-    }
-    return { from: a, to, linewise: false };
-  }
+  if (obj === 'w' || obj === 'W') return wordObjectRange(text, from, obj === 'W', around);
   // Bracket pairs (the open OR the close char, or b/B for ()/{}, selects it).
-  const openKey = OPEN_TO_CLOSE.has(obj) ? obj : obj === 'b' ? '(' : obj === 'B' ? '{' : CLOSE_TO_OPEN.get(obj);
-  if (openKey) {
-    const pair = enclosingPair(text, from, openKey, OPEN_TO_CLOSE.get(openKey)!);
-    if (!pair) return null;
-    return around
-      ? { from: pair[0], to: pair[1] + 1, linewise: false }
-      : { from: pair[0] + 1, to: pair[1], linewise: false };
-  }
+  const openKey = bracketOpenerOf(obj);
+  if (openKey) return pairObjectRange(around, enclosingPair(text, from, openKey, OPEN_TO_CLOSE.get(openKey)!));
   // Quote pairs.
-  if (obj === '"' || obj === "'" || obj === '`') {
-    const pair = quotePair(text, from, obj);
-    if (!pair) return null;
-    return around
-      ? { from: pair[0], to: pair[1] + 1, linewise: false }
-      : { from: pair[0] + 1, to: pair[1], linewise: false };
-  }
+  if (obj === '"' || obj === "'" || obj === '`') return pairObjectRange(around, quotePair(text, from, obj));
   // Paragraph (linewise).
   if (obj === 'p') return { ...paragraphRange(text, from, around), linewise: true };
   return null;

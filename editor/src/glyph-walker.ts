@@ -53,6 +53,129 @@ const blockRanges = (text: string, a: number, b: number): { from: number; to: nu
   return ranges;
 };
 
+/** The selection's plain-offset ranges, shaped by the visual-selection kind.
+ *  LINEWISE expands to the whole model lines (paragraphs) the selection
+ *  spans — the caret is unaffected (it stays at selection.head), and a
+ *  collapsed selection still highlights its own line. CHARWISE INCLUSIVE
+ *  (Vim visual) includes the CELL at the max end, so both the anchor and
+ *  head characters are highlighted (moving backward keeps the original char
+ *  under the cursor) — one caret step past `to`. BLOCK replaces the single
+ *  [from, to) with one range per line (blockRanges); the other kinds keep
+ *  the adjusted single range. */
+const selectionRanges = (
+  text: string,
+  fromIn: number,
+  toIn: number,
+  vkind: VisualSelectionKind,
+  getPolicy: () => Appear,
+): { from: number; to: number }[] => {
+  let from = fromIn;
+  let to = toIn;
+  if (vkind === 'line') {
+    from = from === 0 ? 0 : text.lastIndexOf('\n', from - 1) + 1;
+    const nl = text.indexOf('\n', to);
+    to = nl < 0 ? text.length : nl;
+  } else if (vkind === 'char') {
+    to = nextCaretOffset(text, to, getPolicy(), false);
+  }
+  return vkind === 'block' ? blockRanges(text, from, to) : from < to ? [{ from, to }] : [];
+};
+
+/** Cap a span's BLOCK extent at one cell (the glyph advance), centered:
+ *  the measured rects are glyph EM boxes, and a big-metric font's em box
+ *  (Noto Sans CJK: 1.45em) overflows the advance into the leading WHERE
+ *  THE NEIGHBOR READING PAINTS — the "base-only" highlight visibly tinted
+ *  the readings (ruby-selection-thin.ts). The ink of an upright glyph
+ *  lives inside its advance, so the clamp only trims empty em-box bleed. */
+const clampSpanToCell = (
+  c: { l: number; t: number; r: number; b: number },
+  vertical: boolean,
+  cell: number,
+): DOMRect => {
+  if (vertical) {
+    const w = c.r - c.l;
+    const l = w > cell ? (c.l + c.r) / 2 - cell / 2 : c.l;
+    return new DOMRect(l, c.t, Math.min(w, cell), c.b - c.t);
+  }
+  const h = c.b - c.t;
+  const t = h > cell ? (c.t + c.b) / 2 - cell / 2 : c.t;
+  return new DOMRect(c.l, t, c.r - c.l, Math.min(h, cell));
+};
+
+/** Advance the range cursor past every range ending at or before `off` —
+ *  glyphs stream in ascending offset order, so the (sorted, disjoint) ranges
+ *  advance with a single cursor. */
+const advanceRangeCursor = (ranges: readonly { from: number; to: number }[], ri: number, off: number): number => {
+  let i = ri;
+  while (i < ranges.length && off >= (ranges[i] as { to: number }).to) i++;
+  return i;
+};
+
+/** Merge the glyphs inside `ranges` into one clamped span per visual line.
+ *  Within-line grouping: the shared DIRECTIONAL half-pitch rule
+ *  (pm/line-grouping.ts); backwardTol = one pitch (縦中横 sub-rects merge,
+ *  a page wrap starts a line). A fixed few-px symmetric value here split
+ *  lines (extra hairline rects) at larger font sizes. */
+const mergeSelectedSpans = (
+  glyphs: readonly Glyph[],
+  ranges: readonly { from: number; to: number }[],
+  vertical: boolean,
+  cell: number,
+  pitch: number,
+): DOMRect[] => {
+  const grouper = makeLineGrouper(vertical, pitch / 2, pitch);
+  const out: DOMRect[] = [];
+  let cur: { l: number; t: number; r: number; b: number } | null = null;
+  let ri = 0;
+  for (const g of glyphs) {
+    ri = advanceRangeCursor(ranges, ri, g.off);
+    if (ri >= ranges.length) break;
+    if (g.off < (ranges[ri] as { from: number }).from) continue;
+    const r = g.rect;
+    if (!grouper.step(vertical ? r.left : r.top) && cur) {
+      cur.l = Math.min(cur.l, r.left);
+      cur.t = Math.min(cur.t, r.top);
+      cur.r = Math.max(cur.r, r.right);
+      cur.b = Math.max(cur.b, r.bottom);
+      continue;
+    }
+    if (cur) out.push(clampSpanToCell(cur, vertical, cell));
+    cur = { l: r.left, t: r.top, r: r.right, b: r.bottom };
+  }
+  if (cur) out.push(clampSpanToCell(cur, vertical, cell));
+  return out;
+};
+
+/** Per-line offset lists of the leaves VISIBLE in model lines `l0..l1` —
+ *  body and plain text always; an rt/delim leaf only where the policy shows
+ *  it. The lists mirror `isHidden`, the same visibility rule the decorations
+ *  resolve, so the DOM walk and the offset list stay paired. */
+const visibleOffsetsByLine = (
+  leaves: readonly Leaf[],
+  l0: number,
+  l1: number,
+  policy: Appear,
+  activeLine: number,
+  active: ReturnType<typeof activeRuby>,
+): number[][] => {
+  const byLine: number[][] = [];
+  for (const l of leaves) {
+    if (l.line < l0 || l.line > l1) continue;
+    const visible =
+      l.kind === 'body' ||
+      l.kind === 'plain' ||
+      ((l.kind === 'rt' || l.kind === 'delim') && !isHidden(l, policy, activeLine, active));
+    if (!visible) continue;
+    let arr = byLine[l.line];
+    if (!arr) {
+      arr = [];
+      byLine[l.line] = arr;
+    }
+    for (let o = l.from; o < l.to; o++) arr.push(o);
+  }
+  return byLine;
+};
+
 export const createGlyphWalker = (
   view: EditorView,
   mount: HTMLElement,
@@ -98,74 +221,23 @@ export const createGlyphWalker = (
     const vkind = getVisualSelection();
     if (sel.empty && vkind === 'none') return [];
     const text = serialize(view.state.doc);
-    let from = posToOffset(view.state.doc, sel.from);
-    let to = posToOffset(view.state.doc, sel.to);
-    if (vkind === 'line') {
-      // LINEWISE: expand to the whole model lines (paragraphs) the selection
-      // spans — the caret is unaffected (it stays at selection.head). A
-      // collapsed selection still highlights its own line.
-      from = from === 0 ? 0 : text.lastIndexOf('\n', from - 1) + 1;
-      const nl = text.indexOf('\n', to);
-      to = nl < 0 ? text.length : nl;
-    } else if (vkind === 'char') {
-      // CHARWISE INCLUSIVE (Vim visual): include the CELL at the max end, so
-      // both the anchor and head characters are highlighted (moving backward
-      // keeps the original char under the cursor). One caret step past `to`.
-      to = nextCaretOffset(text, to, getPolicy(), false);
-    }
-    // BLOCK replaces the single [from, to) with one range per line
-    // (blockRanges); the other kinds keep the adjusted single range.
-    const ranges = vkind === 'block' ? blockRanges(text, from, to) : from < to ? [{ from, to }] : [];
+    const from = posToOffset(view.state.doc, sel.from);
+    const to = posToOffset(view.state.doc, sel.to);
+    const ranges = selectionRanges(text, from, to, vkind, getPolicy);
     if (ranges.length === 0) return [];
     const first = ranges[0] as { from: number; to: number };
     const last = ranges[ranges.length - 1] as { from: number; to: number };
     const cs = getComputedStyle(view.dom);
     const vertical = cs.writingMode.startsWith('vertical');
-    // Cap a span's BLOCK extent at one cell (the glyph advance), centered:
-    // the measured rects are glyph EM boxes, and a big-metric font's em box
-    // (Noto Sans CJK: 1.45em) overflows the advance into the leading WHERE
-    // THE NEIGHBOR READING PAINTS — the "base-only" highlight visibly tinted
-    // the readings (ruby-selection-thin.ts). The ink of an upright glyph
-    // lives inside its advance, so the clamp only trims empty em-box bleed.
     const cell = readCell(cs);
-    const clamp = (c: { l: number; t: number; r: number; b: number }): DOMRect => {
-      if (vertical) {
-        const w = c.r - c.l;
-        const l = w > cell ? (c.l + c.r) / 2 - cell / 2 : c.l;
-        return new DOMRect(l, c.t, Math.min(w, cell), c.b - c.t);
-      }
-      const h = c.b - c.t;
-      const t = h > cell ? (c.t + c.b) / 2 - cell / 2 : c.t;
-      return new DOMRect(c.l, t, c.r - c.l, Math.min(h, cell));
-    };
-    // Within-line grouping: the shared DIRECTIONAL half-pitch rule
-    // (pm/line-grouping.ts); backwardTol = one pitch (縦中横 sub-rects merge,
-    // a page wrap starts a line). A fixed few-px symmetric value here split
-    // lines (extra hairline rects) at larger font sizes.
     const pitch = readPitch(cs);
-    const grouper = makeLineGrouper(vertical, pitch / 2, pitch);
-    const out: DOMRect[] = [];
-    let cur: { l: number; t: number; r: number; b: number } | null = null;
-    // Glyphs stream in ascending offset order, so the (sorted, disjoint)
-    // ranges advance with a single cursor.
-    let ri = 0;
-    for (const g of walkGlyphsLines(lineOf(text, first.from), lineOf(text, last.to))) {
-      while (ri < ranges.length && g.off >= (ranges[ri] as { to: number }).to) ri++;
-      if (ri >= ranges.length) break;
-      if (g.off < (ranges[ri] as { from: number }).from) continue;
-      const r = g.rect;
-      if (!grouper.step(vertical ? r.left : r.top) && cur) {
-        cur.l = Math.min(cur.l, r.left);
-        cur.t = Math.min(cur.t, r.top);
-        cur.r = Math.max(cur.r, r.right);
-        cur.b = Math.max(cur.b, r.bottom);
-      } else {
-        if (cur) out.push(clamp(cur));
-        cur = { l: r.left, t: r.top, r: r.right, b: r.bottom };
-      }
-    }
-    if (cur) out.push(clamp(cur));
-    return out;
+    return mergeSelectedSpans(
+      walkGlyphsLines(lineOf(text, first.from), lineOf(text, last.to)),
+      ranges,
+      vertical,
+      cell,
+      pitch,
+    );
   };
 
   // Drag-selection hit-testing (see pm/drag-select.ts), built LAZILY by the
@@ -284,21 +356,7 @@ export const createGlyphWalker = (
       leaves.filter((l) => l.line === activeLine),
       headOffset,
     );
-    const byLine: number[][] = [];
-    for (const l of leaves) {
-      if (l.line < l0 || l.line > l1) continue;
-      const visible =
-        l.kind === 'body' ||
-        l.kind === 'plain' ||
-        ((l.kind === 'rt' || l.kind === 'delim') && !isHidden(l, policy, activeLine, active));
-      if (!visible) continue;
-      let arr = byLine[l.line];
-      if (!arr) {
-        arr = [];
-        byLine[l.line] = arr;
-      }
-      for (let o = l.from; o < l.to; o++) arr.push(o);
-    }
+    const byLine = visibleOffsetsByLine(leaves, l0, l1, policy, activeLine, active);
     const out: Glyph[] = [];
     const paras = view.dom.querySelectorAll(':scope > p');
     for (let i = Math.max(0, l0); i <= l1 && i < paras.length; i++) {
