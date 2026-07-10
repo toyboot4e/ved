@@ -2,6 +2,8 @@
 //
 //   node scripts/gen-api-docs.ts            # write docs/api/**/*.md
 //   node scripts/gen-api-docs.ts --check    # fail if the docs are stale
+//   node scripts/gen-api-docs.ts --open     # also render HTML (out/api-docs/)
+//                                           # and open it in the browser
 //
 // One module per public seam: `ved` (the user-extension API — the same
 // source that is written verbatim to `<configDir>/extensions/ved.d.ts`, so
@@ -11,10 +13,11 @@
 // contract). Extraction is ox-content's OXC pipeline (no TypeScript
 // compiler API — it keeps working across tsc major versions).
 
+import { spawn } from 'node:child_process';
 import { existsSync, mkdirSync, readdirSync, readFileSync, rmSync, unlinkSync, writeFileSync } from 'node:fs';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { extractDocsFromEntryPoints, generateDocsMarkdown } from '@ox-content/napi';
+import { extractDocsFromEntryPoints, generateDocsMarkdown, parseAndRender } from '@ox-content/napi';
 
 const REPO_ROOT = dirname(dirname(fileURLToPath(import.meta.url)));
 const OUT_DIR = join(REPO_ROOT, 'docs/api');
@@ -162,4 +165,53 @@ if (process.argv.includes('--check')) {
     writeFileSync(join(OUT_DIR, path), content);
   }
   console.log(`wrote ${files.size} pages for ${modules.length} modules`);
+
+  if (process.argv.includes('--open')) {
+    const htmlDir = join(REPO_ROOT, 'out/api-docs');
+    rmSync(htmlDir, { recursive: true, force: true });
+    for (const [path, content] of files) {
+      // Relative page links target the .md siblings; the HTML tree mirrors it.
+      const md = content.replace(/\((\.[^)#]*)\.md(#[^)]*)?\)/g, (_m, p, h) => `(${p}.html${h ?? ''})`);
+      const { html, errors } = parseAndRender(md, { gfm: true });
+      for (const e of errors) console.error(`${path}: ${e}`);
+      const title = content.match(/^# (.+)$/m)?.[1] ?? path;
+      const htmlPath = join(htmlDir, path.replace(/\.md$/, '.html'));
+      mkdirSync(dirname(htmlPath), { recursive: true });
+      writeFileSync(htmlPath, htmlPage(title, html));
+    }
+    const index = join(htmlDir, 'index.html');
+    console.log(`rendered HTML → ${index}`);
+    const opener = process.platform === 'darwin' ? 'open' : 'xdg-open';
+    spawn(opener, [index], { detached: true, stdio: 'ignore' }).unref();
+  }
+}
+
+function htmlPage(title: string, body: string): string {
+  return `<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>${title} — ved API</title>
+<style>
+  body { max-width: 52rem; margin: 2rem auto; padding: 0 1rem; font-family: system-ui, sans-serif; line-height: 1.6; }
+  code { background: #f4f4f4; padding: 0.1em 0.3em; border-radius: 3px; font-size: 0.9em; }
+  pre { background: #f4f4f4; padding: 0.8em; border-radius: 6px; overflow-x: auto; }
+  pre code { background: none; padding: 0; }
+  table { border-collapse: collapse; }
+  th, td { border: 1px solid #ccc; padding: 0.3em 0.6em; text-align: left; }
+  a { color: #0857a6; }
+  @media (prefers-color-scheme: dark) {
+    body { background: #1b1b1d; color: #ddd; }
+    code, pre { background: #2a2a2d; }
+    th, td { border-color: #444; }
+    a { color: #7ab7ff; }
+  }
+</style>
+</head>
+<body>
+${body}
+</body>
+</html>
+`;
 }

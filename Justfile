@@ -122,6 +122,11 @@ doc:
 doc-check:
     pnpm run api-docs:check
 
+# regenerates the API reference, renders it to HTML (out/api-docs/), and opens
+# it in the browser
+doc-open:
+    pnpm run api-docs:open
+
 # regenerates the Vim keybinding reference (vim/docs/keybindings.{json,md}) by
 # joining Vim's own index.txt against @ved/vim's declared binding catalog
 vim-keys:

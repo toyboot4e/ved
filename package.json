@@ -22,7 +22,8 @@
     "smoke": "pnpm -C desktop smoke",
     "smoke:mozc": "pnpm -C desktop smoke:mozc",
     "api-docs": "node scripts/gen-api-docs.ts",
-    "api-docs:check": "node scripts/gen-api-docs.ts --check"
+    "api-docs:check": "node scripts/gen-api-docs.ts --check",
+    "api-docs:open": "node scripts/gen-api-docs.ts --open"
   },
   "devDependencies": {
     "@biomejs/biome": "2.4.16",
