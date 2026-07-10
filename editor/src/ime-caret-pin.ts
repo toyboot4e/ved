@@ -66,10 +66,20 @@ export const installImeCaretPin = (view: EditorView, deps: ImeCaretPinDeps): (()
       const mid = (r: { left: number; right: number }): number => (r.left + r.right) / 2;
       const onLine = (r: { left: number; right: number; top: number }): boolean =>
         Math.abs(mid(r) - mid(aRect)) <= linePitch / 2 && Math.abs(r.top - aRect.top) <= lineLen;
-      if (onLine(caretCoords(view, tailPos))) return; // no wrap — native behavior
-      // Last preedit offset still on the starting line (offsets leave the
-      // line monotonically, so the boundary binary-searches; the walk is
-      // bounded by the preedit length and runs only while composing).
+      // The tail is the LIVE DOM caret (Blink parks it at the preedit end).
+      // Measure its ACTUAL range rect, not coordsAtPos: at the DOCUMENT end
+      // coordsAtPos reports the empty NEXT column (the multicol end-of-text
+      // artifact — a ~cell horizontal shift), which read as a spurious wrap
+      // and re-seated the caret BACKWARD, hiding the preedit tail under the
+      // candidate window (VerticalColumns; mozc/ime-compose-visible). The DOM
+      // rect is also exactly what the IME positions its window by.
+      const dr = sel.getRangeAt(0).getBoundingClientRect();
+      const degenerate = dr.top === 0 && dr.bottom === 0 && dr.left === 0 && dr.right === 0;
+      const tailRect = degenerate ? caretCoords(view, tailPos) : { left: dr.left, right: dr.right, top: dr.top };
+      if (onLine(tailRect)) return; // no wrap — leave the caret at the preedit end
+      // Wrapped: the last preedit offset still on the starting line (offsets
+      // leave the line monotonically, so the boundary binary-searches; the
+      // walk is bounded by the preedit length and runs only while composing).
       let lo = anchorOff;
       let hi = tailOff;
       while (hi - lo > 1) {
