@@ -60,9 +60,10 @@ export function activate(ctx: VedContext): void | Promise<void> {
 export function deactivate(): void {} // optional
 ```
 
-`VedContext` (the full surface: `desktop/src/shared/extension-api.ts`) is
-bound to the extension's id — **namespacing is by construction**, not
-convention: there is no unprefixed registration API.
+`VedContext` (the full surface: `desktop/src/shared/extension-api.ts`; a
+browsable reference is generated from it into `docs/api/` by
+`just doc`) is bound to the extension's id — **namespacing is by
+construction**, not convention: there is no unprefixed registration API.
 
 - `commands.register(name, run)` registers `<id>.<name>`; `execute(fullId)`
   runs anything — composition is allowed, foreign registration impossible.

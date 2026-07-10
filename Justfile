@@ -113,6 +113,12 @@ test-all:
 [private]
 alias ta := test-all
 
+# regenerates the API reference (docs/api/) — the `ved` extension API plus the
+# internal seams (@ved/editor, @ved/vim, the IPC contract) — from the entry
+# files' TypeScript via ox-content's OXC extraction
+doc:
+    pnpm run api-docs
+
 # regenerates the Vim keybinding reference (vim/docs/keybindings.{json,md}) by
 # joining Vim's own index.txt against @ved/vim's declared binding catalog
 vim-keys:

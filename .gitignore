@@ -10,3 +10,6 @@ out
 # nix build output symlink
 /result
 /result-*
+
+# generated API reference (`just doc`)
+/docs/api/

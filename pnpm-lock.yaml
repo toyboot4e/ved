@@ -11,6 +11,9 @@ importers:
       '@biomejs/biome':
         specifier: 2.4.16
         version: 2.4.16
+      '@ox-content/napi':
+        specifier: ^2.76.0
+        version: 2.76.0
       '@types/node':
         specifier: ^26.1.0
         version: 26.1.0
@@ -732,6 +735,36 @@ packages:
   '@noble/hashes@2.2.0':
     resolution: {integrity: sha512-IYqDGiTXab6FniAgnSdZwgWbomxpy9FtYvLKs7wCUs2a8RkITG+DFGO1DM9cr+E3/RgADRpFjrKVaJ1z6sjtEg==}
     engines: {node: '>= 20.19.0'}
+
+  '@ox-content/binding-darwin-arm64@2.76.0':
+    resolution: {integrity: sha512-16VppMtoBhvg4jnV4oluQf/oFQcICeChI93FlvIra41LwAGM5bd55it4bI7mJ/6dEgXi5QcGj3use3WVWoj/3Q==}
+    cpu: [arm64]
+    os: [darwin]
+
+  '@ox-content/binding-darwin-x64@2.76.0':
+    resolution: {integrity: sha512-ZQFw+AcKNO8j3O6Xh3mwRqlaU1EThPDzMeOz4VARRXEJEE/kFkR2Y3Ljie3LEE29srrUXit53CohKsiCuHu8nQ==}
+    cpu: [x64]
+    os: [darwin]
+
+  '@ox-content/binding-linux-arm64-gnu@2.76.0':
+    resolution: {integrity: sha512-exF1z3oheePTIpsfc0Tg0wdplpmzXyBQ2gUx3DiOodqoGPT24grkJr0wAOknDKzMZwwjz0ZfB0ajTpdWD7K2/Q==}
+    cpu: [arm64]
+    os: [linux]
+    libc: [glibc]
+
+  '@ox-content/binding-linux-x64-gnu@2.76.0':
+    resolution: {integrity: sha512-G3IG5bOJCWTh1H7Za4Zmjoq5JtsQeO1VCE9oe27FKftqjBN8LWyKIKWq4RTzc0K/egXD8Foqm1zpdc9fPUi0sQ==}
+    cpu: [x64]
+    os: [linux]
+    libc: [glibc]
+
+  '@ox-content/binding-win32-x64-msvc@2.76.0':
+    resolution: {integrity: sha512-gR3GXZn4mBzn50PHTIM7B2NhuKjK+cj1Pl0j9xvfH5JByA1m6bW0tMNrvecU6Uv6h4BYVcpaFXkkmV02cFkJhw==}
+    cpu: [x64]
+    os: [win32]
+
+  '@ox-content/napi@2.76.0':
+    resolution: {integrity: sha512-cfPWaBBVFr8Xyf91/XBRTJLy+YK+5dE8FbT0MaPQ8y84c4zaT2cdW4m5robOmlQKnQv1blnmm868HMjNdW1ELA==}
 
   '@oxc-project/types@0.138.0':
     resolution: {integrity: sha512-1a7ZKmrRTCoN1XMZ4L0PyyqrMnrNlLyPuOkdSX2MZg7IiIGRUyurNhAm73ptDOraoBcIordsIGKNPKUzy3ZmfA==}
@@ -2994,6 +3027,29 @@ snapshots:
   '@noble/hashes@1.4.0': {}
 
   '@noble/hashes@2.2.0': {}
+
+  '@ox-content/binding-darwin-arm64@2.76.0':
+    optional: true
+
+  '@ox-content/binding-darwin-x64@2.76.0':
+    optional: true
+
+  '@ox-content/binding-linux-arm64-gnu@2.76.0':
+    optional: true
+
+  '@ox-content/binding-linux-x64-gnu@2.76.0':
+    optional: true
+
+  '@ox-content/binding-win32-x64-msvc@2.76.0':
+    optional: true
+
+  '@ox-content/napi@2.76.0':
+    optionalDependencies:
+      '@ox-content/binding-darwin-arm64': 2.76.0
+      '@ox-content/binding-darwin-x64': 2.76.0
+      '@ox-content/binding-linux-arm64-gnu': 2.76.0
+      '@ox-content/binding-linux-x64-gnu': 2.76.0
+      '@ox-content/binding-win32-x64-msvc': 2.76.0
 
   '@oxc-project/types@0.138.0': {}
 

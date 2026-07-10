@@ -20,10 +20,13 @@
     "build": "pnpm -C desktop build",
     "build:web": "pnpm -C web build",
     "smoke": "pnpm -C desktop smoke",
-    "smoke:mozc": "pnpm -C desktop smoke:mozc"
+    "smoke:mozc": "pnpm -C desktop smoke:mozc",
+    "api-docs": "node scripts/gen-api-docs.ts",
+    "api-docs:check": "node scripts/gen-api-docs.ts --check"
   },
   "devDependencies": {
     "@biomejs/biome": "2.4.16",
+    "@ox-content/napi": "^2.76.0",
     "@types/node": "^26.1.0",
     "@vitest/ui": "^4.1.10",
     "typescript": "^7.0.2",
