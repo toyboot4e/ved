@@ -36,6 +36,7 @@ const ved: VedApi = {
   onExtensionUpdated: (cb) => on(IpcChannel.ExtensionUpdated, cb),
   extensionStorageRead: (id, file) => ipcRenderer.invoke(IpcChannel.ExtensionStorageRead, id, file),
   extensionStorageWrite: (id, file, data) => ipcRenderer.invoke(IpcChannel.ExtensionStorageWrite, id, file, data),
+  imeCaretRect: (rect) => ipcRenderer.send(IpcChannel.ImeCaretRect, rect),
 };
 
 // Expose via `contextBridge` when context isolation is enabled, otherwise

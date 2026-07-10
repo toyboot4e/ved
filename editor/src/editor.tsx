@@ -117,6 +117,12 @@ export type VedEditorProps = {
    *  null when it unmounts) — the seam the shell's search bar drives
    *  select/replace through. */
   readonly onSearchOps?: (ops: EditorSearchOps | null) => void;
+  /** The live composing caret rect (viewport CSS px) per IME composition
+   *  update, null when the composition ends — what the system IME positions
+   *  its candidate window by. The desktop shell forwards it to the
+   *  main-process fcitx window guard (ime-caret-pin.ts onCaretRect documents
+   *  the placement race it corrects). Platform-neutral: just a callback. */
+  readonly onImeCaretRect?: (rect: { left: number; top: number; right: number; bottom: number } | null) => void;
 };
 
 // ---------------------------------------------------------------------------
@@ -450,6 +456,7 @@ export const VedEditor = (props: VedEditorProps): React.JSX.Element => {
       beforeOffsetRef,
       lastTextRef,
       isVertical: () => live.current.writingMode !== WritingMode.Horizontal,
+      onCaretRect: (rect) => live.current.onImeCaretRect?.(rect),
     });
     const imeCellPad = createImeCellPad(view, {
       beforeOffsetRef,

@@ -8,6 +8,7 @@ import { installCloseGuard, registerCloseGuard } from './close-guard';
 import { devExtensionFlags, resolveConfigDir } from './config-dir';
 import { registerExtensionService } from './extension-service';
 import { registerFileService } from './file-service';
+import { installImeWindowGuard } from './ime-window-guard';
 import { killAllShells, registerShellService } from './shell-service';
 
 // e2e seam: an isolated per-run profile. Parallel smoke drivers would race
@@ -127,6 +128,7 @@ app.whenReady().then(() => {
   registerShellService();
   registerCloseGuard();
   installClipboardPersist();
+  installImeWindowGuard();
   // User config lives under the config dir (docs/extensions.md) —
   // `--config-dir=<path>` overrides the platform default; the flag is also
   // the e2e isolation seam, like VED_SMOKE_USER_DATA above.

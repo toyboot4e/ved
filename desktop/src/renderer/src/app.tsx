@@ -33,6 +33,12 @@ import { useVimStore, vimExtensions } from './vim';
 import { useWorkspaceStore } from './workspace';
 import { useWritingModeStore } from './writing-mode';
 
+// The live composing caret rect → the main-process fcitx window guard
+// (src/main/ime-window-guard.ts). Module-level, so the editor prop's identity
+// is stable across renders.
+const reportImeCaretRect = (rect: { left: number; top: number; right: number; bottom: number } | null): void =>
+  window.ved.imeCaretRect(rect);
+
 export const App = (): React.JSX.Element => {
   const writingMode = useWritingModeStore((s) => s.writingMode);
   const appearPolicy = useAppearPolicyStore((s) => s.appearPolicy);
@@ -335,6 +341,7 @@ export const App = (): React.JSX.Element => {
               invisibles={invisibles}
               searchHighlights={searchHighlights}
               onSearchOps={handleSearchOps}
+              onImeCaretRect={reportImeCaretRect}
               keybindings={keybindings}
               extensions={editorExtensions}
             />

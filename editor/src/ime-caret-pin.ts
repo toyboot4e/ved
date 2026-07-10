@@ -43,6 +43,16 @@ export type ImeCaretPinDeps = {
   /** Live writing-mode check; the pin only applies to vertical writing (a
    *  horizontal window opens BELOW the line, over no preedit text). */
   readonly isVertical: () => boolean;
+  /** Reports the live composing caret rect (viewport CSS px) after each
+   *  composition update — the rect the system IME SHOULD position its window
+   *  by — and null once the composition ends. The desktop shell forwards it
+   *  to the main-process fcitx window guard: fcitx places its window per key
+   *  event using the caret rect it holds AT THAT MOMENT, and a mod-tap
+   *  keyboard's instant key release loses the race against Chromium's async
+   *  rect update — the window then opens ON the first preedit cell and
+   *  nothing repositions it (rect-only updates are ignored while mapped;
+   *  mozc-verified). Optional: the web preview has no main process. */
+  readonly onCaretRect?: (rect: { left: number; top: number; right: number; bottom: number } | null) => void;
 };
 
 /** Install the composition caret pin on a mounted view; returns the teardown. */
@@ -53,7 +63,21 @@ export const installImeCaretPin = (view: EditorView, deps: ImeCaretPinDeps): (()
   // word's end once it settles (compositionend below) — where a native
   // commit leaves it.
   let pinnedAnchor: number | null = null;
+  // The live collapsed DOM caret rect — read AFTER the pin has re-seated, so
+  // it is exactly the rect the IME window belongs under.
+  const reportCaretRect = (): void => {
+    if (!deps.onCaretRect) return;
+    const sel = view.dom.ownerDocument.getSelection();
+    if (!view.composing || !sel?.focusNode || !sel.isCollapsed || sel.rangeCount === 0) return;
+    const r = sel.getRangeAt(0).getBoundingClientRect();
+    if (r.top === 0 && r.bottom === 0 && r.left === 0 && r.right === 0) return; // degenerate — keep the last
+    deps.onCaretRect({ left: r.left, top: r.top, right: r.right, bottom: r.bottom });
+  };
   const onInput = (): void => {
+    pinCaret();
+    reportCaretRect();
+  };
+  const pinCaret = (): void => {
     if (!view.composing || !deps.isVertical()) return;
     const sel = view.dom.ownerDocument.getSelection();
     // No selection is ime-survival's case; a range is the IME's own doing.
@@ -135,6 +159,9 @@ export const installImeCaretPin = (view: EditorView, deps: ImeCaretPinDeps): (()
     }
   };
   const onCompositionEnd = (event: Event): void => {
+    // The composition is over — the guard stands down (the window unmaps on
+    // commit; a fresh composition re-reports).
+    deps.onCaretRect?.(null);
     if (pinnedAnchor == null) return;
     const anchorOff = pinnedAnchor;
     pinnedAnchor = null;
@@ -162,6 +189,7 @@ export const installImeCaretPin = (view: EditorView, deps: ImeCaretPinDeps): (()
   view.dom.addEventListener('input', onInput);
   view.dom.addEventListener('compositionend', onCompositionEnd);
   return () => {
+    deps.onCaretRect?.(null); // unmount mid-composition — stand the guard down
     view.dom.removeEventListener('input', onInput);
     view.dom.removeEventListener('compositionend', onCompositionEnd);
   };

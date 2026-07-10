@@ -28,7 +28,19 @@ export const IpcChannel = {
   ExtensionUpdated: 'ved:extension:updated',
   ExtensionStorageRead: 'ved:extension:storage-read',
   ExtensionStorageWrite: 'ved:extension:storage-write',
+  ImeCaretRect: 'ved:ime:caret-rect',
 } as const;
+
+/** The live composing caret rect, in the renderer's viewport CSS px — what
+ * the system IME positions its candidate window by. Streamed to main while an
+ * IME composition is active (null = composition ended); consumed by the fcitx
+ * window guard (`src/main/ime-window-guard.ts`). */
+export type ImeCaretRect = {
+  readonly left: number;
+  readonly top: number;
+  readonly right: number;
+  readonly bottom: number;
+};
 
 /** One user extension, compiled in main (extension-host.ts) and imported as
  * a blob module by the renderer (extension-host.ts there). `js` is the
@@ -204,4 +216,7 @@ export type VedApi = VedFileApi &
      * no such file. Ids/names are single path segments — main validates. */
     readonly extensionStorageRead: (id: string, file: string) => Promise<string | null>;
     readonly extensionStorageWrite: (id: string, file: string, data: string) => Promise<void>;
+    /** Streams the live composing caret rect to the fcitx window guard in
+     * main (null = the composition ended). Fire-and-forget. */
+    readonly imeCaretRect: (rect: ImeCaretRect | null) => void;
   };
