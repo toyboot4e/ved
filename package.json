@@ -26,7 +26,7 @@
     "api-docs:open": "node scripts/gen-api-docs.ts --open"
   },
   "devDependencies": {
-    "@biomejs/biome": "2.4.16",
+    "@biomejs/biome": "2.5.3",
     "@ox-content/napi": "^2.76.0",
     "@types/node": "^26.1.0",
     "@vitest/ui": "^4.1.10",
