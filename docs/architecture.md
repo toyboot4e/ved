@@ -605,7 +605,12 @@ lines — the text accumulates through the same channels as the dot-repeat
 recording, so IME-committed text repeats too (`mozc/vim-block-ime.ts`).
 Enter/Delete (or Backspacing past the insert start) abort the repeat; block
 changes are not dot-repeatable (like all visual changes, v1) and block-visual
-paste is not supported (v1). `gv` reselects the selection the last visual
+paste is not supported (v1). Visual `r{char}` overwrites every selected
+character (per-segment in a block; newlines survive; no register write), and
+the searches (`/` `?` `n` `N` `*` `#`) stay live in visual mode, EXTENDING
+the selection. Every motion DECLARES its effect on the `$`-block flag
+(`MotionDef.blockEol`, a required field) — the classification is exhaustive
+by construction, not by a hand-kept key list. `gv` reselects the selection the last visual
 mode ENDED with — kind and `$`-flag included; from inside visual mode it
 swaps with the live selection (`gv gv` toggles between the two). The stored
 offsets are not edit-adjusted (Vim's `'<`/`'>` are best-effort there too),

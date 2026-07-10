@@ -813,6 +813,99 @@ describe('block visual (Ctrl+V)', () => {
   });
 });
 
+describe('visual r (replace every selected character)', () => {
+  const cv = key('v', { ctrl: true });
+
+  it('charwise: r{char} overwrites the inclusive range, caret to its start', () => {
+    const r = play('abcdef', 1, ['v', 'l', 'r', 'x']);
+    expect(r.text).toBe('axxdef');
+    expect(r.head).toBe(1);
+    expect(r.state.mode).toBe('normal');
+  });
+
+  it('linewise: newlines survive', () => {
+    const r = play('ab\ncd', 0, ['V', 'G', 'r', 'x']);
+    expect(r.text).toBe('xx\nxx');
+    expect(r.head).toBe(0);
+  });
+
+  it('block: overwrites each segment, caret to the top-left', () => {
+    const r = play('abcd\nefgh', 1, [cv, 'G', 'l', 'r', 'x']);
+    expect(r.text).toBe('axxd\nexxh');
+    expect(r.head).toBe(1);
+  });
+
+  it('$-block: overwrites to every line end (ragged)', () => {
+    const r = play('ab\ncdef', 0, [cv, 'G', '$', 'r', 'x']);
+    expect(r.text).toBe('xx\nxxxx');
+  });
+
+  it('a find-chord resolves the char argument (Ctrl+l → 。)', () => {
+    const r = play('abc', 0, ['v', 'r', key('l', { ctrl: true })]);
+    expect(r.text).toBe('。bc');
+  });
+
+  it('Escape cancels the pending r without editing', () => {
+    const r = play('abc', 0, ['v', 'r', key('Escape')]);
+    expect(r.text).toBe('abc');
+    expect(r.state.mode).toBe('normal');
+    expect(r.state.charPending).toBeNull();
+  });
+});
+
+describe('motions: | + - _ and the block-eol classification', () => {
+  const cv = key('v', { ctrl: true });
+
+  it('| goes to column N (1-based), clamped to the line', () => {
+    expect(play('abcdef', 4, ['|']).head).toBe(0);
+    expect(play('abcdef', 0, ['3', '|']).head).toBe(2);
+    expect(play('ab', 0, ['9', '|']).head).toBe(2); // clamped to the line end
+  });
+
+  it('+/- move N lines down/up onto the first non-blank; _ stays (count−1)', () => {
+    const t = '  ab\n  cd\n  ef';
+    expect(play(t, 2, ['+']).head).toBe(7);
+    expect(play(t, 7, ['-']).head).toBe(2);
+    expect(play(t, 0, ['_']).head).toBe(2);
+    expect(play(t, 2, ['2', '+']).head).toBe(12);
+  });
+
+  it('+ at the last line fails (no move); d+ is linewise', () => {
+    expect(play('ab', 0, ['+']).head).toBe(0);
+    expect(play('  ab\n  cd\n  ef', 2, ['d', '+']).text).toBe('  ef');
+  });
+
+  it('every column motion drops the $-block flag ({ included); gg/G keep it', () => {
+    expect(play('abcd\nefgh', 0, [cv, '$']).state.visualBlockEol).toBe(true);
+    expect(play('abcd\nefgh', 0, [cv, '$', '{']).state.visualBlockEol).toBe(false);
+    expect(play('abcd\nefgh', 0, [cv, '$', '|']).state.visualBlockEol).toBe(false);
+    expect(play('abcd\nefgh', 0, [cv, '$', 'G']).state.visualBlockEol).toBe(true);
+  });
+});
+
+describe('searches extend in visual mode', () => {
+  it('/pattern from visual keeps the anchor', () => {
+    const r = play('foo bar foo', 0, ['v', '/', 'b', 'a', 'r', key('Enter')]);
+    expect(r.state.mode).toBe('visual');
+    expect(r.anchor).toBe(0);
+    expect(r.head).toBe(4);
+  });
+
+  it('n continues extending; N reverses', () => {
+    const r = play('foo bar foo bar', 0, ['v', '/', 'b', 'a', 'r', key('Enter'), 'n']);
+    expect(r.anchor).toBe(0);
+    expect(r.head).toBe(12);
+    const back = play('foo bar foo bar', 0, ['v', '/', 'b', 'a', 'r', key('Enter'), 'n', 'N']);
+    expect(back.head).toBe(4);
+  });
+
+  it('normal-mode search still collapses to the match', () => {
+    const r = play('foo bar', 0, ['/', 'b', 'a', 'r', key('Enter')]);
+    expect(r.anchor).toBe(4);
+    expect(r.head).toBe(4);
+  });
+});
+
 describe('gv (reselect the last visual selection)', () => {
   const cv = key('v', { ctrl: true });
 

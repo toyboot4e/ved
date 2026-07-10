@@ -40,7 +40,9 @@
 //     selected as the head moves before it; linewise visual `V` KEEPS the
 //     cursor (a collapsed selection at the caret) and highlights the whole
 //     paragraph. Both shape the render via setVisualSelection; operators still
-//     take whole lines for V (visualRange);
+//     take whole lines for V (visualRange). `r{char}` overwrites every
+//     selected character (newlines survive); the searches (`/` `?` `n` `N`
+//     `*` `#`) stay live in visual mode and EXTEND the selection;
 //   - BLOCK visual `Ctrl+V`: the rectangle between anchor and head (lines ×
 //     character columns, both inclusive — ved's cell grid, a deviation from
 //     Vim's screen columns). d/x/c/s/y take the per-line segments (blockwise
@@ -329,12 +331,14 @@ const incrementNumber = (state: VimState, doc: VimDocView, delta: number): VimSt
 };
 
 /** Move the caret to a search result (or swallow if none), recording it for
- *  `n`/`N`. */
+ *  `n`/`N`. In visual mode the move EXTENDS the selection (the anchor
+ *  stays), like any other motion there. */
 const runSearch = (state: VimState, pattern: string, forward: boolean, doc: VimDocView): VimStep => {
   const next = { ...state, commandLine: null, lastSearch: { pattern, forward } };
   const off = searchNext(doc.text, doc.head, pattern, forward);
   if (off == null) return swallow(next);
-  return { state: next, effects: [{ kind: 'select', anchor: off, head: off }], handled: true };
+  const anchor = state.mode === 'visual' ? doc.anchor : off;
+  return { state: next, effects: [{ kind: 'select', anchor, head: off }], handled: true };
 };
 
 /** A keystroke while the `/`?`?` command line is open: build the pattern,
@@ -374,12 +378,38 @@ type MotionEnv = {
 /** A motion DEFINITION: its static range flags, a human description, and a pure
  *  resolver from origin → target offset (`null` = no target, e.g. `%` off a
  *  bracket). `inclusive` = the operator range takes the char AT the target too
- *  (`e`, `f`, `t`); `linewise` = whole lines (`gg`, `G`). */
+ *  (`e`, `f`, `t`); `linewise` = whole lines (`gg`, `G`).
+ *
+ *  `blockEol` is the motion's effect on a `$`-block's to-every-line-end flag
+ *  (Vim's curswant): `'set'` turns it on (`$`), `'keep'` preserves it (the
+ *  line jumps gg/G — Vim keeps curswant there), `'reset'` drops it (every
+ *  column-absolute motion). REQUIRED, so adding a motion without deciding
+ *  its block behavior is a compile error — the field is what guarantees the
+ *  classification stays exhaustive. */
 type MotionDef = {
   readonly inclusive: boolean;
   readonly linewise: boolean;
+  readonly blockEol: 'set' | 'reset' | 'keep';
   readonly desc: string;
   readonly resolve: (env: MotionEnv) => number | null;
+};
+
+/** `+`/`-`/`_`: N whole lines down/up (or N−1 for `_`), landing on the first
+ *  non-blank. Null when the document runs out of lines (Vim: the motion
+ *  fails). */
+const linewiseStep = (text: string, from: number, count: number, dir: 1 | -1): number | null => {
+  let ls = lineStart(text, from);
+  for (let i = 0; i < count; i++) {
+    if (dir > 0) {
+      const le = lineEnd(text, ls);
+      if (le >= text.length) return null;
+      ls = le + 1;
+    } else {
+      if (ls === 0) return null;
+      ls = lineStart(text, ls - 1);
+    }
+  }
+  return firstNonBlank(text, ls);
 };
 
 /** Step `count` caret stops within the caret's line (h/l): a collapsed ruby is
@@ -424,92 +454,135 @@ export const MOTIONS = {
   charLeft: {
     inclusive: false,
     linewise: false,
+    blockEol: 'reset',
     desc: 'left within the line',
     resolve: ({ doc, from, count }) => stepInLine(doc, from, count, -1),
   },
   charRight: {
     inclusive: false,
     linewise: false,
+    blockEol: 'reset',
     desc: 'right within the line',
     resolve: ({ doc, from, count }) => stepInLine(doc, from, count, 1),
   },
   wordForward: {
     inclusive: false,
     linewise: false,
+    blockEol: 'reset',
     desc: 'N words forward',
     resolve: ({ doc, from, count }) => wordStep(doc, from, count, 'next', false),
   },
   wordBackward: {
     inclusive: false,
     linewise: false,
+    blockEol: 'reset',
     desc: 'N words backward',
     resolve: ({ doc, from, count }) => wordStep(doc, from, count, 'prev', false),
   },
   wordEnd: {
     inclusive: true,
     linewise: false,
+    blockEol: 'reset',
     desc: 'forward to the end of a word',
     resolve: ({ doc, from, count }) => wordStep(doc, from, count, 'end', false),
   },
   bigWordForward: {
     inclusive: false,
     linewise: false,
+    blockEol: 'reset',
     desc: 'N WORDs forward',
     resolve: ({ doc, from, count }) => wordStep(doc, from, count, 'next', true),
   },
   bigWordBackward: {
     inclusive: false,
     linewise: false,
+    blockEol: 'reset',
     desc: 'N WORDs backward',
     resolve: ({ doc, from, count }) => wordStep(doc, from, count, 'prev', true),
   },
   bigWordEnd: {
     inclusive: true,
     linewise: false,
+    blockEol: 'reset',
     desc: 'forward to the end of a WORD',
     resolve: ({ doc, from, count }) => wordStep(doc, from, count, 'end', true),
   },
   matchBracket: {
     inclusive: true,
     linewise: false,
+    blockEol: 'reset',
     desc: 'to the matching bracket',
     resolve: ({ doc, from }) => matchBracket(doc.text, from),
   },
   paraForward: {
     inclusive: false,
     linewise: false,
+    blockEol: 'reset',
     desc: 'N paragraphs forward',
     resolve: ({ doc, from, count }) => repeatStep(from, count, (o) => paraForward(doc.text, o)),
   },
   paraBack: {
     inclusive: false,
     linewise: false,
+    blockEol: 'reset',
     desc: 'N paragraphs backward',
     resolve: ({ doc, from, count }) => repeatStep(from, count, (o) => paraBack(doc.text, o)),
   },
   lineStart: {
     inclusive: false,
     linewise: false,
+    blockEol: 'reset',
     desc: 'to the first column of the line',
     resolve: ({ doc, from }) => lineStart(doc.text, from),
   },
   firstNonBlank: {
     inclusive: false,
     linewise: false,
+    blockEol: 'reset',
     desc: 'to the first non-blank of the line',
     resolve: ({ doc, from }) => firstNonBlank(doc.text, from),
   },
   lineEnd: {
     inclusive: false,
     linewise: false,
+    blockEol: 'set',
     desc: 'to the end of the line',
     resolve: ({ doc, from }) => lineEnd(doc.text, from),
+  },
+  column: {
+    inclusive: false,
+    linewise: false,
+    blockEol: 'reset',
+    desc: 'to column N of the line',
+    resolve: ({ doc, from, count }) => Math.min(lineStart(doc.text, from) + count - 1, lineEnd(doc.text, from)),
+  },
+  linewiseDown: {
+    inclusive: false,
+    linewise: true,
+    blockEol: 'reset',
+    desc: 'N lines down, on the first non-blank',
+    resolve: ({ doc, from, count }) => linewiseStep(doc.text, from, count, 1),
+  },
+  linewiseUp: {
+    inclusive: false,
+    linewise: true,
+    blockEol: 'reset',
+    desc: 'N lines up, on the first non-blank',
+    resolve: ({ doc, from, count }) => linewiseStep(doc.text, from, count, -1),
+  },
+  linewiseHere: {
+    inclusive: false,
+    linewise: true,
+    blockEol: 'reset',
+    desc: 'N−1 lines down, on the first non-blank',
+    resolve: ({ doc, from, count }) => linewiseStep(doc.text, from, count - 1, 1),
   },
   // gg/G land on the target line KEEPING the current column (Vim with
   // `nostartofline`); still linewise so `dgg`/`dG` take whole lines.
   gotoFirst: {
     inclusive: false,
     linewise: true,
+    blockEol: 'keep',
     desc: 'to line N, default the first line',
     resolve: ({ doc, from, count, hasCount }) =>
       atColumn(doc.text, from, hasCount ? lineStartOf(doc.text, count - 1) : 0),
@@ -517,6 +590,7 @@ export const MOTIONS = {
   gotoLast: {
     inclusive: false,
     linewise: true,
+    blockEol: 'keep',
     desc: 'to line N, default the last line',
     resolve: ({ doc, from, count, hasCount }) =>
       atColumn(doc.text, from, hasCount ? lineStartOf(doc.text, count - 1) : lineStart(doc.text, doc.text.length)),
@@ -544,6 +618,10 @@ export const MOTION_BINDINGS: Readonly<Record<string, MotionId>> = {
   '0': 'lineStart',
   '^': 'firstNonBlank',
   $: 'lineEnd',
+  '|': 'column',
+  '+': 'linewiseDown',
+  '-': 'linewiseUp',
+  _: 'linewiseHere',
   gg: 'gotoFirst',
   G: 'gotoLast',
 };
@@ -667,7 +745,7 @@ const stripRecordedText = (items: readonly VimChangeItem[], n: number): readonly
   let left = n;
   while (left > 0) {
     const last = out[out.length - 1];
-    if (!last || last.kind !== 'text') break;
+    if (last?.kind !== 'text') break;
     if (last.text.length > left) {
       out[out.length - 1] = { kind: 'text', text: last.text.slice(0, -left) };
       left = 0;
@@ -1178,6 +1256,8 @@ const resolveCharKey = (state: VimState, ch: string, doc: VimDocView): VimStep =
   const hadOperator = state.operator;
   const cleared = clearPending(state);
   if (pending === 'r') {
+    // Visual r: overwrite every selected character (blockwise: per segment).
+    if (state.mode === 'visual') return visualReplaceChar(cleared, ch, doc);
     // Replace the character (caret step — a collapsed ruby replaces whole)
     // under the caret; the caret stays on it.
     const next = doc.caretStop(doc.head, 1);
@@ -1424,6 +1504,31 @@ const blockInsertStart = (state: VimState, doc: VimDocView, append: boolean): Vi
   };
 };
 
+/** Visual `r{char}` (all kinds): overwrite every selected character with
+ *  `{char}` — per-segment in a block, every non-newline character in a
+ *  charwise/linewise range (newlines survive, Vim's rule) — and land the
+ *  caret on the selection's start (the block's top-left). The replaced text
+ *  sets no register (Vim's v_r doesn't yank). */
+const visualReplaceChar = (state: VimState, ch: string, doc: VimDocView): VimStep => {
+  const effects: VimEffect[] = [];
+  let caret: number;
+  if (state.visualKind === 'block') {
+    const geom = blockGeometry(doc.text, doc.anchor, doc.head, state.visualBlockEol);
+    for (const l of [...geom.lines].reverse()) {
+      if (l.from < l.to) effects.push({ kind: 'replace', from: l.from, to: l.to, text: ch.repeat(l.to - l.from) });
+    }
+    caret = (geom.lines[0] as BlockLine).from;
+  } else {
+    const r = visualRange(state, doc);
+    if (r.from >= r.to) return swallow({ ...state, mode: 'normal' });
+    const body = doc.text.slice(r.from, r.to).replace(/[^\n]/gu, ch);
+    effects.push({ kind: 'replace', from: r.from, to: r.to, text: body });
+    caret = r.from;
+  }
+  effects.push({ kind: 'select', anchor: caret, head: caret });
+  return { state: { ...state, mode: 'normal' }, effects, handled: true };
+};
+
 /** Escape after a block insert: repeat the typed text on the remaining block
  *  lines (BOTTOM-UP — all of them sit below the caret's line, so the caret's
  *  own offsets are untouched). Skipped when the insert cannot repeat: it was
@@ -1470,13 +1575,15 @@ type VimAction = (state: VimState, env: VimActionEnv, doc: VimDocView) => VimSte
  *  the state shape never becomes public API. */
 export type VimCustomAction = (doc: VimDocView, env: VimActionEnv) => readonly VimEffect[];
 
-/** `n`/`N`: jump to the next/reversed match of the last search. */
+/** `n`/`N`: jump to the next/reversed match of the last search. Extends the
+ *  selection in visual mode (the anchor stays), like any other motion. */
 const searchStep = (state: VimState, doc: VimDocView, sameDirection: boolean): VimStep => {
   const ls = state.lastSearch;
   if (!ls) return swallow(state);
   const off = searchNext(doc.text, doc.head, ls.pattern, sameDirection ? ls.forward : !ls.forward);
   if (off == null) return swallow(state);
-  return { state, effects: [{ kind: 'select', anchor: off, head: off }], handled: true };
+  const anchor = state.mode === 'visual' ? doc.anchor : off;
+  return { state, effects: [{ kind: 'select', anchor, head: off }], handled: true };
 };
 
 /** `*`/`#`: search for the word under the caret. */
@@ -1549,6 +1656,13 @@ const VISUAL_ACTIONS = {
       : { state: { ...state, visualKind: 'line' as const }, effects: [], handled: true },
   'visual.swapEnds': swapEnds,
   'visual.swapCorners': swapCornersSameLine,
+  // r{char}: stage the char argument (resolveCharKey routes a visual-mode r
+  // to visualReplaceChar).
+  'visual.replaceChar': (state) => ({
+    state: { ...state, charPending: 'r' as const },
+    effects: [],
+    handled: true,
+  }),
   'visual.delete': (state, _env, doc) =>
     state.visualKind === 'block'
       ? blockOperator(state, 'd', doc)
@@ -1592,6 +1706,7 @@ export const VISUAL_BINDINGS: Readonly<Record<string, keyof typeof VISUAL_ACTION
   V: 'visual.toggleLine',
   o: 'visual.swapEnds',
   O: 'visual.swapCorners',
+  r: 'visual.replaceChar',
   x: 'visual.delete',
   d: 'visual.delete',
   y: 'visual.yank',
@@ -1618,24 +1733,28 @@ const WALK: Readonly<Record<'h' | 'j' | 'k' | 'l', VimVisualDirection>> = {
   l: 'right',
 };
 
-/** Column-absolute motions that drop a `$`-block's to-every-line-end shape
- *  (Vim resets curswant on them); the hjkl walk and gg/G keep it. */
-const BLOCK_COL_MOTIONS: ReadonlySet<string> = new Set([
-  '0',
-  '^',
-  'w',
-  'W',
-  'b',
-  'B',
-  'e',
-  'E',
-  'f',
-  'F',
-  't',
-  'T',
-  ';',
-  ',',
-  '%',
+/** A key's effect on a `$`-block's to-every-line-end flag (Vim's curswant).
+ *  Motions declare it themselves (MotionDef.blockEol — a required field, so
+ *  the classification is exhaustive by construction); the find family and
+ *  the searches are column-absolute (`'reset'`); the hjkl walk is spatial
+ *  (the editor picks the axis) and keeps it, like gg/G. */
+const blockEolOf = (k: string): 'set' | 'reset' | 'keep' => {
+  const id = MOTION_BINDINGS[k];
+  if (id) return MOTIONS[id].blockEol;
+  if (FIND_BINDINGS[k]) return 'reset';
+  if (NORMAL_BINDINGS[k]?.startsWith('search.')) return 'reset';
+  return 'keep';
+};
+
+/** The normal/visual actions that stay live INSIDE visual mode (Vim: the
+ *  searches move the cursor there, extending the selection). */
+const VISUAL_PASS_ACTIONS: ReadonlySet<string> = new Set([
+  'search.forward',
+  'search.backward',
+  'search.next',
+  'search.prev',
+  'search.wordForward',
+  'search.wordBackward',
 ]);
 
 const normalKey = (rawState: VimState, k: string, count: number, hasCount: boolean, doc: VimDocView): VimStep => {
@@ -1643,10 +1762,11 @@ const normalKey = (rawState: VimState, k: string, count: number, hasCount: boole
   // $-block bookkeeping (block visual only): `$` extends the block to every
   // line's end; a column-absolute motion re-shapes it back to a rectangle.
   const inBlock = visual && rawState.visualKind === 'block';
+  const eol = inBlock ? blockEolOf(k) : 'keep';
   const state =
-    inBlock && k === '$'
+    eol === 'set'
       ? { ...rawState, visualBlockEol: true }
-      : inBlock && rawState.visualBlockEol && BLOCK_COL_MOTIONS.has(k)
+      : eol === 'reset' && rawState.visualBlockEol
         ? { ...rawState, visualBlockEol: false }
         : rawState;
 
@@ -1665,9 +1785,11 @@ const normalKey = (rawState: VimState, k: string, count: number, hasCount: boole
   }
   if (k === ';' || k === ',') return repeatFind(state, k, count, doc) ?? swallow(state);
 
-  if (visual) return swallow(state); // no other normal edits while selecting
-
   const id = NORMAL_BINDINGS[k];
+  // Visual mode: only the pass-through actions (searches) run; every other
+  // normal edit is swallowed while selecting.
+  if (visual && (!id || !VISUAL_PASS_ACTIONS.has(id))) return swallow(state);
+
   // Unbound printable keys are swallowed: normal mode never types.
   return id ? NORMAL_ACTIONS[id](state, { count, hasCount }, doc) : swallow(state);
 };

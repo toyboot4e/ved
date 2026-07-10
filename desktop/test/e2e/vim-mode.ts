@@ -497,6 +497,19 @@ try {
   assert.equal(await docText(page), 'ad\neh', 'the operator applies to the reselected block');
   step('gv reselects the last visual block');
 
+  // --- visual r: overwrite every cell of the rectangle with one character. ---
+  await toggleVim();
+  await setDoc(page, 'abcd\nefgh');
+  await toggleVim();
+  await setCaret(page, 1);
+  await page.keyboard.press('Control+v');
+  await press('j');
+  await press('l');
+  await press('r');
+  await press('x');
+  assert.equal(await docText(page), 'axxd\nexxh', 'block r overwrites each segment');
+  step('block r overwrites every cell in the rectangle');
+
   // Restore the charwise-test doc so the sections below see what they expect.
   await toggleVim();
   await setDoc(page, 'abcde');
