@@ -119,6 +119,9 @@ alias ta := test-all
 doc:
     pnpm run api-docs
 
+doc-check:
+    pnpm run api-docs:check
+
 # regenerates the Vim keybinding reference (vim/docs/keybindings.{json,md}) by
 # joining Vim's own index.txt against @ved/vim's declared binding catalog
 vim-keys:
