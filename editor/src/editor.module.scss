@@ -31,6 +31,14 @@ $font-size: 18px;
   inherits: true;
   initial-value: 0.5;
 }
+// The horizontal-multicol counterpart: the horizontal band gap has NO folio
+// strip (horizontal folios sit bottom-center under the page), so the border's
+// fraction is gap下 out of 上 + 下.
+@property --page-gap-ratio-h {
+  syntax: '<number>';
+  inherits: true;
+  initial-value: 0.5;
+}
 $pad-x: 20px;
 $pad-y: 10px;
 // Breathing room at the line start so the caret at the document start has a
@@ -97,15 +105,31 @@ $footer-height: $font-size + $pad-y * 2;
   --page-gap-ratio: calc(
     (1 + var(--page-gap-bottom-cells)) / max(0.001, 1 + var(--page-gap-top-cells) + var(--page-gap-bottom-cells))
   );
-  // Pages per page ROW in VerticalColumns: a multicol band holds
-  // this many pages side by side (arithmetic within the band, separated by
-  // page-gap widgets). Meaningless in the other modes — the shell pins it to
-  // 1 outside VerticalColumns (view-config.ts).
+  // Pages per page ROW in the columns modes: a multicol band holds this many
+  // pages (side by side in VerticalColumns, stacked in HorizontalColumns;
+  // arithmetic within the band, separated by page-gap widgets). Meaningless
+  // in the other modes — the shell pins it to 1 there (view-config.ts).
   --pages-per-row: 1;
 
   // Horizontal writing: lines run horizontally, stacking downwards
   --page-width: var(--line-length);
   --page-height: var(--lines-extent);
+  // HorizontalColumns inter-band gap: gap下 + gap上 (no folio strip — the
+  // horizontal folio sits bottom-center under the page), FLOORED at the
+  // line-number gutter — the numbers of a band's rows sit in the preceding
+  // gap, so it can never shrink below their room.
+  --band-gap-h: max(#{$line-gutter}, var(--page-gap));
+  --page-gap-ratio-h: calc(
+    var(--page-gap-bottom-cells) / max(0.001, var(--page-gap-top-cells) + var(--page-gap-bottom-cells))
+  );
+  // One HorizontalColumns band: --pages-per-row pages stacked vertically with
+  // a --page-gap between each (= --page-height when --pages-per-row is 1).
+  --page-band-height: calc(var(--pages-per-row) * var(--page-height) + (var(--pages-per-row) - 1) * var(--page-gap));
+  // Headroom for a ruby READING's overhang past a band's FIRST row (the rt
+  // renders above the base; every other row's rt lands in its neighbor's
+  // leading, but row 1 has no neighbor) — the HorizontalColumns twin of the
+  // vertical --rt-allowance below.
+  --rt-allowance-h: calc(var(--cell-size) / 2);
 
   // Vertical writing transposes the page box
   &.vertMode {
@@ -585,6 +609,76 @@ $footer-height: $font-size + $pad-y * 2;
       box-sizing: border-box;
     }
   }
+}
+
+// Horizontal paged modes — the dankumi layouts transposed to horizontal-tb.
+//
+// HorizontalColumns is VerticalColumns with the axes swapped: real CSS
+// multicol fragmentation, one band = one page column (column-width = the line
+// length), overflow bands tile RIGHTWARD, and the scroll axis is horizontal.
+// HorizontalRows is VerticalRows transposed: one continuous horizontal-tb
+// flow where a page is arithmetic (every --page-lines rows) and the physical
+// inter-page space comes from the same .ved-page-gap widgets (logical sizes,
+// so the one widget rule serves both orientations) — pages stack DOWNWARD
+// with a vertical scroll, so it needs no rules beyond the plain horizontal
+// ones (.growMode); only the widgets, separators, and folios differ, and
+// those are measured (pm/page-gap.ts, line-numbers.ts).
+
+.editor.multiColMode:not(.vertMode) {
+  // Bands tile rightward only; the cross axis stays `auto` (implied by the
+  // scroll overflow), so a window shorter than the page can still reveal it.
+  overflow-x: scroll;
+  // Band separators: vertical hairlines between the page columns. Chromium
+  // does not paint column-rule between overflow columns (same as
+  // VerticalColumns), so they are a local background: a finite tile under
+  // repeat-x whose period matches the band lattice exactly (page width +
+  // band gap), phased past the content's left margin + the first band's
+  // start padding. The FIRST layer is an opaque mask over the lead strip —
+  // page 1 starts borderless, and `repeat-x` paints a phantom tile before
+  // the origin.
+  background-image:
+    linear-gradient(var(--ved-bg, #fff), var(--ved-bg, #fff)),
+    linear-gradient(
+      to right,
+      transparent calc(var(--page-width) + var(--band-gap-h) * var(--page-gap-ratio-h) - 0.5px),
+      var(--ved-separator, #808080) calc(var(--page-width) + var(--band-gap-h) * var(--page-gap-ratio-h) - 0.5px),
+      var(--ved-separator, #808080) calc(var(--page-width) + var(--band-gap-h) * var(--page-gap-ratio-h) + 0.5px),
+      transparent calc(var(--page-width) + var(--band-gap-h) * var(--page-gap-ratio-h) + 0.5px)
+    );
+  background-size:
+    calc(#{$pad-x} + var(--page-gap-top)) 100%,
+    calc(var(--page-width) + var(--band-gap-h)) 100%;
+  background-repeat: no-repeat, repeat-x;
+  background-attachment: local, local;
+  background-position:
+    0 0,
+    calc(#{$pad-x} + var(--page-gap-top)) 0;
+}
+
+.editorContent.multiColMode:not(.vertMode) {
+  // Consistent band geometry (the VerticalColumns rules transposed):
+  //   column-width = page-width (the line), equal to the content area
+  //     (width − start padding), so it is never clamped;
+  //   column-gap   = --band-gap-h — the configurable inter-band gap, floored
+  //     at the line-number gutter (the rows' numbers live in it);
+  //   start padding = gap A ONLY — page 1's left space is exactly its head
+  //     margin, borderless, with no extra gutter.
+  // Band period = page-width + --band-gap-h; the separator pitch matches.
+  width: calc(var(--page-width) + var(--page-gap-top));
+  // The box carries the rt allowance on BOTH sides of the block axis: the
+  // top one as padding (the fragmentation area shrinks back to the row slots
+  // plus one allowance, so the first row's reading fits and N rows pack),
+  // the bottom one as natural end slack.
+  height: calc(var(--page-band-height) + var(--rt-allowance-h) * 2);
+  // Bottom margin reserves the folio row (drawn bottom-center by the
+  // overlay) plus the always-shown horizontal scrollbar's height.
+  margin: $pad-y $pad-x $footer-height $pad-x;
+  padding: 0;
+  padding-inline-start: var(--page-gap-top);
+  padding-top: var(--rt-allowance-h);
+  box-sizing: border-box;
+  column-width: var(--page-width);
+  column-gap: var(--band-gap-h);
 }
 
 // Ruby styles live in pm/ruby.css (GLOBAL, not this module): decorations and

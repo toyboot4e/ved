@@ -398,16 +398,17 @@ ruby.rubyActive + .rubyDelimClose {
   }
 }
 
-/* Physical inter-page space in VerticalRows (pm/page-gap.ts): a widget decoration in the LAST line of each page. Zero
- * inline size (height, in vertical-rl) so it can never change the wrapping it
- * was measured from; its width fattens the line box by --page-gap, and
- * vertical-align: top pins the line's glyphs to the line-over (right) side so
- * the whole extra space opens toward the NEXT page. Rows mode is always
- * vertical-rl, so the physical axes are fixed. */
+/* Physical inter-page space in the rows-paged modes (pm/page-gap.ts): a
+ * widget decoration in the LAST line of each page. Logical sizes, so one rule
+ * serves both orientations: zero INLINE size so it can never change the
+ * wrapping it was measured from; its BLOCK size fattens the line box by a
+ * pitch + --page-gap, and vertical-align: top pins the line's glyphs to the
+ * line-over side (right in vertical-rl, top in horizontal-tb) so the whole
+ * extra space opens toward the NEXT page. */
 .ved-page-gap {
   display: inline-block;
-  height: 0;
-  width: calc(var(--line-pitch, 27.9px) + var(--page-gap, 0px));
+  inline-size: 0;
+  block-size: calc(var(--line-pitch, 27.9px) + var(--page-gap, 0px));
   vertical-align: top;
   pointer-events: none;
   user-select: none;
@@ -415,9 +416,9 @@ ruby.rubyActive + .rubyDelimClose {
 }
 
 /* The composition-time fallback (see editor.tsx runPageGaps): pinned to the
- * line-UNDER side instead, the extra width opens toward the PREVIOUS line —
- * a widget rendered one line late still draws the gap between the right
- * lines. */
+ * line-UNDER side instead, the extra block size opens toward the PREVIOUS
+ * line — a widget rendered one line late still draws the gap between the
+ * right lines. */
 .ved-page-gap-before {
   vertical-align: bottom;
 }
@@ -435,10 +436,10 @@ ruby.rubyActive + .rubyDelimClose {
   -webkit-user-select: none;
 }
 
-/* Page-number folio (paged modes only — VerticalColumns / VerticalRows),
- * drawn by the line-number overlay at the bottom of each page, centered on
- * the page's measured span; plain text, no box (it sits in clear space —
- * before the band border in multiCol, below the line length in rows). */
+/* Page-number folio (paged modes only), drawn by the line-number overlay at
+ * the bottom of each page, centered on the page's measured span; plain text,
+ * no box (it sits in clear space — the folio strip of the band gap in the
+ * vertical columns mode, below/beside the page elsewhere). */
 .vedPageNumber {
   position: absolute;
   top: 0;
@@ -451,13 +452,15 @@ ruby.rubyActive + .rubyDelimClose {
 
 /* Page-boundary separator (paged modes): a hairline drawn by the line-number
  * overlay, centered in the MEASURED blank between two pages (the gap-widget
- * blank in VerticalRows / intra-band in VerticalColumns). Overlay-relative,
- * scroll-invariant, always in sync with the gap widgets and page chips —
- * they all derive from the same measured visual lines. */
+ * blank in the rows modes / intra-band in the columns modes).
+ * Overlay-relative, scroll-invariant, always in sync with the gap widgets and
+ * page chips — they all derive from the same measured visual lines. The
+ * overlay sizes the line per orientation (a 1px-wide vertical hairline
+ * between vertical lines, a 1px-tall horizontal one between horizontal
+ * rows) via inline width/height. */
 .vedPageSeparator {
   position: absolute;
   top: 0;
   left: 0;
-  width: 1px;
   background: var(--ved-separator, #808080);
 }

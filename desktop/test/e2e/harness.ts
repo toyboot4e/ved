@@ -214,13 +214,19 @@ export const emptyDocument = async (page: Page): Promise<void> => {
   await page.waitForTimeout(250);
 };
 
-/** Clicks a writing-mode toolbar button. Buttons are icon-only; the aria-label
- *  carries the mode name (see toolbar.tsx). */
+/** Selects a writing mode via the toolbar's TWO button groups — orientation
+ *  ('Horizontal' | 'Vertical') and paging ('Continuous' | 'Columns' |
+ *  'Rows'); buttons are icon-only, the aria-label carries the name (see
+ *  toolbar.tsx). Mode names split on the space; a bare orientation means
+ *  continuous paging. Both axes are always clicked, so the resulting mode
+ *  never depends on the paging the app happened to be in. */
 export const clickWritingMode = async (
   page: Page,
-  label: 'Horizontal' | 'Vertical' | 'Vertical Columns' | 'Vertical Rows',
+  label: 'Horizontal' | 'Vertical' | 'Horizontal Columns' | 'Horizontal Rows' | 'Vertical Columns' | 'Vertical Rows',
 ) => {
-  await page.click(`button[aria-label="${label}"]`);
+  const [orientation, paging = 'Continuous'] = label.split(' ');
+  await page.click(`button[aria-label="${orientation}"]`);
+  await page.click(`button[aria-label="${paging}"]`);
   await page.waitForTimeout(150);
 };
 

@@ -8,21 +8,8 @@
 import type { EditorView } from 'prosemirror-view';
 import type React from 'react';
 import { useCallback, useLayoutEffect, useRef } from 'react';
-import { lineToScroll, revealDelta, type ScrollGeom, type ScrollMode, scrollToLine } from './scroll-keep';
-import { WritingMode } from './writing-mode';
-
-export const toScrollMode = (mode: WritingMode): ScrollMode => {
-  switch (mode) {
-    case WritingMode.Horizontal:
-      return 'horizontal';
-    case WritingMode.Vertical:
-      return 'vertical';
-    case WritingMode.VerticalColumns:
-      return 'columns';
-    case WritingMode.VerticalRows:
-      return 'rows';
-  }
-};
+import { lineToScroll, revealDelta, type ScrollGeom, scrollToLine } from './scroll-keep';
+import { isVerticalMode, type WritingMode, writingPaging } from './writing-mode';
 
 export const measureGeom = (scroller: HTMLElement): ScrollGeom => {
   const cs = getComputedStyle(scroller);
@@ -60,7 +47,7 @@ export const useKeepScrollPosition = (
     const scroller = scrollerRef.current;
     if (!scroller) return;
     firstLineRef.current = scrollToLine(
-      toScrollMode(modeRef.current),
+      modeRef.current,
       measureGeom(scroller),
       scroller.scrollTop,
       scroller.scrollLeft,
@@ -72,7 +59,7 @@ export const useKeepScrollPosition = (
     modeRef.current = writingMode;
     const scroller = scrollerRef.current;
     if (!scroller) return;
-    const { top, left } = lineToScroll(toScrollMode(writingMode), measureGeom(scroller), firstLineRef.current);
+    const { top, left } = lineToScroll(writingMode, measureGeom(scroller), firstLineRef.current);
     scroller.scrollTop = top;
     scroller.scrollLeft = left;
   }, [writingMode, scrollerRef]);
@@ -81,47 +68,61 @@ export const useKeepScrollPosition = (
 };
 
 /** The span of the PAGE containing the caret on the PAGED axis, or null
- *  outside the paged modes. Reveal target for revealCaretInScroller.
- *  - `columns`: the band (page row) is a real multicol fragment — physically
- *    periodic (colsPagePitch) — so its vertical span is exact arithmetic over
- *    the content box.
- *  - `rows`: pages are arithmetic LINES whose physical positions drift with
- *    paragraph paddings, so the boundaries are read from the
+ *  outside the paged modes. Reveal target for revealCaretInScroller. The
+ *  paged axis is vertical in VerticalColumns/HorizontalRows and horizontal in
+ *  VerticalRows/HorizontalColumns (see pagedAxisIsY).
+ *  - `columns` paging: the band (page row) is a real multicol fragment —
+ *    physically periodic (colsPagePitch) — so its span is exact arithmetic
+ *    over the content box.
+ *  - `rows` paging: pages are arithmetic LINES whose physical positions drift
+ *    with paragraph paddings, so the boundaries are read from the
  *    MEASURED `.ved-page-gap` widgets already in the DOM — each widget's rect
  *    spans its fattened last line + gap, so its center lies in the gap blank. */
 const caretPageSpan = (
   scroller: HTMLElement,
   view: EditorView,
-  mode: ScrollMode,
+  mode: WritingMode,
   caret: { top: number; bottom: number; left: number; right: number },
 ): { lo: number; hi: number } | null => {
-  if (mode !== 'columns' && mode !== 'rows') return null;
+  const paging = writingPaging(mode);
+  if (paging === 'continuous') return null;
+  const vertical = isVerticalMode(mode);
   const content = view.dom.getBoundingClientRect();
-  if (mode === 'columns') {
+  if (paging === 'columns') {
+    // Bands stack along the inline axis: downward (vertical-rl) or rightward
+    // (horizontal-tb).
     const pitch = measureGeom(scroller).colsPagePitch;
     const cs = getComputedStyle(view.dom);
-    // padding-inline-start = the first band's line-number gutter (top in
-    // vertical-rl); the band period then repeats via column-gap.
-    const gutter = Number.parseFloat(cs.paddingTop) || 0;
-    const pageH = pitch - (Number.parseFloat(cs.columnGap) || 0);
-    const mid = (caret.top + caret.bottom) / 2;
-    const band = Math.max(0, Math.floor((mid - content.top - gutter) / pitch));
-    const bandTop = content.top + gutter + band * pitch;
-    return { lo: bandTop, hi: bandTop + pageH };
+    // padding-inline-start = the first band's head margin (top in vertical-rl,
+    // left in horizontal); the band period then repeats via column-gap.
+    const gutter = Number.parseFloat(vertical ? cs.paddingTop : cs.paddingLeft) || 0;
+    const pageExtent = pitch - (Number.parseFloat(cs.columnGap) || 0);
+    const mid = vertical ? (caret.top + caret.bottom) / 2 : (caret.left + caret.right) / 2;
+    const origin = vertical ? content.top : content.left;
+    const band = Math.max(0, Math.floor((mid - origin - gutter) / pitch));
+    const bandStart = origin + gutter + band * pitch;
+    return { lo: bandStart, hi: bandStart + pageExtent };
   }
-  // rows: the page span between the two measured gap centers around the caret
-  // (the content edges at the ends). Pages tile leftward; order-independent.
-  const mid = (caret.left + caret.right) / 2;
-  let lo = content.left;
-  let hi = content.right;
+  // rows paging: the page span between the two measured gap centers around
+  // the caret (the content edges at the ends). Pages tile leftward in
+  // vertical-rl, downward in horizontal-tb; order-independent either way.
+  const mid = vertical ? (caret.left + caret.right) / 2 : (caret.top + caret.bottom) / 2;
+  let lo = vertical ? content.left : content.top;
+  let hi = vertical ? content.right : content.bottom;
   for (const el of view.dom.querySelectorAll('.ved-page-gap')) {
     const r = el.getBoundingClientRect();
-    const c = (r.left + r.right) / 2;
+    const c = vertical ? (r.left + r.right) / 2 : (r.top + r.bottom) / 2;
     if (c >= mid) hi = Math.min(hi, c);
     else lo = Math.max(lo, c);
   }
   return { lo, hi };
 };
+
+/** Whether the PAGED axis of a paged mode is the vertical (scrollTop) one:
+ *  VerticalColumns (bands stack downward) and HorizontalRows (pages stack
+ *  downward) page along Y; VerticalRows (pages tile leftward) and
+ *  HorizontalColumns (bands tile rightward) page along X. */
+const pagedAxisIsY = (mode: WritingMode): boolean => (writingPaging(mode) === 'columns') === isVerticalMode(mode);
 
 /** The scroll delta that SNAPS the page's START edge (reading order: the TOP
  *  band edge in `columns`, the RIGHT page edge in `rows`) to the viewport's
@@ -185,7 +186,7 @@ export const caretCoords = (
  *  caret's page START to the viewport start (pageSnapDelta — the "page turn"
  *  the user reads by), and is a no-op only when the WHOLE page is visible;
  *  the cross axis stays caret-minimal. */
-export const revealCaretInScroller = (scroller: HTMLElement, view: EditorView, mode: ScrollMode): void => {
+export const revealCaretInScroller = (scroller: HTMLElement, view: EditorView, mode: WritingMode): void => {
   const sel = view.dom.ownerDocument.getSelection();
   if (!sel || sel.rangeCount === 0) return;
   const range = sel.getRangeAt(0);
@@ -208,12 +209,23 @@ export const revealCaretInScroller = (scroller: HTMLElement, view: EditorView, m
   const left = viewBox.left + scroller.clientLeft;
   const cushion = 8;
   const page = caretPageSpan(scroller, view, mode, rect);
-  if (page && mode === 'columns') {
+  if (page && pagedAxisIsY(mode)) {
     scroller.scrollTop += pageSnapDelta(page, rect.top, rect.bottom, top, top + scroller.clientHeight, cushion, false);
     scroller.scrollLeft += revealDelta(rect.left, rect.right, left, left + scroller.clientWidth, cushion);
   } else if (page) {
+    // Horizontal-paged: the page START is the RIGHT edge in vertical-rl
+    // (reading enters a page from the right) and the LEFT edge in
+    // horizontal-tb multicol (bands tile rightward).
     scroller.scrollTop += revealDelta(rect.top, rect.bottom, top, top + scroller.clientHeight, cushion);
-    scroller.scrollLeft += pageSnapDelta(page, rect.left, rect.right, left, left + scroller.clientWidth, cushion, true);
+    scroller.scrollLeft += pageSnapDelta(
+      page,
+      rect.left,
+      rect.right,
+      left,
+      left + scroller.clientWidth,
+      cushion,
+      isVerticalMode(mode),
+    );
   } else {
     scroller.scrollTop += revealDelta(rect.top, rect.bottom, top, top + scroller.clientHeight, cushion);
     scroller.scrollLeft += revealDelta(rect.left, rect.right, left, left + scroller.clientWidth, cushion);

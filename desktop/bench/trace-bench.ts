@@ -48,7 +48,8 @@ try {
     ).join('\n'),
   );
   await page.waitForTimeout(1500);
-  await page.click('button[aria-label="Vertical Columns"]');
+  await page.click('button[aria-label="Vertical"]');
+  await page.click('button[aria-label="Columns"]');
   await page.waitForTimeout(800);
 
   const box = await page.evaluate(() => {

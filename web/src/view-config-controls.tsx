@@ -1,4 +1,4 @@
-import { WritingMode } from '@ved/editor';
+import { type WritingMode, writingPaging } from '@ved/editor';
 import React from 'react';
 import { VIEW_CONFIG_BOUNDS, VIEW_CONFIG_DEFAULTS, type ViewConfig } from './view-config';
 
@@ -89,7 +89,7 @@ export const ViewConfigControls = ({ writingMode, config, setConfig }: ViewConfi
         // 頁/段 only means something under VerticalColumns (app.tsx pins it to 1
         // elsewhere; a VerticalRows page GRID is a Chromium impossibility).
         // Gray it out so it doesn't present as broken.
-        const inert = field === 'pagesPerRow' && writingMode !== WritingMode.VerticalColumns;
+        const inert = field === 'pagesPerRow' && writingPaging(writingMode) !== 'columns';
         return (
           <label key={field} title={inert ? `${title} — inert in this mode` : title}>
             {label}

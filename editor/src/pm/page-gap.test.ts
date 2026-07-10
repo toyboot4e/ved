@@ -132,6 +132,21 @@ describe('visualLineEnds', () => {
   it('is empty for no items', () => {
     expect(visualLineEnds([], 28)).toEqual([]);
   });
+
+  it('groups horizontal-tb items (forward = increasing b) with vertical=false', () => {
+    // Horizontal rows: lines advance DOWNWARD (increasing top). The same
+    // rules mirrored: half-pitch jitter merges, a forward pitch step splits,
+    // a large backward jump (a multicol band wrap, rightward-tiling pages)
+    // still splits.
+    const items: LineItem[] = [
+      { endOff: 1, b: 100 },
+      { endOff: 2, b: 97 }, // -3px jitter (a ruby line's sub-rect) — same line
+      { endOff: 3, b: 128 }, // one pitch down: next line
+      { endOff: 4, b: 20 }, // far back UP: the next band's first line
+      { endOff: 5, b: 48 }, // next line in the new band
+    ];
+    expect(visualLineEnds(items, 28, false)).toEqual([2, 3, 4, 5]);
+  });
 });
 
 describe('pageGapPlacement', () => {

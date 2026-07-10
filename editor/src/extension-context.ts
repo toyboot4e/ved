@@ -14,7 +14,7 @@ import { deleteChar, plainInsertTr } from './plain-edits';
 import { isCaretStop, legalStop, nextCaretOffset } from './pm/caret-model';
 import type { Appear } from './pm/leaves';
 import { docFromText, offsetToPos, posToOffset, serialize } from './pm/model';
-import { WritingMode } from './writing-mode';
+import { isVerticalMode, scrollsVertically } from './writing-mode';
 
 /** Set a model RANGE selection by plain offsets (clamped), ending any
  *  line-move run — the shared core of searchOps.select and the test seams. */
@@ -169,7 +169,7 @@ export const createEditorOps = (
       // Resolve the screen direction to the (axis, reverse) the arrow key
       // uses in this writing mode: vertical rotates the axes (left/right =
       // line, up/down = char), horizontal keeps them.
-      const isVert = live.current.writingMode !== WritingMode.Horizontal;
+      const isVert = isVerticalMode(live.current.writingMode);
       const arrow = { up: 'ArrowUp', down: 'ArrowDown', left: 'ArrowLeft', right: 'ArrowRight' }[direction];
       const act = (isVert ? VERT_ARROWS : HORIZ_ARROWS)[arrow];
       if (!act) return;
@@ -194,13 +194,15 @@ export const createEditorOps = (
       const s = scrollerRef.current;
       if (!s) return;
       const wm = live.current.writingMode;
-      // Reading direction per scroll axis: Horizontal/VerticalColumns
-      // advance downward; Vertical/VerticalRows advance LEFTWARD
-      // (vertical-rl overflows to the left, so forward DECREASES scrollLeft).
-      const vertScroll = wm === WritingMode.Horizontal || wm === WritingMode.VerticalColumns;
+      // Reading direction per scroll axis (writing-mode.ts scrollsVertically):
+      // the vertically-scrolling modes advance downward; the horizontal ones
+      // advance LEFTWARD in the vertical orientation (vertical-rl overflows
+      // to the left, so forward DECREASES scrollLeft) and RIGHTWARD in
+      // HorizontalColumns.
+      const vertScroll = scrollsVertically(wm);
       const step = (vertScroll ? s.clientHeight : s.clientWidth) / (half ? 2 : 1);
       if (vertScroll) s.scrollTop += dir * step;
-      else s.scrollLeft -= dir * step;
+      else s.scrollLeft += (isVerticalMode(wm) ? -dir : dir) * step;
       // Bring the caret along (Chromium hit-test at the viewport center,
       // snapped to a legal stop) WITHOUT a reveal — a reveal would undo the
       // scroll. A miss (gap between pages &c.) keeps the caret where it was;

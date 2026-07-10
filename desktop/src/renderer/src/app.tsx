@@ -1,4 +1,11 @@
-import { type EditorSnapshot, editorStyles as styles, VedEditor, WritingMode } from '@ved/editor';
+import {
+  type EditorSnapshot,
+  isVerticalMode,
+  editorStyles as styles,
+  VedEditor,
+  WritingMode,
+  writingPaging,
+} from '@ved/editor';
 import { clsx } from 'clsx';
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import appStyles from './app.module.scss';
@@ -297,8 +304,8 @@ export const App = (): React.JSX.Element => {
           {/*
           vertMode on the root transposes the page geometry (CSS custom props);
           the view config overrides the geometry custom props inline
-          (view-config.ts). pagesPerRow only means something in VerticalColumns —
-          pin it to 1 elsewhere so the root/page widths stay one page.
+          (view-config.ts). pagesPerRow only means something in the columns
+          modes — pin it to 1 elsewhere so the root/page widths stay one page.
           rowsMode widens the root to the pane: VerticalRows scrolls along the
           horizontal axis, so the viewport is free there — a wide pane shows
           more lines (editor.module.scss .root.rowsMode).
@@ -306,17 +313,19 @@ export const App = (): React.JSX.Element => {
           <div
             className={clsx(
               styles.root,
-              writingMode !== WritingMode.Horizontal && styles.vertMode,
+              isVerticalMode(writingMode) && styles.vertMode,
               writingMode === WritingMode.VerticalRows && styles.rowsMode,
-              // Continuous Vertical fills the pane WIDTH. Horizontal keeps its
-              // fixed line-measure width (centered) and instead grows in
-              // HEIGHT — handled on the editor scroller (growMode), so the root
-              // stays page-fixed here. VerticalColumns stays fixed; VerticalRows
+              // The horizontally-scrolling continuous/columns modes fill the
+              // pane WIDTH. Horizontal and HorizontalRows keep their fixed
+              // line-measure width (centered) and instead grow in HEIGHT —
+              // handled on the editor scroller (growMode), so the root stays
+              // page-fixed there. VerticalColumns stays fixed; VerticalRows
               // already fills via rowsMode.
-              writingMode === WritingMode.Vertical && styles.fillMode,
+              (writingMode === WritingMode.Vertical || writingMode === WritingMode.HorizontalColumns) &&
+                styles.fillMode,
             )}
             style={viewConfigToCss(
-              writingMode === WritingMode.VerticalColumns ? viewConfig : { ...viewConfig, pagesPerRow: 1 },
+              writingPaging(writingMode) === 'columns' ? viewConfig : { ...viewConfig, pagesPerRow: 1 },
             )}
           >
             {/* Also makes space for traffic lights (macOS only) */}

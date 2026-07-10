@@ -14,28 +14,54 @@ primary mode ved exists to serve.
 _Avoid_: tategaki (use in prose, not in identifiers), TTB, RTL.
 
 **Writing mode**:
-The page layout axis, independent of how ruby is shown: `Horizontal`,
-`Vertical` (one continuous flow), `VerticalColumns`, or `VerticalRows`.
-_Avoid_: orientation, direction.
+The page layout, independent of how ruby is shown: the combination of an
+**orientation** and a **paging**, one enum member per pair (`Horizontal`,
+`Vertical`, `VerticalColumns`, `VerticalRows`, `HorizontalColumns`,
+`HorizontalRows`).
+_Avoid_: orientation or direction for the whole (each names only one axis).
+
+**Orientation**:
+The writing mode's text-flow axis: `horizontal` (horizontal-tb) or
+`vertical` (vertical-rl, the tategaki flow ved exists to serve).
+_Avoid_: direction (ambiguous with reading/scroll direction).
+
+**Paging**:
+The writing mode's page-breaking axis: `continuous` (one unbroken flow),
+`columns` (real CSS-multicol pages tiling along the inline axis), or `rows`
+(arithmetic pages in one flow, separated by gap widgets). Orthogonal to
+**orientation** — each paging exists in both.
+_Avoid_: page mode, pagination.
 
 **Dankumi**:
-The multi-page vertical layout family (`VerticalColumns` and `VerticalRows`)
+The multi-page VERTICAL layout family (`VerticalColumns` and `VerticalRows`)
 — vertical lines packed into fixed pages, with the pages tiled across the
-viewport. The two modes differ in how the pages tile.
+viewport. Reserve the word for the vertical orientation; the horizontal
+paged modes are just "the horizontal columns/rows modes".
 _Avoid_: columns (ambiguous with CSS columns), 段組み in identifiers.
 
 **VerticalColumns**:
-A dankumi mode: pages tile into a vertical COLUMN (stack downward), so the
-major scroll axis is vertical. One page per row; rows accumulate as the
-document grows.
+A dankumi mode (vertical orientation × columns paging): pages tile into a
+vertical COLUMN (stack downward), so the major scroll axis is vertical. One
+page per row; rows accumulate as the document grows.
 _Avoid_: down-dankumi (use the canonical name in identifiers).
 
 **VerticalRows**:
-A dankumi mode: pages tile into a horizontal ROW (extend leftward in
-vertical-rl), so the major scroll axis is horizontal — like turning the
-pages of a Japanese book. One page per column; columns accumulate leftward
-as the document grows.
+A dankumi mode (vertical orientation × rows paging): pages tile into a
+horizontal ROW (extend leftward in vertical-rl), so the major scroll axis is
+horizontal — like turning the pages of a Japanese book. One page per column;
+columns accumulate leftward as the document grows.
 _Avoid_: left-dankumi, book-mode.
+
+**HorizontalColumns**:
+Horizontal orientation × columns paging: multicol pages tile RIGHTWARD, so
+the major scroll axis is horizontal. The transpose of VerticalColumns.
+_Avoid_: right-dankumi (dankumi is the vertical family).
+
+**HorizontalRows**:
+Horizontal orientation × rows paging: arithmetic pages stack DOWNWARD, so
+the major scroll axis is vertical — like scrolling a manuscript of stacked
+pages. The transpose of VerticalRows.
+_Avoid_: page-scroll mode, manuscript mode.
 
 **Cell**:
 The square of one fullwidth (zenkaku) character; one cell = 1em at the body
@@ -58,8 +84,10 @@ _Avoid_: line-height (the CSS property), leading, gap.
 **Page row**:
 A row of **pages** laid side by side — the unit that tiles downward in
 VerticalColumns. Holds a configurable number of pages (pages-per-row);
-one page per row is the default. VerticalRows has no counterpart (a column
-of pages cannot exist — one fragmentation direction per flow; see docs/architecture.md).
+one page per row is the default. In HorizontalColumns the same knob stacks
+pages vertically within each rightward-tiling band. The rows-paging modes
+have no counterpart (a page grid needs a second fragmentation direction —
+one per flow; see docs/architecture.md).
 _Avoid_: band (implementation word), grid row.
 
 ### Document and annotation

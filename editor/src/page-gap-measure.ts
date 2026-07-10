@@ -1,5 +1,7 @@
-// The VerticalRows/paged page-gap measure (pm/page-gap.ts is the pure math;
-// this owns the DOM walk, the suffix cache, and the widget-set dispatch).
+// The paged-mode page-gap measure (pm/page-gap.ts is the pure math; this
+// owns the DOM walk, the suffix cache, and the widget-set dispatch) —
+// orientation-generic: the block axis and its reading direction come from
+// the computed writing-mode.
 // The `__vedGapLines`/`__vedGapLineEnds` seams guard the suffix-incremental
 // invariant (page-gap-suffix.ts); composition-time behavior is pinned by
 // mozc/gap-compose.ts.
@@ -62,6 +64,7 @@ export const createPageGapMeasure = (
   let gapCache: {
     text: string;
     pitch: number;
+    vertical: boolean;
     linesPerPage: number;
     pagesPerBand: number;
     lineEnds: number[];
@@ -72,7 +75,12 @@ export const createPageGapMeasure = (
   type MeasuredGap = { g: PageGapPos; prevLineEnd: number; nextLineEnd: number | undefined };
   const measurePageGaps = (pagesPerBand: number): MeasuredGap[] => {
     const linesPerPage = Number.parseFloat(getComputedStyle(mount).getPropertyValue('--page-lines')) || 20;
-    const pitch = Number.parseFloat(getComputedStyle(view.dom).lineHeight) || 28;
+    const contentCs = getComputedStyle(view.dom);
+    const pitch = Number.parseFloat(contentCs.lineHeight) || 28;
+    // The block-axis coordinate and its reading direction depend on the
+    // orientation: leftward-decreasing x in vertical-rl, downward-increasing
+    // y in horizontal-tb (the shared line-grouping rule handles both).
+    const vertical = contentCs.writingMode.startsWith('vertical');
     const text = serialize(view.state.doc);
     const lines = text.split('\n');
     const policy = getPolicy();
@@ -80,6 +88,7 @@ export const createPageGapMeasure = (
       gapCache !== null &&
       (policy === 'rich' || policy === 'plain') &&
       gapCache.pitch === pitch &&
+      gapCache.vertical === vertical &&
       gapCache.linesPerPage === linesPerPage &&
       gapCache.pagesPerBand === pagesPerBand;
     // The reusable prefix: cached visual-line ends strictly before the first
@@ -112,15 +121,16 @@ export const createPageGapMeasure = (
     let off = fromOff;
     for (let i = fromLine; i < lines.length && i < paras.length; i++) {
       const p = paras[i]!;
-      if (lines[i]!.length === 0) items.push({ endOff: off, b: p.getBoundingClientRect().left });
+      if (lines[i]!.length === 0)
+        items.push({ endOff: off, b: vertical ? p.getBoundingClientRect().left : p.getBoundingClientRect().top });
       else if (byLine[i]?.length) {
         buf.length = 0;
         walker.paraGlyphs(p, byLine[i]!, buf);
-        for (const g of buf) items.push({ endOff: g.off + 1, b: g.rect.left });
+        for (const g of buf) items.push({ endOff: g.off + 1, b: vertical ? g.rect.left : g.rect.top });
       }
       off += lines[i]!.length + 1;
     }
-    const lineEnds = prefixEnds.concat(visualLineEnds(items, pitch));
+    const lineEnds = prefixEnds.concat(visualLineEnds(items, pitch, vertical));
     // Test seams: `__vedGapLines` counts the model lines glyph-measured per
     // gap pass (an end-of-doc edit must measure only the tail, not the
     // document); `__vedGapLineEnds` exposes the maintained visual-line ends
@@ -128,7 +138,7 @@ export const createPageGapMeasure = (
     const w = globalThis as unknown as { __vedGapLines?: number; __vedGapLineEnds?: readonly number[] };
     w.__vedGapLines = (w.__vedGapLines ?? 0) + (lines.length - fromLine);
     w.__vedGapLineEnds = lineEnds;
-    gapCache = { text, pitch, linesPerPage, pagesPerBand, lineEnds };
+    gapCache = { text, pitch, vertical, linesPerPage, pagesPerBand, lineEnds };
     measuredLineCount = lineEnds.length;
     return pageEndsFromLines(lineEnds, linesPerPage, pagesPerBand).map((end) => {
       // The boundary's neighboring line-end offsets — the composing
@@ -213,9 +223,10 @@ export const createPageGapMeasure = (
       }
     }
     // Rows: RESERVE the remainder of a partial last page as block-end
-    // padding, so the page exists as a whole (scrollable blank space) and
-    // the folio centers on the entire page. Padding never re-wraps lines
-    // (it extends the box past them), so one pass is stable.
+    // padding (left in vertical-rl, bottom in horizontal-tb), so the page
+    // exists as a whole (scrollable blank space) and the folio centers on
+    // the entire page. Padding never re-wraps lines (it extends the box
+    // past them), so one pass is stable.
     let reserve = '';
     if (rowsHere && measuredLineCount > 0) {
       const linesPerPage = Number.parseFloat(getComputedStyle(mount).getPropertyValue('--page-lines')) || 20;
@@ -223,8 +234,13 @@ export const createPageGapMeasure = (
       const deficit = (linesPerPage - (measuredLineCount % linesPerPage)) % linesPerPage;
       if (deficit > 0) reserve = `${deficit * pitch}px`;
     }
-    const reserveChanged = view.dom.style.paddingLeft !== reserve;
-    if (reserveChanged) view.dom.style.paddingLeft = reserve;
+    const verticalHere = getComputedStyle(view.dom).writingMode.startsWith('vertical');
+    const reserveProp = verticalHere ? 'paddingLeft' : 'paddingBottom';
+    const staleProp = verticalHere ? 'paddingBottom' : 'paddingLeft';
+    // A mode switch flips the block-end axis — clear the other side's reserve.
+    if (view.dom.style[staleProp] !== '') view.dom.style[staleProp] = '';
+    const reserveChanged = view.dom.style[reserveProp] !== reserve;
+    if (reserveChanged) view.dom.style[reserveProp] = reserve;
     // Compare against the LIVE widget identities (the plugin maps its set
     // through edits between dispatches) — a cached copy of the last
     // dispatch goes stale the moment an edit maps the widgets, and a stale

@@ -1,10 +1,14 @@
 // Writing-mode icons (inline SVG, no external dependency).
 //
 // Shared visual language: each icon shows a rounded rectangle "page frame"
-// with text strokes (lines or vertical strokes) showing how text flows
-// inside. The two paged modes additionally show a page-boundary divider
-// perpendicular to the scroll axis — horizontal divider for VerticalColumns
-// (vertical scroll), vertical divider for VerticalRows (horizontal scroll).
+// with text strokes (horizontal lines or vertical strokes) showing how text
+// flows inside. The two paging icons additionally show a page-boundary
+// divider perpendicular to the paged axis; they take the CURRENT orientation,
+// so the divider always previews the layout the button would produce —
+// e.g. Columns shows a horizontal divider in the vertical orientation (pages
+// stack downward) and a vertical one in the horizontal orientation (pages
+// tile rightward).
+import type { WritingOrientation } from '@ved/editor';
 import type React from 'react';
 import type { IconProps } from './icon-props';
 
@@ -23,61 +27,99 @@ const svgProps = (className?: string) => ({
   'aria-hidden': true as const,
 });
 
+const stroke = { stroke: STROKE, strokeWidth: 1.4, strokeLinecap: 'round' as const };
+const divider = { stroke: STROKE, strokeWidth: 1, strokeDasharray: '2 1.5' };
+
+/** Full-height text strokes at the given x positions (vertical writing). */
+const VerticalStrokes = ({ xs, y1 = 6, y2 = 18 }: { xs: number[]; y1?: number; y2?: number }): React.JSX.Element => (
+  <>
+    {xs.map((x) => (
+      <line key={x} x1={x} y1={y1} x2={x} y2={y2} {...stroke} />
+    ))}
+  </>
+);
+
+/** Full-width text strokes at the given y positions (horizontal writing). */
+const HorizontalStrokes = ({ ys, x1 = 6, x2 = 18 }: { ys: number[]; x1?: number; x2?: number }): React.JSX.Element => (
+  <>
+    {ys.map((y) => (
+      <line key={y} x1={x1} y1={y} x2={x2} y2={y} {...stroke} />
+    ))}
+  </>
+);
+
 /** Horizontal writing: three short horizontal strokes stacked top-to-bottom. */
 export const HorizontalIcon = ({ className }: IconProps): React.JSX.Element => (
   <svg {...svgProps(className)}>
     <title>Horizontal</title>
     <Frame />
-    <line x1='6' y1='8' x2='18' y2='8' stroke={STROKE} strokeWidth='1.4' strokeLinecap='round' />
-    <line x1='6' y1='12' x2='18' y2='12' stroke={STROKE} strokeWidth='1.4' strokeLinecap='round' />
-    <line x1='6' y1='16' x2='18' y2='16' stroke={STROKE} strokeWidth='1.4' strokeLinecap='round' />
+    <HorizontalStrokes ys={[8, 12, 16]} />
   </svg>
 );
 
-/** Vertical (continuous flow): three vertical strokes side-by-side, no
- *  divider — emphasizes the unbroken column of text. */
+/** Vertical writing: three vertical strokes side-by-side (right-to-left). */
 export const VerticalIcon = ({ className }: IconProps): React.JSX.Element => (
   <svg {...svgProps(className)}>
     <title>Vertical</title>
     <Frame />
-    <line x1='16' y1='6' x2='16' y2='18' stroke={STROKE} strokeWidth='1.4' strokeLinecap='round' />
-    <line x1='12' y1='6' x2='12' y2='18' stroke={STROKE} strokeWidth='1.4' strokeLinecap='round' />
-    <line x1='8' y1='6' x2='8' y2='18' stroke={STROKE} strokeWidth='1.4' strokeLinecap='round' />
+    <VerticalStrokes xs={[16, 12, 8]} />
   </svg>
 );
 
-/** VerticalColumns (dankumi-down): vertical strokes in two horizontal halves,
- *  with a HORIZONTAL divider between them — pages stack downward. */
-export const VerticalColumnsIcon = ({ className }: IconProps): React.JSX.Element => (
+type PagingIconProps = IconProps & { readonly orientation: WritingOrientation };
+
+/** Continuous paging: an unbroken flow — no divider, full-extent strokes in
+ *  the current orientation. */
+export const PagingContinuousIcon = ({ className, orientation }: PagingIconProps): React.JSX.Element => (
   <svg {...svgProps(className)}>
-    <title>Vertical Columns</title>
+    <title>Continuous</title>
     <Frame />
-    {/* top half */}
-    <line x1='16' y1='5' x2='16' y2='10' stroke={STROKE} strokeWidth='1.4' strokeLinecap='round' />
-    <line x1='12' y1='5' x2='12' y2='10' stroke={STROKE} strokeWidth='1.4' strokeLinecap='round' />
-    <line x1='8' y1='5' x2='8' y2='10' stroke={STROKE} strokeWidth='1.4' strokeLinecap='round' />
-    {/* horizontal page divider */}
-    <line x1='3' y1='12' x2='21' y2='12' stroke={STROKE} strokeWidth='1' strokeDasharray='2 1.5' />
-    {/* bottom half */}
-    <line x1='16' y1='14' x2='16' y2='19' stroke={STROKE} strokeWidth='1.4' strokeLinecap='round' />
-    <line x1='12' y1='14' x2='12' y2='19' stroke={STROKE} strokeWidth='1.4' strokeLinecap='round' />
-    <line x1='8' y1='14' x2='8' y2='19' stroke={STROKE} strokeWidth='1.4' strokeLinecap='round' />
+    {orientation === 'vertical' ? <VerticalStrokes xs={[16, 12, 8]} /> : <HorizontalStrokes ys={[8, 12, 16]} />}
   </svg>
 );
 
-/** VerticalRows (dankumi-left): vertical strokes in two vertical halves,
- *  with a VERTICAL divider between them — pages tile leftward. */
-export const VerticalRowsIcon = ({ className }: IconProps): React.JSX.Element => (
+/** Columns paging (multicol pages). Vertical: pages stack DOWNWARD — a
+ *  horizontal divider between two half-height groups. Horizontal: pages tile
+ *  RIGHTWARD — a vertical divider between two half-width groups. */
+export const PagingColumnsIcon = ({ className, orientation }: PagingIconProps): React.JSX.Element => (
   <svg {...svgProps(className)}>
-    <title>Vertical Rows</title>
+    <title>Columns</title>
     <Frame />
-    {/* right half (= first page in vertical-rl reading order) */}
-    <line x1='18' y1='6' x2='18' y2='18' stroke={STROKE} strokeWidth='1.4' strokeLinecap='round' />
-    <line x1='15' y1='6' x2='15' y2='18' stroke={STROKE} strokeWidth='1.4' strokeLinecap='round' />
-    {/* vertical page divider */}
-    <line x1='12' y1='3' x2='12' y2='21' stroke={STROKE} strokeWidth='1' strokeDasharray='2 1.5' />
-    {/* left half (= second page) */}
-    <line x1='9' y1='6' x2='9' y2='18' stroke={STROKE} strokeWidth='1.4' strokeLinecap='round' />
-    <line x1='6' y1='6' x2='6' y2='18' stroke={STROKE} strokeWidth='1.4' strokeLinecap='round' />
+    {orientation === 'vertical' ? (
+      <>
+        <VerticalStrokes xs={[16, 12, 8]} y1={5} y2={10} />
+        <line x1='3' y1='12' x2='21' y2='12' {...divider} />
+        <VerticalStrokes xs={[16, 12, 8]} y1={14} y2={19} />
+      </>
+    ) : (
+      <>
+        <HorizontalStrokes ys={[8, 12, 16]} x1={5} x2={10} />
+        <line x1='12' y1='3' x2='12' y2='21' {...divider} />
+        <HorizontalStrokes ys={[8, 12, 16]} x1={14} x2={19} />
+      </>
+    )}
+  </svg>
+);
+
+/** Rows paging (arithmetic pages in one flow). Vertical: pages tile LEFTWARD
+ *  — a vertical divider. Horizontal: pages stack DOWNWARD — a horizontal
+ *  divider. */
+export const PagingRowsIcon = ({ className, orientation }: PagingIconProps): React.JSX.Element => (
+  <svg {...svgProps(className)}>
+    <title>Rows</title>
+    <Frame />
+    {orientation === 'vertical' ? (
+      <>
+        <VerticalStrokes xs={[18, 15]} />
+        <line x1='12' y1='3' x2='12' y2='21' {...divider} />
+        <VerticalStrokes xs={[9, 6]} />
+      </>
+    ) : (
+      <>
+        <HorizontalStrokes ys={[6, 9]} />
+        <line x1='3' y1='12' x2='21' y2='12' {...divider} />
+        <HorizontalStrokes ys={[15, 18]} />
+      </>
+    )}
   </svg>
 );

@@ -468,13 +468,16 @@ falls back to `coordsAtPos` — the focus element's rect is the whole paragraph
 and over-scrolls.
 
 Paged modes snap the caret's page *start* to the viewport start instead
-(`caretPageSpan` + `pageSnapDelta` — a page turn). No-op when the whole page
+(`caretPageSpan` + `pageSnapDelta` — a page turn; the page start edge is the
+reading entry: top in the vertically-paged modes, right in VerticalRows,
+left in HorizontalColumns). No-op when the whole page
 is visible; a page larger than the viewport degrades to the minimal reveal;
 at the doc end the scroll clamp leaves the page at the far edge.
-VerticalColumns page bounds are arithmetic (`colsPagePitch` — real multicol
-fragments); VerticalRows page bounds are the *measured* `.ved-page-gap`
+Columns-paging page bounds are arithmetic (`colsPagePitch` — real multicol
+fragments); rows-paging page bounds are the *measured* `.ved-page-gap`
 widget centers — arithmetic drifts with paragraph paddings.
-(`page-reveal.ts`, visible window.)
+(`page-reveal.ts`, visible window; `horizontal-pages.ts` for the horizontal
+variants.)
 
 ## History
 
@@ -692,31 +695,54 @@ line is pinned to `--line-length` = N cells and wraps there in every mode —
 a wide CJK font wraps, never overflows, and the page box never resizes to the
 text. The line-number gutter sits outside the cell track.
 
+A writing mode is an **orientation × paging** combination (`writing-mode.ts`:
+`writingOrientation` / `writingPaging` decompose the enum, `writingModeFor`
+composes it, `scrollsVertically` names each mode's major scroll axis) — two
+orientations (horizontal-tb, vertical-rl) × three pagings (continuous,
+columns, rows) = six modes. The toolbar renders one button group per axis
+(2 + 3 buttons); each button keeps the other axis as it is.
+
 | Writing mode | CSS | Page | Scroll |
 |---|---|---|---|
 | `Horizontal` | normal flow | line-length wide × lines tall | vertical |
 | `Vertical` | `vertical-rl` | transposed, one fixed page box | both axes |
 | `VerticalColumns` | `vertical-rl` + CSS multicol (段組) | page rows tile downward; `--pages-per-row` pages per row | vertical |
 | `VerticalRows` | `vertical-rl`, plain block flow (段組) | pages tile leftward; arithmetic pages (every N lines) | horizontal |
+| `HorizontalColumns` | CSS multicol (horizontal-tb) | page bands tile rightward; `--pages-per-row` pages per band | horizontal |
+| `HorizontalRows` | plain block flow | pages stack downward; arithmetic pages (every N lines) | vertical |
 
-Both paged modes are 1D (CSS can't page vertical text 2D — see dead ends),
-and they are structurally different:
+Each paged mode is 1D (CSS can't page one flow 2D — see dead ends) and exists
+in BOTH orientations: the horizontal variants are the vertical ones with the
+axes transposed. Multicol columns always stack along the INLINE axis —
+downward in vertical-rl, rightward in horizontal-tb — and the rows widgets
+use logical sizes, so one `.ved-page-gap` rule serves both orientations. The
+axis-generic pieces are shared (`makeLineGrouper` takes the orientation, the
+page-gap measure and the overlay read `writing-mode` from the computed
+style); one deliberate deviation: horizontal folios sit BOTTOM-CENTER under
+each page (the typographic norm — vertical folios keep their spot past the
+line length), so the horizontal band gap has no folio strip (`--band-gap-h`;
+its border fraction is `--page-gap-ratio-h` = gap下 / (上+下)). The two
+pagings are structurally different:
 
-- **VerticalColumns** has real fragmentation: multicol overflow columns stack
-  downward with a physical `column-gap` gutter (`--band-gap` = folio strip +
-  `--page-gap`, floored at the line-number gutter). The first page row's
-  start padding is `gap A` only — no border above page 1; the `repeat-y`
-  lattice's phantom tile above the origin is masked by an opaque first
-  background layer. Paragraphs carry `orphans: 1; widows: 1` — the UA default
-  (`orphans: 2`) pushes a multi-line paragraph WHOLE to the next band when its
-  first line would land on a band's last slot, leaving that page one line
-  short and drifting every folio after it (`ruby-pages.ts` pins the
-  band-edge fragmentation).
-- **VerticalRows** has none (no block-axis fragmentation exists — dead ends):
-  one continuous vertical-rl flow where a page is arithmetic. The inter-page
-  space is a `.ved-page-gap` *widget decoration* (zero inline size, width =
-  line pitch + `--page-gap`) fattening each page's last line — a real gap
-  without touching the text model. Widgets are re-positioned from glyph rects
+- **Columns paging** (`VerticalColumns` / `HorizontalColumns`) has real
+  fragmentation: multicol overflow columns stack along the inline axis with a
+  physical `column-gap` gutter (vertical: `--band-gap` = folio strip +
+  `--page-gap`; horizontal: `--band-gap-h` = `--page-gap`; both floored at
+  the line-number gutter). The first band's start padding is `gap A` only —
+  no border before page 1; the repeating separator lattice's phantom tile
+  before the origin is masked by an opaque first background layer
+  (`repeat-y` on the vertical scroller, `repeat-x` on the horizontal one).
+  Paragraphs carry `orphans: 1; widows: 1` — the UA default (`orphans: 2`)
+  pushes a multi-line paragraph WHOLE to the next band when its first line
+  would land on a band's last slot, leaving that page one line short and
+  drifting every folio after it (`ruby-pages.ts` pins the band-edge
+  fragmentation).
+- **Rows paging** (`VerticalRows` / `HorizontalRows`) has none (no block-axis
+  fragmentation exists — dead ends): one continuous flow where a page is
+  arithmetic. The inter-page space is a `.ved-page-gap` *widget decoration*
+  (zero inline size, block size = line pitch + `--page-gap`) fattening each
+  page's last line — a real gap without touching the text model. Widgets are
+  re-positioned from glyph rects
   after layout-affecting events (`pm/page-gap.ts`); the line clustering is
   *directional* — only a reading-direction jump past half a pitch starts a
   line, since a 3+ digit 縦中横 box reports per-digit sub-rects up to a cell
@@ -761,13 +787,16 @@ The page-gap knobs are the page's margins around the border (view config
 border → text, B = folio → next border. VerticalColumns anatomy, top→bottom:
 `text | folio strip (1 cell) | gap B | border | gap A | next text`; the
 border sits at `--band-gap × --page-gap-ratio` (a registered `<number>`, so a
-floored gap scales proportionally). VerticalRows has no folio in the gap:
-`last line | gap B | border | gap A | first line`; the overlay's separators
-shift `(A − B)/2` from the mid-blank. A size-neutral change resizes nothing
-observable, so the shell passes `viewConfigEpoch` (an optional editor prop)
-to trigger the re-measure (`gap-config-reflow.ts`). The same widget trick
-generalizes VerticalColumns into a page grid; the transpose — page columns in
-VerticalRows — stays impossible (dead ends).
+floored gap scales proportionally). The other paged modes have no folio in
+the gap (VerticalRows' folio sits under the page, the horizontal modes'
+bottom-center): `last line | gap B | border | gap A | first line`; the
+overlay's separators shift `(A − B)/2` from the mid-blank toward the earlier
+page, and the HorizontalColumns border sits at `--band-gap-h ×
+--page-gap-ratio-h`. A size-neutral change resizes nothing observable, so
+the shell passes `viewConfigEpoch` (an optional editor prop) to trigger the
+re-measure (`gap-config-reflow.ts`). The same widget trick generalizes the
+columns modes into a page grid; the transpose — page columns in a rows mode —
+stays impossible (dead ends).
 
 ### The measured overlay (`line-numbers.ts`)
 
@@ -938,11 +967,12 @@ Hard limits and approaches that failed — don't re-derive or re-try:
   the live DOM rect, and any DOM-originated selection read-back orphans the
   bit. The answer lives in structure — boundary offsets map *outside* the
   node.
-- **CSS cannot page vertical text 2D.** Multicol stacks columns along the
-  *inline* axis only (for vertical-rl: downward — that is VerticalColumns);
-  an orthogonal-flow child does not fragment (measured in this Chromium). One
-  fragmentation direction per flow — hence no page *columns* in VerticalRows.
-  Re-test if Chromium ships block-axis column progression.
+- **CSS cannot page one flow 2D.** Multicol stacks columns along the
+  *inline* axis only (vertical-rl: downward — VerticalColumns; horizontal-tb:
+  rightward — HorizontalColumns); an orthogonal-flow child does not fragment
+  (measured in this Chromium). One fragmentation direction per flow — hence
+  no page *columns* in a rows mode. Re-test if Chromium ships block-axis
+  column progression.
 - **Rejected page-layout alternatives:** DOM-level pagination — structure
   repair at page boundaries on every edit, against invariants 1 + 2; CSS
   transforms over the multicol page rows — break every client-rect

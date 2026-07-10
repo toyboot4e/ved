@@ -1,4 +1,12 @@
-import { AppearPolicy, PlainTextHistory, editorStyles as styles, VedEditor, WritingMode } from '@ved/editor';
+import {
+  AppearPolicy,
+  isVerticalMode,
+  PlainTextHistory,
+  editorStyles as styles,
+  VedEditor,
+  WritingMode,
+  writingPaging,
+} from '@ved/editor';
 import { clsx } from 'clsx';
 import { useEffect, useMemo, useState } from 'react';
 import { type ViewConfig, viewConfigFromPersisted, viewConfigToCss } from './view-config';
@@ -28,6 +36,8 @@ const WRITING_MODES: ReadonlyArray<readonly [WritingMode, string]> = [
   [WritingMode.Vertical, 'Vertical'],
   [WritingMode.VerticalColumns, 'VerticalColumns'],
   [WritingMode.VerticalRows, 'VerticalRows'],
+  [WritingMode.HorizontalColumns, 'HorizontalColumns'],
+  [WritingMode.HorizontalRows, 'HorizontalRows'],
 ];
 
 const APPEAR_POLICIES: ReadonlyArray<readonly [AppearPolicy, string]> = [
@@ -109,18 +119,20 @@ export const App = (): React.JSX.Element => {
       <div className='stage'>
         {/* vertMode on the root transposes the page geometry (CSS custom props);
             the view config overrides the geometry custom props inline.
-            pagesPerRow only means something in VerticalColumns —
+            pagesPerRow only means something in the columns modes —
             pin it to 1 elsewhere so the root/page widths stay one page.
-            rowsMode widens the root to the window: VerticalRows scrolls along
-            the horizontal axis, so a wide window shows more lines. */}
+            rowsMode/fillMode widen the root to the window: VerticalRows and
+            HorizontalColumns scroll along the horizontal axis, so a wide
+            window shows more lines/pages (Vertical likewise via fillMode). */}
         <div
           className={clsx(
             styles.root,
-            writingMode !== WritingMode.Horizontal && styles.vertMode,
+            isVerticalMode(writingMode) && styles.vertMode,
             writingMode === WritingMode.VerticalRows && styles.rowsMode,
+            (writingMode === WritingMode.Vertical || writingMode === WritingMode.HorizontalColumns) && styles.fillMode,
           )}
           style={viewConfigToCss(
-            writingMode === WritingMode.VerticalColumns ? viewConfig : { ...viewConfig, pagesPerRow: 1 },
+            writingPaging(writingMode) === 'columns' ? viewConfig : { ...viewConfig, pagesPerRow: 1 },
           )}
         >
           <VedEditor

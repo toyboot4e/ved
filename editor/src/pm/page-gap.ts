@@ -1,10 +1,12 @@
-// Physical inter-page space for VerticalRows.
+// Physical inter-page space for the rows-paged modes (VerticalRows /
+// HorizontalRows) and the intra-band boundaries of the columns modes.
 //
-// VerticalRows cannot FRAGMENT (pages are arithmetic — every N visual lines of
-// one continuous vertical-rl flow), but a line box can be FATTENED one-sidedly:
-// a zero-inline-size inline-block of width (line pitch + gap) with
+// A rows-paged flow cannot FRAGMENT (pages are arithmetic — every N visual
+// lines of one continuous flow), but a line box can be FATTENED one-sidedly:
+// a zero-inline-size inline-block of block size (line pitch + gap) with
 // `vertical-align: top` pins its line's glyphs to the line-over side and opens
-// the whole extra width toward the NEXT line (`.ved-page-gap`, pm/ruby.css).
+// the whole extra space toward the NEXT line (`.ved-page-gap`, pm/ruby.css —
+// logical sizes, so one rule serves both orientations).
 // So a widget decoration in the LAST line of each page creates a real gap
 // before the next page — view-only, the text model never changes.
 //
@@ -99,12 +101,13 @@ export const pageGapPlugin = (): Plugin<DecorationSet> =>
 /** One measured visual-line item in reading order: the TEXT offset where the
  *  page gap would sit if this item ends a page (after a glyph: `off + 1`; an
  *  empty paragraph: its own offset), and the item's block-axis coordinate
- *  (decreasing per line in vertical-rl). */
+ *  (decreasing per line in vertical-rl, increasing in horizontal-tb). */
 export type LineItem = { readonly endOff: number; readonly b: number };
 
 /** The END OFFSET of each visual line, in reading order — items cluster into a
  *  line until the block coordinate jumps FORWARD (the reading direction:
- *  decreasing `b` in vertical-rl) by more than half a pitch. Per-glyph jitter
+ *  decreasing `b` in vertical-rl, increasing in horizontal-tb — pass
+ *  `vertical` to match the measured layout) by more than half a pitch. Per-glyph jitter
  *  stays under that; a real line break is a whole pitch. The check is
  *  DIRECTIONAL, anchored on the line's most-forward coordinate: a BACKWARD
  *  excursion within one pitch never starts a line — a 3+ digit 縦中横 box
@@ -117,11 +120,11 @@ export type LineItem = { readonly endOff: number; readonly b: number };
  *  between measures for the suffix re-measure: an offset is frame-independent,
  *  so a prefix of this list survives scrolls and widget-induced geometry
  *  shifts that would invalidate any cached coordinate. */
-export const visualLineEnds = (items: readonly LineItem[], linePitch: number): number[] => {
+export const visualLineEnds = (items: readonly LineItem[], linePitch: number, vertical = true): number[] => {
   if (items.length === 0) return [];
   const ends: number[] = [];
   // The shared grouping rule (pm/line-grouping.ts); backwardTol = one pitch.
-  const grouper = makeLineGrouper(true, linePitch / 2, linePitch);
+  const grouper = makeLineGrouper(vertical, linePitch / 2, linePitch);
   let lastEnd: number | null = null;
   for (const it of items) {
     if (grouper.step(it.b) && lastEnd !== null) ends.push(lastEnd);

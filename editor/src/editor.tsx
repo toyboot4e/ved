@@ -34,10 +34,10 @@ import { docFromText, offsetToPos, posToOffset, rubyClickOutsidePos, serialize, 
 import { pageGapPlugin } from './pm/page-gap';
 import { RubyView } from './pm/ruby-view';
 import { repair } from './pm/structure';
-import { caretCoords, revealCaretInScroller, toScrollMode, useKeepScrollPosition } from './scroll-reveal';
+import { caretCoords, revealCaretInScroller, useKeepScrollPosition } from './scroll-reveal';
 import { createEditorSession, createRestore, createSyncExtensions } from './session';
 import { installTestSeams } from './test-seams';
-import { WritingMode } from './writing-mode';
+import { isVerticalMode, scrollsVertically, type WritingMode, writingPaging } from './writing-mode';
 // ProseMirror's required base styles, then ved's GLOBAL ruby/syntax styles
 // (decorations + the node view emit literal class names a CSS module can't match).
 import 'prosemirror-view/style/prosemirror.css';
@@ -144,17 +144,19 @@ const NO_INVISIBLES: Invisibles = { newline: false, whitespace: false };
 
 export const VedEditor = (props: VedEditorProps): React.JSX.Element => {
   const { writingMode, appearPolicy } = props;
-  const vert = writingMode !== WritingMode.Horizontal;
-  const multiCol = writingMode === WritingMode.VerticalColumns;
-  const rows = writingMode === WritingMode.VerticalRows;
-  // Continuous Vertical fills the pane WIDTH (its free axis is the horizontal
-  // scroll, so a wide window shows more columns). VerticalRows already fills
+  const vert = isVerticalMode(writingMode);
+  const multiCol = writingPaging(writingMode) === 'columns';
+  const rows = writingPaging(writingMode) === 'rows';
+  // Modes whose free axis is the pane WIDTH fill it: continuous Vertical (its
+  // horizontal scroll shows more columns) and HorizontalColumns (bands tile
+  // rightward, so a wide window shows more pages). VerticalRows already fills
   // via rowsMode.
-  const fill = vert && !multiCol && !rows;
-  // Horizontal's free axis is the opposite: its width is the fixed line
-  // measure (--line-length), so it stays a restricted centered column and
-  // instead GROWS in height to fill the pane (more lines, scrolling inside).
-  const grow = !vert;
+  const fill = (vert && !multiCol && !rows) || (!vert && multiCol);
+  // The vertically-scrolling horizontal modes are the opposite: their width
+  // is the fixed line measure (--line-length), so they stay a restricted
+  // centered column and instead GROW in height to fill the pane (more lines,
+  // scrolling inside).
+  const grow = !vert && !multiCol;
 
   const scrollerRef = useRef<HTMLDivElement>(null);
   const viewRef = useRef<EditorView | null>(null);
@@ -199,7 +201,7 @@ export const VedEditor = (props: VedEditorProps): React.JSX.Element => {
   // moveCaretByLine). Any other caret change resets it.
   const goalInlineRef = useRef<number | null>(null);
   const lineNumbersRef = useRef<LineNumbers | null>(null);
-  // Re-measures the VerticalRows page-gap widget positions (pm/page-gap.ts)
+  // Re-measures the paged modes' page-gap widget positions (pm/page-gap.ts)
   // after layout-affecting events; a no-op in the other modes. `full` (the
   // default) drops the suffix cache — pass false ONLY for a doc edit, whose
   // layout change is bounded to its own lines (see measurePageGaps).
@@ -440,7 +442,7 @@ export const VedEditor = (props: VedEditorProps): React.JSX.Element => {
     const revealSoon = (): void => {
       requestAnimationFrame(() => {
         const s = scrollerRef.current;
-        if (s) revealCaretInScroller(s, view, toScrollMode(live.current.writingMode));
+        if (s) revealCaretInScroller(s, view, live.current.writingMode);
       });
     };
 
@@ -455,13 +457,13 @@ export const VedEditor = (props: VedEditorProps): React.JSX.Element => {
     const teardownImeCaretPin = installImeCaretPin(view, {
       beforeOffsetRef,
       lastTextRef,
-      isVertical: () => live.current.writingMode !== WritingMode.Horizontal,
+      isVertical: () => isVerticalMode(live.current.writingMode),
       onCaretRect: (rect) => live.current.onImeCaretRect?.(rect),
     });
     const imeCellPad = createImeCellPad(view, {
       beforeOffsetRef,
       lastTextRef,
-      isVertical: () => live.current.writingMode !== WritingMode.Horizontal,
+      isVertical: () => isVerticalMode(live.current.writingMode),
     });
     imeCellPadRef.current = imeCellPad;
     installTestSeams(view, goalInlineRef);
@@ -516,7 +518,7 @@ export const VedEditor = (props: VedEditorProps): React.JSX.Element => {
         // kana at a line's end, which would flip the picked line per key —
         // the hold lets the highlight cross a boundary exactly once,
         // forward. (Mozc-verified: candidate-window-pos.ts.)
-        if (view.composing && live.current.writingMode !== WritingMode.Horizontal) {
+        if (view.composing && isVerticalMode(live.current.writingMode)) {
           const doc = view.state.doc;
           const preedit = Math.max(0, serialize(doc).length - lastTextRef.current.length);
           const pos = offsetToPos(doc, beforeOffsetRef.current + preedit);
@@ -657,8 +659,8 @@ export const VedEditor = (props: VedEditorProps): React.JSX.Element => {
     // suffix cache can't see a wrap-cap change: same text, same pitch).
     let lastCross: number | null = null;
     const contentObserver = new ResizeObserver(() => {
-      const horizontal = live.current.writingMode === WritingMode.Horizontal;
-      const cross = horizontal ? view.dom.offsetWidth : view.dom.offsetHeight;
+      // The block-growth axis IS the scroll axis; the cross axis is the other.
+      const cross = scrollsVertically(live.current.writingMode) ? view.dom.offsetWidth : view.dom.offsetHeight;
       const crossChanged = lastCross !== null && cross !== lastCross;
       lastCross = cross;
       lineNumbers.schedule();
@@ -675,18 +677,19 @@ export const VedEditor = (props: VedEditorProps): React.JSX.Element => {
     // may have left the caret behind (a quick-open content-search jump mounts
     // with a far caret and the old scroll). Same invariant as after edits;
     // synchronous — rAF stalls in hidden windows.
-    if (scroller && initialCursor) revealCaretInScroller(scroller, view, toScrollMode(live.current.writingMode));
+    if (scroller && initialCursor) revealCaretInScroller(scroller, view, live.current.writingMode);
     requestAnimationFrame(() => view.focus());
 
-    // In the horizontally-scrolling vertical modes (continuous Vertical and
-    // VerticalRows) there is no vertical overflow, so a plain mouse wheel does
-    // nothing — map its vertical delta to horizontal scroll so the user can
-    // read on without holding Shift. vertical-rl scrolls left as you advance,
-    // so wheel-down (deltaY > 0) decreases scrollLeft.
+    // In the horizontally-scrolling modes (continuous Vertical, VerticalRows,
+    // HorizontalColumns) there is no vertical overflow, so a plain mouse
+    // wheel does nothing — map its vertical delta to horizontal scroll so the
+    // user can read on without holding Shift. vertical-rl scrolls left as you
+    // advance (wheel-down decreases scrollLeft); horizontal bands tile
+    // rightward (wheel-down increases it).
     const onWheel = (e: WheelEvent): void => {
       const wm = live.current.writingMode;
-      if ((wm !== WritingMode.Vertical && wm !== WritingMode.VerticalRows) || e.shiftKey || e.deltaY === 0) return;
-      mount.scrollLeft -= e.deltaY;
+      if (scrollsVertically(wm) || e.shiftKey || e.deltaY === 0) return;
+      mount.scrollLeft += isVerticalMode(wm) ? -e.deltaY : e.deltaY;
       e.preventDefault();
     };
     mount.addEventListener('wheel', onWheel, { passive: false });
@@ -864,7 +867,7 @@ export const VedEditor = (props: VedEditorProps): React.JSX.Element => {
     if (prevRevealRef.current.policy !== appearPolicy || prevRevealRef.current.mode !== writingMode) {
       prevRevealRef.current = { policy: appearPolicy, mode: writingMode };
       const s = scrollerRef.current;
-      if (s) revealCaretInScroller(s, view, toScrollMode(writingMode));
+      if (s) revealCaretInScroller(s, view, writingMode);
     }
   }, [appearPolicy, vert, multiCol, rows, grow, writingMode]);
 

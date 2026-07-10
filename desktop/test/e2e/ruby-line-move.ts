@@ -31,7 +31,8 @@ try {
   await page.click('#editor-content');
   await page.waitForTimeout(150);
   // Default mode is VerticalColumns; make it explicit.
-  await page.click('button[aria-label="Vertical Columns"]');
+  await page.click('button[aria-label="Vertical"]');
+  await page.click('button[aria-label="Columns"]');
   await page.waitForTimeout(150);
 
   // Three paragraphs, each 92 plain chars (≈2–3 reading columns at the

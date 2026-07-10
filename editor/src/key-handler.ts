@@ -18,7 +18,7 @@ import { deleteChar } from './plain-edits';
 import { type Appear, docLeaves } from './pm/leaves';
 import { offsetToPos, posToOffset, serialize } from './pm/model';
 import type { EditorSession } from './session';
-import { WritingMode } from './writing-mode';
+import { isVerticalMode } from './writing-mode';
 
 // macOS uses Cmd as the editing modifier; everywhere else Ctrl. Detected from
 // the browser so it works in both Electron and the web preview — the editor
@@ -122,7 +122,7 @@ export const createKeyHandler = (deps: KeyHandlerDeps): ((v: EditorView, event: 
       }
       return true;
     }
-    const isVert = live.current.writingMode !== WritingMode.Horizontal;
+    const isVert = isVerticalMode(live.current.writingMode);
     if (!isVert && (mod || event.altKey)) return false;
     const act = (isVert ? VERT_ARROWS : HORIZ_ARROWS)[event.key];
     if (!act) return false;

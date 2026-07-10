@@ -1,39 +1,70 @@
-import { AppearPolicy, editorStyles as styles, WritingMode } from '@ved/editor';
+import {
+  AppearPolicy,
+  editorStyles as styles,
+  type WritingOrientation,
+  type WritingPaging,
+  writingModeFor,
+  writingOrientation,
+  writingPaging,
+} from '@ved/editor';
 import type React from 'react';
 import { useAppearPolicyStore } from '../appear-policy';
 import { preserveFocus } from '../focus';
 import { useWorkspaceStore } from '../workspace';
 import { useWritingModeStore } from '../writing-mode';
-import { HorizontalIcon, VerticalColumnsIcon, VerticalIcon, VerticalRowsIcon } from './icons/WritingModeIcons';
+import {
+  HorizontalIcon,
+  PagingColumnsIcon,
+  PagingContinuousIcon,
+  PagingRowsIcon,
+  VerticalIcon,
+} from './icons/WritingModeIcons';
 import { InvisiblesControls } from './invisibles-controls';
 import { ThemeToggle } from './theme-toggle';
 import { ViewConfigControls } from './view-config-controls';
 import { VimToggle } from './vim-toggle';
 
-const writingModeItems: {
-  mode: WritingMode;
+// The writing mode is a COMBINATION of two orthogonal axes (writing-mode.ts),
+// so the toolbar renders one button group per axis: 2 orientations × 3
+// pagings = 6 modes behind 5 buttons. Each button keeps the OTHER axis as it
+// is.
+const orientationItems: {
+  orientation: WritingOrientation;
   label: string;
   title: string;
   Icon: React.ComponentType<{ className?: string }>;
 }[] = [
-  { mode: WritingMode.Horizontal, label: 'Horizontal', title: 'Horizontal writing', Icon: HorizontalIcon },
+  { orientation: 'horizontal', label: 'Horizontal', title: 'Horizontal writing', Icon: HorizontalIcon },
+  { orientation: 'vertical', label: 'Vertical', title: 'Vertical writing (tategaki)', Icon: VerticalIcon },
+];
+
+const pagingItems: {
+  paging: WritingPaging;
+  label: string;
+  title: (orientation: WritingOrientation) => string;
+  Icon: React.ComponentType<{ className?: string; orientation: WritingOrientation }>;
+}[] = [
   {
-    mode: WritingMode.Vertical,
-    label: 'Vertical',
-    title: 'Vertical writing — one continuous flow, both axes scroll',
-    Icon: VerticalIcon,
+    paging: 'continuous',
+    label: 'Continuous',
+    title: () => 'One continuous flow, no pages',
+    Icon: PagingContinuousIcon,
   },
   {
-    mode: WritingMode.VerticalColumns,
-    label: 'Vertical Columns',
-    title: 'Vertical writing — pages stack downward (dankumi, vertical scroll)',
-    Icon: VerticalColumnsIcon,
+    paging: 'columns',
+    label: 'Columns',
+    title: (o) =>
+      o === 'vertical' ? 'Pages stack downward (dankumi, vertical scroll)' : 'Pages tile rightward (horizontal scroll)',
+    Icon: PagingColumnsIcon,
   },
   {
-    mode: WritingMode.VerticalRows,
-    label: 'Vertical Rows',
-    title: 'Vertical writing — pages tile leftward like a book (dankumi, horizontal scroll)',
-    Icon: VerticalRowsIcon,
+    paging: 'rows',
+    label: 'Rows',
+    title: (o) =>
+      o === 'vertical'
+        ? 'Pages tile leftward like a book (dankumi, horizontal scroll)'
+        : 'Pages stack downward like a manuscript (vertical scroll)',
+    Icon: PagingRowsIcon,
   },
 ];
 
@@ -74,20 +105,38 @@ export const Toolbar = (): React.JSX.Element => {
         </button>
       </fieldset>
       <fieldset className={styles.toolbarGroup} aria-label='Writing mode' onMouseDown={preserveFocus}>
-        <span className={styles.toolbarGroupLabel} aria-hidden='true' title='Text direction and layout'>
+        <span className={styles.toolbarGroupLabel} aria-hidden='true' title='Text direction'>
           Writing
         </span>
-        {writingModeItems.map(({ mode, label, title, Icon }) => (
+        {orientationItems.map(({ orientation, label, title, Icon }) => (
           <button
-            key={mode}
+            key={orientation}
             type='button'
             className={styles.toolbarIconButton}
-            aria-pressed={writingMode === mode}
+            aria-pressed={writingOrientation(writingMode) === orientation}
             aria-label={label}
             title={title}
-            onClick={() => setWritingMode(mode)}
+            onClick={() => setWritingMode(writingModeFor(orientation, writingPaging(writingMode)))}
           >
             <Icon />
+          </button>
+        ))}
+      </fieldset>
+      <fieldset className={styles.toolbarGroup} aria-label='Paging' onMouseDown={preserveFocus}>
+        <span className={styles.toolbarGroupLabel} aria-hidden='true' title='How the document breaks into pages'>
+          Pages
+        </span>
+        {pagingItems.map(({ paging, label, title, Icon }) => (
+          <button
+            key={paging}
+            type='button'
+            className={styles.toolbarIconButton}
+            aria-pressed={writingPaging(writingMode) === paging}
+            aria-label={label}
+            title={title(writingOrientation(writingMode))}
+            onClick={() => setWritingMode(writingModeFor(writingOrientation(writingMode), paging))}
+          >
+            <Icon orientation={writingOrientation(writingMode)} />
           </button>
         ))}
       </fieldset>

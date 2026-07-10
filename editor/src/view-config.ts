@@ -1,9 +1,10 @@
-// View config (CONTEXT.md): the user-adjustable rendering values, delivered
-// to the editor exclusively as CSS custom properties on the app root. This
-// pure module is the CONTRACT between a shell and the editor's stylesheet —
-// the type, bounds, clamp, and property mapping live here, next to the CSS
-// that consumes them; each shell keeps only its own state layer (the desktop
-// Zustand store, the web preview's plain state).
+/** View config (CONTEXT.md): the user-adjustable rendering values, delivered
+ *  to the editor exclusively as CSS custom properties on the app root. This
+ *  pure module is the CONTRACT between a shell and the editor's stylesheet —
+ *  the type, bounds, clamp, and property mapping live here, next to the CSS
+ *  that consumes them; each shell keeps only its own state layer (the desktop
+ *  Zustand store, the web preview's plain state). */
+
 import type React from 'react';
 
 /** The user-adjustable rendering values. A pure view concern. */
@@ -17,16 +18,17 @@ export type ViewConfig = {
   /** Lines per page (`--page-lines`). */
   readonly pageLines: number;
   /** HEAD margin: space between the page border and the page's TEXT, in cells
-   *  (`--page-gap-top-cells`; below the border in VerticalColumns, left of it
-   *  in VerticalRows). */
+   *  (`--page-gap-top-cells`; on the next page's side of the border along
+   *  each mode's paged axis). */
   readonly pageGapTopCells: number;
   /** TAIL margin: space between the page's FOLIO (page number) and the next
    *  border, in cells (`--page-gap-bottom-cells`). The VerticalColumns band
    *  gap is a 1-cell folio strip + 上 + 下, floored at the line-number gutter;
-   *  VerticalRows has no folio in the gap, so its page gap is 上 + 下. */
+   *  the other paged modes have no folio in the gap, so theirs is 上 + 下. */
   readonly pageGapBottomCells: number;
-  /** Pages side by side per page row — VerticalColumns only
-   *  (`--pages-per-row`; pinned to 1 in the other modes). */
+  /** Pages per multicol band — the columns pagings only (`--pages-per-row`;
+   *  pinned to 1 in the other modes). Side by side in VerticalColumns,
+   *  stacked in HorizontalColumns. */
   readonly pagesPerRow: number;
   /** Editor content font family (`--font-family`); '' inherits the shell's stack. */
   readonly fontFamily: string;
@@ -43,8 +45,8 @@ export const VIEW_CONFIG_DEFAULTS: ViewConfig = {
   fontFamily: '',
 };
 
-// The line-space lower bound is deliberately below the 0.5 ruby-clearing spec
-// (CONTEXT.md "line space") so ruby row collisions can be reproduced on demand.
+/** The line-space lower bound is deliberately below the 0.5 ruby-clearing spec
+ *  (CONTEXT.md "line space") so ruby row collisions can be reproduced on demand. */
 export const VIEW_CONFIG_BOUNDS = {
   fontSize: { min: 8, max: 64 },
   lineSpaceRatio: { min: 0.2, max: 2 },
