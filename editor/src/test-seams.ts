@@ -25,10 +25,24 @@ export const installTestSeams = (view: EditorView, goalInlineRef: { current: num
     __vedAnchor?: () => number;
     __vedCaretRect?: () => { top: number; bottom: number; left: number; right: number } | null;
     __vedText?: () => string;
+    __vedDomCaret?: () => number | null;
     __vedSetCaret?: (off: number) => void;
     __vedSetSelection?: (anchor: number, head: number) => void;
   };
   w.__vedCaret = () => posToOffset(view.state.doc, view.state.selection.head);
+  // The LIVE DOM selection mapped to a plain offset — what the NATIVE caret
+  // actually draws from, vs __vedCaret (the model). A divergence is a DOM/model
+  // desync (e.g. the caret not re-synced after an IME-commit → Backspace); null
+  // when there is no in-editor DOM selection.
+  w.__vedDomCaret = () => {
+    const sel = view.dom.ownerDocument.getSelection();
+    if (!sel?.focusNode || !view.dom.contains(sel.focusNode)) return null;
+    try {
+      return posToOffset(view.state.doc, view.posAtDOM(sel.focusNode, sel.focusOffset));
+    } catch {
+      return null;
+    }
+  };
   w.__vedAnchor = () => posToOffset(view.state.doc, view.state.selection.anchor);
   w.__vedCaretRect = () => {
     try {
