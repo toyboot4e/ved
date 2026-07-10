@@ -1,6 +1,6 @@
-// IPC contract shared by the main, preload, and renderer processes.
-// Channel names and payload types are defined once here so the three
-// processes cannot drift apart.
+/** IPC contract shared by the main, preload, and renderer processes.
+ *  Channel names and payload types are defined once here so the three
+ *  processes cannot drift apart. */
 
 /** IPC channel names (handlers: `src/main/file-service.ts`, `close-guard.ts`). */
 export const IpcChannel = {
@@ -36,9 +36,13 @@ export const IpcChannel = {
  * IME composition is active (null = composition ended); consumed by the fcitx
  * window guard (`src/main/ime-window-guard.ts`). */
 export type ImeCaretRect = {
+  /** Caret rect left edge, viewport CSS px. */
   readonly left: number;
+  /** Caret rect top edge. */
   readonly top: number;
+  /** Caret rect right edge. */
   readonly right: number;
+  /** Caret rect bottom edge. */
   readonly bottom: number;
 };
 
@@ -49,15 +53,20 @@ export type ImeCaretRect = {
 export type ExtensionSource = {
   /** The extension's id — its file base name; namespaces its commands. */
   readonly id: string;
+  /** The source file's name (e.g. `reflow.ts`), for error reporting. */
   readonly fileName: string;
+  /** The compiled (type-stripped) JS, or `null` when compilation failed. */
   readonly js: string | null;
+  /** The compile/load failure message, or `null` on success. */
   readonly error: string | null;
 };
 
 /** A file named on the command line, read at startup. A path that does not
  * exist yet arrives with empty text (a "new file" buffer; save creates it). */
 export type CliFile = {
+  /** Absolute path (resolved in main against its cwd). */
   readonly path: string;
+  /** The file's content; empty for a not-yet-existing path. */
   readonly text: string;
 };
 
@@ -77,9 +86,11 @@ export type SaveFileAsResult = {
 
 /** One entry of a directory listing (file-browser sidebar). */
 export type DirEntry = {
+  /** The entry's base name (what the sidebar row shows). */
   readonly name: string;
   /** Absolute path (parent + name, joined by main). */
   readonly path: string;
+  /** Directory or file (directories sort first). */
   readonly kind: 'dir' | 'file';
 };
 
@@ -88,7 +99,9 @@ export type DirEntry = {
  * path relative to its root, prefixed with the root's base name when several
  * roots are open, so the same relative path under two roots stays distinct. */
 export type WorkspaceFile = {
+  /** Absolute path — what opening the pick reads. */
   readonly path: string;
+  /** What the user sees and fuzzy-matches against (root-relative). */
   readonly label: string;
   /** Decided in main while indexing, by LAYERS: extension denylist → size
    * cap → content sniff (NUL head check) — the same truth the open path
@@ -102,16 +115,27 @@ export type WorkspaceFile = {
  * line (the caret target), while `text`/`matched` may be a window trimmed
  * around the match for display. */
 export type GrepMatch = {
+  /** Absolute path of the matched file. */
   readonly path: string;
+  /** The file's quick-open label (`WorkspaceFile.label`). */
   readonly label: string;
+  /** 1-based line number — maps straight onto `CursorState.para`. */
   readonly line: number;
+  /** 0-based column in the UNTRIMMED line: the caret target. */
   readonly col: number;
+  /** The line for display — possibly a window trimmed around the match. */
   readonly text: string;
+  /** Indices into `text` of the matched characters (highlighting). */
   readonly matched: readonly number[];
 };
 
 /** Capped matches plus the uncapped total (the palette's overflow note). */
-export type GrepResult = { readonly matches: readonly GrepMatch[]; readonly total: number };
+export type GrepResult = {
+  /** The matches, best lines first per file, capped overall. */
+  readonly matches: readonly GrepMatch[];
+  /** Total hits found, counting past the cap. */
+  readonly total: number;
+};
 
 /** A known path read by CONTENT: `binary` means "not UTF-8 text" — sniffed
  * from the bytes (NUL check + strict decode), never from the extension —
@@ -164,6 +188,7 @@ export type VedFileApi = {
   readonly grepWorkspaceFiles: (roots: readonly string[], query: string) => Promise<GrepResult>;
 };
 
+/** Returned by every event subscription: call it to remove the listener. */
 export type Unsubscribe = () => void;
 
 /** The shell portion of the renderer-facing API (integrated terminal). A
@@ -173,11 +198,17 @@ export type VedShellApi = {
   /** Spawns the user's shell in `cwd` (falls back to $HOME). The PTY starts
    * PAUSED so no output is lost — call `resumeShell` once listeners are up. */
   readonly createShell: (cwd?: string) => Promise<number>;
+  /** Un-pause the PTY's output stream (see `createShell`). */
   readonly resumeShell: (id: number) => void;
+  /** Send input (keystrokes/paste) to the PTY. */
   readonly writeShell: (id: number, data: string) => void;
+  /** Propagate the terminal element's size to the PTY. */
   readonly resizeShell: (id: number, cols: number, rows: number) => void;
+  /** Kill the PTY (closing the terminal pane). */
   readonly killShell: (id: number) => void;
+  /** PTY output; `id` routes it to the right terminal. */
   readonly onShellData: (cb: (id: number, data: string) => void) => Unsubscribe;
+  /** The PTY exited (its process ended or `killShell`). */
   readonly onShellExit: (cb: (id: number, exitCode: number) => void) => Unsubscribe;
 };
 
@@ -215,6 +246,7 @@ export type VedApi = VedFileApi &
     /** Per-extension storage (`<configDir>/storage/<id>/<file>`); `null` =
      * no such file. Ids/names are single path segments — main validates. */
     readonly extensionStorageRead: (id: string, file: string) => Promise<string | null>;
+    /** Write (create or overwrite) one storage file; see `extensionStorageRead`. */
     readonly extensionStorageWrite: (id: string, file: string, data: string) => Promise<void>;
     /** Streams the live composing caret rect to the fcitx window guard in
      * main (null = the composition ended). Fire-and-forget. */

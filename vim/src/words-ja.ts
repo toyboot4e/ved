@@ -1,12 +1,12 @@
-// A Japanese-aware WordModel for `w`/`b`/`e`, using the platform's
-// Intl.Segmenter (ships in Chromium — ved's only engine). It splits kana/kanji
-// runs at real word boundaries (これ / は / ペン / です) instead of treating a
-// whole CJK run as one "word" (the default CLASS_WORDS). Enabled per instance
-// via createVimExtension({ japaneseWords: true }).
-//
-// It runs over the raw serialized text (ruby markup included); the caller's
-// snapCaret cleans up any target that lands inside a ruby, exactly as with the
-// default model — this only sharpens the granularity of plain runs.
+/** A Japanese-aware WordModel for `w`/`b`/`e`, using the platform's
+ *  Intl.Segmenter (ships in Chromium — ved's only engine). It splits kana/kanji
+ *  runs at real word boundaries (これ / は / ペン / です) instead of treating a
+ *  whole CJK run as one "word" (the default CLASS_WORDS). Enabled per instance
+ *  via createVimExtension({ japaneseWords: true }).
+ *
+ *  It runs over the raw serialized text (ruby markup included); the caller's
+ *  snapCaret cleans up any target that lands inside a ruby, exactly as with the
+ *  default model — this only sharpens the granularity of plain runs. */
 
 import { CLASS_WORDS, type WordModel } from './model';
 

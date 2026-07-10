@@ -34,6 +34,9 @@ export type ViewConfig = {
   readonly fontFamily: string;
 };
 
+/** What a fresh install renders with: 40×20 fullwidth cells per page (the
+ *  80-ASCII-column line cap), 0.55 line space (above the 0.5 ruby-clearing
+ *  spec), the shell's font stack. */
 export const VIEW_CONFIG_DEFAULTS: ViewConfig = {
   fontSize: 18,
   lineSpaceRatio: 0.55,

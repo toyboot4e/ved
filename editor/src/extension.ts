@@ -1,17 +1,17 @@
-// The editor extension seam: the ONLY way third-party code (including
-// @ved/vim) drives the editor. Everything crossing this boundary is
-// backend-neutral — plain strings and plain offsets, never ProseMirror
-// values — so an extension survives an editor-backend swap and cannot break
-// the identity rich text model: every edit routes through the editor's exact
-// plain-string paths (plainInsertTr), every selection through the
-// boundary-aware offset map.
-//
-// IME safety is enforced BY THE SEAM, not trusted to extensions: key/text
-// hooks are never called for composing input (`isComposing` / keyCode 229),
-// every mutating context method refuses while a composition is live, and
-// attach/detach is deferred to the composition's end. An extension that wants
-// to react to composed text does so at `onCompositionEnd` — a legal edit
-// time.
+/** The editor extension seam: the ONLY way third-party code (including
+ *  `@ved/vim`) drives the editor. Everything crossing this boundary is
+ *  backend-neutral — plain strings and plain offsets, never ProseMirror
+ *  values — so an extension survives an editor-backend swap and cannot break
+ *  the identity rich text model: every edit routes through the editor's exact
+ *  plain-string paths (plainInsertTr), every selection through the
+ *  boundary-aware offset map.
+ *
+ *  IME safety is enforced BY THE SEAM, not trusted to extensions: key/text
+ *  hooks are never called for composing input (`isComposing` / keyCode 229),
+ *  every mutating context method refuses while a composition is live, and
+ *  attach/detach is deferred to the composition's end. An extension that wants
+ *  to react to composed text does so at `onCompositionEnd` — a legal edit
+ *  time. */
 
 import type { ChordEvent, EditorCommand, EditorCommandId } from './commands';
 
@@ -21,14 +21,26 @@ import type { ChordEvent, EditorCommand, EditorCommandId } from './commands';
 export type CaretShape = 'bar' | 'block';
 
 /** A selection in plain offsets. `head` is the moving end. */
-export type EditorSelectionOffsets = { readonly anchor: number; readonly head: number };
+export type EditorSelectionOffsets = {
+  /** The fixed end. */
+  readonly anchor: number;
+  /** The moving end; equals `anchor` for a collapsed caret. */
+  readonly head: number;
+};
 
 /** One view-only highlight an extension contributes: a PLAIN-offset range
  *  plus a CSS class (already namespaced by the caller — the desktop host
  *  prefixes `vedx-<extension id>-`). Background-only styling by contract:
  *  no metric may change, so every cached measurement stands (the same rule
  *  as the search highlights). */
-export type ExtensionDecorationRange = { readonly from: number; readonly to: number; readonly cls: string };
+export type ExtensionDecorationRange = {
+  /** Start of the range, a plain offset (half-open `[from, to)`). */
+  readonly from: number;
+  /** End of the range (exclusive). */
+  readonly to: number;
+  /** The CSS class to apply (full, already-namespaced name). */
+  readonly cls: string;
+};
 
 /** A spatial (screen) direction — what an arrow key means before the writing
  *  mode decides which axis it moves along. */
@@ -152,6 +164,9 @@ export type EditorExtensionHooks = {
  *  prop, detached when removed (or on unmount). `id` must be unique and
  *  namespaces the extension's commands. */
 export type EditorExtension = {
+  /** Unique id; namespaces the extension's commands. */
   readonly id: string;
+  /** Called at attach with the context; returns the hooks the editor calls.
+   *  Deferred past a live IME composition (never mid-composition). */
   readonly attach: (ctx: EditorExtensionContext) => EditorExtensionHooks;
 };

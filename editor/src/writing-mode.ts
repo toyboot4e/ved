@@ -10,6 +10,7 @@
  *  the editor branches on — and the helpers (`writingOrientation`,
  *  `writingPaging`, `writingModeFor`) decompose/compose it. */
 export enum WritingMode {
+  /** Horizontal (horizontal-tb), one continuous flow with vertical scroll. */
   Horizontal,
   /** Vertical (vertical-rl), one continuous flow with horizontal scroll. */
   Vertical,
@@ -29,11 +30,13 @@ export type WritingOrientation = 'horizontal' | 'vertical';
 /** How the document breaks into pages (see the header). */
 export type WritingPaging = 'continuous' | 'columns' | 'rows';
 
+/** The mode's orientation axis. */
 export const writingOrientation = (mode: WritingMode): WritingOrientation =>
   mode === WritingMode.Vertical || mode === WritingMode.VerticalColumns || mode === WritingMode.VerticalRows
     ? 'vertical'
     : 'horizontal';
 
+/** The mode's paging axis. */
 export const writingPaging = (mode: WritingMode): WritingPaging => {
   switch (mode) {
     case WritingMode.VerticalColumns:
@@ -47,6 +50,7 @@ export const writingPaging = (mode: WritingMode): WritingPaging => {
   }
 };
 
+/** Whether the mode's orientation is vertical (vertical-rl). */
 export const isVerticalMode = (mode: WritingMode): boolean => writingOrientation(mode) === 'vertical';
 
 /** Whether the mode's MAJOR scroll axis is vertical (`scrollTop`):

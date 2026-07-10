@@ -1,9 +1,9 @@
-// Public surface of @ved/vim: a Vim-like modal editing extension for
-// @ved/editor, built entirely on the public extension seam. Model (pure
-// reducer, model.ts) and view (adapter, extension.ts) are separate modules —
-// see each header. The tuning tables (bracket pairs, find-chord targets, join
-// spacing — config.ts) are INTERNAL: nothing outside the package consumes
-// them, and un-exported they can be reshaped freely.
+/** Public surface of @ved/vim: a Vim-like modal editing extension for
+ *  `@ved/editor`, built entirely on the public extension seam. Model (pure
+ *  reducer, model.ts) and view (adapter, extension.ts) are separate modules —
+ *  see each header. The tuning tables (bracket pairs, find-chord targets, join
+ *  spacing — config.ts) are INTERNAL: nothing outside the package consumes
+ *  them, and un-exported they can be reshaped freely. */
 
 // The declared binding catalog (assembled from the dispatch tables): the
 // single source of truth for what this extension implements. Consumed by the
