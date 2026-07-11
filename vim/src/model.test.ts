@@ -973,6 +973,72 @@ describe('motions: ge/gE, g_, sentences ( )', () => {
   });
 });
 
+describe('case operators (gu/gU/g~) and visual u/U/~', () => {
+  const cv = key('v', { ctrl: true });
+
+  it('gu{motion} lowercases; gU uppercases; g~ toggles — caret to the range start', () => {
+    const r = play('ABC def', 4, ['g', 'u', 'b']); // back to 0: lowercases [0,4)
+    expect(r.text).toBe('abc def');
+    expect(r.head).toBe(0);
+    expect(play('abc', 0, ['g', 'U', 'w']).text).toBe('ABC');
+    expect(play('aBc', 0, ['g', '~', 'w']).text).toBe('AbC');
+  });
+
+  it('doubled forms take whole lines (guu / gUU via gUgU / g~~)', () => {
+    expect(play('AbC x\nY', 0, ['g', 'u', 'u']).text).toBe('abc x\nY');
+    expect(play('AbC x\nY', 0, ['g', 'u', 'g', 'u']).text).toBe('abc x\nY');
+    expect(play('aBc\nz', 0, ['g', '~', '~']).text).toBe('AbC\nz');
+    expect(play('ab\ncd', 0, ['2', 'g', 'U', 'U']).text).toBe('AB\nCD'); // counted lines
+  });
+
+  it('case ops never touch the register', () => {
+    const r = play('abc def', 0, ['y', 'w', 'g', 'U', 'w']);
+    expect(r.state.register?.text).toBe('abc '); // still the yank
+    expect(r.text).toBe('ABC def');
+  });
+
+  it('visual u/U/~ transform the selection; block visual per segment', () => {
+    expect(play('ABC', 0, ['v', 'l', 'u']).text).toBe('abC');
+    expect(play('abc', 0, ['v', 'l', 'U']).text).toBe('ABc');
+    const block = play('aB\ncD', 0, [cv, 'G', '~']);
+    expect(block.text).toBe('AB\nCD'); // col 0 toggled on both lines
+    expect(block.state.mode).toBe('normal');
+    expect(play('AB', 0, ['v', 'g', 'u']).text).toBe('aB'); // v_gu = v_u
+  });
+
+  it('CJK passes through a toggle unchanged (uncased)', () => {
+    expect(play('あa', 0, ['g', '~', '$']).text).toBe('あA');
+  });
+});
+
+describe('indent operators (> <) and visual forms', () => {
+  it('>> indents a line by one fullwidth space; count takes more lines', () => {
+    const r = play('あ\nい', 0, ['>', '>']);
+    expect(r.text).toBe('　あ\nい');
+    expect(r.head).toBe(1); // the first non-blank
+    expect(play('a\nb\nc', 0, ['2', '>', '>']).text).toBe('　a\n　b\nc');
+  });
+
+  it('> with a motion shifts every spanned line; empty lines are skipped', () => {
+    expect(play('a\n\nb', 0, ['>', 'G']).text).toBe('　a\n\n　b');
+  });
+
+  it('<< removes one fullwidth space, a tab, or up to two ASCII spaces', () => {
+    expect(play('　あ', 1, ['<', '<']).text).toBe('あ');
+    expect(play('\tab', 1, ['<', '<']).text).toBe('ab');
+    expect(play('   ab', 3, ['<', '<']).text).toBe(' ab'); // eats 2 of 3 spaces
+    expect(play(' ab', 1, ['<', '<']).text).toBe('ab');
+    expect(play('ab', 0, ['<', '<']).text).toBe('ab'); // nothing to eat
+  });
+
+  it('visual > and < shift the selected lines and exit visual', () => {
+    const r = play('a\nb', 0, ['V', 'G', '>']);
+    expect(r.text).toBe('　a\n　b');
+    expect(r.state.mode).toBe('normal');
+    expect(play('　a\n　b', 0, ['V', 'G', '<']).text).toBe('a\nb');
+  });
+});
+
 describe('H/M/L over the visible range', () => {
   // Five 2-char lines at 0, 3, 6, 9, 12; the viewport shows lines 1..4.
   const T = 'aa\nbb\ncc\ndd\nee';

@@ -93,7 +93,7 @@
  *  join spacing) lives in ONE place — config.ts; user KEY mappings ride the
  *  keymap option (extension.ts). */
 
-import { BRACKET_PAIRS, FIND_CHORDS, joinNeedsSpace } from './config';
+import { BRACKET_PAIRS, FIND_CHORDS, INDENT_ASCII_WIDTH, INDENT_UNIT, joinNeedsSpace } from './config';
 import {
   buildTrie,
   type CompiledKeymap,
@@ -235,8 +235,21 @@ type VimBlockInsert = {
   readonly valid: boolean;
 };
 
-type Operator = 'd' | 'c' | 'y';
+type Operator = 'd' | 'c' | 'y' | 'lower' | 'upper' | 'toggle' | 'indent' | 'dedent';
 type FindOp = 'f' | 'F' | 't' | 'T';
+
+/** The key that, doubled after its operator, takes whole lines (`dd`, `guu`,
+ *  `>>`…) — the operators no longer share their pending key. */
+const OPERATOR_LINE_KEY: Readonly<Record<Operator, string>> = {
+  d: 'd',
+  c: 'c',
+  y: 'y',
+  lower: 'u',
+  upper: 'U',
+  toggle: '~',
+  indent: '>',
+  dedent: '<',
+};
 
 export type VimState = {
   readonly mode: VimMode;
@@ -1285,6 +1298,12 @@ export const G_SEQUENCES: Readonly<Record<string, VimAction>> = {
     state.mode === 'visual'
       ? visualJoin(clearPending(state), doc, true)
       : joinLines(clearPending(state), doc, env.count, true),
+  // Case operators: gu{motion}/gU{motion}/g~{motion}, doubled for lines,
+  // direct in visual mode. (Called lazily — caseOperatorKey is declared
+  // with the other operator machinery below.)
+  gu: (state, env, doc) => caseOperatorKey('lower')(state, env, doc),
+  gU: (state, env, doc) => caseOperatorKey('upper')(state, env, doc),
+  'g~': (state, env, doc) => caseOperatorKey('toggle')(state, env, doc),
   // gv: reselect the last visual selection (kind and $-flag included). From
   // INSIDE visual mode it swaps with the live selection, so gv gv toggles
   // between the two — Vim's rule. Offsets clamp to the current text (they
@@ -1539,7 +1558,7 @@ const operatorTargetKey = (
   doc: VimDocView,
 ): VimStep => {
   const cleared = clearPending(state);
-  if (k === op) return linewiseOperator(cleared, op, count, doc);
+  if (k === OPERATOR_LINE_KEY[op]) return linewiseOperator(cleared, op, count, doc);
   if (k === 'f' || k === 'F' || k === 't' || k === 'T') {
     return { state: { ...state, charPending: k }, effects: [], handled: true };
   }
@@ -1738,6 +1757,36 @@ const blockInsertStart = (state: VimState, doc: VimDocView, append: boolean): Vi
   };
 };
 
+/** Visual u/U/~ (and gu/gU/g~ pressed in visual mode): transform the
+ *  selection's case — per-segment in a block — exit visual, caret to the
+ *  selection start (the block's top-left). */
+const visualCase = (state: VimState, op: 'lower' | 'upper' | 'toggle', doc: VimDocView): VimStep => {
+  const next = { ...state, mode: 'normal' as const };
+  if (state.visualKind !== 'block') return applyCaseOp(next, op, visualRange(state, doc), doc);
+  const geom = blockGeometry(doc.text, doc.anchor, doc.head, state.visualBlockEol);
+  const effects: VimEffect[] = [];
+  for (const l of [...geom.lines].reverse()) {
+    if (l.from >= l.to) continue;
+    const before = doc.text.slice(l.from, l.to);
+    const after = CASE_OPS[op](before);
+    if (after !== before) effects.push({ kind: 'replace', from: l.from, to: l.to, text: after });
+  }
+  const caret = (geom.lines[0] as BlockLine).from;
+  effects.push({ kind: 'select', anchor: caret, head: caret });
+  return { state: next, effects, handled: true };
+};
+
+/** gu/gU/g~ as a KEY: an operator pend in normal mode (its own doubled line
+ *  form — guu/gugu — handled by OPERATOR_LINE_KEY and the re-walk), the
+ *  direct selection transform in visual mode (Vim's v_gu = v_u). */
+const caseOperatorKey =
+  (op: 'lower' | 'upper' | 'toggle'): VimAction =>
+  (state, env, doc) => {
+    if (state.mode === 'visual') return visualCase(clearPending(state), op, doc);
+    if (state.operator === op) return linewiseOperator(clearPending(state), op, env.count, doc); // gugu
+    return pendOperator(clearPending(state), op, env);
+  };
+
 /** Visual `r{char}` (all kinds): overwrite every selected character with
  *  `{char}` — per-segment in a block, every non-newline character in a
  *  charwise/linewise range (newlines survive, Vim's rule) — and land the
@@ -1906,6 +1955,15 @@ const VISUAL_ACTIONS = {
   // J: join every selected line with the policy spacing (gJ — the plain,
   // newline-only join — rides the g-sequence layer, visual included).
   'visual.join': (state, _env, doc) => visualJoin(state, doc, false),
+  // u/U/~: case-transform the selection (per-segment in a block).
+  'visual.lowercase': (state, _env, doc) => visualCase(state, 'lower', doc),
+  'visual.uppercase': (state, _env, doc) => visualCase(state, 'upper', doc),
+  'visual.toggleCase': (state, _env, doc) => visualCase(state, 'toggle', doc),
+  // </>: shift the selected lines one indent step and exit visual.
+  'visual.indent': (state, _env, doc) =>
+    applyIndentOp({ ...state, mode: 'normal' }, 'indent', visualRange(state, doc), doc),
+  'visual.dedent': (state, _env, doc) =>
+    applyIndentOp({ ...state, mode: 'normal' }, 'dedent', visualRange(state, doc), doc),
   'visual.delete': (state, _env, doc) =>
     state.visualKind === 'block'
       ? blockOperator(state, 'd', doc)
@@ -1951,6 +2009,11 @@ export const VISUAL_BINDINGS: Readonly<Record<string, keyof typeof VISUAL_ACTION
   O: 'visual.swapCorners',
   r: 'visual.replaceChar',
   J: 'visual.join',
+  u: 'visual.lowercase',
+  U: 'visual.uppercase',
+  '~': 'visual.toggleCase',
+  '>': 'visual.indent',
+  '<': 'visual.dedent',
   x: 'visual.delete',
   d: 'visual.delete',
   y: 'visual.yank',
@@ -2103,6 +2166,8 @@ const NORMAL_ACTIONS = {
   'operator.delete': (state, env) => pendOperator(state, 'd', env),
   'operator.change': (state, env) => pendOperator(state, 'c', env),
   'operator.yank': (state, env) => pendOperator(state, 'y', env),
+  'operator.indent': (state, env) => pendOperator(state, 'indent', env),
+  'operator.dedent': (state, env) => pendOperator(state, 'dedent', env),
   'paste.after': (state, env, doc) => paste(state, doc, env.count, true),
   'paste.before': (state, env, doc) => paste(state, doc, env.count, false),
   'history.undo': (state) => ({
@@ -2197,6 +2262,8 @@ export const NORMAL_BINDINGS: Readonly<Record<string, keyof typeof NORMAL_ACTION
   d: 'operator.delete',
   c: 'operator.change',
   y: 'operator.yank',
+  '>': 'operator.indent',
+  '<': 'operator.dedent',
   p: 'paste.after',
   P: 'paste.before',
   u: 'history.undo',
@@ -2341,7 +2408,74 @@ const linewiseOperator = (state: VimState, op: Operator, count: number, doc: Vim
   return applyOperator(state, op, { from, to, linewise: true }, doc);
 };
 
+/** Flip one character's case (the `~`/`g~` rule: uncased chars — CJK — pass
+ *  through). */
+const flipCase = (ch: string): string => {
+  const lower = ch.toLowerCase();
+  return ch === lower ? ch.toUpperCase() : lower;
+};
+
+const CASE_OPS: Readonly<Record<'lower' | 'upper' | 'toggle', (s: string) => string>> = {
+  lower: (s) => s.toLowerCase(),
+  upper: (s) => s.toUpperCase(),
+  toggle: (s) => [...s].map(flipCase).join(''),
+};
+
+/** gu/gU/g~ over a range: transform in place, caret to the range start.
+ *  No register write (Vim's case operators don't yank). */
+const applyCaseOp = (state: VimState, op: 'lower' | 'upper' | 'toggle', range: VimRange, doc: VimDocView): VimStep => {
+  const before = doc.text.slice(range.from, range.to);
+  const after = CASE_OPS[op](before);
+  const effects: VimEffect[] = [];
+  if (after !== before) effects.push({ kind: 'replace', from: range.from, to: range.to, text: after });
+  effects.push({ kind: 'select', anchor: range.from, head: range.from });
+  return { state, effects, handled: true };
+};
+
+/** How many leading characters `<` removes from a line: one INDENT_UNIT
+ *  (fullwidth space) or one tab, else up to INDENT_ASCII_WIDTH spaces. */
+const dedentWidth = (line: string): number => {
+  if (line.startsWith(INDENT_UNIT) || line.startsWith('\t')) return 1;
+  let n = 0;
+  while (n < INDENT_ASCII_WIDTH && line[n] === ' ') n++;
+  return n;
+};
+
+/** `>`/`<`: shift the WHOLE LINES the range spans by one indent step
+ *  (config.ts INDENT_UNIT — a fullwidth space, ved's Japanese-first cell;
+ *  `<` also eats an ASCII-space/tab indent). Empty lines are skipped; the
+ *  caret lands on the first line's first non-blank; no register write. */
+const applyIndentOp = (state: VimState, op: 'indent' | 'dedent', range: VimRange, doc: VimDocView): VimStep => {
+  const starts: number[] = [];
+  for (let ls = lineStart(doc.text, range.from); ; ) {
+    starts.push(ls);
+    const le = lineEnd(doc.text, ls);
+    if (le >= doc.text.length || le >= range.to) break;
+    ls = le + 1;
+  }
+  const effects: VimEffect[] = [];
+  for (const ls of [...starts].reverse()) {
+    const le = lineEnd(doc.text, ls);
+    if (op === 'indent') {
+      if (le > ls) effects.push({ kind: 'replace', from: ls, to: ls, text: INDENT_UNIT });
+    } else {
+      const n = dedentWidth(doc.text.slice(ls, le));
+      if (n > 0) effects.push({ kind: 'replace', from: ls, to: ls + n, text: '' });
+    }
+  }
+  if (effects.length === 0) return swallow(state);
+  const ls0 = starts[0] as number;
+  const line0 = doc.text.slice(ls0, lineEnd(doc.text, ls0));
+  const newLine0 = op === 'indent' ? (line0 ? INDENT_UNIT + line0 : line0) : line0.slice(dedentWidth(line0));
+  const fnb = newLine0.search(/[^ \t　]/);
+  const caret = ls0 + (fnb < 0 ? 0 : fnb);
+  effects.push({ kind: 'select', anchor: caret, head: caret });
+  return { state, effects, handled: true };
+};
+
 const applyOperator = (state: VimState, op: Operator, range: VimRange, doc: VimDocView): VimStep => {
+  if (op === 'lower' || op === 'upper' || op === 'toggle') return applyCaseOp(state, op, range, doc);
+  if (op === 'indent' || op === 'dedent') return applyIndentOp(state, op, range, doc);
   const register: VimRegister = { text: doc.text.slice(range.from, range.to), linewise: range.linewise };
   const next = { ...state, register };
   switch (op) {

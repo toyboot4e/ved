@@ -408,6 +408,20 @@ try {
   assert.equal(await docText(page), 'aa bb cc', 'visual J joins every selected line');
   step('gJ newline-only join; visual J joins the selection');
 
+  // --- Case + indent operators: gU{motion} uppercases, >> indents by one
+  // fullwidth space (the Japanese-first indent cell), << removes it. ---
+  await toggleVim();
+  await setDoc(page, 'abc def');
+  await toggleVim();
+  await setCaret(page, 0);
+  await press('gUw', 150);
+  assert.equal(await docText(page), 'ABC def', 'gUw uppercases to the word boundary');
+  await press('>>', 150);
+  assert.equal(await docText(page), '　ABC def', '>> indents by one fullwidth space');
+  await press('<<', 150);
+  assert.equal(await docText(page), 'ABC def', '<< removes it');
+  step('case (gU) and indent (>> <<) operators');
+
   // --- Viewport seams: zt/zb reposition the caret line in the scroller,
   // Ctrl+E scrolls one line pitch, H/L jump within the VISIBLE lines. ---
   await toggleVim();

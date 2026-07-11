@@ -102,15 +102,24 @@ const normalCommandRows = (): VimBinding[] => {
 
 /** g-sequences: the ones that RESOLVE to motions (gg/ge/gE/g_) are already
  *  MOTION_BINDINGS rows; gh/gj/gk/gl are the display walks; gv reselects the
- *  last visual; gJ is the plain join. All of them run in visual mode too,
- *  but only gJ has its own visual index row (v_gJ) to match. */
+ *  last visual; gJ is the plain join; gu/gU/g~ are the case operators. All
+ *  of them run in visual mode too, but only the ones with their own visual
+ *  index rows (v_gJ, v_gu, v_gU, v_g~) need a visual catalog row to match. */
+const G_KINDS: Readonly<Record<string, VimBindingKind>> = {
+  gv: 'misc',
+  gJ: 'edit',
+  gu: 'operator',
+  gU: 'operator',
+  'g~': 'operator',
+};
+const G_VISUAL_ROWS: ReadonlySet<string> = new Set(['gJ', 'gu', 'gU', 'g~']);
 const gSequenceRows = (): VimBinding[] => {
   const out: VimBinding[] = [];
   for (const keys of Object.keys(G_SEQUENCES)) {
     if (keys in MOTION_BINDINGS) continue;
-    const kind = keys === 'gv' ? 'misc' : keys === 'gJ' ? 'edit' : 'motion';
+    const kind = G_KINDS[keys] ?? 'motion';
     out.push({ keys, mode: 'normal', kind, id: keys });
-    if (keys === 'gJ') out.push({ keys, mode: 'visual', kind, id: keys });
+    if (G_VISUAL_ROWS.has(keys)) out.push({ keys, mode: 'visual', kind, id: keys });
   }
   return out;
 };

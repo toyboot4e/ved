@@ -1580,8 +1580,8 @@
       "keys": "<{motion}",
       "mode": "normal",
       "action": "shift Nmove lines one 'shiftwidth'",
-      "api": "operator 'dedent' — shift Nmove lines one shiftwidth left",
-      "status": "todo",
+      "api": "operator.dedent",
+      "status": "done",
       "category": "Operators",
       "tag": "<"
     },
@@ -1589,9 +1589,9 @@
       "keys": "<<",
       "mode": "normal",
       "action": "shift N lines one 'shiftwidth' leftwards",
-      "api": "",
-      "status": "todo",
-      "category": "Normal mode — other",
+      "api": "operator.dedent",
+      "status": "done",
+      "category": "Operators",
       "tag": "<<"
     },
     {
@@ -1616,8 +1616,8 @@
       "keys": ">{motion}",
       "mode": "normal",
       "action": "shift Nmove lines one 'shiftwidth'",
-      "api": "operator 'indent' — shift Nmove lines one shiftwidth right",
-      "status": "todo",
+      "api": "operator.indent",
+      "status": "done",
       "category": "Operators",
       "tag": ">"
     },
@@ -1625,9 +1625,9 @@
       "keys": ">>",
       "mode": "normal",
       "action": "shift N lines one 'shiftwidth' rightwards",
-      "api": "",
-      "status": "todo",
-      "category": "Normal mode — other",
+      "api": "operator.indent",
+      "status": "done",
+      "category": "Operators",
       "tag": ">>"
     },
     {
@@ -4352,8 +4352,8 @@
       "keys": "gU{motion}",
       "mode": "normal",
       "action": "make Nmove text uppercase",
-      "api": "operator 'uppercase' — make Nmove text uppercase",
-      "status": "todo",
+      "api": "gU",
+      "status": "done",
       "category": "Operators",
       "tag": "gU"
     },
@@ -4568,8 +4568,8 @@
       "keys": "gu{motion}",
       "mode": "normal",
       "action": "make Nmove text lowercase",
-      "api": "operator 'lowercase' — make Nmove text lowercase",
-      "status": "todo",
+      "api": "gu",
+      "status": "done",
       "category": "Operators",
       "tag": "gu"
     },
@@ -4613,8 +4613,8 @@
       "keys": "g~{motion}",
       "mode": "normal",
       "action": "swap case for Nmove text",
-      "api": "operator 'swapCase' — 'tildeop' over Nmove text",
-      "status": "todo",
+      "api": "g~",
+      "status": "done",
       "category": "Operators",
       "tag": "g~"
     },
@@ -5306,9 +5306,9 @@
       "keys": "<",
       "mode": "visual",
       "action": "shift the highlighted lines one",
-      "api": "",
-      "status": "todo",
-      "category": "Visual mode — other",
+      "api": "visual.dedent",
+      "status": "done",
+      "category": "Editing",
       "tag": "v_<"
     },
     {
@@ -5324,9 +5324,9 @@
       "keys": ">",
       "mode": "visual",
       "action": "shift the highlighted lines one",
-      "api": "",
-      "status": "todo",
-      "category": "Visual mode — other",
+      "api": "visual.indent",
+      "status": "done",
+      "category": "Editing",
       "tag": "v_>"
     },
     {
@@ -5423,8 +5423,8 @@
       "keys": "U",
       "mode": "visual",
       "action": "make highlighted area uppercase",
-      "api": "action 'visual.uppercase'",
-      "status": "todo",
+      "api": "visual.uppercase",
+      "status": "done",
       "category": "Editing",
       "tag": "v_U"
     },
@@ -5882,8 +5882,8 @@
       "keys": "u",
       "mode": "visual",
       "action": "make highlighted area lowercase",
-      "api": "action 'visual.lowercase'",
-      "status": "todo",
+      "api": "visual.lowercase",
+      "status": "done",
       "category": "Editing",
       "tag": "v_u"
     },
@@ -5918,8 +5918,8 @@
       "keys": "~",
       "mode": "visual",
       "action": "swap case for the highlighted area",
-      "api": "action 'visual.toggleCase' — swap case over the selection",
-      "status": "todo",
+      "api": "visual.toggleCase",
+      "status": "done",
       "category": "Editing",
       "tag": "v_~"
     },
@@ -11447,6 +11447,33 @@
       "api": "gl",
       "status": "ext",
       "category": "Motions",
+      "tag": ""
+    },
+    {
+      "keys": "gu",
+      "mode": "visual",
+      "action": "(ved extension)",
+      "api": "gu",
+      "status": "ext",
+      "category": "Operators",
+      "tag": ""
+    },
+    {
+      "keys": "gU",
+      "mode": "visual",
+      "action": "(ved extension)",
+      "api": "gU",
+      "status": "ext",
+      "category": "Operators",
+      "tag": ""
+    },
+    {
+      "keys": "g~",
+      "mode": "visual",
+      "action": "(ved extension)",
+      "api": "g~",
+      "status": "ext",
+      "category": "Operators",
       "tag": ""
     },
     {
