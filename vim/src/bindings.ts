@@ -12,6 +12,7 @@ import {
   NORMAL_BINDINGS,
   TEXT_OBJECT_KEYS,
   VISUAL_BINDINGS,
+  Z_SEQUENCES,
 } from './model';
 
 /** Which index.txt section a binding belongs to (its dispatch context). */
@@ -99,20 +100,24 @@ const normalCommandRows = (): VimBinding[] => {
   return out;
 };
 
-/** g-sequences: gg is already the gotoFirst motion; gh/gj/gk/gl are the
- *  display walks; gv reselects the last visual; gJ is the plain join. All of
- *  them run in visual mode too, but only gJ has its own visual index row
- *  (v_gJ) to match. */
+/** g-sequences: the ones that RESOLVE to motions (gg/ge/gE/g_) are already
+ *  MOTION_BINDINGS rows; gh/gj/gk/gl are the display walks; gv reselects the
+ *  last visual; gJ is the plain join. All of them run in visual mode too,
+ *  but only gJ has its own visual index row (v_gJ) to match. */
 const gSequenceRows = (): VimBinding[] => {
   const out: VimBinding[] = [];
   for (const keys of Object.keys(G_SEQUENCES)) {
-    if (keys === 'gg') continue;
+    if (keys in MOTION_BINDINGS) continue;
     const kind = keys === 'gv' ? 'misc' : keys === 'gJ' ? 'edit' : 'motion';
     out.push({ keys, mode: 'normal', kind, id: keys });
     if (keys === 'gJ') out.push({ keys, mode: 'visual', kind, id: keys });
   }
   return out;
 };
+
+/** z-sequences: the caret-line scrolls (zt/zz/zb). */
+const zSequenceRows = (): VimBinding[] =>
+  Object.keys(Z_SEQUENCES).map((keys) => ({ keys, mode: 'normal', kind: 'scroll', id: keys }));
 
 const buildBindings = (): VimBinding[] => {
   const out: VimBinding[] = [...motionRows()];
@@ -130,6 +135,7 @@ const buildBindings = (): VimBinding[] => {
   }
 
   out.push(...gSequenceRows());
+  out.push(...zSequenceRows());
 
   // Text objects — i/a × every object key (operator-pending and visual).
   for (const scope of ['i', 'a'] as const) {

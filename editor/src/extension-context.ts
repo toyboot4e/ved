@@ -13,7 +13,9 @@ import type { LineNumbers } from './line-numbers';
 import { deleteChar, plainInsertTr } from './plain-edits';
 import { isCaretStop, legalStop, nextCaretOffset } from './pm/caret-model';
 import type { Appear } from './pm/leaves';
+import { readPitch } from './pm/line-grouping';
 import { docFromText, offsetToPos, posToOffset, serialize } from './pm/model';
+import { caretCoords } from './scroll-reveal';
 import { isVerticalMode, scrollsVertically } from './writing-mode';
 
 /** Set a model RANGE selection by plain offsets (clamped), ending any
@@ -216,6 +218,63 @@ export const createEditorOps = (
       view.dispatch(
         view.state.tr.setSelection(TextSelection.create(view.state.doc, offsetToPos(view.state.doc, legal))),
       );
+    },
+    scrollLines: (n) => {
+      if (view.composing) return;
+      const s = scrollerRef.current;
+      if (!s) return;
+      const wm = live.current.writingMode;
+      // One "line" = the line pitch along the scroll axis (in the vertical
+      // multicol modes the lines ARE the columns, so the pitch is their
+      // horizontal advance). Signs mirror scrollPage: forward is down in the
+      // vertically-scrolling modes, LEFT in the vertical-rl ones.
+      const step = readPitch(getComputedStyle(view.dom)) * n;
+      if (scrollsVertically(wm)) s.scrollTop += step;
+      else s.scrollLeft += isVerticalMode(wm) ? -step : step;
+    },
+    revealCaretAt: (at) => {
+      if (view.composing) return;
+      const s = scrollerRef.current;
+      if (!s) return;
+      const wm = live.current.writingMode;
+      const rect = caretCoords(view, view.state.selection.head);
+      const box = s.getBoundingClientRect();
+      const pad = readPitch(getComputedStyle(view.dom));
+      if (scrollsVertically(wm)) {
+        const target = at === 'start' ? box.top + pad : at === 'end' ? box.bottom - pad : box.top + box.height / 2;
+        s.scrollTop += (rect.top + rect.bottom) / 2 - target;
+      } else {
+        // Horizontal scroll: the reading START edge is the RIGHT side in the
+        // vertical (rl) modes, the LEFT side in HorizontalColumns.
+        const vertical = isVerticalMode(wm);
+        const startEdge = vertical ? box.right - pad : box.left + pad;
+        const endEdge = vertical ? box.left + pad : box.right - pad;
+        const target = at === 'start' ? startEdge : at === 'end' ? endEdge : box.left + box.width / 2;
+        s.scrollLeft += (rect.left + rect.right) / 2 - target;
+      }
+    },
+    visibleRange: () => {
+      const s = scrollerRef.current;
+      if (!s) return null;
+      const r = s.getBoundingClientRect();
+      const inset = 6;
+      const probes = [
+        { left: r.left + inset, top: r.top + inset },
+        { left: r.right - inset, top: r.top + inset },
+        { left: r.left + inset, top: r.bottom - inset },
+        { left: r.right - inset, top: r.bottom - inset },
+        { left: r.left + r.width / 2, top: r.top + r.height / 2 },
+      ];
+      let from = Number.POSITIVE_INFINITY;
+      let to = Number.NEGATIVE_INFINITY;
+      for (const p of probes) {
+        const hit = view.posAtCoords(p);
+        if (!hit) continue;
+        const off = posToOffset(view.state.doc, hit.pos);
+        from = Math.min(from, off);
+        to = Math.max(to, off);
+      }
+      return from <= to ? { from, to } : null;
     },
     caretStop: (offset, dir) => nextCaretOffset(serialize(view.state.doc), offset, policyClassRef.current, dir < 0),
     snapCaret: (offset, dir) => {

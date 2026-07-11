@@ -220,6 +220,7 @@ export const createVimExtension = (options: VimExtensionOptions = {}): EditorExt
           head: sel.head,
           caretStop: ctx.caretStop,
           snapCaret: ctx.snapCaret,
+          visibleRange: ctx.visibleRange,
           // exactOptionalPropertyTypes: only set `words` when present.
           ...(words ? { words } : {}),
         };
@@ -239,6 +240,12 @@ export const createVimExtension = (options: VimExtensionOptions = {}): EditorExt
             break;
           case 'scrollPage':
             ctx.scrollPage(effect.dir, effect.half);
+            break;
+          case 'scrollLines':
+            ctx.scrollLines(effect.lines);
+            break;
+          case 'revealCaretAt':
+            ctx.revealCaretAt(effect.at);
             break;
           case 'command':
             ctx.runCommand(effect.id);

@@ -120,6 +120,8 @@ import {
   paraBack,
   paraForward,
   searchNext,
+  sentenceBack,
+  sentenceForward,
   textObjectRange,
   type VimRange,
   type WordModel,
@@ -153,6 +155,9 @@ export type VimDocView = {
   /** The word model for `w`/`b`/`e`; defaults to `CLASS_WORDS` (the adapter
    *  injects a Japanese-aware one when that option is on). */
   readonly words?: WordModel;
+  /** The model-offset range visible in the viewport (H/M/L). Optional — a
+   *  headless doc view has no viewport, and the motions fail gracefully. */
+  readonly visibleRange?: () => { readonly from: number; readonly to: number } | null;
 };
 
 /** A spatial (screen) direction — an arrow key. */
@@ -174,6 +179,11 @@ export type VimEffect =
       readonly visualLine: boolean;
     }
   | { readonly kind: 'scrollPage'; readonly dir: 1 | -1; readonly half: boolean }
+  /** Ctrl+E/Ctrl+Y: scroll N line pitches (positive = forward), caret put. */
+  | { readonly kind: 'scrollLines'; readonly lines: number }
+  /** zt/zz/zb: scroll the caret's line to the viewport's reading start /
+   *  center / end, caret put. */
+  | { readonly kind: 'revealCaretAt'; readonly at: 'start' | 'center' | 'end' }
   | { readonly kind: 'command'; readonly id: string }
   | { readonly kind: 'breakUndo' }
   /** Replay the last recorded change `count` times (dot-repeat `.`). Handled
@@ -438,9 +448,12 @@ const stepInLine = (doc: VimDocView, from: number, count: number, dir: 1 | -1): 
  *  `big` forces WORD (whitespace-delimited). */
 const wordStep = (doc: VimDocView, from: number, count: number, edge: keyof WordModel, big: boolean): number => {
   const words = big ? BIG_WORDS : (doc.words ?? CLASS_WORDS);
-  const dir = edge === 'prev' ? -1 : 1;
+  // A custom model may predate `endBack` (optional on the public type) —
+  // the default class walk stands in for ge/gE there.
+  const step = words[edge] ?? CLASS_WORDS[edge];
+  const dir = edge === 'prev' || edge === 'endBack' ? -1 : 1;
   let o = from;
-  for (let i = 0; i < count; i++) o = doc.snapCaret(words[edge](doc.text, o), dir);
+  for (let i = 0; i < count; i++) o = doc.snapCaret(step(doc.text, o), dir);
   return o;
 };
 
@@ -449,6 +462,32 @@ const repeatStep = (from: number, count: number, step: (o: number) => number): n
   let o = from;
   for (let i = 0; i < count; i++) o = step(o);
   return o;
+};
+
+/** H/M/L: the first non-blank of a MODEL line within the visible range —
+ *  the top line (+count−1 down), the middle one, or the bottom (−count+1
+ *  up). ved's deviation: model lines, not wrapped display rows. Null with
+ *  no viewport (headless) — the motion fails gracefully. */
+const screenLine = (doc: VimDocView, which: 'top' | 'middle' | 'bottom', count: number): number | null => {
+  const vis = doc.visibleRange?.();
+  if (!vis) return null;
+  const topLs = lineStart(doc.text, Math.max(0, Math.min(vis.from, doc.text.length)));
+  const botLs = lineStart(doc.text, Math.max(0, Math.min(vis.to, doc.text.length)));
+  const starts: number[] = [];
+  for (let ls = topLs; ; ) {
+    starts.push(ls);
+    if (ls >= botLs) break;
+    const le = lineEnd(doc.text, ls);
+    if (le >= doc.text.length) break;
+    ls = le + 1;
+  }
+  const idx =
+    which === 'top'
+      ? Math.min(count - 1, starts.length - 1)
+      : which === 'bottom'
+        ? Math.max(0, starts.length - count)
+        : (starts.length - 1) >> 1;
+  return firstNonBlank(doc.text, starts[idx] as number);
 };
 
 /** Every motion DEFINITION, keyed by its stable id — the resolver switches on
@@ -512,12 +551,48 @@ export const MOTIONS = {
     desc: 'forward to the end of a WORD',
     resolve: ({ doc, from, count }) => wordStep(doc, from, count, 'end', true),
   },
+  wordEndBack: {
+    inclusive: true,
+    linewise: false,
+    blockEol: 'reset',
+    desc: 'backward to the end of a word',
+    resolve: ({ doc, from, count }) => wordStep(doc, from, count, 'endBack', false),
+  },
+  bigWordEndBack: {
+    inclusive: true,
+    linewise: false,
+    blockEol: 'reset',
+    desc: 'backward to the end of a WORD',
+    resolve: ({ doc, from, count }) => wordStep(doc, from, count, 'endBack', true),
+  },
   matchBracket: {
     inclusive: true,
     linewise: false,
     blockEol: 'reset',
     desc: 'to the matching bracket',
     resolve: ({ doc, from }) => matchBracket(doc.text, from),
+  },
+  sentenceForward: {
+    inclusive: false,
+    linewise: false,
+    blockEol: 'reset',
+    desc: 'N sentences forward (。！？-aware)',
+    resolve: ({ doc, from, count }) => {
+      let o = from;
+      for (let i = 0; i < count; i++) {
+        const n = sentenceForward(doc.text, o);
+        if (n == null) return doc.text.length; // past the last sentence: the doc end (Vim)
+        o = n;
+      }
+      return o;
+    },
+  },
+  sentenceBack: {
+    inclusive: false,
+    linewise: false,
+    blockEol: 'reset',
+    desc: 'N sentences backward (。！？-aware)',
+    resolve: ({ doc, from, count }) => repeatStep(from, count, (o) => sentenceBack(doc.text, o)),
   },
   paraForward: {
     inclusive: false,
@@ -561,6 +636,20 @@ export const MOTIONS = {
     desc: 'to column N of the line',
     resolve: ({ doc, from, count }) => Math.min(lineStart(doc.text, from) + count - 1, lineEnd(doc.text, from)),
   },
+  lastNonBlank: {
+    inclusive: true,
+    linewise: false,
+    blockEol: 'reset',
+    desc: 'to the last non-blank of the line, N−1 lines down',
+    resolve: ({ doc, from, count }) => {
+      const base = count > 1 ? linewiseStep(doc.text, from, count - 1, 1) : from;
+      if (base == null) return null;
+      const ls = lineStart(doc.text, base);
+      let i = lineEnd(doc.text, base) - 1;
+      while (i >= ls && isBlank(doc.text[i]!)) i--;
+      return i >= ls ? i : ls;
+    },
+  },
   linewiseDown: {
     inclusive: false,
     linewise: true,
@@ -581,6 +670,27 @@ export const MOTIONS = {
     blockEol: 'reset',
     desc: 'N−1 lines down, on the first non-blank',
     resolve: ({ doc, from, count }) => linewiseStep(doc.text, from, count - 1, 1),
+  },
+  screenTop: {
+    inclusive: false,
+    linewise: true,
+    blockEol: 'reset',
+    desc: 'to line N from the top of the viewport',
+    resolve: ({ doc, count }) => screenLine(doc, 'top', count),
+  },
+  screenMiddle: {
+    inclusive: false,
+    linewise: true,
+    blockEol: 'reset',
+    desc: 'to the middle line of the viewport',
+    resolve: ({ doc }) => screenLine(doc, 'middle', 1),
+  },
+  screenBottom: {
+    inclusive: false,
+    linewise: true,
+    blockEol: 'reset',
+    desc: 'to line N from the bottom of the viewport',
+    resolve: ({ doc, count }) => screenLine(doc, 'bottom', count),
   },
   // gg/G land on the target line KEEPING the current column (Vim with
   // `nostartofline`); still linewise so `dgg`/`dG` take whole lines.
@@ -627,8 +737,18 @@ export const MOTION_BINDINGS: Readonly<Record<string, MotionId>> = {
   '+': 'linewiseDown',
   '-': 'linewiseUp',
   _: 'linewiseHere',
+  '(': 'sentenceBack',
+  ')': 'sentenceForward',
+  H: 'screenTop',
+  M: 'screenMiddle',
+  L: 'screenBottom',
+  // Pseudo-keys from the g-sequence layer (like `gg`): the walk matches the
+  // two keys and re-enters commandKey with the joined name.
   gg: 'gotoFirst',
   G: 'gotoLast',
+  ge: 'wordEndBack',
+  gE: 'bigWordEndBack',
+  g_: 'lastNonBlank',
 };
 
 /** Resolve the motion a key triggers (`null` when the key is not a motion, or
@@ -1132,8 +1252,28 @@ const displayWalk =
     handled: true,
   });
 
+/** zt/zz/zb: scroll the caret's line to the viewport's reading start /
+ *  center / end (the caret itself stays put — Vim's z variants without a
+ *  column move). */
+const zScroll =
+  (at: 'start' | 'center' | 'end'): VimAction =>
+  (state) => ({
+    state: clearPending(state),
+    effects: [{ kind: 'revealCaretAt', at }],
+    handled: true,
+  });
+
+export const Z_SEQUENCES: Readonly<Record<string, VimAction>> = {
+  zt: zScroll('start'),
+  zz: zScroll('center'),
+  zb: zScroll('end'),
+};
+
 export const G_SEQUENCES: Readonly<Record<string, VimAction>> = {
   gg: (state, _env, doc) => commandKey(state, 'gg', doc),
+  ge: (state, _env, doc) => commandKey(state, 'ge', doc),
+  gE: (state, _env, doc) => commandKey(state, 'gE', doc),
+  g_: (state, _env, doc) => commandKey(state, 'g_', doc),
   gh: displayWalk('left'),
   gj: displayWalk('down'),
   gk: displayWalk('up'),
@@ -1189,8 +1329,8 @@ const textObjectSequences = (): Record<string, VimAction> => {
 };
 
 const BUILTIN_TRIES: Readonly<Record<'normal' | 'visual' | 'operatorPending', BuiltinTrie>> = {
-  normal: builtinTrie(G_SEQUENCES),
-  visual: builtinTrie({ ...G_SEQUENCES, ...textObjectSequences() }),
+  normal: builtinTrie({ ...G_SEQUENCES, ...Z_SEQUENCES }),
+  visual: builtinTrie({ ...G_SEQUENCES, ...Z_SEQUENCES, ...textObjectSequences() }),
   operatorPending: builtinTrie({ ...G_SEQUENCES, ...textObjectSequences() }),
 };
 
@@ -1983,6 +2123,17 @@ const NORMAL_ACTIONS = {
   'scroll.pageUp': pageScroll(-1, false),
   'scroll.halfDown': pageScroll(1, true),
   'scroll.halfUp': pageScroll(-1, true),
+  // Ctrl+e/y: N-line scrolls, caret put (zt/zz/zb ride Z_SEQUENCES).
+  'scroll.lineDown': (state, env) => ({
+    state,
+    effects: [{ kind: 'scrollLines' as const, lines: env.count }],
+    handled: true,
+  }),
+  'scroll.lineUp': (state, env) => ({
+    state,
+    effects: [{ kind: 'scrollLines' as const, lines: -env.count }],
+    handled: true,
+  }),
   // Dot-repeat: replay the last change (the adapter steps the doc). `N.`
   // replays N times.
   'repeat.dot': (state, env) =>
@@ -2070,6 +2221,8 @@ export const NORMAL_BINDINGS: Readonly<Record<string, keyof typeof NORMAL_ACTION
   'C-b': 'scroll.pageUp',
   'C-d': 'scroll.halfDown',
   'C-u': 'scroll.halfUp',
+  'C-e': 'scroll.lineDown',
+  'C-y': 'scroll.lineUp',
 };
 
 /** The action ids a user `{action}` RHS may reference, per map mode (handed

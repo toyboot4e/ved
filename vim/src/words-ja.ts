@@ -78,5 +78,11 @@ export const createJapaneseWordModel = (): WordModel => {
       const i = firstIdxWhere(stops, (s) => s.end - 1 > off);
       return i < stops.length ? stops[i]!.end - 1 : Math.max(off, text.length - 1);
     },
+    endBack: (text, off) => {
+      const stops = stopsOf(text);
+      // The last stop whose end char sits strictly before `off`.
+      const i = firstIdxWhere(stops, (s) => s.end - 1 >= off) - 1;
+      return i >= 0 ? stops[i]!.end - 1 : 0;
+    },
   };
 };

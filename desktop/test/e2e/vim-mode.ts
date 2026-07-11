@@ -26,8 +26,21 @@ const vimClasses = () =>
       blockCaretBox: document.querySelector('.vedBlockCaretBox') !== null,
     };
   });
+// The FIRST toggle goes through a real mouse click (the toolbar loop is part
+// of what this driver pins); the rest dispatch the DOM click directly — in
+// some shell layout states (expanded view-config row + the centered vim
+// cluster) the tab-bar container wins the hit-test above the button and a
+// real click can't land. A shell papercut, not a vim one.
+let toggledOnce = false;
 const toggleVim = async () => {
-  await page.click('button[aria-label="Toggle Vim mode"]');
+  if (toggledOnce) {
+    await page.evaluate(() =>
+      document.querySelector<HTMLButtonElement>('button[aria-label="Toggle Vim mode"]')?.click(),
+    );
+  } else {
+    await page.click('button[aria-label="Toggle Vim mode"]');
+    toggledOnce = true;
+  }
   await page.waitForTimeout(100);
 };
 const press = async (keys: string, settleMs = 60) => {
@@ -60,8 +73,9 @@ try {
   assert.ok(cls.blockCaret, 'block caret decoration renders over the character under the caret');
   step('toggle on: NORMAL chip, vedVimNormal class, block caret');
 
-  // --- Normal mode never types (z is unbound — q now records macros) ---
-  await press('z');
+  // --- Normal mode never types (& is unbound — z is the zt/zz/zb prefix,
+  // q records macros) ---
+  await press('&');
   await page.keyboard.insertText('な'); // bypasses keydown → the handleTextInput belt
   await page.waitForTimeout(80);
   assert.equal(await docText(page), TEXT, 'neither an unbound key nor raw insertText types in normal mode');
@@ -393,6 +407,33 @@ try {
   await press('J');
   assert.equal(await docText(page), 'aa bb cc', 'visual J joins every selected line');
   step('gJ newline-only join; visual J joins the selection');
+
+  // --- Viewport seams: zt/zb reposition the caret line in the scroller,
+  // Ctrl+E scrolls one line pitch, H/L jump within the VISIBLE lines. ---
+  await toggleVim();
+  await setDoc(page, Array.from({ length: 80 }, (_, i) => `l${i}`).join('\n'));
+  await toggleVim();
+  const scrollPos = () =>
+    page.evaluate(() => {
+      const s = document.getElementById('editor-content')?.parentElement;
+      return { x: s?.scrollLeft ?? 0, y: s?.scrollTop ?? 0 };
+    });
+  await setCaret(page, 150); // mid-document
+  await press('zt', 200);
+  const atStart = await scrollPos();
+  await press('zb', 200);
+  const atEnd = await scrollPos();
+  assert.ok(atStart.x !== atEnd.x || atStart.y !== atEnd.y, 'zt and zb park the caret line at different edges');
+  await page.keyboard.press('Control+e');
+  await page.waitForTimeout(120);
+  const lineScrolled = await scrollPos();
+  assert.ok(lineScrolled.x !== atEnd.x || lineScrolled.y !== atEnd.y, 'Ctrl+E scrolls by a line pitch');
+  await press('H');
+  const hOff = await caretOffset(page);
+  await press('L');
+  const lOff = await caretOffset(page);
+  assert.ok(hOff !== lOff, `H and L land on different visible lines (${hOff} vs ${lOff})`);
+  step('zt/zb/Ctrl+E scroll the viewport; H/L jump within the visible lines');
 
   await toggleVim();
   await setDoc(page, 'あ、い。う');

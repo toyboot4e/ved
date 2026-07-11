@@ -42,3 +42,33 @@ export const isFullwidth = (ch: string): boolean => !!ch && FULLWIDTH.test(ch);
  *  `right` the first non-blank of the lower one (either may be '' at an edge). */
 export const joinNeedsSpace = (left: string, right: string): boolean =>
   left !== '' && right !== '' && !isFullwidth(left) && !isFullwidth(right);
+
+/** Sentence ENDERS for the `(`/`)` motions. A fullwidth ender (。！？．) ends
+ *  the sentence by itself; an ASCII one needs following whitespace or a line
+ *  end (so `3.14` is not a boundary) — Vim's rule, Japanese-first. */
+export const SENTENCE_ENDS: ReadonlySet<string> = new Set(['。', '！', '？', '．', '.', '!', '?']);
+
+/** Characters that may TRAIL a sentence ender and still belong to the
+ *  sentence (closing quotes/brackets: 「彼は言った。」). */
+export const SENTENCE_CLOSERS: ReadonlySet<string> = new Set([
+  '」',
+  '』',
+  '）',
+  '】',
+  '〕',
+  '》',
+  '〉',
+  ')',
+  ']',
+  '}',
+  '"',
+  "'",
+  '’',
+  '”',
+]);
+
+/** One indent step for the `>`/`<` operators — Japanese-first, a single
+ *  fullwidth space (the conventional paragraph-indent cell). `<` also eats
+ *  this many ASCII columns (spaces, or one tab) so Latin text round-trips. */
+export const INDENT_UNIT = '　';
+export const INDENT_ASCII_WIDTH = 2;

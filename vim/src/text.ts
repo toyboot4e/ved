@@ -5,7 +5,7 @@
  *  markup characters included (ruby-aware snapping is the caller's job, via
  *  the injected doc view). */
 
-import { BRACKET_PAIRS } from './config';
+import { BRACKET_PAIRS, isFullwidth, SENTENCE_CLOSERS, SENTENCE_ENDS } from './config';
 
 // ---------------------------------------------------------------------------
 // Lines
@@ -57,8 +57,10 @@ export const isBlank = (c: string): boolean => /\s/.test(c);
  *  (`d`/`c`/`y`) consumes. */
 export type VimRange = { from: number; to: number; linewise: boolean };
 
-/** The word-granularity behind `w`/`b`/`e`, abstracted so it can be swapped
- *  (a Japanese segmenter, words-ja.ts). Each returns an offset in `text`. */
+/** The word-granularity behind `w`/`b`/`e`/`ge`, abstracted so it can be
+ *  swapped (a Japanese segmenter, words-ja.ts). Each returns an offset in
+ *  `text`. `endBack` is optional (older custom models predate it); a model
+ *  without one falls back to the default class walk for `ge`/`gE`. */
 export type WordModel = {
   /** `w`: the start of the next word after `off`. */
   readonly next: (text: string, off: number) => number;
@@ -66,11 +68,14 @@ export type WordModel = {
   readonly prev: (text: string, off: number) => number;
   /** `e`: the last character (offset) of the next word from `off`. */
   readonly end: (text: string, off: number) => number;
+  /** `ge`: the last character (offset) of the previous word, strictly before
+   *  `off`. */
+  readonly endBack?: (text: string, off: number) => number;
 };
 
 /** The word/WORD walk is ONE algorithm over a character classifier (class 0 =
  *  whitespace, others = word classes); word vs WORD is just the classifier. */
-const wordTrio = (cls: (c: string) => number): WordModel => ({
+const wordTrio = (cls: (c: string) => number): Required<WordModel> => ({
   next: (text, off) => {
     let i = off;
     if (i >= text.length) return i;
@@ -96,15 +101,23 @@ const wordTrio = (cls: (c: string) => number): WordModel => ({
     while (i + 1 < text.length && cls(text[i + 1]!) === k) i++;
     return i;
   },
+  endBack: (text, off) => {
+    // A word END is a word char whose successor is missing or of a
+    // different class.
+    const isEnd = (x: number): boolean =>
+      cls(text[x]!) !== 0 && (x + 1 >= text.length || cls(text[x + 1]!) !== cls(text[x]!));
+    for (let i = off - 1; i > 0; i--) if (isEnd(i)) return i;
+    return 0;
+  },
 });
 
 /** The default word model — Vim's `iskeyword` classes (a CJK run is one word,
  *  as Vim behaves without a segmenter). `words-ja.ts` offers a JP-aware one. */
-export const CLASS_WORDS: WordModel = wordTrio(classOf);
+export const CLASS_WORDS: Required<WordModel> = wordTrio(classOf);
 
-/** WORD granularity (`W`/`B`/`E`): only whitespace vs non-whitespace (a WORD
- *  is a whitespace-delimited run — punctuation joins its neighbours). */
-export const BIG_WORDS: WordModel = wordTrio((c) => (isBlank(c) ? 0 : 1));
+/** WORD granularity (`W`/`B`/`E`/`gE`): only whitespace vs non-whitespace (a
+ *  WORD is a whitespace-delimited run — punctuation joins its neighbours). */
+export const BIG_WORDS: Required<WordModel> = wordTrio((c) => (isBlank(c) ? 0 : 1));
 
 // ---------------------------------------------------------------------------
 // Brackets, paragraphs, text objects
@@ -192,6 +205,42 @@ const quotePair = (text: string, from: number, q: string): [number, number] | nu
 
 /** `}`: the start of the next BLANK line after the caret's line, or the doc
  *  end. `{`: the previous blank line's start, or 0. (Vim paragraph motions.) */
+/** The next sentence-START strictly after `from`, or null past the last one.
+ *  A sentence starts at the document start, after every newline (a ved line
+ *  is a paragraph), and after an ENDER (config.ts SENTENCE_ENDS — a
+ *  fullwidth 。！？ by itself; an ASCII one only when whitespace or the line
+ *  end follows) plus any trailing CLOSERS (」』…) and spaces. */
+export const sentenceForward = (text: string, from: number): number | null => {
+  for (let i = from; i < text.length; i++) {
+    const c = text[i]!;
+    if (c === '\n') return i + 1 <= text.length ? i + 1 : null;
+    if (!SENTENCE_ENDS.has(c)) continue;
+    let j = i + 1;
+    while (j < text.length && SENTENCE_CLOSERS.has(text[j]!)) j++;
+    let k = j;
+    while (k < text.length && (text[k] === ' ' || text[k] === '\t' || text[k] === '　')) k++;
+    // ASCII enders need the gap (so `3.14` is no boundary); fullwidth don't.
+    if (!isFullwidth(c) && !(k > j || k >= text.length || text[k] === '\n')) continue;
+    if (k >= text.length) return null; // the ender closes the LAST sentence
+    if (text[k] === '\n') return k + 1;
+    return k;
+  }
+  return null;
+};
+
+/** The latest sentence-start strictly BEFORE `from` (Vim `(`: the current
+ *  sentence's start when inside one, else the previous sentence's). */
+export const sentenceBack = (text: string, from: number): number => {
+  if (from <= 0) return 0;
+  // Candidates live on the caret's line or the one before it (a newline is
+  // itself a sentence boundary, so earlier lines can't win).
+  let bound = lineStart(text, from);
+  if (bound >= from && bound > 0) bound = lineStart(text, bound - 1);
+  let best = bound;
+  for (let s = sentenceForward(text, bound); s != null && s < from; s = sentenceForward(text, s)) best = s;
+  return best;
+};
+
 export const paraForward = (text: string, from: number): number => {
   let i = lineEnd(text, from);
   while (i < text.length) {

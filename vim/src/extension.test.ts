@@ -33,6 +33,9 @@ const fakeContext = (initial: string) => {
       if (!extend) state.anchor = h;
     },
     scrollPage: () => calls.push('scrollPage'),
+    scrollLines: (n) => calls.push(`scrollLines:${n}`),
+    revealCaretAt: (at) => calls.push(`revealCaretAt:${at}`),
+    visibleRange: () => ({ from: 0, to: state.text.length }),
     caretStop: (off, dir) => clamp(off + dir),
     snapCaret: (off) => clamp(off),
     deleteStep: () => calls.push('deleteStep'),
@@ -201,6 +204,34 @@ describe('dot-repeat over editor-inserted text', () => {
     typeLive(t, '!');
     t.press('Escape');
     expect(t.state.text).toBe('ab!\ncd!');
+  });
+});
+
+describe('viewport seams through the adapter', () => {
+  it('zt/zz/zb emit revealCaretAt; Ctrl+E/Ctrl+Y emit counted line scrolls', () => {
+    const t = attach('abc');
+    t.press('z', 't');
+    t.press('z', 'z');
+    t.press('z', 'b');
+    expect(t.calls).toContain('revealCaretAt:start');
+    expect(t.calls).toContain('revealCaretAt:center');
+    expect(t.calls).toContain('revealCaretAt:end');
+    t.hooks.handleKey?.(chord('e', { ctrlKey: true }));
+    expect(t.calls).toContain('scrollLines:1');
+    t.press('3');
+    t.hooks.handleKey?.(chord('y', { ctrlKey: true }));
+    expect(t.calls).toContain('scrollLines:-3');
+  });
+
+  it('H/M/L read the fake viewport (the whole doc here)', () => {
+    const t = attach('aa\nbb\ncc');
+    t.press('G'); // away from the top
+    t.press('H');
+    expect(t.state.head).toBe(0);
+    t.press('L');
+    expect(t.state.head).toBe(6);
+    t.press('M');
+    expect(t.state.head).toBe(3);
   });
 });
 

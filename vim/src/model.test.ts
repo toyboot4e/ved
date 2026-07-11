@@ -932,6 +932,79 @@ describe('motions: | + - _ and the block-eol classification', () => {
   });
 });
 
+describe('motions: ge/gE, g_, sentences ( )', () => {
+  it('ge moves backward to the previous word end; inclusive for operators', () => {
+    expect(play('foo bar baz', 8, ['g', 'e']).head).toBe(6); // end of 'bar'
+    expect(play('foo bar', 4, ['g', 'e']).head).toBe(2); // end of 'foo'
+    expect(play('foo bar baz', 10, ['2', 'g', 'e']).head).toBe(2); // counted
+    // Inclusive backward motion: dge takes target THROUGH the cursor char.
+    expect(play('foo bar', 4, ['d', 'g', 'e']).text).toBe('foar');
+  });
+
+  it('gE uses WORD granularity (punctuation joins its run)', () => {
+    expect(play('a b.c d', 6, ['g', 'E']).head).toBe(4); // end of the WORD 'b.c'
+    expect(play('a b.c d', 4, ['g', 'e']).head).toBe(3); // word: '.' is its own end
+    expect(play('a b.c d', 4, ['g', 'E']).head).toBe(0); // WORD: back to 'a'
+  });
+
+  it('g_ goes to the last non-blank; N−1 lines down with a count', () => {
+    expect(play('ab  ', 0, ['g', '_']).head).toBe(1);
+    expect(play('ab\ncd  \nef', 0, ['2', 'g', '_']).head).toBe(4); // line 2's 'd'
+    expect(play('ab  ', 0, ['d', 'g', '_']).text).toBe('  '); // inclusive
+  });
+
+  it(') jumps to the next sentence start — 。 ends alone, ASCII needs a gap', () => {
+    expect(play('あれ。これ。それ', 0, [')']).head).toBe(3);
+    expect(play('あれ。これ。それ', 3, [')']).head).toBe(6);
+    expect(play('A b. C d', 0, [')']).head).toBe(5); // '. ' is a boundary
+    expect(play('pi 3.14 x', 0, [')']).head).toBe(9); // '3.14' is not → the doc end
+    expect(play('「あ。」い。う', 0, [')']).head).toBe(4); // closers ride the sentence
+    expect(play('ab\ncd', 0, [')']).head).toBe(3); // a newline bounds sentences
+  });
+
+  it('( returns to the current/previous sentence start', () => {
+    expect(play('あれ。これ。それ', 7, ['(']).head).toBe(6);
+    expect(play('あれ。これ。それ', 3, ['(']).head).toBe(0);
+    expect(play('あれ。これ。それ', 8, ['2', '(']).head).toBe(3);
+  });
+
+  it('d) deletes to the next sentence start (exclusive)', () => {
+    expect(play('あれ。これ。', 0, ['d', ')']).text).toBe('これ。');
+  });
+});
+
+describe('H/M/L over the visible range', () => {
+  // Five 2-char lines at 0, 3, 6, 9, 12; the viewport shows lines 1..4.
+  const T = 'aa\nbb\ncc\ndd\nee';
+  const doc = (head: number): VimDocView => ({
+    ...docOf(T, head),
+    visibleRange: () => ({ from: 3, to: 13 }),
+  });
+
+  it('H/M/L land on the top / middle / bottom visible lines', () => {
+    expect(vimKeydown(VIM_INITIAL, key('H'), doc(7)).effects).toContainEqual({ kind: 'select', anchor: 3, head: 3 });
+    expect(vimKeydown(VIM_INITIAL, key('M'), doc(7)).effects).toContainEqual({ kind: 'select', anchor: 6, head: 6 });
+    expect(vimKeydown(VIM_INITIAL, key('L'), doc(7)).effects).toContainEqual({
+      kind: 'select',
+      anchor: 12,
+      head: 12,
+    });
+  });
+
+  it('counts step from the edge; dH is linewise', () => {
+    const two = vimKeydown({ ...VIM_INITIAL, count: 2 }, key('H'), doc(12));
+    expect(two.effects).toContainEqual({ kind: 'select', anchor: 6, head: 6 });
+    const pend = vimKeydown(VIM_INITIAL, key('d'), doc(7));
+    const dH = vimKeydown(pend.state, key('H'), doc(7));
+    expect(dH.effects).toContainEqual({ kind: 'replace', from: 3, to: 9, text: '' }); // lines 1-2, linewise
+  });
+
+  it('fails gracefully without a viewport (headless doc view)', () => {
+    const r = play(T, 7, ['H']);
+    expect(r.head).toBe(7); // no visibleRange → the motion is a no-op
+  });
+});
+
 describe('searches extend in visual mode', () => {
   it('/pattern from visual keeps the anchor', () => {
     const r = play('foo bar foo', 0, ['v', '/', 'b', 'a', 'r', key('Enter')]);

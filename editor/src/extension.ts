@@ -93,6 +93,19 @@ export type EditorExtensionContext = {
    *  the nearest legal position in the new viewport (a modal editor's
    *  Ctrl+F/B page motion). Refused during IME composition. */
   readonly scrollPage: (dir: 1 | -1, half?: boolean) => void;
+  /** Scroll `n` LINE PITCHES along the reading direction (positive =
+   *  forward), without moving the caret (a modal editor's Ctrl+E/Ctrl+Y).
+   *  Refused during IME composition. */
+  readonly scrollLines: (n: number) => void;
+  /** Scroll so the caret's line sits at the viewport's reading START,
+   *  center, or reading END, without moving the caret (a modal editor's
+   *  zt/zz/zb). Refused during IME composition. */
+  readonly revealCaretAt: (at: 'start' | 'center' | 'end') => void;
+  /** The model-offset range currently VISIBLE in the viewport, hit-tested at
+   *  the viewport's corners and center (approximate around page gaps and
+   *  blank space). Null when nothing hit (detached/headless). Pure query —
+   *  the seam behind a modal editor's H/M/L. */
+  readonly visibleRange: () => { readonly from: number; readonly to: number } | null;
   /** The next legal caret stop from `offset` (pure query — the editor's
    *  character-movement rule: collapsed ruby markup and readings are skipped,
    *  base interiors step char by char). Returns `offset` at a document
