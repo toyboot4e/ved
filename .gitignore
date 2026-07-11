@@ -13,3 +13,5 @@ out
 
 # generated API reference (`just doc`)
 /docs/api/
+# shadow copy of a docs entry file (see vite.docs.config.ts)
+.api-docs-entry.ts

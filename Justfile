@@ -113,33 +113,20 @@ test-all:
 [private]
 alias ta := test-all
 
-# regenerates the API reference (docs/api/) — the `ved` extension API plus the
-# internal seams (@ved/editor, @ved/vim, the IPC contract) — from the entry
-# files' TypeScript via ox-content's OXC extraction
+# regenerates the API reference — the `ved` extension API plus the internal
+# seams (@ved/editor, @ved/vim, the IPC contract) — from the entry files'
+# TypeScript via ox-content's OXC extraction, and builds the static site
+# (docs/api/ Markdown, out/api-docs/ HTML). Fails on extraction diagnostics.
 doc:
     pnpm run api-docs
 
-doc-check:
-    pnpm run api-docs:check
-
-# regenerates the API reference, renders it to HTML (out/api-docs/), and opens
-# it in the browser
+# serves the API reference on a Vite dev server (http://localhost:5273) and
+# opens it in the browser; re-extracts whenever a documented source changes
 doc-open:
-    pnpm run api-docs:open
+    pnpm run api-docs:serve
 
 [private]
 alias do := doc-open
-
-# regenerates the API reference whenever a documented source changes. The
-# ignore matters: the generator drops a shadow copy of @ved/editor's entry
-# into the watched tree on every run — watching it would self-trigger forever.
-doc-watch:
-    watchexec --watch editor/src --watch vim/src --watch desktop/src/shared \
-        --watch scripts/gen-api-docs.ts --exts ts,tsx \
-        --ignore '**/.api-docs-entry.ts' -- pnpm run api-docs
-
-[private]
-alias dw := doc-watch
 
 # regenerates the Vim keybinding reference (vim/docs/keybindings.{json,md}) by
 # joining Vim's own index.txt against @ved/vim's declared binding catalog
