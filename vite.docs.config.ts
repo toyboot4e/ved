@@ -17,7 +17,7 @@ import { existsSync, readdirSync, readFileSync, rmSync, writeFileSync } from 'no
 import { dirname, join, relative } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { extractDocsFromEntryPoints } from '@ox-content/napi';
-import { defaultTheme, defineTheme, oxContent } from '@ox-content/vite-plugin';
+import { buildSearchIndex, defaultTheme, defineTheme, oxContent } from '@ox-content/vite-plugin';
 import { defineConfig, type Plugin } from 'vite';
 
 const REPO_ROOT = dirname(fileURLToPath(import.meta.url));
@@ -103,12 +103,27 @@ const patchDocs = (): Plugin => ({
   // buildStart, which generates the pages.
   buildStart: { sequential: true, order: 'post', handler: () => patchTree(API_DIR) },
   configureServer(server) {
+    // ox-content builds the search index only into the static build
+    // (closeBundle); in dev, /search-index.json would fall through to the
+    // html fallback and search reports the index unavailable. Serve it here,
+    // rebuilt lazily after every docs change.
+    let searchIndex: string | null = null;
+    server.middlewares.use('/search-index.json', (_req, res, next) => {
+      (async () => {
+        searchIndex ??= await buildSearchIndex(API_DIR, '/', ['.md']);
+        res.setHeader('Content-Type', 'application/json');
+        res.end(searchIndex);
+      })().catch(next);
+    });
     server.watcher.on('all', (event, file) => {
       if (event !== 'add' && event !== 'change') return;
       // A shadowed entry changed: refresh its shadow (the write re-triggers
       // the plugin's own extraction watcher, which reads the shadow).
       if (shadows.has(relative(REPO_ROOT, file))) shadowOf(relative(REPO_ROOT, file));
-      if (file.startsWith(API_DIR) && file.endsWith('.md')) patchPage(file);
+      if (file.startsWith(API_DIR) && file.endsWith('.md')) {
+        patchPage(file);
+        searchIndex = null;
+      }
     });
   },
 });
