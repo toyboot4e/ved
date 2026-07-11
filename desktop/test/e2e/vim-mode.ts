@@ -408,6 +408,29 @@ try {
   assert.equal(await docText(page), 'aa bb cc', 'visual J joins every selected line');
   step('gJ newline-only join; visual J joins the selection');
 
+  // --- Replace mode: R overtypes (insertText = the IME-commit path — the
+  // adapter consumes the displaced chars), Backspace restores, Escape ends,
+  // and the change dot-repeats as an overtype. ---
+  await toggleVim();
+  await setDoc(page, 'abcd efgh');
+  await toggleVim();
+  await setCaret(page, 0);
+  await press('R');
+  assert.equal(await modeChip(), 'REPLACE', 'R shows the REPLACE chip');
+  await page.keyboard.insertText('XY'); // like an IME commit: no keydowns
+  await page.waitForTimeout(80);
+  assert.equal(await docText(page), 'XYcd efgh', 'insertText overtypes in replace mode');
+  await page.keyboard.press('Backspace');
+  await page.waitForTimeout(60);
+  assert.equal(await docText(page), 'Xbcd efgh', 'Backspace restores the overwritten character');
+  await page.keyboard.press('Escape');
+  await page.waitForTimeout(60);
+  assert.equal(await modeChip(), 'NORMAL', 'Escape leaves replace mode');
+  await press('w');
+  await press('.');
+  assert.equal(await docText(page), 'Xbcd Xfgh', 'dot-repeat replays the R change as an overtype');
+  step('R replace mode: overtype (IME path), Backspace restore, dot-repeat');
+
   // --- Case + indent operators: gU{motion} uppercases, >> indents by one
   // fullwidth space (the Japanese-first indent cell), << removes it. ---
   await toggleVim();

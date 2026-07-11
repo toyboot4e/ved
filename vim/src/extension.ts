@@ -19,6 +19,7 @@ import {
   type VimState,
   vimKeydown,
   vimRecordText,
+  vimReplaceText,
   type WordModel,
 } from './model';
 import { createJapaneseWordModel } from './words-ja';
@@ -82,10 +83,27 @@ const clampLineEnd = (ctx: EditorExtensionContext, mode: VimMode): void => {
   }
 };
 
+/** Replace-mode overwrite: consume as many characters after the caret as
+ *  `text` brings, CLAMPED at the line end (past it `R` appends — Vim), and
+ *  return what was displaced. The one primitive every replace-mode text path
+ *  shares: typed (handleTextInput), fed keys, dot-repeat replay, and IME
+ *  commits (compositionend). */
+const overwriteAtCaret = (ctx: EditorExtensionContext, text: string): string => {
+  const docText = ctx.getText();
+  const { head } = ctx.getSelection();
+  const nl = docText.indexOf('\n', head);
+  const le = nl < 0 ? docText.length : nl;
+  const to = Math.min(head + text.length, le);
+  const overwritten = docText.slice(head, to);
+  ctx.replaceRange(head, to, text);
+  return overwritten;
+};
+
 /** A fed/replayed insert-mode key the reducer leaves to "the editor": mirror
  *  what the editor's own handlers do with a live one — type printables, break
  *  the line on Enter, delete one caret step on Backspace/Delete. (Live
- *  keydowns never come through here — the editor itself handles them.) */
+ *  keydowns never come through here — the editor itself handles them.
+ *  Replace-mode printables go through the caller's overwrite path instead.) */
 const insertUnhandled = (ctx: EditorExtensionContext, k: VimKey): void => {
   if (k.ctrl || k.meta || k.alt) return;
   const { head } = ctx.getSelection();
@@ -176,8 +194,9 @@ export const createVimExtension = (options: VimExtensionOptions = {}): EditorExt
       let feedBudget = 0;
 
       const syncMode = (mode: VimMode): void => {
-        ctx.setCaretShape(mode === 'insert' ? 'bar' : 'block');
-        ctx.setContentClass(NORMAL_CLASS, mode !== 'insert');
+        const typing = mode === 'insert' || mode === 'replace';
+        ctx.setCaretShape(typing ? 'bar' : 'block');
+        ctx.setContentClass(NORMAL_CLASS, !typing);
         options.onModeChange?.(mode);
       };
       syncMode(state.mode);
@@ -271,22 +290,29 @@ export const createVimExtension = (options: VimExtensionOptions = {}): EditorExt
         if (step.handled) {
           applyStepEffects(step.effects, callOpts.replay, applyEffect);
           clampLineEnd(ctx, state.mode);
-        } else if (state.mode === 'insert') {
+        } else if (state.mode === 'replace' && isPlainKey(k)) {
+          state = vimReplaceText(state, k.key, overwriteAtCaret(ctx, k.key));
+        } else if (state.mode === 'insert' || state.mode === 'replace') {
           insertUnhandled(ctx, k);
         }
       };
 
       // Dot-repeat: recorded keys are POST-expansion, so replay skips the
       // mapping layer (`replay: true`) and is not itself re-recorded; TEXT
-      // items (the insert phase's literal text) insert as-is at the caret.
+      // items (the insert phase's literal text) insert as-is at the caret —
+      // or OVERTYPE, when the replayed change re-entered replace mode.
       const replayLastChange = (count: number): void => {
         const items = state.lastChange;
         if (!items) return;
         for (let n = 0; n < count; n++) {
           for (const it of items) {
             if (it.kind === 'text') {
-              const sel = ctx.getSelection();
-              ctx.replaceRange(sel.head, sel.head, it.text);
+              if (state.mode === 'replace') {
+                state = vimReplaceText(state, it.text, overwriteAtCaret(ctx, it.text));
+              } else {
+                const sel = ctx.getSelection();
+                ctx.replaceRange(sel.head, sel.head, it.text);
+              }
             } else {
               feedOne(it.key, { replay: true });
             }
@@ -353,20 +379,28 @@ export const createVimExtension = (options: VimExtensionOptions = {}): EditorExt
           return step.handled;
         },
         // Belt over the keydown braces: any plain insertion arriving outside
-        // insert mode (programmatic insertText &c.) is blocked. In insert
-        // mode the data records for dot-repeat — the beforeinput literal is
+        // the typing modes (programmatic insertText &c.) is blocked. Insert
+        // mode records the data for dot-repeat — the beforeinput literal is
         // the faithful source for live typed text (see vimRecordText).
+        // REPLACE mode takes the insertion over entirely: overwrite at the
+        // caret (clamped at the line end), stack what was displaced.
         handleTextInput: (data: string): boolean => {
-          if (state.mode !== 'insert') return true;
-          state = vimRecordText(state, data);
-          return false;
+          if (state.mode === 'insert') {
+            state = vimRecordText(state, data);
+            return false;
+          }
+          if (state.mode === 'replace') {
+            state = vimReplaceText(state, data, overwriteAtCaret(ctx, data));
+            return true; // the overwrite above IS the edit
+          }
+          return true;
         },
         onCompositionStart: (): void => {
           // A composition interrupting an insert-map walk: the typed prefix
           // is LIVE text (the insert walk never swallows), so resetting the
           // walk loses nothing — and stays observation-only.
           if (state.mapPending) state = { ...state, mapPending: null };
-          if (state.mode === 'insert') {
+          if (state.mode === 'insert' || state.mode === 'replace') {
             // Snapshot for the dot-repeat text capture. A chained
             // composition can fire a second start before the (deferred) end
             // hook — keep the FIRST snapshot; the final diff covers the
@@ -379,9 +413,27 @@ export const createVimExtension = (options: VimExtensionOptions = {}): EditorExt
         },
         onCompositionEnd: (): void => {
           if (insertCompose) {
-            // Insert mode accepted the composition: record what it added.
-            state = vimRecordText(state, insertedText(insertCompose.text, ctx.getText()));
+            const inserted = insertedText(insertCompose.text, ctx.getText());
             insertCompose = null;
+            if (state.mode === 'replace' && inserted.length > 0) {
+              // The composition INSERTED its commit; consume the same number
+              // of characters after the caret (up to the line end) so the
+              // net effect is an overtype — a legal post-settle edit.
+              const docText = ctx.getText();
+              const { head } = ctx.getSelection();
+              const nl = docText.indexOf('\n', head);
+              const le = nl < 0 ? docText.length : nl;
+              const to = Math.min(head + inserted.length, le);
+              const overwritten = docText.slice(head, to);
+              if (to > head) {
+                ctx.replaceRange(head, to, '');
+                ctx.setSelection(head, head);
+              }
+              state = vimReplaceText(state, inserted, overwritten);
+              return;
+            }
+            // Insert mode accepted the composition: record what it added.
+            state = vimRecordText(state, inserted);
             return;
           }
           if (!composeUndo) return;

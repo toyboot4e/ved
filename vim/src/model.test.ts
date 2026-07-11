@@ -12,6 +12,7 @@ import {
   type VimStep,
   vimKeydown,
   vimRecordText,
+  vimReplaceText,
 } from './model';
 
 /** A doc view over plain text: caretStop = ±1 clamped (no rubies here — the
@@ -91,8 +92,14 @@ const play = (
   const replayLastChange = (count: number): void => {
     for (let n = 0; n < count; n++) {
       for (const it of st.lastChange ?? []) {
-        if (it.kind === 'text') insertText(it.text);
-        else feed(it.key, { replay: true });
+        if (it.kind === 'text') {
+          // Mirror the adapter: text OVERTYPES when the replayed change
+          // re-entered replace mode, inserts otherwise.
+          if (st.mode === 'replace') for (const ch of it.text) editorReplaceKey(key(ch));
+          else insertText(it.text);
+        } else {
+          feed(it.key, { replay: true });
+        }
       }
     }
   };
@@ -141,6 +148,24 @@ const play = (
       deleteBack();
     }
   };
+  // Mirror the adapter's replace-mode overwrite (clamped at the line end;
+  // every path — typed, fed, replayed — reports through vimReplaceText).
+  const editorReplaceKey = (k: VimKey): void => {
+    if (isPlainKey(k)) {
+      const nl = cur.text.indexOf('\n', cur.head);
+      const le = nl < 0 ? cur.text.length : nl;
+      const to = Math.min(cur.head + 1, le);
+      const overwritten = cur.text.slice(cur.head, to);
+      cur = {
+        text: cur.text.slice(0, cur.head) + k.key + cur.text.slice(to),
+        head: cur.head + 1,
+        anchor: cur.head + 1,
+      };
+      st = vimReplaceText(st, k.key, overwritten);
+    } else if (k.key === 'Enter') {
+      insertText('\n');
+    }
+  };
   // Feed one key. `replay` matches the adapter's suppressed-recording replay.
   function feed(k: VimKey, callOpts: VimKeydownOpts | undefined): void {
     const step: VimStep = vimKeydown(st, k, docOf(cur.text, cur.head, cur.anchor), callOpts);
@@ -149,6 +174,8 @@ const play = (
     if (live) handled.push(step.handled);
     if (step.handled) {
       applyStepEffects(step, callOpts?.replay ?? false);
+    } else if (st.mode === 'replace' && !k.ctrl && !k.meta && !k.alt) {
+      editorReplaceKey(k);
     } else if (st.mode === 'insert' && !k.ctrl && !k.meta && !k.alt) {
       editorInsertKey(k, live);
     }
@@ -970,6 +997,34 @@ describe('motions: ge/gE, g_, sentences ( )', () => {
 
   it('d) deletes to the next sentence start (exclusive)', () => {
     expect(play('あれ。これ。', 0, ['d', ')']).text).toBe('これ。');
+  });
+});
+
+describe('Replace mode (R)', () => {
+  it('R overtypes; past the line end it appends; Escape returns to normal', () => {
+    const r = play('abcd', 1, ['R', 'X', 'Y', key('Escape')]);
+    expect(r.text).toBe('aXYd');
+    expect(r.state.mode).toBe('normal');
+    expect(r.head).toBe(2); // Escape steps back one, like insert
+    expect(play('ab', 1, ['R', 'X', 'Y', 'Z', key('Escape')]).text).toBe('aXYZ');
+  });
+
+  it('Backspace restores the overwritten characters; below the session it only moves left', () => {
+    const restored = play('abcd', 0, ['R', 'X', 'Y', key('Backspace'), key('Backspace'), key('Escape')]);
+    expect(restored.text).toBe('abcd');
+    const below = play('abc', 1, ['R', key('Backspace'), key('Escape')]);
+    expect(below.text).toBe('abc'); // nothing deleted…
+    expect(below.head).toBe(0); // …the caret just moved left
+  });
+
+  it('Enter INSERTS a newline (replaces nothing); Backspace can take it back', () => {
+    expect(play('abc', 0, ['R', 'X', key('Enter'), 'Y', key('Escape')]).text).toBe('X\nYc');
+    expect(play('abc', 0, ['R', 'X', key('Enter'), key('Backspace'), key('Escape')]).text).toBe('Xbc');
+  });
+
+  it('an R change dot-repeats as an overtype', () => {
+    const r = play('abcd efgh', 0, ['R', 'X', 'Y', key('Escape'), 'w', '.']);
+    expect(r.text).toBe('XYcd XYgh');
   });
 });
 

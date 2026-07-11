@@ -16,7 +16,7 @@
     "typecheck:web": "tsc --noEmit -p tsconfig.web.json --composite false",
     "typecheck": "pnpm run typecheck:node && pnpm run typecheck:web",
     "smoke": "node test/e2e/run-smoke.ts",
-    "smoke:mozc": "node test/e2e/mozc/ruby-composition.ts && node test/e2e/mozc/undo-composition.ts && node test/e2e/mozc/ime-compose-visible.ts && node test/e2e/mozc/ime-window-guard.ts && node test/e2e/mozc/selection-composition.ts && node test/e2e/mozc/page-boundary-composition.ts && node test/e2e/mozc/space-convert.ts && node test/e2e/mozc/gap-compose.ts && node test/e2e/mozc/candidate-window-pos.ts && node test/e2e/mozc/ruby-hl-compose.ts && node test/e2e/mozc/ruby-undo-caret.ts && node test/e2e/mozc/vim-dot-repeat.ts && node test/e2e/mozc/vim-block-ime.ts",
+    "smoke:mozc": "node test/e2e/mozc/ruby-composition.ts && node test/e2e/mozc/undo-composition.ts && node test/e2e/mozc/ime-compose-visible.ts && node test/e2e/mozc/ime-window-guard.ts && node test/e2e/mozc/selection-composition.ts && node test/e2e/mozc/page-boundary-composition.ts && node test/e2e/mozc/space-convert.ts && node test/e2e/mozc/gap-compose.ts && node test/e2e/mozc/candidate-window-pos.ts && node test/e2e/mozc/ruby-hl-compose.ts && node test/e2e/mozc/ruby-undo-caret.ts && node test/e2e/mozc/vim-dot-repeat.ts && node test/e2e/mozc/vim-block-ime.ts && node test/e2e/mozc/vim-replace-ime.ts",
     "postinstall": "electron-builder install-app-deps && node node_modules/electron/install.js",
     "fuzz": "node test/e2e/fuzz-caret.ts"
   },

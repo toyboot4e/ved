@@ -196,8 +196,25 @@ module stays a leaf.
 
 `buildDecorations` caches the caret-independent layers (inline formats keyed
 by doc, ruby decorations keyed by expanded set); a caret move builds an O(1)
-delta (`rubyActive`, `rubySelected`). Seams:
-`__vedBaseRebuilds`/`__vedRubyRebuilds`.
+delta (`rubyActive`, `rubySelected`). An EDIT does not rebuild the cached
+sets either: `dispatchTransaction` calls `advanceDecorationCaches`, which
+maps both sets through the transaction (untouched paragraphs shift wholesale
+inside ProseMirror's set tree) and rebuilds only the dirty paragraphs'
+decorations — dirty = the paragraph-identity diff (`changedParagraphSpan`),
+plus the paragraphs whose LAST-ness flipped (the newline widget exists on
+every paragraph but the last). The ruby layer advances only under Rich/Plain
+(the expanded set is caret-independent there — the page-gap suffix cache's
+gate); the parse layer (leaves, ruby geometry, offset maps) resolves through
+per-paragraph WeakMap caches keyed on the immutable nodes, so it is O(changed)
+by construction. Under ByParagraph/ByCharacter a caret crossing that changes
+the expanded set PATCHES only the delta rubies' decorations
+(`patchExpandedSet` — removal is by value, so the exact old shapes are
+reconstructed and dropped), never the whole document's.
+Widget keys are CONTENT-derived (`nl`, `ropen-|`), never
+ordinal — renumbering paragraphs/rubies must not recreate downstream widget
+DOM. `decorations.test.ts` pins advanced ≡ cold rebuild per edit shape.
+Seams: `__vedBaseRebuilds`/`__vedRubyRebuilds` (caret-move-perf, click-perf,
+edit-perf).
 
 ## Invisibles (newline / whitespace markers)
 
@@ -356,6 +373,12 @@ nodes must follow the text. After each transaction: capture the caret as a
 plain offset; replace the content of every paragraph that differs from
 `inlineNodesFor(line)`, last→first so positions stay valid; restore the caret.
 **Skipped while `view.composing`** — the composition-end transaction repairs.
+
+Cost is O(changed paragraphs): paragraph nodes are immutable, so a node
+known canonical stays canonical — every paragraph builder goes through
+`model.ts paragraphFor` (canonical by construction, marked at birth), a
+verification marks the node, and repair skips marked nodes by identity.
+`__vedRepairChecks` counts the verifications; `edit-perf.ts` pins the bound.
 
 ## Offset mapping
 
@@ -617,7 +640,13 @@ by construction, not by a hand-kept key list. `gv` reselects the selection the l
 mode ENDED with — kind and `$`-flag included; from inside visual mode it
 swaps with the live selection (`gv gv` toggles between the two). The stored
 offsets are not edit-adjusted (Vim's `'<`/`'>` are best-effort there too),
-only clamped on reselect. **Macros**: `q{reg}`…`q` records the TYPED keys —
+only clamped on reselect. **Replace mode** (`R`): typing OVERTYPES, clamped
+at the line end (past it R appends). The ADAPTER owns the overwrite — typed
+text through the beforeinput hook, an IME commit by consuming the displaced
+characters at compositionend (the composition itself is never disturbed;
+`mozc/vim-replace-ime.ts` pins the loop). Backspace restores the overwritten
+text within the session (`replaceStack`) and only moves left below it; Enter
+inserts; the whole session dot-repeats as an overtype. **Macros**: `q{reg}`…`q` records the TYPED keys —
 capture lives in `vimKeydown` and excludes fed/replayed keys, so a replay
 (`@{reg}`, `@@`, counts multiply) re-expands through user mappings, and `.`
 after a macro repeats the last change WITHIN it, as in Vim; the adapter runs
@@ -818,11 +847,24 @@ measured, rt-excluded rects — never index arithmetic across the document:
 drifts whole page rows off the real lines. Only the page-row top is quantized
 (multicol fragmentation is periodic).
 
-Re-measuring is O(document), so it runs only on layout changes
-(edit/mode/policy/resize/font), debounced to one frame. A selection-only
-change takes a highlight-only path (`refreshCaret`): cached geometry, runs
-synchronously in the dispatch, skips DOM writes when the caret stays on the
-same visual line — else a large doc stalls ~100 ms per arrow key.
+Re-measuring every paragraph is O(document), so the FULL measure runs only on
+layout changes no edit explains (mode/policy/resize/font/view-config),
+debounced to one frame. An EDIT takes the incremental path (`scheduleEdit`):
+per-paragraph line geometry is cached with a movement PROBE (the paragraph's
+first reading-flow rect, overlay-relative), the dispatch names the clean
+paragraph runs at both ends (`changedParagraphSpan`), and only the dirty
+paragraphs re-measure — the clean prefix cannot move (layout flows forward; a
+paragraph-0 probe guards the overlay origin), and the clean suffix is reused
+while its first paragraph's probe still matches (a shifted suffix re-measures
+whole: block flow is cumulative, so a shift never re-converges). A page-gap
+widget change reports its first changed position through `onLayoutShift`, so
+that pass is suffix-scoped too. `__vedLineMeasures` counts paragraphs
+measured per pass (`edit-perf.ts`); the shell's content resize observer
+absorbs growth a pending/completed pass explains and escalates to FULL only
+for unexplained growth. A selection-only change takes a highlight-only path
+(`refreshCaret`): cached geometry, runs synchronously in the dispatch, skips
+DOM writes when the caret stays on the same visual line — else a large doc
+stalls ~100 ms per arrow key.
 
 At the end of a paragraph whose last line is full, `coordsAtPos` reports the
 empty next column, which would snap the highlight one column back; `caretRect`
@@ -998,8 +1040,6 @@ Hard limits and approaches that failed — don't re-derive or re-try:
   no WM there; `VED_SMOKE_NO_XVFB=1` forces the real display). On the real
   display it shows *inactive* (`showInactive()`), never stealing OS focus;
   only the mozc suite activates the window.
-- `repair` compares every paragraph per change; fine at current sizes,
-  limitable to dirty paragraphs if profiling flags it.
 - **Ruby line spacing is `$line-space`-tuned; heavy webfonts may need more.**
   The `<rt>` renders outside the base's em box in a fixed line pitch; the
   reading must clear the previous row via `line-height: 1` + `$line-space` —
@@ -1018,7 +1058,12 @@ Hard limits and approaches that failed — don't re-derive or re-try:
   `editor.tsx` drives it from a geometric hit-test over the base glyphs
   (`pm/drag-select.ts`), and `createSelectionBetween` returns the model
   selection during the drag so PM's read-back doesn't clobber it. Walks are
-  scoped per the `CLAUDE.md` perf invariant. (`ruby-selection-thin.ts`,
+  scoped per the `CLAUDE.md` perf invariant, and the viewport-scoped hit-test
+  geometry is cached ACROSS gestures (`glyph-walker.ts` scopedCache — doc
+  changes invalidate via leaves identity, layout shifts via
+  `invalidateGeometry` from the same shell signals that re-measure the
+  overlay), so repeated empty-area/gap clicks re-measure nothing
+  (`__vedNearWalks`, click-perf.ts). (`ruby-selection-thin.ts`,
   `drag-select-ruby.ts`.)
 - **Click on non-text may not place the caret** (gap between rows, past a
   line's text). Not yet reproduced — clicks inside the contenteditable's box

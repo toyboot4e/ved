@@ -62,6 +62,13 @@
  *      pattern captures raw keydowns; a composed IME pattern is out of scope);
  *    - the caret may rest AT a line end (Vim's virtualedit=onemore) — ved's
  *      caret is a boundary, not a cell;
+ *    - REPLACE mode (`R`): typing overtypes, clamped at the line end (past
+ *      it R appends); the ADAPTER owns the overwrite (typed text via the
+ *      beforeinput hook; an IME commit by consuming the displaced characters
+ *      at compositionend — the composition itself is never disturbed).
+ *      Backspace restores the overwritten text within the session
+ *      (replaceStack) and only moves left below it; Enter inserts; the whole
+ *      session dot-repeats as an overtype;
  *    - dot-repeat `.`: the record() wrapper keeps the last change as
  *      `lastChange` — normal-mode KEYS plus the insert phase's literal TEXT
  *      (VimChangeItem). Insert text is recorded as TEXT because keystrokes
@@ -130,7 +137,7 @@ import {
 
 /** The active modal state. `'visual'` covers all visual kinds —
  *  `VimVisualKind` distinguishes charwise/linewise/block. */
-export type VimMode = 'normal' | 'insert' | 'visual';
+export type VimMode = 'normal' | 'insert' | 'visual' | 'replace';
 export type VimVisualKind = 'char' | 'line' | 'block';
 
 export type { VimKey } from './keys';
@@ -261,6 +268,11 @@ export type VimState = {
   readonly visualBlockEol: boolean;
   /** The block insert pending its Escape-time repeat, or null. */
   readonly blockInsert: VimBlockInsert | null;
+  /** Replace mode (`R`): per INSERTED code unit, the character it overwrote
+   *  — `null` when nothing was (appended at a line end, a typed newline).
+   *  Backspace pops entries to RESTORE the original text; below the stack it
+   *  only moves left (Vim). Cleared on Escape. */
+  readonly replaceStack: readonly (string | null)[];
   /** The selection the last visual mode ENDED with (an operator, Escape, a
    *  toggle-off, block I/A) — what `gv` reselects, kind and $-flag included.
    *  Plain offsets, NOT edit-adjusted: like Vim's `'<`/`'>` marks, `gv`
@@ -313,6 +325,7 @@ export const VIM_INITIAL: VimState = {
   visualKind: 'char',
   visualBlockEol: false,
   blockInsert: null,
+  replaceStack: [],
   lastVisual: null,
   count: null,
   operator: null,
@@ -968,11 +981,17 @@ const settleRecording = (step: VimStep, rec: NonNullable<VimState['recording']>)
 };
 
 const record = (incoming: VimState, key: VimKey, raw: VimStep, fed: boolean): VimStep => {
-  const inInsert = incoming.mode === 'insert' && !raw.handled;
+  const inInsert = (incoming.mode === 'insert' || incoming.mode === 'replace') && !raw.handled;
   const insertText = inInsert && isPlainKey(key);
   const insertEdit = inInsert && !key.ctrl && !key.meta && !key.alt && INSERT_EDIT_KEYS.has(key.key);
   const editsNow = raw.effects.some((e) => e.kind === 'replace') || insertText || insertEdit;
-  const item: VimChangeItem | null = insertText ? (fed ? { kind: 'text', text: key.key } : null) : { kind: 'key', key };
+  // Replace-mode text records via vimReplaceText (fed and live alike — the
+  // adapter performs the overwrite either way), never here.
+  const item: VimChangeItem | null = insertText
+    ? fed && incoming.mode === 'insert'
+      ? { kind: 'text', text: key.key }
+      : null
+    : { kind: 'key', key };
   // A FED printable also feeds a pending block insert.
   const step = fed && insertText ? appendBlockInsertText(raw, key.key) : raw;
   const rec = advanceRecording(incoming.recording, atRest(incoming), item, editsNow);
@@ -986,7 +1005,7 @@ const record = (incoming: VimState, key: VimKey, raw: VimStep, fed: boolean): Vi
  *  (composing keydowns are 229-guarded and never reach vimKeydown). No-op
  *  outside insert mode or without a live recording. */
 export const vimRecordText = (state: VimState, text: string): VimState => {
-  if (text.length === 0 || state.mode !== 'insert') return state;
+  if (text.length === 0 || (state.mode !== 'insert' && state.mode !== 'replace')) return state;
   // A pending block insert accumulates the same text — its Escape-time
   // repeat is what makes block I/A work with IME-committed text.
   const bi = state.blockInsert;
@@ -996,6 +1015,17 @@ export const vimRecordText = (state: VimState, text: string): VimState => {
     ...st,
     recording: { items: appendItem(st.recording.items, { kind: 'text', text }), changed: true },
   };
+};
+
+/** Text ARRIVED in replace mode — the adapter performed the overwrite
+ *  (typed, fed, or IME-committed) and reports what it displaced. Stacks the
+ *  overwritten characters for Backspace restore and records the text for
+ *  dot-repeat. */
+export const vimReplaceText = (state: VimState, inserted: string, overwritten: string): VimState => {
+  if (state.mode !== 'replace' || inserted.length === 0) return state;
+  const stack = [...state.replaceStack];
+  for (let i = 0; i < inserted.length; i++) stack.push(i < overwritten.length ? (overwritten[i] as string) : null);
+  return vimRecordText({ ...state, replaceStack: stack }, inserted);
 };
 
 export type VimKeydownOpts = {
@@ -1429,7 +1459,7 @@ const dispatch = (state: VimState, key: VimKey, doc: VimDocView): VimStep => {
   // any charPending/count/operator intact for the chord that follows.
   if (isLoneModifier(key)) return unhandled(state);
   if (key.meta || key.alt) return unhandled(state);
-  if (state.mode === 'insert') return insertKey(state, key, doc);
+  if (state.mode === 'insert' || state.mode === 'replace') return insertKey(state, key, doc);
   if (key.ctrl) return ctrlChordKey(state, key, doc);
   if (key.key === 'Escape') {
     const effects: VimEffect[] = state.mode === 'visual' ? [{ kind: 'select', anchor: doc.head, head: doc.head }] : [];
@@ -1448,11 +1478,13 @@ const dispatch = (state: VimState, key: VimKey, doc: VimDocView): VimStep => {
   return commandKey(state, k, doc);
 };
 
-/** Insert mode: only Escape is ours (back to normal, caret one step left like
- *  Vim, its own undo unit; a pending BLOCK insert repeats its text on the
- *  block's other lines first). Everything else — including chords — is the
- *  editor's normal editing, though a pending block insert tracks the keys
- *  that break its repeat (Enter/Delete) or shorten it (Backspace). */
+/** Insert AND replace mode: only Escape is ours (back to normal, caret one
+ *  step left like Vim, its own undo unit; a pending BLOCK insert repeats its
+ *  text on the block's other lines first). Everything else — including
+ *  chords — is the editor's normal editing, though a pending block insert
+ *  tracks the keys that break its repeat (Enter/Delete) or shorten it
+ *  (Backspace), and replace mode owns Backspace (restore) and stacks its
+ *  typed newlines. */
 const insertKey = (state: VimState, key: VimKey, doc: VimDocView): VimStep => {
   if (key.key === 'Escape' && !key.ctrl) {
     const flushed = flushBlockInsert(state, doc);
@@ -1462,10 +1494,38 @@ const insertKey = (state: VimState, key: VimKey, doc: VimDocView): VimStep => {
     // The block-repeat inserts all sit BELOW the caret's line, so the caret
     // offset is unaffected by them.
     if (back >= ls && back !== doc.head) effects.push({ kind: 'select', anchor: back, head: back });
-    return { state: { ...clearPending(flushed.state), mode: 'normal' }, effects, handled: true };
+    return { state: { ...clearPending(flushed.state), mode: 'normal', replaceStack: [] }, effects, handled: true };
+  }
+  const chordless = !key.ctrl && !key.meta && !key.alt;
+  if (state.mode === 'replace' && chordless && key.key === 'Backspace') {
+    // Within this replace session Backspace RESTORES the overwritten char;
+    // below the session it only moves left (Vim's R rule).
+    const stack = state.replaceStack;
+    if (stack.length === 0) {
+      const back = Math.max(lineStart(doc.text, doc.head), doc.head - 1);
+      return {
+        state,
+        effects: back < doc.head ? [{ kind: 'select', anchor: back, head: back }] : [],
+        handled: true,
+      };
+    }
+    const orig = stack[stack.length - 1] as string | null;
+    return {
+      state: { ...state, replaceStack: stack.slice(0, -1) },
+      effects: [
+        { kind: 'replace', from: doc.head - 1, to: doc.head, text: orig ?? '' },
+        { kind: 'select', anchor: doc.head - 1, head: doc.head - 1 },
+      ],
+      handled: true,
+    };
+  }
+  if (state.mode === 'replace' && chordless && key.key === 'Enter') {
+    // R + Enter INSERTS the newline (replaces nothing, Vim); stack it so a
+    // Backspace can delete it again.
+    return unhandled({ ...state, replaceStack: [...state.replaceStack, null] });
   }
   const bi = state.blockInsert;
-  if (bi?.valid && !key.ctrl && !key.meta && !key.alt) {
+  if (bi?.valid && chordless) {
     if (key.key === 'Enter' || key.key === 'Delete') {
       return unhandled({ ...state, blockInsert: { ...bi, valid: false } });
     }
@@ -2153,6 +2213,13 @@ const NORMAL_ACTIONS = {
     effects: [],
     handled: true,
   }),
+  // R: Replace mode — typing OVERTYPES (the adapter owns the overwrite;
+  // composing IME text overtypes at commit). Its own undo unit, like i.
+  'replace.enter': (state) => ({
+    state: { ...state, mode: 'replace' as const, replaceStack: [] },
+    effects: [{ kind: 'breakUndo' as const }],
+    handled: true,
+  }),
   'delete.charForward': (state, env, doc) => deleteSteps(state, doc, env.count, true, false),
   'delete.charBack': (state, env, doc) => deleteSteps(state, doc, env.count, false, false),
   'substitute.char': (state, env, doc) => deleteSteps(state, doc, env.count, true, true),
@@ -2251,6 +2318,7 @@ export const NORMAL_BINDINGS: Readonly<Record<string, keyof typeof NORMAL_ACTION
   v: 'visual.enterChar',
   V: 'visual.enterLine',
   r: 'replace.char',
+  R: 'replace.enter',
   x: 'delete.charForward',
   X: 'delete.charBack',
   s: 'substitute.char',

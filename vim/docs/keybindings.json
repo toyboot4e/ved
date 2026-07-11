@@ -1823,8 +1823,8 @@
       "keys": "R",
       "mode": "normal",
       "action": "enter replace mode: overtype existing",
-      "api": "action 'replace.enter' — overtype; Esc restores mode",
-      "status": "todo",
+      "api": "replace.enter",
+      "status": "done",
       "category": "Mode entry",
       "tag": "R"
     },

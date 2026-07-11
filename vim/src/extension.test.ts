@@ -207,6 +207,46 @@ describe('dot-repeat over editor-inserted text', () => {
   });
 });
 
+describe('Replace mode through the adapter', () => {
+  it('typed text overtypes via handleTextInput; the chip mode is replace', () => {
+    const t = attach('abcd');
+    const modes: string[] = [];
+    const t2 = attach('abcd', { onModeChange: (m) => modes.push(m) });
+    t2.press('R');
+    expect(modes).toContain('replace');
+    t.press('R');
+    // Live typing: the keydown is declined, the beforeinput hook overwrites.
+    t.hooks.handleKey?.(chord('X'));
+    expect(t.hooks.handleTextInput?.('X')).toBe(true); // the hook DID the edit
+    expect(t.state.text).toBe('Xbcd');
+    expect(t.state.head).toBe(1);
+  });
+
+  it('an IME commit in replace mode consumes the following characters', () => {
+    const t = attach('abcd');
+    t.press('R');
+    t.hooks.onCompositionStart?.();
+    // The IME committed 'あい' — PM INSERTED it at the caret.
+    t.state.text = 'あいabcd';
+    t.state.head = t.state.anchor = 2;
+    t.hooks.onCompositionEnd?.();
+    expect(t.state.text).toBe('あいcd'); // 'ab' consumed: a net overtype
+    t.press('Escape');
+    expect(t.state.text).toBe('あいcd');
+  });
+
+  it('dot-repeat replays an R change as an overtype', () => {
+    const t = attach('abcd');
+    t.press('R');
+    t.hooks.handleKey?.(chord('X'));
+    t.hooks.handleTextInput?.('X');
+    t.press('Escape');
+    expect(t.state.text).toBe('Xbcd');
+    t.press('l', '.'); // caret to 'b'… replay R+X over it
+    expect(t.state.text).toBe('XXcd');
+  });
+});
+
 describe('viewport seams through the adapter', () => {
   it('zt/zz/zb emit revealCaretAt; Ctrl+E/Ctrl+Y emit counted line scrolls', () => {
     const t = attach('abc');
