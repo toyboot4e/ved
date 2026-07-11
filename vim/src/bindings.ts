@@ -70,6 +70,8 @@ const kindOfActionId = (id: string): VimBindingKind => {
   if (id.startsWith('search.')) return 'search';
   if (id.startsWith('macro.')) return 'macro';
   if (id.startsWith('scroll.')) return 'scroll';
+  if (id.startsWith('mark.')) return 'misc';
+  if (id === 'register.select') return 'register';
   if (id === 'repeat.dot') return 'misc';
   return 'edit';
 };
@@ -111,6 +113,9 @@ const G_KINDS: Readonly<Record<string, VimBindingKind>> = {
   gu: 'operator',
   gU: 'operator',
   'g~': 'operator',
+  gi: 'modeEntry',
+  gp: 'register',
+  gP: 'register',
 };
 const G_VISUAL_ROWS: ReadonlySet<string> = new Set(['gJ', 'gu', 'gU', 'g~']);
 const gSequenceRows = (): VimBinding[] => {

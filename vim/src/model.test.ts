@@ -1000,6 +1000,78 @@ describe('motions: ge/gE, g_, sentences ( )', () => {
   });
 });
 
+describe('named registers ("a–"z, "A–"Z append)', () => {
+  it('"ayw / "ap round-trip; the unnamed register gets a copy', () => {
+    const r = play('foo bar', 0, ['"', 'a', 'y', 'w', 'w', '"', 'a', 'p']);
+    expect(r.text).toBe('foo bfoo ar'); // pasted after 'b'
+    expect(r.state.registers.a?.text).toBe('foo ');
+    expect(r.state.register?.text).toBe('foo '); // the unnamed copy
+  });
+
+  it('"A appends to "a', () => {
+    const r = play('ab cd', 0, ['"', 'a', 'y', 'w', 'w', '"', 'A', 'y', 'w']);
+    expect(r.state.registers.a?.text).toBe('ab cd');
+  });
+
+  it('"adw captures the delete; plain p still pastes the unnamed register', () => {
+    const r = play('foo bar', 0, ['"', 'a', 'd', 'w', 'p']);
+    expect(r.state.registers.a?.text).toBe('foo ');
+    expect(r.text).toBe('bfoo ar'); // p read the unnamed copy
+  });
+
+  it('"xp pastes from x without touching other registers', () => {
+    const r = play('ab', 0, ['"', 'z', 'y', 'l', '$', '"', 'z', 'p']);
+    expect(r.text).toBe('aba');
+  });
+
+  it('an empty named register swallows the paste', () => {
+    expect(play('ab', 0, ['"', 'q', 'p']).text).toBe('ab');
+  });
+});
+
+describe("marks (m, `, ')", () => {
+  it("ma + `a jumps back to the exact offset; 'a to the line's first non-blank", () => {
+    const exact = play('abc\n  def', 6, ['m', 'a', 'g', 'g', '`', 'a']);
+    expect(exact.head).toBe(6);
+    const line = play('abc\n  def', 6, ['m', 'a', 'g', 'g', "'", 'a']);
+    expect(line.head).toBe(6); // first non-blank of line 2
+  });
+
+  it("d`a deletes to the mark; d'a takes whole lines", () => {
+    expect(play('abcdef', 4, ['m', 'a', '0', 'd', '`', 'a']).text).toBe('ef');
+    expect(play('ab\ncd\nef', 4, ['m', 'a', 'g', 'g', 'd', "'", 'a']).text).toBe('ef');
+  });
+
+  it("marks adjust over the reducer's own edits", () => {
+    // Mark 'f' (offset 5); gg keeps the column (line 1, col 1); x deletes
+    // 'b' BEFORE the mark — `a still hits 'f'.
+    const r = play('abc\nef', 5, ['m', 'a', 'g', 'g', 'x', '`', 'a']);
+    expect(r.head).toBe(4); // mark shifted 5 → 4 by the deletion
+    expect(r.text).toBe('ac\nef');
+  });
+
+  it('a missing mark swallows', () => {
+    expect(play('abc', 1, ['`', 'z']).head).toBe(1);
+  });
+});
+
+describe('gi and gp/gP', () => {
+  it('gi re-enters insert where the last session ended', () => {
+    const r = play('abcd', 2, ['i', key('Escape'), '0', 'g', 'i']);
+    expect(r.state.mode).toBe('insert');
+    expect(r.head).toBe(2); // the session ended at 2 (Escape recorded it)
+  });
+
+  it('gp pastes with the cursor AFTER the text; linewise lands on the next line', () => {
+    const char = play('ab', 0, ['y', 'l', 'g', 'p']);
+    expect(char.text).toBe('aab');
+    expect(char.head).toBe(2); // just past the pasted 'a'
+    const line = play('ab\ncd', 0, ['y', 'y', 'g', 'p']);
+    expect(line.text).toBe('ab\nab\ncd');
+    expect(line.head).toBe(6); // the line after the pasted one
+  });
+});
+
 describe('Replace mode (R)', () => {
   it('R overtypes; past the line end it appends; Escape returns to normal', () => {
     const r = play('abcd', 1, ['R', 'X', 'Y', key('Escape')]);

@@ -408,6 +408,27 @@ try {
   assert.equal(await docText(page), 'aa bb cc', 'visual J joins every selected line');
   step('gJ newline-only join; visual J joins the selection');
 
+  // --- Named registers + marks: "ayw / "ap round-trips; ma + `a jumps
+  // back after edits shifted the mark. ---
+  await toggleVim();
+  await setDoc(page, 'foo bar');
+  await toggleVim();
+  await setCaret(page, 0);
+  await press('"ayw', 200); // yank 'foo ' into "a
+  await press('w');
+  await press('"ap', 200);
+  assert.equal(await docText(page), 'foo bfoo ar', '"ayw + "ap pastes the named register');
+  await toggleVim();
+  await setDoc(page, 'abc\ndef');
+  await toggleVim();
+  await setCaret(page, 4); // on 'd'
+  await press('ma', 150);
+  await press('gg', 150);
+  await press('x', 100); // delete before the mark — it must shift
+  await press('`a', 150);
+  assert.equal(await caretOffset(page), 3, '`a jumps to the shifted mark');
+  step('named registers ("a) and marks (ma / `a) round-trip');
+
   // --- Replace mode: R overtypes (insertText = the IME-commit path — the
   // adapter consumes the displaced chars), Backspace restores, Escape ends,
   // and the change dot-repeats as an overtype. ---

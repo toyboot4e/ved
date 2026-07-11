@@ -1220,8 +1220,8 @@
       "keys": "\"{register}",
       "mode": "normal",
       "action": "use {register} for next delete, yank or put",
-      "api": "\"{register} prefix — a registers map in VimState",
-      "status": "todo",
+      "api": "register.select",
+      "status": "done",
       "category": "Registers",
       "tag": "quote"
     },
@@ -1274,9 +1274,9 @@
       "keys": "'{a-zA-Z0-9}",
       "mode": "normal",
       "action": "cursor to the first CHAR on the line with",
-      "api": "",
-      "status": "todo",
-      "category": "Normal mode — other",
+      "api": "mark.jumpLine",
+      "status": "done",
+      "category": "Misc",
       "tag": "'"
     },
     {
@@ -1949,9 +1949,9 @@
       "keys": "`{a-zA-Z0-9}",
       "mode": "normal",
       "action": "cursor to the mark {a-zA-Z0-9}",
-      "api": "",
-      "status": "todo",
-      "category": "Marks",
+      "api": "mark.jumpChar",
+      "status": "done",
+      "category": "Misc",
       "tag": "`"
     },
     {
@@ -2183,8 +2183,8 @@
       "keys": "m{A-Za-z}",
       "mode": "normal",
       "action": "set mark {A-Za-z} at cursor position",
-      "api": "m{a-z} + `{a-z}/'{a-z} — plain-offset marks, edit-adjusted",
-      "status": "todo",
+      "api": "mark.set",
+      "status": "done",
       "category": "Marks",
       "tag": "m"
     },
@@ -4316,8 +4316,8 @@
       "keys": "[\"x]gP",
       "mode": "normal",
       "action": "put the text [from register x] before the",
-      "api": "paste variant — cursor AFTER the pasted text",
-      "status": "todo",
+      "api": "gP",
+      "status": "done",
       "category": "Registers",
       "tag": "gP"
     },
@@ -4460,8 +4460,8 @@
       "keys": "gi",
       "mode": "normal",
       "action": "like \"i\", but first move to the |'^| mark",
-      "api": "action 'insert.atLastInsert' — needs the ^-mark equivalent",
-      "status": "todo",
+      "api": "gi",
+      "status": "done",
       "category": "Mode entry",
       "tag": "gi"
     },
@@ -4523,8 +4523,8 @@
       "keys": "[\"x]gp",
       "mode": "normal",
       "action": "put the text [from register x] after the",
-      "api": "paste variant — cursor AFTER the pasted text",
-      "status": "todo",
+      "api": "gp",
+      "status": "done",
       "category": "Registers",
       "tag": "gp"
     },

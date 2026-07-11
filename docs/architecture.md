@@ -651,10 +651,17 @@ capture lives in `vimKeydown` and excludes fed/replayed keys, so a replay
 (`@{reg}`, `@@`, counts multiply) re-expands through user mappings, and `.`
 after a macro repeats the last change WITHIN it, as in Vim; the adapter runs
 all fed keys through one explicit queue (recursion would overflow a counted
-macro), and `onMacroRecording` reports the live register. The full key set and
-its deviations — motions, operators + TEXT OBJECTS (`iw`/`a(`/`ip`…), `%`,
-`~`, etc. — are the `model.ts` header; deferred: marks, named yank registers,
-ex commands. The whole loop is pinned by `test/e2e/vim-mode.ts`.
+macro), and `onMacroRecording` reports the live register. **Named registers**
+(`"a`–`"z`, `"A`–`"Z` append): every yank/delete still writes the unnamed
+register; a pending `"x` routes the next write/read (the macro registers stay
+a separate space — a deviation). **Marks** `m{a-z}` + `` ` ``/`'` jumps
+(operators compose; `'` is linewise): plain offsets, adjusted over the
+reducer's own replace effects and only CLAMPED across editor-side insert
+sessions (best-effort, like `'<`/`'>`). `gi` re-enters insert where the last
+insert/replace session ended; `gp`/`gP` paste with the cursor after the text.
+The full key set and its deviations — motions, operators + TEXT OBJECTS
+(`iw`/`a(`/`ip`…), `%`, `~`, etc. — are the `model.ts` header; deferred: ex
+commands. The whole loop is pinned by `test/e2e/vim-mode.ts`.
 
 Every **tunable, locale-dependent** value lives in ONE data leaf, `config.ts`:
 the bracket pairs `%` and the bracket text objects match (Japanese `「」（）

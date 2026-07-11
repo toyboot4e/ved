@@ -83,8 +83,14 @@
  *      a replay re-expands through mappings), `@{reg}` replays via the same
  *      feedKeys loop as mappings, `@@` repeats, counts multiply. `.` after a
  *      macro repeats the last change WITHIN it, like Vim;
- *    - one unnamed register (plus the macro registers); NO marks, named yank
- *      registers, or ex commands (`:`) yet;
+ *    - registers: the unnamed one receives every yank/delete; `"a`–`"z` name
+ *      one for the next yank/delete/paste (`"A`–`"Z` append). The macro
+ *      registers are a SEPARATE space (deviation from Vim). Marks: `m{a-z}`
+ *      + `` ` ``/`'` jumps (operators compose: ``d`a``, `d'a` linewise) —
+ *      plain offsets, adjusted over the reducer's own edits, best-effort
+ *      (clamped) across editor-side insert sessions. `gi` re-enters insert
+ *      at the last session's end; `gp`/`gP` paste with the cursor after.
+ *      NO ex commands (`:`) yet;
  *    - USER MAPPINGS (keymap.ts; docs/architecture.md "Extensions"): a front layer in
  *      vimKeydown walks per-map-mode tries (nmap/xmap/omap/imap) BEFORE this
  *      dispatch; a match feeds its RHS keys back through the adapter
@@ -288,8 +294,23 @@ export type VimState = {
   /** Pending operator (`d` of `dw`), waiting for its motion. */
   readonly operator: Operator | null;
   /** A key waiting for its CHARACTER argument: `r` (replace), `f`/`F`/`t`/`T`
-   *  (find), `q` (macro register), `@` (macro replay register). */
-  readonly charPending: 'r' | 'q' | '@' | FindOp | null;
+   *  (find), `q` (macro register), `@` (macro replay register), `"` (named
+   *  register), `m` (set mark), `` ` ``/`'` (jump to mark). */
+  readonly charPending: 'r' | 'q' | '@' | '"' | 'm' | '`' | "'" | FindOp | null;
+  /** NAMED registers (`"a`–`"z`; `"A`–`"Z` append). The unnamed register
+   *  (`register`) still receives every yank/delete. The macro registers
+   *  (`macros`) are a separate space (deviation from Vim, documented). */
+  readonly registers: Readonly<Record<string, VimRegister>>;
+  /** A `"x` prefix awaiting its operator/paste, or null. Consumed by the
+   *  next register write/read; cleared by Escape. */
+  readonly pendingRegister: string | null;
+  /** `m{a-z}` marks as plain offsets. Adjusted over the reducer's own
+   *  replace effects; editor-side insert-session edits leave them
+   *  best-effort (clamped on use), like `'<`/`'>`. */
+  readonly marks: Readonly<Record<string, number>>;
+  /** Where the last insert/replace session ENDED (Vim's `'^`) — what `gi`
+   *  re-enters insert at. Same adjustment rules as `marks`. */
+  readonly lastInsertMark: number | null;
   /** The `/`(forward) / `?`(backward) search command line being typed, its
    *  accumulated pattern, or null when not searching. */
   readonly commandLine: { readonly forward: boolean; readonly text: string } | null;
@@ -327,6 +348,10 @@ export const VIM_INITIAL: VimState = {
   blockInsert: null,
   replaceStack: [],
   lastVisual: null,
+  registers: {},
+  pendingRegister: null,
+  marks: {},
+  lastInsertMark: null,
   count: null,
   operator: null,
   charPending: null,
@@ -1089,8 +1114,38 @@ const rememberVisualExit = (incoming: VimState, doc: VimDocView, step: VimStep):
       }
     : step;
 
+/** Keep the stored plain offsets (marks, `gi`'s last-insert point) valid
+ *  over the step's OWN replace effects — applied in effect order, since each
+ *  effect speaks post-previous offsets. Editor-side insert-session edits are
+ *  not visible here; those leave the offsets best-effort (clamped on use). */
+const adjustStoredOffsets = (step: VimStep): VimStep => {
+  const replaces = step.effects.filter((e) => e.kind === 'replace');
+  if (replaces.length === 0) return step;
+  const shift = (off: number): number => {
+    let o = off;
+    for (const r of replaces) {
+      if (r.kind !== 'replace') continue;
+      const delta = r.text.length - (r.to - r.from);
+      if (o >= r.to) o += delta;
+      else if (o > r.from) o = r.from;
+    }
+    return o;
+  };
+  const st = step.state;
+  const marks: Record<string, number> = {};
+  for (const [name, off] of Object.entries(st.marks)) marks[name] = shift(off);
+  return {
+    ...step,
+    state: {
+      ...st,
+      marks,
+      lastInsertMark: st.lastInsertMark == null ? null : shift(st.lastInsertMark),
+    },
+  };
+};
+
 const keydownLayers = (state: VimState, key: VimKey, doc: VimDocView, opts?: VimKeydownOpts): VimStep =>
-  rememberVisualExit(state, doc, keydownLayersInner(state, key, doc, opts));
+  adjustStoredOffsets(rememberVisualExit(state, doc, keydownLayersInner(state, key, doc, opts)));
 
 const keydownLayersInner = (state: VimState, key: VimKey, doc: VimDocView, opts?: VimKeydownOpts): VimStep => {
   let st = state;
@@ -1334,6 +1389,11 @@ export const G_SEQUENCES: Readonly<Record<string, VimAction>> = {
   gu: (state, env, doc) => caseOperatorKey('lower')(state, env, doc),
   gU: (state, env, doc) => caseOperatorKey('upper')(state, env, doc),
   'g~': (state, env, doc) => caseOperatorKey('toggle')(state, env, doc),
+  // gi re-enters insert where the last session ended; gp/gP paste with the
+  // cursor AFTER the pasted text.
+  gi: (state, env, doc) => NORMAL_ACTIONS['insert.atLastInsert'](clearPending(state), env, doc),
+  gp: (state, env, doc) => paste(clearPending(state), doc, env.count, true, true),
+  gP: (state, env, doc) => paste(clearPending(state), doc, env.count, false, true),
   // gv: reselect the last visual selection (kind and $-flag included). From
   // INSIDE visual mode it swaps with the live selection, so gv gv toggles
   // between the two — Vim's rule. Offsets clamp to the current text (they
@@ -1463,7 +1523,7 @@ const dispatch = (state: VimState, key: VimKey, doc: VimDocView): VimStep => {
   if (key.ctrl) return ctrlChordKey(state, key, doc);
   if (key.key === 'Escape') {
     const effects: VimEffect[] = state.mode === 'visual' ? [{ kind: 'select', anchor: doc.head, head: doc.head }] : [];
-    return { state: { ...clearPending(state), mode: 'normal' }, effects, handled: true };
+    return { state: { ...clearPending(state), mode: 'normal', pendingRegister: null }, effects, handled: true };
   }
   if (state.charPending) {
     if (key.key.length !== 1) return swallow(clearPending(state));
@@ -1494,7 +1554,12 @@ const insertKey = (state: VimState, key: VimKey, doc: VimDocView): VimStep => {
     // The block-repeat inserts all sit BELOW the caret's line, so the caret
     // offset is unaffected by them.
     if (back >= ls && back !== doc.head) effects.push({ kind: 'select', anchor: back, head: back });
-    return { state: { ...clearPending(flushed.state), mode: 'normal', replaceStack: [] }, effects, handled: true };
+    return {
+      // Where the session ended = Vim's `^ mark, what gi re-enters at.
+      state: { ...clearPending(flushed.state), mode: 'normal', replaceStack: [], lastInsertMark: doc.head },
+      effects,
+      handled: true,
+    };
   }
   const chordless = !key.ctrl && !key.meta && !key.alt;
   if (state.mode === 'replace' && chordless && key.key === 'Backspace') {
@@ -1585,7 +1650,24 @@ const findCharStep = (state: VimState, op: FindOp, ch: string, count: number, do
   return motionStep(withFind, motion, doc);
 };
 
-/** The character argument of a pending `r`/`f`/`F`/`t`/`T` (or `q`/`@`). */
+/** `` ` ``/`'` {mark}: jump to the mark (exact position, or its line's first
+ *  non-blank — a linewise motion, so `d'a` takes whole lines). Clamped: mark
+ *  offsets are only best-effort after editor-side insert sessions. */
+const markJumpStep = (state: VimState, exact: boolean, ch: string, doc: VimDocView): VimStep => {
+  const hadOperator = state.operator;
+  const cleared = clearPending(state);
+  const stored = state.marks[ch];
+  if (stored == null) return swallow(cleared);
+  const at = Math.max(0, Math.min(stored, doc.text.length));
+  const motion: Motion = exact
+    ? { target: doc.snapCaret(at, -1), inclusive: false, linewise: false }
+    : { target: firstNonBlank(doc.text, at), inclusive: false, linewise: true };
+  if (hadOperator) return applyOperator(cleared, hadOperator, operatorRange(motion, doc, doc.head), doc);
+  return motionStep(cleared, motion, doc);
+};
+
+/** The character argument of a pending `r`/`f`/`F`/`t`/`T` (or `q`/`@`/`"`/
+ *  `m`/`` ` ``/`'`). */
 const resolveCharKey = (state: VimState, ch: string, doc: VimDocView): VimStep => {
   const pending = state.charPending;
   const count = state.count ?? 1;
@@ -1595,6 +1677,20 @@ const resolveCharKey = (state: VimState, ch: string, doc: VimDocView): VimStep =
     return { state: { ...clearPending(state), macroRecording: { reg: ch, keys: [] } }, effects: [], handled: true };
   }
   if (pending === '@') return macroPlayStep(state, ch, count);
+  if (pending === '"') {
+    // `"a`–`"z` select; `"A`–`"Z` mark an APPEND for the next write.
+    if (!/^[a-zA-Z]$/.test(ch)) return swallow(clearPending(state));
+    return { state: { ...clearPending(state), pendingRegister: ch }, effects: [], handled: true };
+  }
+  if (pending === 'm') {
+    if (!/^[a-z]$/.test(ch)) return swallow(clearPending(state));
+    return {
+      state: { ...clearPending(state), marks: { ...state.marks, [ch]: doc.head } },
+      effects: [],
+      handled: true,
+    };
+  }
+  if (pending === '`' || pending === "'") return markJumpStep(state, pending === '`', ch, doc);
   if (pending === null) return swallow(clearPending(state));
   return findCharStep(state, pending, ch, count, doc);
 };
@@ -1619,7 +1715,7 @@ const operatorTargetKey = (
 ): VimStep => {
   const cleared = clearPending(state);
   if (k === OPERATOR_LINE_KEY[op]) return linewiseOperator(cleared, op, count, doc);
-  if (k === 'f' || k === 'F' || k === 't' || k === 'T') {
+  if (k === 'f' || k === 'F' || k === 't' || k === 'T' || k === '`' || k === "'") {
     return { state: { ...state, charPending: k }, effects: [], handled: true };
   }
   const viaLast = k === ';' || k === ',' ? repeatFind(state, k, count, doc) : null;
@@ -1746,11 +1842,11 @@ const blockGeometry = (text: string, anchor: number, head: number, eol: boolean)
 const blockOperator = (state: VimState, op: Operator, doc: VimDocView): VimStep => {
   const geom = blockGeometry(doc.text, doc.anchor, doc.head, state.visualBlockEol);
   const segs = geom.lines.map((l) => doc.text.slice(l.from, l.to));
-  const register: VimRegister = { text: segs.join('\n'), linewise: false, block: segs };
+  const withReg = writeRegister(state, { text: segs.join('\n'), linewise: false, block: segs });
   const top = geom.lines[0] as BlockLine;
   if (op === 'y') {
     return {
-      state: { ...state, mode: 'normal', register },
+      state: { ...withReg, mode: 'normal' },
       effects: [{ kind: 'select', anchor: top.from, head: top.from }],
       handled: true,
     };
@@ -1761,7 +1857,7 @@ const blockOperator = (state: VimState, op: Operator, doc: VimDocView): VimStep 
     .map((l) => ({ kind: 'replace', from: l.from, to: l.to, text: '' }) as const);
   if (op === 'd') {
     return {
-      state: { ...state, mode: 'normal', register },
+      state: { ...withReg, mode: 'normal' },
       effects: [...deletes, { kind: 'select', anchor: top.from, head: top.from }],
       handled: true,
     };
@@ -1777,7 +1873,7 @@ const blockOperator = (state: VimState, op: Operator, doc: VimDocView): VimStep 
     valid: true,
   };
   return {
-    state: { ...state, mode: 'insert', register, blockInsert },
+    state: { ...withReg, mode: 'insert', blockInsert },
     effects: [{ kind: 'breakUndo' }, ...deletes, { kind: 'select', anchor: top.from, head: top.from }],
     handled: true,
   };
@@ -2044,14 +2140,14 @@ const VISUAL_ACTIONS = {
   // Paste over the selection; the replaced text takes the register's place.
   // (Block visual: not supported (v1) — swallowed.)
   'visual.pasteOver': (state, _env, doc) => {
-    const reg = state.register;
+    const reg = readRegister(state);
     if (!reg || reg.text.length === 0 || state.visualKind === 'block') return swallow(state);
     const r = visualRange(state, doc);
+    const consumed = { ...state, pendingRegister: null };
     return {
       state: {
-        ...state,
+        ...writeRegister(consumed, { text: doc.text.slice(r.from, r.to), linewise: r.linewise }),
         mode: 'normal' as const,
-        register: { text: doc.text.slice(r.from, r.to), linewise: r.linewise },
       },
       effects: [
         { kind: 'replace', from: r.from, to: r.to, text: reg.text },
@@ -2122,6 +2218,9 @@ const VISUAL_PASS_ACTIONS: ReadonlySet<string> = new Set([
   'search.prev',
   'search.wordForward',
   'search.wordBackward',
+  'register.select', // "x before a visual operator
+  'mark.jumpChar', // `{a-z} extends the selection like any motion
+  'mark.jumpLine',
 ]);
 
 /** $-block bookkeeping (block visual only — every other state passes
@@ -2266,6 +2365,22 @@ const NORMAL_ACTIONS = {
     effects: [{ kind: 'scrollLines' as const, lines: -env.count }],
     handled: true,
   }),
+  // "x: stage a named register for the next yank/delete/paste.
+  'register.select': (state) => ({
+    state: { ...state, charPending: '"' as const },
+    effects: [],
+    handled: true,
+  }),
+  // m{a-z} sets a mark; `{a-z} jumps to it exactly; '{a-z} to its line's
+  // first non-blank (linewise — d'a takes whole lines).
+  'mark.set': (state) => ({ state: { ...state, charPending: 'm' as const }, effects: [], handled: true }),
+  'mark.jumpChar': (state) => ({ state: { ...state, charPending: '`' as const }, effects: [], handled: true }),
+  'mark.jumpLine': (state) => ({ state: { ...state, charPending: "'" as const }, effects: [], handled: true }),
+  // gi: insert where the last insert/replace session ended (Vim's `^ mark).
+  'insert.atLastInsert': (state, _env, doc) =>
+    state.lastInsertMark == null
+      ? swallow(state)
+      : enterInsert(state, Math.max(0, Math.min(state.lastInsertMark, doc.text.length))),
   // Dot-repeat: replay the last change (the adapter steps the doc). `N.`
   // replays N times.
   'repeat.dot': (state, env) =>
@@ -2334,6 +2449,10 @@ export const NORMAL_BINDINGS: Readonly<Record<string, keyof typeof NORMAL_ACTION
   '<': 'operator.dedent',
   p: 'paste.after',
   P: 'paste.before',
+  '"': 'register.select',
+  m: 'mark.set',
+  '`': 'mark.jumpChar',
+  "'": 'mark.jumpLine',
   u: 'history.undo',
   '.': 'repeat.dot',
   '~': 'case.toggle',
@@ -2408,7 +2527,7 @@ const deleteSteps = (state: VimState, doc: VimDocView, count: number, forward: b
   if (o === head) return insert ? enterInsert(state, null) : swallow(state);
   const from = Math.min(head, o);
   const to = Math.max(head, o);
-  const next = { ...state, register: { text: text.slice(from, to), linewise: false } };
+  const next = writeRegister(state, { text: text.slice(from, to), linewise: false });
   const effects: VimEffect[] = [{ kind: 'replace', from, to, text: '' }];
   if (insert) return { ...enterInsert(next, null, effects), handled: true };
   return { state: next, effects, handled: true };
@@ -2475,6 +2594,28 @@ const linewiseOperator = (state: VimState, op: Operator, count: number, doc: Vim
   for (let i = 1; i < count && to < text.length; i++) to = lineEnd(text, to + 1);
   return applyOperator(state, op, { from, to, linewise: true }, doc);
 };
+
+/** Write a yank/delete result: always to the UNNAMED register, and — when a
+ *  `"x` prefix is pending — to the named one too (`"A`–`"Z` append to their
+ *  lowercase register, Vim's rule). Consumes the prefix. */
+const writeRegister = (state: VimState, reg: VimRegister): VimState => {
+  const name = state.pendingRegister;
+  if (!name) return { ...state, register: reg };
+  const lower = name.toLowerCase();
+  const prev = name === lower ? undefined : state.registers[lower];
+  const stored: VimRegister = prev ? { text: prev.text + reg.text, linewise: prev.linewise || reg.linewise } : reg;
+  return {
+    ...state,
+    register: stored,
+    registers: { ...state.registers, [lower]: stored },
+    pendingRegister: null,
+  };
+};
+
+/** The register a paste reads: the pending `"x` (consumed by the caller
+ *  clearing pendingRegister), else the unnamed one. */
+const readRegister = (state: VimState): VimRegister | null =>
+  state.pendingRegister ? (state.registers[state.pendingRegister.toLowerCase()] ?? null) : state.register;
 
 /** Flip one character's case (the `~`/`g~` rule: uncased chars — CJK — pass
  *  through). */
@@ -2544,8 +2685,7 @@ const applyIndentOp = (state: VimState, op: 'indent' | 'dedent', range: VimRange
 const applyOperator = (state: VimState, op: Operator, range: VimRange, doc: VimDocView): VimStep => {
   if (op === 'lower' || op === 'upper' || op === 'toggle') return applyCaseOp(state, op, range, doc);
   if (op === 'indent' || op === 'dedent') return applyIndentOp(state, op, range, doc);
-  const register: VimRegister = { text: doc.text.slice(range.from, range.to), linewise: range.linewise };
-  const next = { ...state, register };
+  const next = writeRegister(state, { text: doc.text.slice(range.from, range.to), linewise: range.linewise });
   switch (op) {
     case 'y':
       return {
@@ -2589,8 +2729,8 @@ const applyOperator = (state: VimState, op: Operator, range: VimRange, doc: VimD
  *  the column is padded with spaces; missing lines are created at the
  *  document end; the caret lands on the first pasted character. `count`
  *  repeats each segment horizontally. */
-const blockPaste = (state: VimState, doc: VimDocView, count: number, after: boolean): VimStep => {
-  const segs = (state.register?.block ?? []).map((s) => s.repeat(count));
+const blockPaste = (state: VimState, reg: VimRegister, doc: VimDocView, count: number, after: boolean): VimStep => {
+  const segs = (reg.block ?? []).map((s) => s.repeat(count));
   const { text, head, caretStop } = doc;
   const le0 = lineEnd(text, head);
   const at0 = after && head < le0 ? Math.min(caretStop(head, 1), le0) : head;
@@ -2625,8 +2765,15 @@ const blockPaste = (state: VimState, doc: VimDocView, count: number, after: bool
 
 /** Linewise `p`/`P`: register content is the line body (no trailing
  *  newline); paste as whole lines below (p) / above (P), caret to the pasted
- *  text's first line. */
-const linewisePaste = (state: VimState, doc: VimDocView, body: string, after: boolean): VimStep => {
+ *  text's first line — or, for `gp`/`gP` (`cursorAfter`), to the line
+ *  FOLLOWING the pasted block. */
+const linewisePaste = (
+  state: VimState,
+  doc: VimDocView,
+  body: string,
+  after: boolean,
+  cursorAfter: boolean,
+): VimStep => {
   const { text, head } = doc;
   const ls = lineStart(text, head);
   const le = lineEnd(text, head);
@@ -2634,7 +2781,7 @@ const linewisePaste = (state: VimState, doc: VimDocView, body: string, after: bo
     const atDocEnd = le >= text.length;
     const from = atDocEnd ? text.length : le + 1;
     const data = atDocEnd ? `\n${body}` : `${body}\n`;
-    const caret = atDocEnd ? from + 1 : from;
+    const caret = cursorAfter ? from + data.length : atDocEnd ? from + 1 : from;
     return {
       state,
       effects: [
@@ -2644,31 +2791,33 @@ const linewisePaste = (state: VimState, doc: VimDocView, body: string, after: bo
       handled: true,
     };
   }
+  const caret = cursorAfter ? ls + body.length + 1 : ls;
   return {
     state,
     effects: [
       { kind: 'replace', from: ls, to: ls, text: `${body}\n` },
-      { kind: 'select', anchor: ls, head: ls },
+      { kind: 'select', anchor: caret, head: caret },
     ],
     handled: true,
   };
 };
 
-const paste = (state: VimState, doc: VimDocView, count: number, after: boolean): VimStep => {
-  const reg = state.register;
-  if (!reg || reg.text.length === 0) return swallow(state);
-  if (reg.block) return blockPaste(state, doc, count, after);
+const paste = (state: VimState, doc: VimDocView, count: number, after: boolean, cursorAfter = false): VimStep => {
+  const reg = readRegister(state);
+  const consumed = state.pendingRegister ? { ...state, pendingRegister: null } : state;
+  if (!reg || reg.text.length === 0) return swallow(consumed);
+  if (reg.block) return blockPaste(consumed, reg, doc, count, after);
   const { text, head, caretStop } = doc;
   // Linewise copies are LINES — joined by newlines, not concatenated.
   const body = reg.linewise ? Array.from({ length: count }, () => reg.text).join('\n') : reg.text.repeat(count);
-  if (reg.linewise) return linewisePaste(state, doc, body, after);
+  if (reg.linewise) return linewisePaste(consumed, doc, body, after, cursorAfter);
   // Charwise: after the character under the caret (p) or at the caret (P);
-  // the caret lands ON the last pasted character.
+  // the caret lands ON the last pasted character (gp/gP: just AFTER it).
   const le = lineEnd(text, head);
   const at = after && head < le ? Math.min(caretStop(head, 1), le) : head;
-  const caret = Math.max(at, at + body.length - 1);
+  const caret = cursorAfter ? at + body.length : Math.max(at, at + body.length - 1);
   return {
-    state,
+    state: consumed,
     effects: [
       { kind: 'replace', from: at, to: at, text: body },
       { kind: 'select', anchor: caret, head: caret },
