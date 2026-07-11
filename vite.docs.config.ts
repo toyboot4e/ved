@@ -48,27 +48,31 @@ const shadowOf = (entry: string): string | null => {
   writeFileSync(join(REPO_ROOT, shadow), kept.join('\n'));
   return shadow;
 };
-const shadows = new Map(
-  MODULES.flatMap((m) => {
+const shadows = new Map<string, string>();
+const entryPoints: { path: string; name: string }[] = [];
+
+// The generation-time side effects, gated below on the vite command —
+// `vite preview` loads this config too, and must serve the existing build
+// untouched (no shadow refresh, no gate, above all no rm of its own outDir).
+const prepare = (): void => {
+  for (const m of MODULES) {
     const shadow = shadowOf(m.entry);
-    return shadow ? [[m.entry, shadow] as const] : [];
-  }),
-);
-const entryPoints = MODULES.map((m) => ({ path: shadows.get(m.entry) ?? m.entry, name: m.name }));
-
-// The plugin swallows extraction diagnostics (a broken JSDoc block would just
-// vanish from the reference); gate on them here, where a failure still fails
-// the whole vite invocation.
-for (const m of extractDocsFromEntryPoints(entryPoints, { root: REPO_ROOT })) {
-  for (const d of m.diagnostics) {
-    throw new Error(`${d.code} ${d.entrypoint} ${d.exportName}: ${d.message}`);
+    if (shadow) shadows.set(m.entry, shadow);
+    entryPoints.push({ path: shadow ?? m.entry, name: m.name });
   }
-}
-
-// The plugin only ever adds pages; drop the previous trees so removed symbols
-// don't linger as stale pages.
-rmSync(API_DIR, { recursive: true, force: true });
-rmSync(join(REPO_ROOT, 'out/api-docs'), { recursive: true, force: true });
+  // The plugin swallows extraction diagnostics (a broken JSDoc block would
+  // just vanish from the reference); gate on them here, where a failure still
+  // fails the whole vite invocation.
+  for (const m of extractDocsFromEntryPoints(entryPoints, { root: REPO_ROOT })) {
+    for (const d of m.diagnostics) {
+      throw new Error(`${d.code} ${d.entrypoint} ${d.exportName}: ${d.message}`);
+    }
+  }
+  // The plugin only ever adds pages; drop the previous trees so removed
+  // symbols don't linger as stale pages.
+  rmSync(API_DIR, { recursive: true, force: true });
+  rmSync(join(REPO_ROOT, 'out/api-docs'), { recursive: true, force: true });
+};
 
 // Patch three ox-content@2.76 rendering quirks in the generated Markdown:
 //   - source links relativize the file path to the nearest package, dropping
@@ -109,38 +113,48 @@ const patchDocs = (): Plugin => ({
   },
 });
 
-export default defineConfig({
-  // `docs/` is the vite root: the client build wants an index.html entry, and
-  // the stub lives there (the SSG writes the real pages over it).
-  root: 'docs',
-  // Off the 5173+ range that `just dev` / `just serve` auto-increment through.
-  server: { port: 5273 },
-  publicDir: '../desktop/resources', // icon.png only — the site logo
-  build: { outDir: '../out/api-docs' },
-  plugins: [
-    oxContent({
-      srcDir: 'api',
-      outDir: '../out/api-docs',
-      gfm: true,
-      search: true,
-      docs: {
-        entryPoints,
-        // With entryPoints set, `src` only feeds the dev-server watcher: a
-        // change under these trees re-runs the extraction.
-        src: ['../editor/src', '../vim/src', '../desktop/src/shared'],
-        out: 'api',
-        githubUrl: 'https://github.com/toyboot4e/ved',
-        pathStrategy: 'typedoc',
-        sortEntryPoints: false, // keep the MODULES order: ved first
-      },
-      ssg: {
-        siteName: 'ved API',
-        theme: defineTheme({
-          extends: defaultTheme,
-          header: { logo: '/icon.png' },
-        }),
-      },
-    }),
-    patchDocs(),
-  ],
+export default defineConfig(({ isPreview }) => {
+  if (!isPreview) prepare();
+  return {
+    // `docs/` is the vite root: the client build wants an index.html entry, and
+    // the stub lives there (the SSG writes the real pages over it).
+    root: 'docs',
+    // Off the 5173+ range that `just dev` / `just serve` auto-increment through.
+    server: { port: 5273 },
+    publicDir: '../desktop/resources', // icon.png only — the site logo
+    build: { outDir: '../out/api-docs' },
+    plugins: [
+      oxContent({
+        srcDir: 'api',
+        outDir: '../out/api-docs',
+        gfm: true,
+        search: true,
+        docs: {
+          entryPoints,
+          // With entryPoints set, `src` only feeds the dev-server watcher: a
+          // change under these trees re-runs the extraction.
+          src: ['../editor/src', '../vim/src', '../desktop/src/shared'],
+          out: 'api',
+          githubUrl: 'https://github.com/toyboot4e/ved',
+          pathStrategy: 'typedoc',
+          sortEntryPoints: false, // keep the MODULES order: ved first
+          // Root-absolute clean routes. The default `.md` links break on pages
+          // named index.md: the SSG rewrite maps every `X.md` to `X/index.html`,
+          // so a module link `./ved/index.md` becomes `./ved/index/index.html` —
+          // a page that does not exist in the build (and in dev poisons the base
+          // URL for every relative link on the module page).
+          linkStyle: 'clean',
+          basePath: '/',
+        },
+        ssg: {
+          siteName: 'ved API',
+          theme: defineTheme({
+            extends: defaultTheme,
+            header: { logo: '/icon.png' },
+          }),
+        },
+      }),
+      patchDocs(),
+    ],
+  };
 });
