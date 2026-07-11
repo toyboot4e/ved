@@ -106,12 +106,38 @@ export const inlineNodesFor = (line: string): PMNode[] => {
   return inline;
 };
 
+// Paragraph nodes KNOWN to be the canonical projection of their text
+// (`inlineNodesFor`). Nodes are immutable, so the verdict never goes stale, and
+// an edit shares every untouched paragraph node — structure repair
+// (pm/structure.ts) skips marked paragraphs, so its per-edit cost is O(changed
+// paragraphs), not O(document). Marked at construction (`paragraphFor`) and by
+// repair after a verification.
+const canonicalParas = new WeakSet<PMNode>();
+
+/** Is `para` known-canonical (its content equals `inlineNodesFor` of its own
+ *  text)? A false answer only means "not verified yet". */
+export const isCanonicalParagraph = (para: PMNode): boolean => canonicalParas.has(para);
+
+/** Record that `para`'s content was verified equal to its canonical form. */
+export const markCanonicalParagraph = (para: PMNode): void => {
+  canonicalParas.add(para);
+};
+
+/** Build one paragraph node as the canonical projection of `line` — and mark
+ *  it so structure repair never re-verifies it. Every paragraph builder
+ *  (docFromText, the plain-edit rebuilds) goes through this. */
+export const paragraphFor = (line: string): PMNode => {
+  const para = schema.node('paragraph', null, inlineNodesFor(line));
+  canonicalParas.add(para);
+  return para;
+};
+
 /** Build a document from plain text (one paragraph per line). */
 export const docFromText = (text: string): PMNode =>
   schema.node(
     'doc',
     null,
-    text.split('\n').map((line) => schema.node('paragraph', null, inlineNodesFor(line))),
+    text.split('\n').map((line) => paragraphFor(line)),
   );
 
 // PM nodes are IMMUTABLE, so node identity is a perfect cache key: an edit
@@ -370,11 +396,11 @@ const paraMaps = (para: PMNode): Maps => {
 /** Doc-level paragraph index: position and cumulative plain offset of each
  *  paragraph. O(#paragraphs) once per doc version (lengths come from the
  *  per-paragraph text cache). */
-type DocIndex = { paras: PMNode[]; paraPos: number[]; prefixOff: number[]; total: number };
+export type DocIndex = { paras: PMNode[]; paraPos: number[]; prefixOff: number[]; total: number };
 
 const docIndexCache = new WeakMap<PMNode, DocIndex>();
 
-const docIndex = (doc: PMNode): DocIndex => {
+export const docIndex = (doc: PMNode): DocIndex => {
   const hit = docIndexCache.get(doc);
   if (hit) return hit;
   const paras: PMNode[] = [];
@@ -394,8 +420,27 @@ const docIndex = (doc: PMNode): DocIndex => {
   return index;
 };
 
+/** The paragraphs an edit touched, as clean-run lengths from BOTH ends:
+ *  `cleanStart` paragraphs at the start and `cleanEnd` at the end are
+ *  IDENTITY-equal between the two docs (immutable nodes — identity means
+ *  untouched). The dirty range in the new doc is
+ *  `[cleanStart, newDoc.childCount - 1 - cleanEnd]` (empty when the docs share
+ *  every paragraph). The clean-end run is capped so the two runs never
+ *  overlap. Shared by the decoration cache advance and the line-number
+ *  overlay's incremental measure. */
+export const changedParagraphSpan = (oldDoc: PMNode, newDoc: PMNode): { cleanStart: number; cleanEnd: number } => {
+  const na = oldDoc.childCount;
+  const nb = newDoc.childCount;
+  const min = Math.min(na, nb);
+  let s = 0;
+  while (s < min && oldDoc.child(s) === newDoc.child(s)) s++;
+  let e = 0;
+  while (e < min - s && oldDoc.child(na - 1 - e) === newDoc.child(nb - 1 - e)) e++;
+  return { cleanStart: s, cleanEnd: e };
+};
+
 /** Index of the last element in ascending `arr` that is <= `x` (-1 if none). */
-const lastAtOrBelow = (arr: number[], x: number): number => {
+export const lastAtOrBelow = (arr: number[], x: number): number => {
   let lo = 0;
   let hi = arr.length - 1;
   let best = -1;

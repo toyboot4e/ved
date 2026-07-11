@@ -62,6 +62,29 @@ const pushRubyLeaves = (out: Leaf[], fmt: Ruby, base: number, li: number, r: num
   });
 };
 
+/** The leaves of ONE line in LOCAL coordinates — offsets from the line start,
+ *  ruby ids from 0, `line` 0 — and WITHOUT the trailing `nl` leaf. The
+ *  per-paragraph decoration caches (pm/decorations.ts) key this on the
+ *  immutable paragraph node and rebase per line, so an edit re-parses only its
+ *  own paragraphs; `docLeaves` assembles the whole document from the same
+ *  walk. */
+export const lineLeafList = (line: string): Leaf[] => {
+  const out: Leaf[] = [];
+  let cursor = 0;
+  let rubyId = 0;
+  for (const fmt of parse(line)) {
+    if (fmt.delimFront[0] > cursor) {
+      out.push({ kind: 'plain', from: cursor, to: fmt.delimFront[0], line: 0, ruby: -1, edge: null });
+    }
+    pushRubyLeaves(out, fmt, 0, 0, rubyId++);
+    cursor = fmt.delimEnd[1];
+  }
+  if (cursor < line.length) {
+    out.push({ kind: 'plain', from: cursor, to: line.length, line: 0, ruby: -1, edge: null });
+  }
+  return out;
+};
+
 /** All leaves of a document in offset order, including a `nl` leaf per line
  *  break so caret movement crosses paragraphs uniformly. Memoized on the text
  *  (one slot — callers pass the memoized `serialize` result). */
@@ -70,20 +93,15 @@ export const docLeaves = (doc: string): Leaf[] => {
   const out: Leaf[] = [];
   const lines = doc.split('\n');
   let base = 0;
-  let rubyId = 0;
+  let rubyBase = 0;
   for (let li = 0; li < lines.length; li++) {
     const line = lines[li]!;
-    let cursor = 0;
-    for (const fmt of parse(line)) {
-      if (fmt.delimFront[0] > cursor) {
-        out.push({ kind: 'plain', from: base + cursor, to: base + fmt.delimFront[0], line: li, ruby: -1, edge: null });
-      }
-      pushRubyLeaves(out, fmt, base, li, rubyId++);
-      cursor = fmt.delimEnd[1];
+    let rubies = 0;
+    for (const l of lineLeafList(line)) {
+      out.push({ ...l, from: base + l.from, to: base + l.to, line: li, ruby: l.ruby < 0 ? -1 : rubyBase + l.ruby });
+      if (l.ruby >= 0) rubies = Math.max(rubies, l.ruby + 1);
     }
-    if (cursor < line.length) {
-      out.push({ kind: 'plain', from: base + cursor, to: base + line.length, line: li, ruby: -1, edge: null });
-    }
+    rubyBase += rubies;
     base += line.length;
     if (li < lines.length - 1) {
       out.push({ kind: 'nl', from: base, to: base + 1, line: li, ruby: -1, edge: null });

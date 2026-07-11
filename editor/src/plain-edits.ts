@@ -8,7 +8,7 @@ import type { EditorView } from 'prosemirror-view';
 import { nextCaretOffset } from './pm/caret-model';
 import type { Appear } from './pm/leaves';
 import { lineSpanAt } from './pm/leaves';
-import { inlineNodesFor, offsetToPos, posToOffset, rubyPasteOutsidePos, schema, serialize } from './pm/model';
+import { offsetToPos, paragraphFor, posToOffset, rubyPasteOutsidePos, serialize } from './pm/model';
 
 /** A non-empty DOM selection that may LEAD PM's model (a programmatic
  *  select-all isn't synced until the next selectionchange flush), as a PM
@@ -57,9 +57,7 @@ export const plainDeleteTr = (state: EditorState, from: number, to: number, spli
   const lineEnd = lineSpanAt(text, toOff).end;
   const head = text.slice(lineStart, fromOff);
   const tail = text.slice(toOff, lineEnd);
-  const paras = split
-    ? [schema.node('paragraph', null, inlineNodesFor(head)), schema.node('paragraph', null, inlineNodesFor(tail))]
-    : [schema.node('paragraph', null, inlineNodesFor(head + tail))];
+  const paras = split ? [paragraphFor(head), paragraphFor(tail)] : [paragraphFor(head + tail)];
   const $a = doc.resolve(offsetToPos(doc, fromOff));
   const $b = doc.resolve(offsetToPos(doc, toOff));
   const tr = state.tr.replaceWith($a.before(1), $b.after(1), paras);
@@ -97,7 +95,7 @@ export const plainInsertTr = (state: EditorState, data: string, policy: Appear):
   const lineStart = lineSpanAt(text, fromOff).start;
   const lineEnd = lineSpanAt(text, toOff).end;
   const spliced = text.slice(lineStart, fromOff) + data + text.slice(toOff, lineEnd);
-  const paras = spliced.split('\n').map((line) => schema.node('paragraph', null, inlineNodesFor(line)));
+  const paras = spliced.split('\n').map((line) => paragraphFor(line));
   const $a = doc.resolve(offsetToPos(doc, fromOff));
   const $b = doc.resolve(offsetToPos(doc, toOff));
   const tr = state.tr.replaceWith($a.before(1), $b.after(1), paras);
