@@ -1,6 +1,7 @@
 import { clsx } from 'clsx';
 import { baseKeymap } from 'prosemirror-commands';
 import { keymap } from 'prosemirror-keymap';
+import type { Node as PMNode } from 'prosemirror-model';
 import { EditorState, Plugin, type Selection, TextSelection, type Transaction } from 'prosemirror-state';
 import { EditorView } from 'prosemirror-view';
 import type React from 'react';
@@ -17,7 +18,7 @@ import { createBeforeInputHandler, createCompositionHandlers } from './compositi
 import styles from './editor.module.scss';
 import type { CaretShape, EditorExtension, ExtensionDecorationRange, VisualSelectionKind } from './extension';
 import { createEditorOps } from './extension-context';
-import { createGlyphWalker } from './glyph-walker';
+import { createGlyphWalker, type GlyphWalker } from './glyph-walker';
 import type { PlainTextHistory } from './history';
 import { installImeCaretPin } from './ime-caret-pin';
 import { createImeCellPad, type ImeCellPad } from './ime-cell-pad';
@@ -27,10 +28,25 @@ import { type CaretRect, type LineNumbers, mountLineNumbers } from './line-numbe
 import { createPageGapMeasure } from './page-gap-measure';
 import { enterReplacingSelection, plainInsertTr } from './plain-edits';
 import { type CursorState, cursorToOffset, offsetToCursor } from './pm/cursor';
-import { buildDecorations, type Invisibles, type SearchHighlights, type SearchRange } from './pm/decorations';
+import {
+  advanceDecorationCaches,
+  boundaryCaretElement,
+  buildDecorations,
+  type Invisibles,
+  type SearchHighlights,
+  type SearchRange,
+} from './pm/decorations';
 import { imePadPlugin } from './pm/ime-pad';
 import type { Appear } from './pm/leaves';
-import { docFromText, offsetToPos, posToOffset, rubyClickOutsidePos, serialize, serializeSlice } from './pm/model';
+import {
+  changedParagraphSpan,
+  docFromText,
+  offsetToPos,
+  posToOffset,
+  rubyClickOutsidePos,
+  serialize,
+  serializeSlice,
+} from './pm/model';
 import { pageGapPlugin } from './pm/page-gap';
 import { RubyView } from './pm/ruby-view';
 import { repair } from './pm/structure';
@@ -175,8 +191,10 @@ const NO_INVISIBLES: Invisibles = { newline: false, whitespace: false };
  *  name the NEXT line — the highlight sat one line off the visible caret
  *  (`line-highlight-wrap-end.ts`). Bar shape only: the block caret covers the
  *  character AFTER the caret and keeps that character's line. */
-const boundaryCaretBox = (view: EditorView): CaretRect | null => {
-  const b = view.dom.querySelector('.vedBoundaryCaret')?.getBoundingClientRect();
+const boundaryCaretBox = (): CaretRect | null => {
+  // O(1) via the decoration layer's handle — a querySelector scanned the
+  // whole content tree to a MISS on every plain-text caret move.
+  const b = boundaryCaretElement()?.getBoundingClientRect();
   if (b && (b.width > 1 || b.height > 1)) {
     return { top: b.top, bottom: b.bottom, left: b.left, right: b.right };
   }
@@ -215,7 +233,7 @@ const steadyCaretRect = (view: EditorView, caretShape: CaretShape): CaretRect | 
   const sel = view.state.selection;
   const head = sel.head;
   if (sel.empty && caretShape === 'bar') {
-    const b = boundaryCaretBox(view);
+    const b = boundaryCaretBox();
     if (b) return b;
   }
   // At the END of a non-empty paragraph whose last visual line is FULL,
@@ -340,6 +358,9 @@ export const VedEditor = (props: VedEditorProps): React.JSX.Element => {
   // MODEL selection, for the overlay's text-selection highlight (the DOM selection
   // can't span a read-only ruby base, so the highlight is model-driven).
   const selectedGlyphRectsRef = useRef<(() => DOMRect[]) | null>(null);
+  // The glyph walker, for the effects below to drop its hit-test cache on
+  // layout shifts they cause (mode/policy/view-config/invisibles changes).
+  const glyphWalkerRef = useRef<GlyphWalker | null>(null);
   const onScroll = useKeepScrollPosition(scrollerRef, writingMode);
 
   // Mount the ProseMirror view once.
@@ -430,16 +451,21 @@ export const VedEditor = (props: VedEditorProps): React.JSX.Element => {
     const onBeforeInput = createBeforeInputHandler(session, policyClassRef);
 
     /** dispatchTransaction's measurement tail (same flush as the update).
-     *  An edit re-wraps lines → full re-measure. A caret-only move keeps the
-     *  geometry → SYNCHRONOUS highlight-only pass from the cached lines (no
-     *  O(doc) re-measure, and no rAF wait — the highlight lands in the same
+     *  An edit re-wraps only its own paragraphs' lines → the overlay's EDIT
+     *  measure, scoped by the paragraph identity diff (a full O(doc)
+     *  re-measure per keystroke stalled large docs). A caret-only move keeps
+     *  the geometry → SYNCHRONOUS highlight-only pass from the cached lines
+     *  (no re-measure, and no rAF wait — the highlight lands in the same
      *  frame as the caret instead of one frame behind it). A composing edit
      *  first pads the preedit to whole cells (the raw romaji letter is a HALF
      *  cell and the wrap point would flip per key — ime-cell-pad.ts), THEN
      *  measures the page gaps against the padded layout. An edit's layout
      *  change starts at its own line — suffix re-measure. */
-    const scheduleMeasuresOnDispatch = (tr: Transaction): void => {
-      if (tr.docChanged) lineNumbersRef.current?.schedule();
+    const scheduleMeasuresOnDispatch = (tr: Transaction, oldDoc: PMNode, newDoc: PMNode): void => {
+      if (tr.docChanged) {
+        const { cleanStart, cleanEnd } = changedParagraphSpan(oldDoc, newDoc);
+        lineNumbersRef.current?.scheduleEdit(cleanStart, cleanEnd);
+      }
       if (tr.docChanged && view.composing) imeCellPadRef.current?.update();
       if (tr.docChanged) pageGapsRef.current?.schedule(false);
       else if (tr.selectionSet) lineNumbersRef.current?.refreshCaret();
@@ -487,16 +513,25 @@ export const VedEditor = (props: VedEditorProps): React.JSX.Element => {
       // preceding text — see pm/ruby-view.ts).
       nodeViews: { ruby: (node) => new RubyView(node) },
       dispatchTransaction(tr) {
+        const oldDoc = view.state.doc;
         let next = view.state.apply(tr);
+        // Advance the cached decoration sets across the edit (dirty paragraphs
+        // only) BEFORE updateState pulls the new decorations — a full rebuild
+        // per keystroke scaled with the document (pm/decorations.ts).
+        if (tr.docChanged) advanceDecorationCaches(view.state.doc, next.doc, tr.mapping);
         // An edit repositions the caret along the line — drop the goal column.
         if (tr.docChanged) goalInlineRef.current = null;
         // Ruby structure repair in the same flush, skipped during IME.
         if (tr.docChanged && !view.composing && !rebuildingRef.current) {
           const fix = repair(next);
-          if (fix) next = next.apply(fix);
+          if (fix) {
+            const repaired = next.apply(fix);
+            advanceDecorationCaches(next.doc, repaired.doc, fix.mapping);
+            next = repaired;
+          }
         }
         view.updateState(next);
-        scheduleMeasuresOnDispatch(tr);
+        scheduleMeasuresOnDispatch(tr, oldDoc, next.doc);
         commitOnDispatch(tr, next);
         trackSelectionOnDispatch(tr, next);
       },
@@ -684,6 +719,17 @@ export const VedEditor = (props: VedEditorProps): React.JSX.Element => {
         return null;
       }
     };
+    // Glyph geometry (glyph-walker.ts), keyed to the live policy. Created
+    // before the overlay/observers: they invalidate its hit-test cache on
+    // every layout shift no doc change explains.
+    const walker = createGlyphWalker(
+      view,
+      mount,
+      () => policyClassRef.current,
+      () => visualSelectionRef.current,
+    );
+    selectedGlyphRectsRef.current = walker.selectedGlyphRects;
+    glyphWalkerRef.current = walker;
     const lineNumbers = mountLineNumbers(
       mount,
       view.dom,
@@ -696,8 +742,10 @@ export const VedEditor = (props: VedEditorProps): React.JSX.Element => {
     document.fonts?.ready.then(() => {
       lineNumbers.schedule();
       // A late webfont changes glyph advances → wraps move; also drops the
-      // page-gap suffix cache, which a font swap would silently invalidate.
+      // page-gap suffix cache and the glyph hit-test cache, which a font swap
+      // would silently invalidate.
       pageGapsRef.current?.schedule();
+      walker.invalidateGeometry();
     });
     // Also fires on a view-config change (font size / line space / page
     // geometry): the content box resizes, so the line numbers re-measure and
@@ -708,26 +756,41 @@ export const VedEditor = (props: VedEditorProps): React.JSX.Element => {
     const resizeObserver = new ResizeObserver(() => {
       lineNumbers.schedule();
       pageGapsRef.current?.schedule();
+      walker.invalidateGeometry();
     });
     resizeObserver.observe(mount);
     // The scroller box misses layout shifts that only resize the CONTENT — a
     // `--page-gap` change fattens the gap widgets (pure CSS) and every page
     // border/separator moves, but the scroller keeps its size and the overlay
     // never re-measured (stale separators/folios/highlight). Observe the
-    // content box too, split by axis: the BLOCK-GROWTH axis (width in the
-    // vertical modes, height in horizontal) changes on every edit — those are
-    // already scheduled (suffix-cached) by dispatchTransaction, so re-measure
-    // only the overlay. A CROSS-axis change is a geometry shift (page-line
-    // count, gap, font) → also re-derive the page-gap widgets in FULL (the
-    // suffix cache can't see a wrap-cap change: same text, same pitch).
+    // content box too, split by axis: a CROSS-axis change is a geometry shift
+    // (page-line count, gap, font) → re-measure the overlay AND re-derive the
+    // page-gap widgets in FULL (the suffix cache can't see a wrap-cap change:
+    // same text, same pitch). A BLOCK-GROWTH-axis change (width in the
+    // vertical modes, height in horizontal) happens on every line-count edit
+    // — those already scheduled their own scoped passes (the overlay's edit
+    // measure, the page-gap suffix), so growth a pending or completed overlay
+    // pass explains is ABSORBED; unexplained growth (a size-affecting
+    // view-config change in a host that passes no viewConfigEpoch) still
+    // re-measures the overlay in full.
     let lastCross: number | null = null;
     const contentObserver = new ResizeObserver(() => {
+      // ANY content resize can move glyphs — the hit-test cache re-measures.
+      walker.invalidateGeometry();
       // The block-growth axis IS the scroll axis; the cross axis is the other.
       const cross = scrollsVertically(live.current.writingMode) ? view.dom.offsetWidth : view.dom.offsetHeight;
       const crossChanged = lastCross !== null && cross !== lastCross;
       lastCross = cross;
+      if (crossChanged) {
+        lineNumbers.schedule();
+        pageGapsRef.current?.schedule();
+        return;
+      }
+      const seen = lineNumbers.measuredContentSize();
+      if (lineNumbers.pending() || (seen && seen.w === view.dom.offsetWidth && seen.h === view.dom.offsetHeight)) {
+        return;
+      }
       lineNumbers.schedule();
-      if (crossChanged) pageGapsRef.current?.schedule();
     });
     contentObserver.observe(view.dom);
 
@@ -757,21 +820,23 @@ export const VedEditor = (props: VedEditorProps): React.JSX.Element => {
     };
     mount.addEventListener('wheel', onWheel, { passive: false });
 
-    // Glyph geometry (glyph-walker.ts) + the page-gap measure
-    // (page-gap-measure.ts), both keyed to the live policy.
-    const walker = createGlyphWalker(
-      view,
-      mount,
-      () => policyClassRef.current,
-      () => visualSelectionRef.current,
-    );
-    selectedGlyphRectsRef.current = walker.selectedGlyphRects;
+    // The page-gap measure (page-gap-measure.ts), keyed to the live policy.
     const pageGaps = createPageGapMeasure(
       view,
       mount,
       () => policyClassRef.current,
       walker,
-      () => lineNumbersRef.current?.schedule(),
+      (firstChangedPos) => {
+        // A widget-set change moves lines only from the FIRST changed widget
+        // onward — the overlay's edit measure re-measures that suffix, and
+        // the glyph hit-test cache re-measures; a reserve-only change (null)
+        // moves no line at all.
+        if (firstChangedPos == null) return;
+        walker.invalidateGeometry();
+        const doc = view.state.doc;
+        const $p = doc.resolve(Math.max(0, Math.min(firstChangedPos, doc.content.size)));
+        lineNumbersRef.current?.scheduleEdit($p.index(0), 0);
+      },
     );
     pageGapsRef.current = pageGaps;
     pageGaps.schedule();
@@ -881,6 +946,7 @@ export const VedEditor = (props: VedEditorProps): React.JSX.Element => {
       contentObserver.disconnect();
       lineNumbers.destroy();
       lineNumbersRef.current = null;
+      glyphWalkerRef.current = null;
       pageGaps.cancel();
       pageGapsRef.current = null;
       live.current.onSearchOps?.(null);
@@ -929,6 +995,7 @@ export const VedEditor = (props: VedEditorProps): React.JSX.Element => {
     view.dispatch(view.state.tr.setMeta('redecorate', true));
     lineNumbersRef.current?.schedule(); // wrapping changed → re-measure line numbers
     pageGapsRef.current?.schedule(); // rows mode may have toggled → widgets in/out
+    glyphWalkerRef.current?.invalidateGeometry(); // glyphs moved → drop hit-test cache
     // Synchronously (a forced layout), so we don't race the reflow as rAF would.
     if (prevRevealRef.current.policy !== appearPolicy || prevRevealRef.current.mode !== writingMode) {
       prevRevealRef.current = { policy: appearPolicy, mode: writingMode };
@@ -946,6 +1013,7 @@ export const VedEditor = (props: VedEditorProps): React.JSX.Element => {
     if (epoch === undefined) return;
     lineNumbersRef.current?.schedule();
     pageGapsRef.current?.schedule();
+    glyphWalkerRef.current?.invalidateGeometry();
   }, [epoch]);
 
   // Invisibles toggle (see VedEditorProps.invisibles): update the live ref and
@@ -961,6 +1029,7 @@ export const VedEditor = (props: VedEditorProps): React.JSX.Element => {
     if (!view) return;
     view.dispatch(view.state.tr.setMeta('redecorate', true));
     lineNumbersRef.current?.schedule();
+    glyphWalkerRef.current?.invalidateGeometry();
   }, [showNewline, showWhitespace]);
 
   // Search-highlight change (see VedEditorProps.searchHighlights): update the

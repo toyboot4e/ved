@@ -91,14 +91,20 @@ Binding rules; the mechanisms behind them are catalogued in
 - **Character counts are ASCII columns.** When a size is given as "N
   characters", it means halfwidth columns: N columns = N/2 fullwidth (全角)
   characters = N/2 em. E.g. the vertical line cap of 80 characters is 40em.
-- **Per-caret-move work must not scale with the document.** Caches key on PM
-  node identity (immutable, never stale); glyph-rect walks (the most
-  expensive operation) are scoped to the viewport or the selection span; the
-  page-gap measure is suffix-incremental per edit. Guarded by counter seams,
-  not timing: `__vedGlyphWalks`, `__vedBaseRebuilds`, `__vedRubyRebuilds`,
+- **Per-event work must not scale with the document — caret moves AND
+  edits.** Caches key on PM node identity (immutable, never stale); glyph-rect
+  walks (the most expensive operation) are scoped to the viewport or the
+  selection span; per edit, structure repair verifies only dirty paragraphs,
+  the decoration sets ADVANCE through the transaction (never rebuild), and
+  the overlay/page-gap measures are suffix-incremental; the empty-area
+  hit-test cache survives gestures; ByParagraph/ByCharacter caret crossings
+  patch the delta rubies. Guarded by counter seams, not timing:
+  `__vedGlyphWalks`, `__vedNearWalks`, `__vedBaseRebuilds`,
+  `__vedRubyRebuilds`, `__vedRepairChecks`, `__vedLineMeasures`,
   `__vedGapLines` (`test/e2e/caret-move-perf.ts`, `click-perf.ts`,
-  `page-gap-suffix.ts`). Latency benchmarks in `desktop/bench/` (visible
-  windows — hidden ones throttle frames and distort latency).
+  `edit-perf.ts`, `page-gap-suffix.ts`). Latency benchmarks in
+  `desktop/bench/` (visible windows — hidden ones throttle frames and distort
+  latency).
 
 ## Current work: editor UI shell
 

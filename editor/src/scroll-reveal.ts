@@ -8,6 +8,7 @@
 import type { EditorView } from 'prosemirror-view';
 import type React from 'react';
 import { useCallback, useLayoutEffect, useRef } from 'react';
+import { boundaryCaretElement } from './pm/decorations';
 import { lineToScroll, revealDelta, type ScrollGeom, scrollToLine } from './scroll-keep';
 import { isVerticalMode, type WritingMode, writingPaging } from './writing-mode';
 
@@ -191,8 +192,9 @@ export const caretCoords = (
   if (extent(b) >= 2) return b;
   // Both sides flat — a paragraph EDGE with the widget as the only neighbor
   // (e.g. the doc start before a leading ruby). The widget is the caret's
-  // visual home; its box is the caret rect.
-  const w = view.dom.querySelector('.vedBoundaryCaret')?.getBoundingClientRect();
+  // visual home; its box is the caret rect (reached in O(1) through the
+  // decoration layer's handle — never a content-tree scan).
+  const w = boundaryCaretElement()?.getBoundingClientRect();
   return w && extent(w) >= 2 ? { left: w.left, right: w.right, top: w.top, bottom: w.bottom } : a;
 };
 

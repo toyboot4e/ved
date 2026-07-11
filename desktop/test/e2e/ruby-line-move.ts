@@ -14,7 +14,7 @@
 //
 // Usage: node test/e2e/ruby-line-move.ts (after pnpm run build).
 import assert from 'node:assert/strict';
-import { caretToStart, fail, finish, launchVed, step } from './harness.ts';
+import { caretOffset, caretToStart, fail, finish, launchVed, pressLineMove, step } from './harness.ts';
 
 // VISIBLE window (not the default hidden one): moveCaretByLine defers via
 // requestAnimationFrame, and hidden Electron windows throttle RAF so the moves
@@ -22,10 +22,6 @@ import { caretToStart, fail, finish, launchVed, step } from './harness.ts';
 // hidden-window RAF gotcha; see line-movement.ts).
 const ved = await launchVed({ env: () => ({ VED_SMOKE_CLOSE_RESPONSE: 'discard', VED_SMOKE_HIDDEN: '' }) });
 const { page } = ved;
-
-// Global caret offset: the editor's own plain offset of the caret head (a
-// reliable test seam — a DOM Range metric is unreliable across hidden markup).
-const caretOffset = () => page.evaluate(() => (window as unknown as { __vedCaret(): number }).__vedCaret());
 
 try {
   await page.click('#editor-content');
@@ -54,26 +50,14 @@ try {
   await caretToStart(page);
   await page.waitForTimeout(100);
 
-  // moveCaretByLine commits asynchronously (a RAF); poll until THIS move
-  // registers (or a generous cap) so a throttled frame doesn't batch moves.
-  const pressLine = async () => {
-    const before = await caretOffset();
-    await page.keyboard.press('ArrowLeft');
-    for (let k = 0; k < 200; k++) {
-      await page.waitForTimeout(16);
-      if ((await caretOffset()) !== before) return;
-    }
-  };
-
   // 8 presses traverse all three paragraphs' reading columns and confirm
   // monotonic, single-column stepping into the last paragraph. (A ruby is a
   // non-editable ATOM in Rich, so the caret never lands inside it and the
   // cross-paragraph step measures clean reading columns — the old <rt> phantom
   // column / paragraph-boundary stall is gone.)
-  const offsets: number[] = [await caretOffset()];
+  const offsets: number[] = [await caretOffset(page)];
   for (let i = 0; i < 8; i++) {
-    await pressLine();
-    offsets.push(await caretOffset());
+    offsets.push(await pressLineMove(page, 'ArrowLeft'));
   }
   step(`offsets across 8 ArrowLefts: ${offsets.join(' ')}`);
 

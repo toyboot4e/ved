@@ -17,21 +17,43 @@
 // only on layout change, never on scroll.
 //
 // Re-measuring every paragraph (a getClientRects + getComputedStyle each) is
-// O(document) and must NOT run on every caret move, or a large doc stalls for
-// ~100ms per arrow key (the highlight "lags", and queued keypresses then apply
-// in a burst that looks like the caret jumping several lines). So there are two
-// paths: a FULL measure (rebuild lines + numbers), rAF-scheduled on layout
-// changes (edit/mode/policy/resize/font), and a SYNCHRONOUS highlight-only pass
-// (`refreshCaret`) on a selection-only change that reuses the cached line
-// geometry — re-pick the caret's line (O(lines) of plain math, no layout reads
-// per paragraph) and, only if the line actually changed, move the highlight.
-// Synchronous so the highlight lands in the same frame as the caret.
+// O(document) and must NOT run per event — neither on a caret move NOR on an
+// edit — or a large doc stalls for ~100ms (the highlight "lags", and queued
+// keypresses then apply in a burst that looks like the caret jumping several
+// lines). Three paths:
+//   - a FULL measure, rAF-scheduled on layout changes no edit explains
+//     (mode/policy/resize/font/view-config);
+//   - an EDIT measure (`scheduleEdit`): the per-paragraph line geometry is
+//     CACHED, the caller names the clean paragraph runs at both ends (node
+//     identity — pm/model.ts changedParagraphSpan), and only the dirty
+//     paragraphs re-measure. The clean prefix cannot move (layout flows
+//     forward; a paragraph-0 probe guards the overlay origin), and the clean
+//     suffix is reused when its FIRST paragraph's probe — its first reading-
+//     flow rect — sits exactly where the cache put it (typing that changes no
+//     line count). A moved suffix re-measures whole: block flow is
+//     cumulative, so a shift never re-converges. The `__vedLineMeasures` seam
+//     counts paragraphs measured per pass (edit-perf.ts pins the bound);
+//   - a SYNCHRONOUS highlight-only pass (`refreshCaret`) on a selection-only
+//     change that reuses the cached line geometry — re-pick the caret's line
+//     (O(lines) of plain math, no layout reads per paragraph) and, only if
+//     the line actually changed, move the highlight. Synchronous so the
+//     highlight lands in the same frame as the caret.
 
 import styles from './editor.module.scss';
-import { makeLineGrouper, readCell, readingFlowRects, readPitch } from './pm/line-grouping';
+import { firstFlowRect, makeLineGrouper, readCell, readingFlowRects, readPitch } from './pm/line-grouping';
 
 export type LineNumbers = {
   schedule: (full?: boolean) => void;
+  /** Schedule the EDIT measure: `cleanStart`/`cleanEnd` paragraphs at the
+   *  document's start/end are untouched by the edit (identity-clean —
+   *  changedParagraphSpan); only the rest re-measure. Coalesced by MIN with
+   *  any pending edit; a pending full measure wins. */
+  scheduleEdit: (cleanStart: number, cleanEnd: number) => void;
+  /** Whether a measure pass is scheduled and not yet run. */
+  pending: () => boolean;
+  /** The content element's offset size recorded by the LAST measure pass —
+   *  lets the shell's resize observer absorb growth a pass already saw. */
+  measuredContentSize: () => { w: number; h: number } | null;
   /** Reposition the caret highlight NOW, synchronously, from the cached line
    *  geometry — for selection-only changes, where waiting for the next
    *  animation frame adds a visible frame of lag between the caret and its
@@ -95,8 +117,16 @@ export const mountLineNumbers = (
   const range = document.createRange();
   let raf = 0;
   let pendingFull = false;
-  let lines: VisualLine[] = []; // cached geometry from the last full measure
-  let vertical = false; // cached from the last full measure (mode changes re-measure)
+  let pendingEdit: { cleanStart: number; cleanEnd: number } | null = null;
+  let lines: VisualLine[] = []; // cached geometry from the last measure pass
+  // Per-paragraph geometry from the last measure pass (full or edit): the DOM
+  // element, its visual lines, and a movement PROBE — the paragraph's first
+  // reading-flow rect, overlay-relative. The edit pass reuses an entry when
+  // the element is the same node and (at the reuse boundaries) the probe
+  // still matches, so an unchanged paragraph is never rect-walked again.
+  let paraCache: ParaLines[] = [];
+  let measuredSize: { w: number; h: number } | null = null;
+  let vertical = false; // cached from the last measure (mode changes re-measure)
   let lastHit: VisualLine | null = null; // the line the highlight last painted
   // The caret's block-axis center at that paint (the composing hold below
   // compares against it — a pick that flips while the caret itself barely
@@ -104,15 +134,11 @@ export const mountLineNumbers = (
   let lastCaretMid: number | null = null;
   let steadyTol = 14; // half the line pitch, cached by the full measure
 
-  // FULL measure: re-collect every visual line and re-place the numbers.
-  // O(doc). Orchestration only — (1) collect the geometry, (2) read EVERY
-  // measured input (getComputedStyle is live, so all reads come before any
-  // placement write), (3) place the numbers, (4) place the page marks.
-  const measure = (): void => {
+  /** The measured inputs both passes share — reads only (getComputedStyle is
+   *  live, so every read comes before any placement write). */
+  const readEnv = (): MeasureEnv => {
     const cs = getComputedStyle(content);
-    vertical = cs.writingMode.startsWith('vertical');
-    overlay.style.fontSize = cs.fontSize; // numbers scale with the body
-    const o = overlay.getBoundingClientRect();
+    const vert = cs.writingMode.startsWith('vertical');
     // A block-axis jump bigger than this — but against the reading direction —
     // is a multicol PAGE WRAP (pages stack, so the next page's first column
     // jumps back across the whole page), not a ruby annotation's small shift.
@@ -130,24 +156,109 @@ export const mountLineNumbers = (
     // ratio floor is 0.5), so half a pitch separates the two cleanly for
     // every font.
     const groupTol = readPitch(cs) / 2;
-    steadyTol = groupTol;
     // The line band length (= `--line-length`) is identical for every paragraph
     // (`inline-size` is pinned to it), so read it ONCE, not per paragraph.
     const firstP = content.querySelector('p');
     const bandLen = firstP ? Number.parseFloat(getComputedStyle(firstP).inlineSize) || 0 : 0;
+    return { cs, vert, colJump, groupTol, bandLen };
+  };
 
-    lines = collectVisualLines(content, range, vertical, colJump, groupTol, bandLen, o);
+  /** Measure ONE paragraph into a cache entry (rect walk + probe). */
+  const measurePara = (p: HTMLElement, env: MeasureEnv, o: DOMRect): ParaLines => {
+    const r = firstFlowRect(p, range) ?? paraBoxRect(p);
+    return {
+      el: p,
+      probe: r ? { x: r.left - o.left, y: r.top - o.top } : null,
+      lines: linesOfParagraph(p, range, env.vert, env.colJump, env.groupTol, env.bandLen, o),
+    };
+  };
 
+  /** The probe of a paragraph that is NOT being re-measured (one rect read). */
+  const probeOf = (p: HTMLElement, o: DOMRect): Probe | null => {
+    const r = firstFlowRect(p, range) ?? paraBoxRect(p);
+    return r ? { x: r.left - o.left, y: r.top - o.top } : null;
+  };
+
+  /** The shared tail of both passes: flatten the per-paragraph cache, read the
+   *  remaining inputs, then place every mark (reads strictly before writes). */
+  const finish = (env: MeasureEnv, o: DOMRect): void => {
+    vertical = env.vert;
+    steadyTol = env.groupTol;
+    lines = paraCache.flatMap((c) => c.lines);
     const multiCol = content.classList.contains(styles.multiColMode ?? '');
     const paged = multiCol || content.classList.contains(styles.rowsMode ?? '');
-    const grid = readBandGrid(cs, vertical, multiCol, lines);
-    const marks = readPageMarkMetrics(cs, paged, bandLen);
+    const grid = readBandGrid(env.cs, vertical, multiCol, lines);
+    const marks = readPageMarkMetrics(env.cs, paged, env.bandLen);
+    measuredSize = { w: content.offsetWidth, h: content.offsetHeight };
 
     placeNumbers(overlay, pool, lines, grid);
     placePageMarks(overlay, pagePool, sepPool, lines, grid, marks);
 
     refreshHighlight(o);
     refreshSelection(o);
+  };
+
+  /** The content's paragraph elements, in document order. */
+  const contentParas = (): HTMLElement[] => {
+    const ps: HTMLElement[] = [];
+    for (const p of Array.from(content.children)) {
+      if (p instanceof HTMLElement && p.tagName === 'P') ps.push(p);
+    }
+    return ps;
+  };
+
+  // FULL measure: re-collect every paragraph's visual lines and re-place the
+  // numbers. O(doc) — reserved for layout changes no edit explains
+  // (mode/policy/resize/font/view-config).
+  const measure = (): void => {
+    const env = readEnv();
+    overlay.style.fontSize = env.cs.fontSize; // numbers scale with the body
+    const o = overlay.getBoundingClientRect();
+    const next = contentParas().map((p) => measurePara(p, env, o));
+    bumpMeasureSeam(next.length);
+    paraCache = next;
+    finish(env, o);
+  };
+
+  // EDIT measure: re-measure the dirty paragraphs; reuse the clean prefix
+  // (guarded by a paragraph-0 origin probe) and — when its first paragraph's
+  // probe still matches — the clean suffix. O(changed paragraphs) for typing
+  // that moves no line; O(suffix) when lines shifted (the same shape as the
+  // page-gap suffix cache).
+  const measureEdit = (edit: { cleanStart: number; cleanEnd: number }): void => {
+    const ps = contentParas();
+    const old = paraCache;
+    const cleanStart = Math.max(0, Math.min(edit.cleanStart, old.length, ps.length));
+    const cleanEnd = Math.max(0, Math.min(edit.cleanEnd, old.length - cleanStart, ps.length - cleanStart));
+    const env = readEnv();
+    const o = overlay.getBoundingClientRect();
+    // Origin guard: if the first clean paragraph moved relative to the
+    // overlay, the overlay box itself shifted — nothing cached is trustworthy.
+    if (cleanStart > 0 && (old[0]!.el !== ps[0] || !probesEq(old[0]!.probe, probeOf(ps[0]!, o)))) {
+      measure();
+      return;
+    }
+    let measured = 0;
+    const cachedOrFresh = (c: ParaLines | undefined, p: HTMLElement, reusable: boolean): ParaLines => {
+      if (reusable && c && c.el === p) return c;
+      measured++;
+      return measurePara(p, env, o);
+    };
+    const next: ParaLines[] = [];
+    for (let i = 0; i < cleanStart; i++) next.push(cachedOrFresh(old[i], ps[i]!, true));
+    const dirtyTo = ps.length - 1 - cleanEnd;
+    for (let i = cleanStart; i <= dirtyTo; i++) next.push(cachedOrFresh(undefined, ps[i]!, false));
+    // Suffix: reusable only while its FIRST paragraph sits exactly where the
+    // cache put it — block flow is cumulative, so a shifted suffix never
+    // re-converges and re-measures whole.
+    const suffixOff = old.length - ps.length; // old index = new index + suffixOff
+    const head = old[dirtyTo + 1 + suffixOff];
+    const suffixOk =
+      cleanEnd > 0 && !!head && head.el === ps[dirtyTo + 1] && probesEq(head.probe, probeOf(ps[dirtyTo + 1]!, o));
+    for (let i = dirtyTo + 1; i < ps.length; i++) next.push(cachedOrFresh(old[i + suffixOff], ps[i]!, suffixOk));
+    bumpMeasureSeam(measured);
+    paraCache = next;
+    finish(env, o);
   };
 
   // Move the highlight to the caret's visual line, reusing the cached `lines`.
@@ -224,20 +335,36 @@ export const mountLineNumbers = (
     clearTimeout(timer);
     raf = 0;
     timer = 0;
-    const doFull = pendingFull || lines.length === 0; // first run must measure
+    const edit = pendingEdit;
+    pendingEdit = null;
+    const doFull = pendingFull || paraCache.length === 0; // first run must measure
     pendingFull = false;
     if (doFull) measure();
+    else if (edit) measureEdit(edit);
     else highlightOnly();
   };
-  const schedule = (full = true): void => {
-    if (full) pendingFull = true;
+  const kick = (): void => {
     if (raf) return;
     raf = requestAnimationFrame(run);
     timer = setTimeout(run, 60);
   };
+  const schedule = (full = true): void => {
+    if (full) pendingFull = true;
+    kick();
+  };
+  const scheduleEdit = (cleanStart: number, cleanEnd: number): void => {
+    // Coalesced by MIN: clean-from-both-ends runs only shrink as edits stack.
+    pendingEdit = pendingEdit
+      ? { cleanStart: Math.min(pendingEdit.cleanStart, cleanStart), cleanEnd: Math.min(pendingEdit.cleanEnd, cleanEnd) }
+      : { cleanStart, cleanEnd };
+    kick();
+  };
 
   return {
     schedule,
+    scheduleEdit,
+    pending: () => raf !== 0 || timer !== 0,
+    measuredContentSize: () => measuredSize,
     refreshCaret: highlightOnly,
     destroy: () => {
       if (raf) cancelAnimationFrame(raf);
@@ -245,6 +372,42 @@ export const mountLineNumbers = (
       overlay.remove();
     },
   };
+};
+
+/** The measured style inputs one pass shares across its paragraphs. */
+type MeasureEnv = {
+  readonly cs: CSSStyleDeclaration;
+  readonly vert: boolean;
+  readonly colJump: number;
+  readonly groupTol: number;
+  readonly bandLen: number;
+};
+
+/** A paragraph's movement probe: its first reading-flow rect's start corner,
+ *  overlay-relative (scroll-invariant, like every cached coordinate). */
+type Probe = { x: number; y: number };
+
+/** One paragraph's cached measure. */
+type ParaLines = { el: Element; probe: Probe | null; lines: VisualLine[] };
+
+/** Probe equality within a 1px slack (identical layouts reproduce identical
+ *  rects; a real shift is at least a line pitch). Two invisible paragraphs
+ *  (null probes) count as unmoved. */
+const probesEq = (a: Probe | null, b: Probe | null): boolean =>
+  a === null || b === null ? a === b : Math.abs(a.x - b.x) <= 1 && Math.abs(a.y - b.y) <= 1;
+
+/** An EMPTY paragraph's probe rect: its own box (the same fallback the
+ *  measure uses for its single visual line). */
+const paraBoxRect = (p: Element): DOMRect | null => {
+  const b = p.getBoundingClientRect();
+  return b.width > 0 && b.height > 0 ? b : null;
+};
+
+/** Test seam: paragraphs rect-measured per pass. An edit must measure O(its
+ *  own paragraphs), never the document (edit-perf.ts). */
+const bumpMeasureSeam = (paras: number): void => {
+  const w = globalThis as unknown as { __vedLineMeasures?: number };
+  w.__vedLineMeasures = (w.__vedLineMeasures ?? 0) + paras;
 };
 
 /** The measured band lattice of the current layout, shared by both placement
@@ -353,13 +516,20 @@ const placeNumbers = (
     const el = pool[i] ?? makeNumber(overlay, pool);
     const x = grid.vertical ? centerX(ln) : ln.left;
     const y = grid.vertical ? bandStartAt(grid, ln) : (ln.top + ln.bottom) / 2;
-    el.style.transform = grid.vertical
+    // Skip writes that would not change anything: the edit pass reuses most
+    // lines' geometry verbatim, and a same-value textContent write still
+    // replaces the text node (needless DOM mutation per line per keystroke).
+    const transform = grid.vertical
       ? `translate(${x}px, ${y}px) translate(-50%, -100%)`
       : `translate(${x}px, ${y}px) translate(-100%, -50%)`;
-    el.textContent = String(i + 1);
-    el.style.display = '';
+    if (el.style.transform !== transform) el.style.transform = transform;
+    const label = String(i + 1);
+    if (el.textContent !== label) el.textContent = label;
+    if (el.style.display !== '') el.style.display = '';
   });
-  for (const el of pool.slice(lines.length)) el.style.display = 'none';
+  for (const el of pool.slice(lines.length)) {
+    if (el.style.display !== 'none') el.style.display = 'none';
+  }
 };
 
 /** The measured inputs of the page-mark pass (paged modes; `linesPerPage` 0 =
@@ -514,40 +684,22 @@ const placePageMarks = (
   for (const el of sepPool.slice(counts.seps)) el.style.display = 'none';
 };
 
-/** Group each paragraph's line-box rects (`Range.getClientRects`) into visual
- *  lines, in CONTENT order (= reading order: column by column in vertical-rl,
- *  row by row in horizontal). A new visual line begins when the block-axis
- *  coordinate jumps either:
+/** The visual lines of ONE paragraph: its line-box rects
+ *  (`Range.getClientRects`) grouped in CONTENT order (= reading order: column
+ *  by column in vertical-rl, row by row in horizontal). A new visual line
+ *  begins when the block-axis coordinate jumps either:
  *    - in the READING direction — leftward (smaller `left`) in vertical-rl,
  *      downward (larger `top`) in horizontal: the next column/row; or
  *    - the OTHER way by more than `colJump`: a multicol page wrap, where the
  *      next page's first column lands back across the whole page.
  *  A ruby annotation shifts rects the other way too, but only slightly (< a
- *  cell), under `colJump`, so it can't false-start a line; `colCoord` tracks the
- *  line's representative coordinate so the annotation's rects don't move it.
- *  (Grouping by `round(left)` mis-orders and miscounts ruby lines, which emit
- *  several rects with shifted lefts.) */
-const collectVisualLines = (
-  content: HTMLElement,
-  range: Range,
-  vertical: boolean,
-  colJump: number,
-  groupTol: number,
-  bandLen: number,
-  o: DOMRect,
-): VisualLine[] => {
-  const lines: VisualLine[] = [];
-  for (const p of Array.from(content.children)) {
-    if (p instanceof HTMLElement && p.tagName === 'P')
-      lines.push(...linesOfParagraph(p, range, vertical, colJump, groupTol, bandLen, o));
-  }
-  return lines;
-};
-
-/** The visual lines of ONE paragraph, grouping its line-box rects per the rules
- *  on `collectVisualLines`. Rect coords are made overlay-relative via `o` so the
- *  cached geometry is scroll-invariant; `bandLen` (the page line length) is the
- *  same for every paragraph, so it is computed once and passed in. */
+ *  cell), under `colJump`, so it can't false-start a line; the grouper tracks
+ *  the line's representative coordinate so the annotation's rects don't move
+ *  it. (Grouping by `round(left)` mis-orders and miscounts ruby lines, which
+ *  emit several rects with shifted lefts.) Rect coords are made
+ *  overlay-relative via `o` so the cached geometry is scroll-invariant;
+ *  `bandLen` (the page line length) is the same for every paragraph, so it is
+ *  computed once and passed in. */
 const linesOfParagraph = (
   p: HTMLElement,
   range: Range,

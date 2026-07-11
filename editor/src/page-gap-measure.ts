@@ -187,18 +187,32 @@ const applyReserve = (view: EditorView, reserve: string): boolean => {
   return reserveChanged;
 };
 
-/** Whether `gaps` matches the LIVE widget identities (the plugin maps its
- *  set through edits between dispatches) — a cached copy of the last
+/** How `gaps` compares against the LIVE widget identities (the plugin maps
+ *  its set through edits between dispatches) — a cached copy of the last
  *  dispatch goes stale the moment an edit maps the widgets, and a stale
  *  "unchanged" would leave a drifted gap in place (composing edits hit
  *  exactly that: the measured boundary offset is often numerically
- *  identical while the mapped widget has moved). */
-const gapSetMatchesLive = (view: EditorView, gaps: readonly PageGapPos[]): boolean => {
+ *  identical while the mapped widget has moved). `firstChanged` is the
+ *  position of the FIRST differing widget (wanted or live, whichever is
+ *  earlier) — a widget change moves layout only from there onward, so the
+ *  overlay re-measure is scoped to it. */
+const gapSetDiff = (
+  view: EditorView,
+  gaps: readonly PageGapPos[],
+): { matches: boolean; firstChanged: number | null } => {
+  const liveDecos = pageGapKey.getState(view.state)?.find() ?? [];
   const wanted = gaps.map(pageGapDecoKey);
-  const live = (pageGapKey.getState(view.state)?.find() ?? []).map((d) =>
+  const live = liveDecos.map((d) =>
     pageGapDecoKey({ pos: d.from, before: `${(d.spec as { key?: string }).key}`.endsWith('-before') }),
   );
-  return wanted.length === live.length && wanted.every((k, i) => k === live[i]);
+  const n = Math.max(wanted.length, live.length);
+  for (let i = 0; i < n; i++) {
+    if (wanted[i] === live[i]) continue;
+    const w = gaps[i]?.pos ?? Number.POSITIVE_INFINITY;
+    const l = liveDecos[i]?.from ?? Number.POSITIVE_INFINITY;
+    return { matches: false, firstChanged: Math.min(w, l) };
+  }
+  return { matches: true, firstChanged: null };
 };
 
 export const createPageGapMeasure = (
@@ -206,8 +220,11 @@ export const createPageGapMeasure = (
   mount: HTMLElement,
   getPolicy: () => Appear,
   walker: Pick<GlyphWalker, 'paraGlyphs' | 'lineGlyphOffsets'>,
-  /** Called after a widget-set/reserve change shifts layout (the overlay re-measures). */
-  onLayoutShift: () => void,
+  /** Called after a widget-set/reserve change shifts layout, with the FIRST
+   *  changed widget's position — lines move only from there onward, so the
+   *  overlay re-measure is scoped to it; null = only the block-end reserve
+   *  changed (no line moved). */
+  onLayoutShift: (firstChangedPos: number | null) => void,
 ): PageGapMeasure => {
   // Page gaps (pm/page-gap.ts): measure the visual lines from the glyph
   // rects (wrapping is decided by glyph advances, not arithmetic), derive
@@ -297,10 +314,12 @@ export const createPageGapMeasure = (
     if (!gaps) return;
     const reserve = rowsHere && measuredLineCount > 0 ? rowsReserve(view, mount, measuredLineCount) : '';
     const reserveChanged = applyReserve(view, reserve);
-    if (!reserveChanged && gapSetMatchesLive(view, gaps)) return;
+    const diff = gapSetDiff(view, gaps);
+    if (!reserveChanged && diff.matches) return;
     view.dispatch(pageGapTr(view.state, gaps));
-    // The widgets/reservation shift the layout — re-measure the numbers.
-    onLayoutShift();
+    // The widgets/reservation shift the layout — re-measure the numbers
+    // (scoped from the first changed widget; a reserve-only change is null).
+    onLayoutShift(diff.firstChanged);
   };
   return {
     // rAF for frame alignment, with a timeout fallback: rAF does NOT fire in

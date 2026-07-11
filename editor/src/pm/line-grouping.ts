@@ -68,6 +68,23 @@ export const readingFlowRects = (p: Element, range: Range = document.createRange
   return rects;
 };
 
+/** The FIRST non-degenerate reading-flow rect of an element (same rt-excluded
+ *  walk as `readingFlowRects`, stopped at the first hit) — the cheap "did this
+ *  paragraph move" probe of the line-number overlay's incremental measure.
+ *  Null for an element with no visible text rects (an empty paragraph). */
+export const firstFlowRect = (p: Element, range: Range = document.createRange()): DOMRect | null => {
+  const walker = document.createTreeWalker(p, NodeFilter.SHOW_TEXT, {
+    acceptNode: (n) => (n.parentElement?.closest('rt') ? NodeFilter.FILTER_REJECT : NodeFilter.FILTER_ACCEPT),
+  });
+  for (let n = walker.nextNode(); n; n = walker.nextNode()) {
+    range.selectNodeContents(n);
+    for (const r of Array.from(range.getClientRects())) {
+      if (r.width !== 0 && r.height !== 0) return r;
+    }
+  }
+  return null;
+};
+
 /** One cell (fullwidth character advance) in px — the font size, with the
  *  shared cold-style fallback. */
 export const readCell = (cs: CSSStyleDeclaration): number => Number.parseFloat(cs.fontSize) || 18;

@@ -21,14 +21,18 @@ export type GlyphWalker = {
   readonly lineGlyphOffsets: () => number[][];
   /** Viewport rects of the base glyphs inside the MODEL selection. */
   readonly selectedGlyphRects: () => DOMRect[];
-  /** Nearest model offset for a viewport point (drag hit-test; cached per gesture). */
+  /** Nearest model offset for a viewport point (drag/empty-press hit-test;
+   *  cached across gestures — see the scoped cache in the body). */
   readonly offsetAtPoint: (px: number, py: number) => number | null;
   /** Record where a pointer gesture pressed (the anchor resolves lazily). */
   readonly beginGesture: (x: number, y: number) => void;
   /** The recorded press point of the current gesture, if any. */
   readonly gestureStart: () => { x: number; y: number } | null;
-  /** Drop the gesture point and the per-gesture hit-test caches. */
+  /** Drop the gesture point and the per-gesture full-walk cache. */
   readonly endGesture: () => void;
+  /** Drop the cached hit-test geometry — for layout shifts no doc change
+   *  explains (resize, mode/policy/view-config, fonts, page-gap widgets). */
+  readonly invalidateGeometry: () => void;
 };
 
 /** BLOCK visual (Vim blockwise): the rectangle between the two selection
@@ -315,6 +319,12 @@ export const createGlyphWalker = (
   // a drag can step slightly past an edge). One <p> per model line, in order —
   // page-gap widgets between them are not `p` elements, so indexes align.
   const walkGlyphsNear = (): Glyph[] => {
+    // Test seam: count viewport-scoped hit-test walks (one paragraph rect per
+    // paragraph + one rect per visible glyph — tens of ms on a large doc).
+    // Repeated empty-area/gap clicks must HIT the scoped cache, not re-walk
+    // (click-perf asserts this).
+    const w = globalThis as unknown as { __vedNearWalks?: number };
+    w.__vedNearWalks = (w.__vedNearWalks ?? 0) + 1;
     const byLine = lineGlyphOffsets();
     const box = mount.getBoundingClientRect();
     const margin = Math.max(mount.clientWidth, mount.clientHeight) / 2;
@@ -366,9 +376,28 @@ export const createGlyphWalker = (
     return out;
   };
   let dragCache: { vertical: boolean; glyphs: DragGlyph[] } | null = null;
-  // The scoped glyphs, keyed by scroll position (a drag without scrolling
-  // reuses them; a wheel-scroll mid-drag re-measures the new viewport).
-  let scopedCache: { key: string; vertical: boolean; glyphs: DragGlyph[] } | null = null;
+  // The scoped glyphs, cached ACROSS gestures: an empty-area/gap click pays
+  // the viewport walk (a paragraph rect per paragraph + a rect per visible
+  // glyph — tens of ms on a large doc), and clearing this per mouseup made
+  // EVERY such click pay it again. Validity is checked per query:
+  //   - `leaves` identity covers any doc change (docLeaves memoizes per doc
+  //     version, so an edit — composing included — changes the reference);
+  //   - `caretKey` covers the caret-DEPENDENT policies (ByParagraph/
+  //     ByCharacter re-wrap the newly (un)expanded line on every caret move —
+  //     the same gate as every other layout cache); Rich/Plain layouts are
+  //     caret-independent and key as '';
+  //   - a SCROLL re-measures (the cache covers only the OLD viewport, so a
+  //     translated reuse could hit-test against off-screen glyphs);
+  //   - layout shifts with no doc change (resize, mode/policy/view-config,
+  //     fonts, page-gap widgets) come through `invalidateGeometry` — the
+  //     shell calls it from the same signals that re-measure the overlay.
+  let scopedCache: {
+    leaves: Leaf[];
+    caretKey: string;
+    scroll: string;
+    vertical: boolean;
+    glyphs: DragGlyph[];
+  } | null = null;
   // Where the current gesture pressed, for resolving the drag ANCHOR lazily on
   // the first drag move (the press itself must not hit-test).
   let dragStartPt: { x: number; y: number } | null = null;
@@ -376,14 +405,32 @@ export const createGlyphWalker = (
     const vertical = getComputedStyle(view.dom).writingMode.startsWith('vertical');
     return { vertical, glyphs: toDragGlyphs(walkGlyphs(), vertical) };
   };
+  /** '' under the caret-independent policies; the caret head under
+   *  ByParagraph/ByCharacter, whose expanded markup re-wraps per caret move. */
+  const scopedCaretKey = (): string => {
+    const policy = getPolicy();
+    return policy === 'rich' || policy === 'plain' ? policy : `${policy}:${view.state.selection.head}`;
+  };
+  const scopedGlyphs = (): { vertical: boolean; glyphs: DragGlyph[] } => {
+    const leaves = docLeaves(serialize(view.state.doc));
+    const caretKey = scopedCaretKey();
+    const scroll = `${mount.scrollLeft},${mount.scrollTop}`;
+    if (
+      scopedCache &&
+      scopedCache.leaves === leaves &&
+      scopedCache.caretKey === caretKey &&
+      scopedCache.scroll === scroll
+    ) {
+      return scopedCache;
+    }
+    const vertical = getComputedStyle(view.dom).writingMode.startsWith('vertical');
+    scopedCache = { leaves, caretKey, scroll, vertical, glyphs: toDragGlyphs(walkGlyphsNear(), vertical) };
+    return scopedCache;
+  };
   const offsetAtPoint = (px: number, py: number): number | null => {
     if (!dragCache) {
-      const key = `${mount.scrollLeft},${mount.scrollTop}`;
-      if (scopedCache?.key !== key) {
-        const vertical = getComputedStyle(view.dom).writingMode.startsWith('vertical');
-        scopedCache = { key, vertical, glyphs: toDragGlyphs(walkGlyphsNear(), vertical) };
-      }
-      if (scopedCache.glyphs.length) return nearestGlyphOffset(scopedCache.glyphs, px, py, scopedCache.vertical);
+      const scoped = scopedGlyphs();
+      if (scoped.glyphs.length) return nearestGlyphOffset(scoped.glyphs, px, py, scoped.vertical);
       dragCache = buildGlyphCache(); // no visible text near the point — full fallback
     }
     return nearestGlyphOffset(dragCache.glyphs, px, py, dragCache.vertical);
@@ -399,8 +446,11 @@ export const createGlyphWalker = (
     gestureStart: () => dragStartPt,
     endGesture: () => {
       dragCache = null;
-      scopedCache = null;
       dragStartPt = null;
+    },
+    invalidateGeometry: () => {
+      scopedCache = null;
+      dragCache = null;
     },
   };
 };

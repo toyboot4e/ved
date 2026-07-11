@@ -255,6 +255,22 @@ export const docText = (page: Page): Promise<string> =>
 export const caretOffset = (page: Page): Promise<number> =>
   page.evaluate(() => (window as unknown as ModelSeams).__vedCaret());
 
+/** Press a LINE-MOVE key and wait for its commit: `moveCaretByLine` lands on
+ *  a requestAnimationFrame, so poll the model caret until it changes (the
+ *  generous cap covers a throttled frame). Returns the caret's new model
+ *  offset — unchanged means the move never landed (a document edge, or the
+ *  bug under test). */
+export const pressLineMove = async (page: Page, key: string): Promise<number> => {
+  const before = await caretOffset(page);
+  await page.keyboard.press(key);
+  for (let k = 0; k < 200; k++) {
+    await page.waitForTimeout(16);
+    const now = await caretOffset(page);
+    if (now !== before) return now;
+  }
+  return before;
+};
+
 /** Places the caret at a model offset (collapsed selection). */
 export const setCaret = async (page: Page, offset: number, settleMs = 50): Promise<void> => {
   await page.evaluate((o) => (window as unknown as ModelSeams).__vedSetCaret(o), offset);
