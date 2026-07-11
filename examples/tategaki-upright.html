@@ -1,0 +1,45 @@
+<!doctype html>
+<meta charset="utf-8" />
+<title>tategaki: text-orientation</title>
+<style>
+  body { margin: 2rem; background: #1a1a1a; color: #e8e8e8; font-family: sans-serif; }
+  .cols { display: flex; gap: 3rem; }
+  .col { display: flex; flex-direction: column; gap: .5rem; }
+  h2 { font-size: .8rem; color: #888; margin: 0; }
+  .page {
+    writing-mode: vertical-rl;
+    font-family: "Noto Serif CJK JP", serif;
+    font-size: 22px;
+    line-height: 2;
+    height: 24em;
+    border: 1px solid #444;
+    padding: 1rem;
+  }
+  .upright { text-orientation: upright; }
+  .mixed   { text-orientation: mixed; }
+  /* 縦中横: short runs only */
+  .tcy { text-combine-upright: all; }
+</style>
+
+<div class="cols">
+  <div class="col">
+    <h2>upright (everything stands up)</h2>
+    <div class="page upright">
+      （令和2020年）、「コーヒーとAIが小説を書いた……」と人々〳〵は言った〜。時刻：ISBN978‥︙
+    </div>
+  </div>
+
+  <div class="col">
+    <h2>mixed (default, latin rotates)</h2>
+    <div class="page mixed">
+      （令和2020年）、「コーヒーとAIが小説を書いた……」と人々〳〵は言った〜。時刻：ISBN978‥︙
+    </div>
+  </div>
+
+  <div class="col">
+    <h2>mixed + 縦中横 (short runs upright)</h2>
+    <div class="page mixed">
+      （令和<span class="tcy">2020</span>年）、「コーヒーと<span class="tcy">AI</span>が小説を書いた……」と人々〳〵は言った〜。時刻：ISBN978‥︙
+    </div>
+  </div>
+</div>
