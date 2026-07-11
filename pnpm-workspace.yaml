@@ -24,6 +24,10 @@ allowBuilds:
   '@parcel/watcher': false
   electron-winstaller: false
   node-pty: true
+  # puppeteer's install script only pre-downloads its Chrome binary; whatever
+  # needs one can fetch it on demand (npx puppeteer browsers install chrome),
+  # so the script stays off like the other binary-shippers.
+  puppeteer: false
 minimumReleaseAgeExclude:
   - '@types/node@25.9.3'
   - '@typescript/typescript-aix-ppc64@7.0.2'
