@@ -26,11 +26,28 @@ export const sh = (c: string): string => {
   }
 };
 
+/** Did the command succeed? `sh` NEVER returns '' on failure (it returns an
+ *  `ERR:…` string), so `sh(…) !== ''` is an availability-check footgun — it is
+ *  TRUE for a missing binary. Always gate on this instead. */
+const ok = (out: string): boolean => !out.startsWith('ERR:');
+
+/** Is the command on PATH? (`command -v` exits 1 → `sh` answers `ERR:…`.) */
+const has = (cmd: string): boolean => ok(sh(`command -v ${cmd}`));
+
+/** A raw key the IME/window-guard suites tap as a fast press+release (a
+ *  mod-tap keyboard resolves its tap ON release — the race the guard defends).
+ *  Each platform maps these to its own key vocabulary. */
+export type TapKey = 'a' | 'space' | 'return' | 'escape';
+
 /** A live IME session bound to a launched app: drive a REAL system IME against the
  *  focused editor. The bug-prone platform mechanics live behind this interface. */
 export interface ImeDriver {
   /** Engage the IME for the focused window and switch it to hiragana input. */
   engage(): Promise<void>;
+  /** A single raw key tap (press+release, NO inter-key delay) — the fast-tap
+   *  race the candidate-window guard defends. Synchronous injection; the caller
+   *  waits. Unlike {@link type} this is one keysym, not a romaji string. */
+  tap(key: TapKey): void;
   /** Inject romaji; the IME composes (does NOT commit). */
   type(romaji: string): Promise<void>;
   /** Press Space: convert the preedit (henkan) / cycle candidates. */
@@ -47,6 +64,11 @@ export interface ImeDriver {
  *  implementation to {@link PLATFORMS}; the tests are unchanged. */
 export interface ImePlatform {
   readonly name: string;
+  /** Can the IME candidate window's on-screen geometry be read externally?
+   *  True on X11 (xdotool sees the fcitx window); FALSE on Wayland, where the
+   *  popup is a compositor surface no client can query — the window-guard suite
+   *  then verifies the fix's renderer mechanism, not the pixel placement. */
+  readonly imeWindowObservable: boolean;
   /** Is this platform's IME stack present + configured on the host? */
   available(): boolean;
   /** Process env that attaches the IME to the launched app. */
@@ -76,12 +98,15 @@ export interface ImePlatform {
 //
 // STEALS X focus while active (windowactivate) — don't type on the same machine.
 // TODO: isolate on an Xvfb virtual display so it stops doing so.
+const X11_TAP: Record<TapKey, string> = { a: 'a', space: 'space', return: 'Return', escape: 'Escape' };
+
 const x11FcitxMozc: ImePlatform = {
   name: 'fcitx5 + mozc (X11 / xdotool)',
+  imeWindowObservable: true, // xdotool can read the fcitx window's geometry
   available: () =>
     (process.env.DISPLAY ?? '') !== '' &&
     process.env.XDG_SESSION_TYPE !== 'wayland' &&
-    sh('command -v xdotool') !== '' &&
+    has('xdotool') &&
     fcitxMozcConfigured(),
   launchEnv: () => FCITX_ENV,
   attach: async (page) => {
@@ -100,6 +125,7 @@ const x11FcitxMozc: ImePlatform = {
     const key = (k: string): void => void sh(`xdotool key ${k}`);
     const typeRaw = (s: string): void => void sh(`xdotool type --delay 70 ${s}`);
     return {
+      tap: (k) => key(X11_TAP[k]),
       engage: async () => {
         await page.click('#editor-content');
         sh(`xdotool windowactivate --sync ${win}`); // ONCE — footgun #2
@@ -152,7 +178,7 @@ const x11FcitxMozc: ImePlatform = {
 // before the mode switch (#3).
 // First run on a real Wayland host validates; fix here, not in tests.
 const fcitxMozcConfigured = (): boolean =>
-  !sh('fcitx5-remote').startsWith('ERR') && sh("grep -l 'Name=mozc' ~/.config/fcitx5/profile") !== '';
+  ok(sh('fcitx5-remote')) && ok(sh("grep -l 'Name=mozc' ~/.config/fcitx5/profile"));
 
 const FCITX_ENV = {
   GTK_IM_MODULE: 'fcitx',
@@ -164,13 +190,12 @@ const FCITX_ENV = {
 /** Wayland key injection: a named-key press and a text typer, or null if no
  *  injector tool is usable on this host. */
 const waylandInjector = (): {
-  key: (name: 'henkan' | 'return' | 'escape' | 'space') => void;
+  key: (name: TapKey | 'henkan') => void;
   type: (s: string) => void;
 } | null => {
   // ydotool speaks Linux input keycodes (input-event-codes.h) through uinput.
-  const YDOTOOL_CODE = { henkan: 92, return: 28, escape: 1, space: 57 } as const;
-  const ydotoold =
-    sh('command -v ydotool') !== '' && (sh('pgrep -x ydotoold') !== '' || !sh('ydotool debug').startsWith('ERR'));
+  const YDOTOOL_CODE = { henkan: 92, a: 30, return: 28, escape: 1, space: 57 } as const;
+  const ydotoold = has('ydotool') && (ok(sh('pgrep -x ydotoold')) || ok(sh('ydotool debug')));
   if (ydotoold) {
     return {
       key: (name) => void sh(`ydotool key ${YDOTOOL_CODE[name]}:1 ${YDOTOOL_CODE[name]}:0`),
@@ -178,8 +203,8 @@ const waylandInjector = (): {
     };
   }
   // wtype speaks XKB keysym names (same vocabulary as xdotool key).
-  const WTYPE_KEYSYM = { henkan: 'Henkan_Mode', return: 'Return', escape: 'Escape', space: 'space' } as const;
-  if (sh('command -v wtype') !== '') {
+  const WTYPE_KEYSYM = { henkan: 'Henkan_Mode', a: 'a', return: 'Return', escape: 'Escape', space: 'space' } as const;
+  if (has('wtype')) {
     return {
       key: (name) => void sh(`wtype -k ${WTYPE_KEYSYM[name]}`),
       type: (s) => void sh(`wtype -d 70 -- ${s}`),
@@ -190,6 +215,7 @@ const waylandInjector = (): {
 
 const waylandFcitxMozc: ImePlatform = {
   name: 'fcitx5 + mozc (Wayland / ydotool|wtype)',
+  imeWindowObservable: false, // the popup is a compositor surface — no client can query it
   available: () =>
     (process.env.XDG_SESSION_TYPE === 'wayland' || (process.env.WAYLAND_DISPLAY ?? '') !== '') &&
     fcitxMozcConfigured() &&
@@ -199,6 +225,7 @@ const waylandFcitxMozc: ImePlatform = {
     const inject = waylandInjector();
     if (!inject) throw new Error('mozc-harness: no Wayland injector (ydotool/wtype) available');
     return {
+      tap: (k) => inject.key(k),
       engage: async () => {
         // No windowactivate on Wayland: the compositor focused the window at
         // launch (it is visible), and page.click keeps focus inside the editor.
@@ -246,11 +273,14 @@ const waylandFcitxMozc: ImePlatform = {
 //
 // UNVERIFIED best-effort (authored on a Linux host) — first run on a Mac with
 // Kotoeri + im-select validates; fix here, not in tests.
+const MACOS_TAP_KEYCODE: Record<Exclude<TapKey, 'a'>, number> = { space: 49, return: 36, escape: 53 };
+
 const macosKotoeri: ImePlatform = {
   name: 'Kotoeri (macOS / osascript + im-select)',
+  imeWindowObservable: false,
   available: () =>
     process.platform === 'darwin' &&
-    sh('command -v im-select') !== '' &&
+    has('im-select') &&
     /inputmethod\.Kotoeri\.\S*Japanese/.test(sh('defaults read com.apple.HIToolbox AppleEnabledInputSources')),
   launchEnv: () => ({}),
   attach: async (page) => {
@@ -261,6 +291,10 @@ const macosKotoeri: ImePlatform = {
       )?.[0] ?? 'com.apple.inputmethod.Kotoeri.RomajiTyping.Japanese';
     const savedSource = sh('im-select');
     return {
+      tap: (k) =>
+        k === 'a'
+          ? osa('tell application "System Events" to keystroke "a"')
+          : osa(`tell application "System Events" to key code ${MACOS_TAP_KEYCODE[k]}`),
       engage: async () => {
         await page.click('#editor-content');
         // Foreground the Electron app so System Events keystrokes reach it.
@@ -313,8 +347,11 @@ Add-Type -AssemblyName System.Windows.Forms
 Add-Type -TypeDefinition 'using System;using System.Runtime.InteropServices;public static class VK{[DllImport("user32.dll")]public static extern void keybd_event(byte k,byte s,uint f,UIntPtr e);public static void Tap(byte k){keybd_event(k,0,0,UIntPtr.Zero);keybd_event(k,0,2,UIntPtr.Zero);}}'
 `.trim();
 
+const WINDOWS_TAP_SENDKEYS: Record<TapKey, string> = { a: 'a', space: ' ', return: '{ENTER}', escape: '{ESC}' };
+
 const windowsMsIme: ImePlatform = {
   name: 'Microsoft IME (Windows / SendInput)',
+  imeWindowObservable: false,
   available: () =>
     process.platform === 'win32' &&
     sh('powershell -NoProfile -Command "(Get-WinUserLanguageList).LanguageTag"').includes('ja'),
@@ -323,6 +360,7 @@ const windowsMsIme: ImePlatform = {
     const ps = (body: string): string =>
       sh(`powershell -NoProfile -Command "${`${SENDINPUT_PS}; ${body}`.replace(/\n/g, '; ').replace(/"/g, '\\"')}"`);
     return {
+      tap: (k) => ps(`[System.Windows.Forms.SendKeys]::SendWait('${WINDOWS_TAP_SENDKEYS[k]}')`),
       engage: async () => {
         await page.click('#editor-content');
         // Foreground by title suffix — every ved window title ends in "ved".
@@ -371,6 +409,12 @@ export const mozcAvailable = (): boolean => activePlatform() !== null;
 export type MozcSession = {
   app: VedApp;
   page: Page;
+  /** The platform this session is driving (its {@link ImePlatform.imeWindowObservable}
+   *  tells a suite whether it can read the candidate window's geometry). */
+  platform: ImePlatform;
+  /** A single raw fast key tap (press+release) — the fast-tap race the
+   *  candidate-window guard defends. Synchronous; the caller waits. */
+  tap: (key: TapKey) => void;
   /** Inject romaji through the IME (composes), WITHOUT committing; returns the live
    *  (composing) serialized text. */
   type: (romaji: string) => Promise<string>;
@@ -386,8 +430,10 @@ export type MozcSession = {
 
 /** Launch ved with the IME attached + visible, focus it, engage the IME in hiragana
  *  mode via the host's {@link ImePlatform}. Caller must guard on {@link mozcAvailable}
- *  first. The returned session reads the editor's serialized text after each op. */
-export const openMozc = async (): Promise<MozcSession> => {
+ *  first. The returned session reads the editor's serialized text after each op.
+ *  `extraEnv` adds launch env on top of the platform's (e.g. WAYLAND_DEBUG=1 for
+ *  the window-guard suite's protocol capture). */
+export const openMozc = async (extraEnv?: Record<string, string>): Promise<MozcSession> => {
   const platform = activePlatform();
   if (!platform) throw new Error('openMozc: no IME platform available — guard on mozcAvailable() first');
   const app = await launchVed({
@@ -395,6 +441,7 @@ export const openMozc = async (): Promise<MozcSession> => {
       VED_SMOKE_CLOSE_RESPONSE: 'discard',
       VED_SMOKE_HIDDEN: '', // visible: the IME only engages a focused window
       ...platform.launchEnv(),
+      ...extraEnv,
     }),
   });
   const { page } = app;
@@ -406,6 +453,8 @@ export const openMozc = async (): Promise<MozcSession> => {
   return {
     app,
     page,
+    platform,
+    tap: (key) => driver.tap(key),
     type: async (romaji) => {
       await driver.type(romaji);
       return txt();
@@ -420,6 +469,16 @@ export const openMozc = async (): Promise<MozcSession> => {
     },
     escape: () => driver.escape(),
     close: async () => {
+      // ALWAYS drop a live composition before teardown: deactivating fcitx or
+      // destroying the window while the candidate popup is MAPPED segfaults
+      // sway 1.12 (constrain_popup ← surface_commit_state — the popup commits
+      // against its dying text-input anchor). A failing suite otherwise takes
+      // the whole session down with it.
+      try {
+        await driver.escape();
+      } catch {
+        // page already gone — nothing composing either
+      }
       driver.restore();
       await app.close();
     },
