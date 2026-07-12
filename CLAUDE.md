@@ -96,7 +96,9 @@ Binding rules; the mechanisms behind them are catalogued in
   walks (the most expensive operation) are scoped to the viewport or the
   selection span; per edit, structure repair verifies only dirty paragraphs,
   the decoration sets ADVANCE through the transaction (never rebuild), and
-  the overlay/page-gap measures are suffix-incremental; the empty-area
+  the overlay measure is suffix-incremental and the page-gap measure reuses
+  BOTH unchanged ends (cached line-end offsets, suffix shifted by the edit's
+  delta); the empty-area
   hit-test cache survives gestures; ByParagraph/ByCharacter caret crossings
   patch the delta rubies. Guarded by counter seams, not timing:
   `__vedGlyphWalks`, `__vedNearWalks`, `__vedBaseRebuilds`,

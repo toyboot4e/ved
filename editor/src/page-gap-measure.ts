@@ -1,8 +1,8 @@
 // The paged-mode page-gap measure (pm/page-gap.ts is the pure math; this
-// owns the DOM walk, the suffix cache, and the widget-set dispatch) —
-// orientation-generic: the block axis and its reading direction come from
-// the computed writing-mode.
-// The `__vedGapLines`/`__vedGapLineEnds` seams guard the suffix-incremental
+// owns the DOM walk, the incremental line-ends cache, and the widget-set
+// dispatch) — orientation-generic: the block axis and its reading direction
+// come from the computed writing-mode.
+// The `__vedGapLines`/`__vedGapLineEnds` seams guard the incremental
 // invariant (page-gap-suffix.ts); composition-time behavior is pinned by
 // mozc/gap-compose.ts.
 import type { EditorView } from 'prosemirror-view';
@@ -27,7 +27,7 @@ export type PageGapMeasure = {
   readonly cancel: () => void;
 };
 
-/** The suffix cache of one measure pass: the layout key it is valid under
+/** The line-ends cache of one measure pass: the layout key it is valid under
  *  (text + pitch + orientation + page shape) and the measured visual-line
  *  END offsets — offsets, never rects: an offset is frame-independent,
  *  immune to scrolls and widget-induced shifts. */
@@ -45,18 +45,26 @@ type GapCache = {
 // line with them).
 type MeasuredGap = { g: PageGapPos; prevLineEnd: number; nextLineEnd: number | undefined };
 
-/** The reusable prefix: cached visual-line ends strictly before the first
- *  changed model line. `serialize` is memoized per doc version (same string
- *  instance), so the identity check catches a text-preserving transaction
- *  (ruby repair, decoration meta) outright — measure nothing. Sound only
- *  while the expanded set is caret-INDEPENDENT (Rich: none; Plain: all) and
- *  the layout key is unchanged; anything else measures from line 0. */
-const reusablePrefix = (
+/** The reusable span around an edit: cached visual-line ends strictly before
+ *  the first changed model line (the prefix, unshifted — those offsets
+ *  precede the edit) AND from the first unchanged model line after it (the
+ *  suffix, shifted by the edit's length delta — a paragraph is its own block
+ *  whose wrapping depends only on its own content, so an untouched suffix
+ *  paragraph keeps its visual-line structure verbatim). Only the model lines
+ *  in `[fromLine, toLine)` need glyph rects. The suffix line must start at a
+ *  `\n` INSIDE the matched tail — a tail match entering the edited paragraph
+ *  mid-line says nothing about that paragraph's wrapping. `serialize` is
+ *  memoized per doc version (same string instance), so the identity check
+ *  catches a text-preserving transaction (ruby repair, decoration meta)
+ *  outright — measure nothing. Sound only while the expanded set is
+ *  caret-INDEPENDENT (Rich: none; Plain: all) and the layout key is
+ *  unchanged; anything else measures everything. */
+const reusableSpan = (
   cache: GapCache | null,
   policy: Appear,
   cur: Pick<GapCache, 'text' | 'pitch' | 'vertical' | 'linesPerPage' | 'pagesPerBand'>,
   lineCount: number,
-): { fromLine: number; fromOff: number; prefixEnds: number[] } => {
+): { fromLine: number; fromOff: number; toLine: number; prefixEnds: number[]; suffixEnds: number[] } => {
   const usable =
     cache !== null &&
     (policy === 'rich' || policy === 'plain') &&
@@ -64,25 +72,43 @@ const reusablePrefix = (
     cache.vertical === cur.vertical &&
     cache.linesPerPage === cur.linesPerPage &&
     cache.pagesPerBand === cur.pagesPerBand;
-  if (!usable || cache === null) return { fromLine: 0, fromOff: 0, prefixEnds: [] };
-  if (cache.text === cur.text) return { fromLine: lineCount, fromOff: 0, prefixEnds: cache.lineEnds };
+  if (!usable || cache === null) return { fromLine: 0, fromOff: 0, toLine: lineCount, prefixEnds: [], suffixEnds: [] };
+  if (cache.text === cur.text)
+    return { fromLine: lineCount, fromOff: 0, toLine: lineCount, prefixEnds: cache.lineEnds, suffixEnds: [] };
   const old = cache.text;
   const text = cur.text;
   const n = Math.min(old.length, text.length);
   let i = 0;
   while (i < n && old.charCodeAt(i) === text.charCodeAt(i)) i++;
   const fromOff = text.lastIndexOf('\n', i - 1) + 1; // start of the first changed line
-  return { fromLine: lineOf(text, fromOff), fromOff, prefixEnds: cache.lineEnds.filter((e) => e < fromOff) };
+  const fromLine = lineOf(text, fromOff);
+  const prefixEnds = cache.lineEnds.filter((e) => e < fromOff);
+  // Tail match, never past the head divergence in either string.
+  let j = 0;
+  const maxJ = n - i;
+  while (j < maxJ && old.charCodeAt(old.length - 1 - j) === text.charCodeAt(text.length - 1 - j)) j++;
+  const nl = text.indexOf('\n', text.length - j);
+  if (nl < 0) return { fromLine, fromOff, toLine: lineCount, prefixEnds, suffixEnds: [] };
+  const suffixOff = nl + 1; // start of the first reusable suffix line
+  const delta = text.length - old.length;
+  return {
+    fromLine,
+    fromOff,
+    toLine: lineOf(text, suffixOff),
+    prefixEnds,
+    suffixEnds: cache.lineEnds.filter((e) => e >= suffixOff - delta).map((e) => e + delta),
+  };
 };
 
-/** Glyph-measure the suffix model lines (`fromLine`.., starting at plain
- *  offset `fromOff`) into per-glyph LineItems. Empty paragraphs are visual
- *  lines with no glyphs — they contribute their own offset instead. */
-const measureSuffixItems = (
+/** Glyph-measure the changed model lines (`[fromLine, toLine)`, starting at
+ *  plain offset `fromOff`) into per-glyph LineItems. Empty paragraphs are
+ *  visual lines with no glyphs — they contribute their own offset instead. */
+const measureChangedItems = (
   view: EditorView,
   walker: Pick<GlyphWalker, 'paraGlyphs' | 'lineGlyphOffsets'>,
   lines: readonly string[],
   fromLine: number,
+  toLine: number,
   fromOff: number,
   vertical: boolean,
 ): LineItem[] => {
@@ -91,7 +117,7 @@ const measureSuffixItems = (
   const items: LineItem[] = [];
   const buf: Glyph[] = [];
   let off = fromOff;
-  for (let i = fromLine; i < lines.length && i < paras.length; i++) {
+  for (let i = fromLine; i < toLine && i < paras.length; i++) {
     const p = paras[i]!;
     if (lines[i]!.length === 0)
       items.push({ endOff: off, b: vertical ? p.getBoundingClientRect().left : p.getBoundingClientRect().top });
@@ -232,19 +258,22 @@ export const createPageGapMeasure = (
   // rAF-coalesced; skipped during IME composition (reconciled on
   // compositionend) and outside the paged modes (where the set empties).
   //
-  // SUFFIX RE-MEASURE. An edit can only move layout from its own model line
-  // onward: earlier paragraphs are separate blocks whose wrapping is
-  // untouched, and the gap widgets before the edit cannot change (boundaries
-  // derive from the line structure, stable before the edit; a widget is
-  // zero-inline-size, so it never re-wraps what it was measured from). So
-  // the measure caches the visual-line END OFFSETS — offsets, never rects:
-  // an offset is frame-independent, immune to scrolls and widget-induced
-  // shifts — and glyph-walks only the lines from the first CHANGED one.
-  // Typing at the end of a large document measures one paragraph instead of
-  // the whole text (the full walk is one layout read per glyph, ~1s at 400k
-  // chars, paid per keystroke). A model-line break is always a visual-line
-  // break (block boxes stack a pitch apart), so prefix ++ fresh-suffix
-  // preserves the clustering with no cross-epoch coordinate comparison.
+  // INCREMENTAL RE-MEASURE, both ends. An edit re-wraps only its own
+  // paragraphs: every other paragraph is a separate block whose wrapping is
+  // untouched, and the gap widgets cannot change it (boundaries derive from
+  // the line structure; a widget is zero-inline-size, so it never re-wraps
+  // what it was measured from). So the measure caches the visual-line END
+  // OFFSETS — offsets, never rects: an offset is frame-independent, immune
+  // to scrolls and widget-induced shifts — and glyph-walks only the CHANGED
+  // model lines, reusing the cached prefix as-is and the cached suffix
+  // shifted by the edit's length delta (reusableSpan). Typing at EITHER end
+  // of a large document measures one paragraph instead of the whole text
+  // (the full walk is one layout read per glyph, ~1s at 400k chars, paid
+  // per keystroke). A model-line break is always a visual-line break (block
+  // boxes stack a pitch apart), so prefix ++ fresh ++ suffix preserves the
+  // clustering with no cross-epoch coordinate comparison; the page
+  // boundaries are re-derived over the WHOLE spliced list, so a line-count
+  // change before the suffix moves its page gaps without re-measuring it.
   // Sound only while the expanded set is caret-INDEPENDENT (Rich: none;
   // Plain: all) — under ByParagraph/ByCharacter a caret MOVE re-wraps the
   // newly (un)expanded paragraph with no doc change, so those policies take
@@ -263,20 +292,20 @@ export const createPageGapMeasure = (
     const vertical = contentCs.writingMode.startsWith('vertical');
     const text = serialize(view.state.doc);
     const lines = text.split('\n');
-    const { fromLine, fromOff, prefixEnds } = reusablePrefix(
+    const { fromLine, fromOff, toLine, prefixEnds, suffixEnds } = reusableSpan(
       gapCache,
       getPolicy(),
       { text, pitch, vertical, linesPerPage, pagesPerBand },
       lines.length,
     );
-    const items = measureSuffixItems(view, walker, lines, fromLine, fromOff, vertical);
-    const lineEnds = prefixEnds.concat(visualLineEnds(items, pitch, vertical));
+    const items = measureChangedItems(view, walker, lines, fromLine, toLine, fromOff, vertical);
+    const lineEnds = prefixEnds.concat(visualLineEnds(items, pitch, vertical), suffixEnds);
     // Test seams: `__vedGapLines` counts the model lines glyph-measured per
-    // gap pass (an end-of-doc edit must measure only the tail, not the
-    // document); `__vedGapLineEnds` exposes the maintained visual-line ends
-    // so page-gap-suffix can pin suffix ≡ full re-measure exactly.
+    // gap pass (an edit must measure only its own lines, at either end of
+    // the document); `__vedGapLineEnds` exposes the maintained visual-line
+    // ends so page-gap-suffix can pin incremental ≡ full re-measure exactly.
     const w = globalThis as unknown as { __vedGapLines?: number; __vedGapLineEnds?: readonly number[] };
-    w.__vedGapLines = (w.__vedGapLines ?? 0) + (lines.length - fromLine);
+    w.__vedGapLines = (w.__vedGapLines ?? 0) + (toLine - fromLine);
     w.__vedGapLineEnds = lineEnds;
     gapCache = { text, pitch, vertical, linesPerPage, pagesPerBand, lineEnds };
     measuredLineCount = lineEnds.length;

@@ -97,7 +97,7 @@ editor/                @ved/editor — the editor core (the only prosemirror con
     leaves.ts            leaf model (isHidden per policy)
     caret-model.ts       nextCaretOffset — model-driven character movement
     cursor.ts            plain offset ↔ backend-neutral {para, offset}
-    page-gap.ts          VerticalRows page-gap widgets; suffix-incremental measure
+    page-gap.ts          VerticalRows page-gap widgets; both-ends-incremental measure
     drag-select.ts       geometric drag selection across read-only ruby bases (unit-tested)
     ruby.css             global ruby/syntax styles (decorations emit literal class names)
 vim/                   @ved/vim — Vim-like modal editing, an editor EXTENSION built ONLY on
@@ -203,8 +203,8 @@ inside ProseMirror's set tree) and rebuilds only the dirty paragraphs'
 decorations — dirty = the paragraph-identity diff (`changedParagraphSpan`),
 plus the paragraphs whose LAST-ness flipped (the newline widget exists on
 every paragraph but the last). The ruby layer advances only under Rich/Plain
-(the expanded set is caret-independent there — the page-gap suffix cache's
-gate); the parse layer (leaves, ruby geometry, offset maps) resolves through
+(the expanded set is caret-independent there — the page-gap line-ends
+cache's gate); the parse layer (leaves, ruby geometry, offset maps) resolves through
 per-paragraph WeakMap caches keyed on the immutable nodes, so it is O(changed)
 by construction. Under ByParagraph/ByCharacter a caret crossing that changes
 the expanded set PATCHES only the delta rubies' decorations
@@ -784,8 +784,12 @@ pagings are structurally different:
   line, since a 3+ digit 縦中横 box reports per-digit sub-rects up to a cell
   *backward* of the slot (past half a pitch under a big-metric CJK font). The
   measure is
-  **suffix-incremental** per edit: visual-line end *offsets* are cached and
-  only lines from the first changed one re-walk. Suffix reuse is gated to
+  **incremental at both ends** per edit: visual-line end *offsets* are cached
+  and only the CHANGED model lines re-walk — the cached prefix is reused
+  as-is, the cached suffix shifted by the edit's length delta (an untouched
+  paragraph is its own block, so its wrapping is verbatim), and the page
+  boundaries re-derive over the whole spliced list, so a line-count change
+  moves every later gap without re-measuring it. Reuse is gated to
   Rich/Plain (other policies re-wrap on caret moves); a non-edit layout
   change schedules a full pass. (`page-gap-suffix.ts` via
   `__vedGapLines`/`__vedGapLineEnds`.) The re-measure runs DURING an IME
