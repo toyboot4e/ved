@@ -44,6 +44,10 @@ export const changedLineSpan = (
   oldText: string,
   newText: string,
 ): { fromOff: number; sufOff: number | null; delta: number } => {
+  // One edit is diffed by several derivations in the same flush (docLeaves,
+  // lineStarts, the page-gap measure) against the same memoized string
+  // instances — scan once, not per caller.
+  if (spanCache && spanCache.oldText === oldText && spanCache.newText === newText) return spanCache.span;
   const n = Math.min(oldText.length, newText.length);
   let i = 0;
   while (i < n && oldText.charCodeAt(i) === newText.charCodeAt(i)) i++;
@@ -53,8 +57,16 @@ export const changedLineSpan = (
   const maxJ = n - i;
   while (j < maxJ && oldText.charCodeAt(oldText.length - 1 - j) === newText.charCodeAt(newText.length - 1 - j)) j++;
   const nl = newText.indexOf('\n', newText.length - j);
-  return { fromOff, sufOff: nl < 0 ? null : nl + 1, delta: newText.length - oldText.length };
+  const span = { fromOff, sufOff: nl < 0 ? null : nl + 1, delta: newText.length - oldText.length };
+  spanCache = { oldText, newText, span };
+  return span;
 };
+
+let spanCache: {
+  oldText: string;
+  newText: string;
+  span: { fromOff: number; sufOff: number | null; delta: number };
+} | null = null;
 
 /** Push one parsed ruby's leaves in offset order — lead delimiter, base body,
  *  mid delimiter, reading, trail delimiter (an empty base/reading span emits
