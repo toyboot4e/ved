@@ -14,11 +14,31 @@ import { posToOffset, serialize } from './pm/model';
 
 export type Glyph = { off: number; rect: DOMRect };
 
+/** Model offsets of `line`'s glyph leaves (body + plain chars, in order).
+ *  Leaves are line-ordered, so the line's first leaf binary-searches. */
+const collectLineOffsets = (leaves: readonly Leaf[], line: number): number[] => {
+  let lo = 0;
+  let hi = leaves.length;
+  while (lo < hi) {
+    const mid = (lo + hi) >> 1;
+    if (leaves[mid]!.line >= line) hi = mid;
+    else lo = mid + 1;
+  }
+  const offs: number[] = [];
+  for (let k = lo; k < leaves.length && leaves[k]!.line === line; k++) {
+    const l = leaves[k]!;
+    if (l.kind !== 'body' && l.kind !== 'plain') continue;
+    for (let o = l.from; o < l.to; o++) offs.push(o);
+  }
+  return offs;
+};
+
 export type GlyphWalker = {
   /** Measure ONE paragraph's glyphs into `out` (see the body doc). */
   readonly paraGlyphs: (p: Element, offs: number[], out: Glyph[], withShownMarkup?: boolean) => void;
-  /** Model offsets of each visual line's glyphs, memoized on the leaves. */
-  readonly lineGlyphOffsets: () => number[][];
+  /** Model offsets of ONE model line's glyphs, resolved lazily per line and
+   *  memoized on the leaves. */
+  readonly lineGlyphOffsets: (line: number) => number[];
   /** Viewport rects of the base glyphs inside the MODEL selection. */
   readonly selectedGlyphRects: () => DOMRect[];
   /** Nearest model offset for a viewport point (drag/empty-press hit-test;
@@ -202,12 +222,11 @@ export const createGlyphWalker = (
     // still takes the full walk.
     const w = globalThis as unknown as { __vedGlyphWalks?: number };
     w.__vedGlyphWalks = (w.__vedGlyphWalks ?? 0) + 1;
-    const byLine = lineGlyphOffsets();
     const out: Glyph[] = [];
     const paras = view.dom.querySelectorAll(':scope > p');
     for (let i = 0; i < paras.length; i++) {
-      const offs = byLine[i];
-      if (offs?.length) paraGlyphs(paras[i]!, offs, out);
+      const offs = lineGlyphOffsets(i);
+      if (offs.length) paraGlyphs(paras[i]!, offs, out);
     }
     return out;
   };
@@ -260,25 +279,21 @@ export const createGlyphWalker = (
       iLo: vertical ? r.top : r.left,
       iHi: vertical ? r.bottom : r.right,
     }));
-  // Model offsets of each visual line's glyphs (body + plain chars, in order)
-  // — memoized on the leaves
-  // (which `docLeaves` memoizes per doc version).
-  let lineOffsCache: { leaves: Leaf[]; byLine: number[][] } | null = null;
-  const lineGlyphOffsets = (): number[][] => {
+  // Model offsets of ONE model line's glyphs (body + plain chars, in order) —
+  // resolved LAZILY per line and memoized on the leaves (which `docLeaves`
+  // memoizes per doc version). Building the whole document's per-line lists
+  // eagerly was one array push per character — ~700k per keystroke on a large
+  // doc, re-done every doc version — while each caller (the page-gap measure,
+  // the viewport-scoped walks) touches a handful of lines.
+  let lineOffsCache: { leaves: Leaf[]; byLine: Map<number, number[]> } | null = null;
+  const lineGlyphOffsets = (line: number): number[] => {
     const leaves = docLeaves(serialize(view.state.doc));
-    if (lineOffsCache?.leaves === leaves) return lineOffsCache.byLine;
-    const byLine: number[][] = [];
-    for (const l of leaves) {
-      if (l.kind !== 'body' && l.kind !== 'plain') continue;
-      let arr = byLine[l.line];
-      if (!arr) {
-        arr = [];
-        byLine[l.line] = arr;
-      }
-      for (let o = l.from; o < l.to; o++) arr.push(o);
-    }
-    lineOffsCache = { leaves, byLine };
-    return byLine;
+    if (lineOffsCache?.leaves !== leaves) lineOffsCache = { leaves, byLine: new Map() };
+    const hit = lineOffsCache.byLine.get(line);
+    if (hit) return hit;
+    const offs = collectLineOffsets(leaves, line);
+    lineOffsCache.byLine.set(line, offs);
+    return offs;
   };
   // Measure ONE paragraph's glyphs (text nodes paired with that line's model
   // offsets) into `out` — the per-paragraph unit the scoped walks below
@@ -325,14 +340,13 @@ export const createGlyphWalker = (
     // (click-perf asserts this).
     const w = globalThis as unknown as { __vedNearWalks?: number };
     w.__vedNearWalks = (w.__vedNearWalks ?? 0) + 1;
-    const byLine = lineGlyphOffsets();
     const box = mount.getBoundingClientRect();
     const margin = Math.max(mount.clientWidth, mount.clientHeight) / 2;
     const out: Glyph[] = [];
     const paras = view.dom.querySelectorAll(':scope > p');
     for (let i = 0; i < paras.length; i++) {
-      const offs = byLine[i];
-      if (!offs?.length) continue;
+      // Viewport rejection FIRST (one element rect), so the lazy per-line
+      // offsets are resolved only for the paragraphs actually walked.
       const pr = paras[i]!.getBoundingClientRect();
       if (
         pr.right < box.left - margin ||
@@ -341,7 +355,8 @@ export const createGlyphWalker = (
         pr.top > box.bottom + margin
       )
         continue;
-      paraGlyphs(paras[i]!, offs, out);
+      const offs = lineGlyphOffsets(i);
+      if (offs.length) paraGlyphs(paras[i]!, offs, out);
     }
     return out;
   };

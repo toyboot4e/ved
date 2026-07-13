@@ -9,7 +9,7 @@ import type { EditorView } from 'prosemirror-view';
 import styles from './editor.module.scss';
 import type { Glyph, GlyphWalker } from './glyph-walker';
 import type { Appear } from './pm/leaves';
-import { lineOf } from './pm/leaves';
+import { changedLineSpan, lineOf } from './pm/leaves';
 import { offsetToPos, posToOffset, serialize } from './pm/model';
 import {
   type LineItem,
@@ -75,28 +75,16 @@ const reusableSpan = (
   if (!usable || cache === null) return { fromLine: 0, fromOff: 0, toLine: lineCount, prefixEnds: [], suffixEnds: [] };
   if (cache.text === cur.text)
     return { fromLine: lineCount, fromOff: 0, toLine: lineCount, prefixEnds: cache.lineEnds, suffixEnds: [] };
-  const old = cache.text;
-  const text = cur.text;
-  const n = Math.min(old.length, text.length);
-  let i = 0;
-  while (i < n && old.charCodeAt(i) === text.charCodeAt(i)) i++;
-  const fromOff = text.lastIndexOf('\n', i - 1) + 1; // start of the first changed line
-  const fromLine = lineOf(text, fromOff);
+  const { fromOff, sufOff, delta } = changedLineSpan(cache.text, cur.text);
+  const fromLine = lineOf(cur.text, fromOff);
   const prefixEnds = cache.lineEnds.filter((e) => e < fromOff);
-  // Tail match, never past the head divergence in either string.
-  let j = 0;
-  const maxJ = n - i;
-  while (j < maxJ && old.charCodeAt(old.length - 1 - j) === text.charCodeAt(text.length - 1 - j)) j++;
-  const nl = text.indexOf('\n', text.length - j);
-  if (nl < 0) return { fromLine, fromOff, toLine: lineCount, prefixEnds, suffixEnds: [] };
-  const suffixOff = nl + 1; // start of the first reusable suffix line
-  const delta = text.length - old.length;
+  if (sufOff === null) return { fromLine, fromOff, toLine: lineCount, prefixEnds, suffixEnds: [] };
   return {
     fromLine,
     fromOff,
-    toLine: lineOf(text, suffixOff),
+    toLine: lineOf(cur.text, sufOff),
     prefixEnds,
-    suffixEnds: cache.lineEnds.filter((e) => e >= suffixOff - delta).map((e) => e + delta),
+    suffixEnds: cache.lineEnds.filter((e) => e >= sufOff - delta).map((e) => e + delta),
   };
 };
 
@@ -112,23 +100,38 @@ const measureChangedItems = (
   fromOff: number,
   vertical: boolean,
 ): LineItem[] => {
-  const byLine = walker.lineGlyphOffsets();
   const paras = view.dom.querySelectorAll(':scope > p');
   const items: LineItem[] = [];
   const buf: Glyph[] = [];
   let off = fromOff;
   for (let i = fromLine; i < toLine && i < paras.length; i++) {
-    const p = paras[i]!;
-    if (lines[i]!.length === 0)
-      items.push({ endOff: off, b: vertical ? p.getBoundingClientRect().left : p.getBoundingClientRect().top });
-    else if (byLine[i]?.length) {
-      buf.length = 0;
-      walker.paraGlyphs(p, byLine[i]!, buf);
-      for (const g of buf) items.push({ endOff: g.off + 1, b: vertical ? g.rect.left : g.rect.top });
-    }
+    pushLineItems(items, buf, walker, paras[i]!, i, lines[i]!.length === 0 ? off : null, vertical);
     off += lines[i]!.length + 1;
   }
   return items;
+};
+
+/** Push one model line's items: an EMPTY paragraph contributes its own offset
+ *  (`emptyOff`), a glyphed one an item per measured glyph. */
+const pushLineItems = (
+  items: LineItem[],
+  buf: Glyph[],
+  walker: Pick<GlyphWalker, 'paraGlyphs' | 'lineGlyphOffsets'>,
+  p: Element,
+  line: number,
+  emptyOff: number | null,
+  vertical: boolean,
+): void => {
+  if (emptyOff !== null) {
+    const r = p.getBoundingClientRect();
+    items.push({ endOff: emptyOff, b: vertical ? r.left : r.top });
+    return;
+  }
+  const offs = walker.lineGlyphOffsets(line);
+  if (offs.length === 0) return;
+  buf.length = 0;
+  walker.paraGlyphs(p, offs, buf);
+  for (const g of buf) items.push({ endOff: g.off + 1, b: vertical ? g.rect.left : g.rect.top });
 };
 
 /** While composing, relocate any boundary trapped INSIDE the composition
