@@ -32,6 +32,30 @@ export type Leaf = {
 // whole text — these run on every caret move (decorations, caret model).
 let leavesCache: { doc: string; leaves: Leaf[] } | null = null;
 
+/** The model-line span an edit changed, by matching the unchanged text HEAD
+ *  and TAIL: lines before `fromOff` are untouched; lines from `sufOff` (a new
+ *  -text offset; its old-text twin is `sufOff - delta`) are untouched too and
+ *  merely shifted by `delta`. The suffix must start at a `\n` INSIDE the
+ *  matched tail — a tail match entering the edited line mid-way says nothing
+ *  about that line. `sufOff` is null when no line survives after the edit.
+ *  The incremental derivations per keystroke (docLeaves, lineStarts, the
+ *  page-gap measure) all splice around this span. */
+export const changedLineSpan = (
+  oldText: string,
+  newText: string,
+): { fromOff: number; sufOff: number | null; delta: number } => {
+  const n = Math.min(oldText.length, newText.length);
+  let i = 0;
+  while (i < n && oldText.charCodeAt(i) === newText.charCodeAt(i)) i++;
+  const fromOff = newText.lastIndexOf('\n', i - 1) + 1;
+  // Tail match, never past the head divergence in either string.
+  let j = 0;
+  const maxJ = n - i;
+  while (j < maxJ && oldText.charCodeAt(oldText.length - 1 - j) === newText.charCodeAt(newText.length - 1 - j)) j++;
+  const nl = newText.indexOf('\n', newText.length - j);
+  return { fromOff, sufOff: nl < 0 ? null : nl + 1, delta: newText.length - oldText.length };
+};
+
 /** Push one parsed ruby's leaves in offset order — lead delimiter, base body,
  *  mid delimiter, reading, trail delimiter (an empty base/reading span emits
  *  no leaf). `base` is the line's document offset, `li` its index, `r` the
@@ -85,44 +109,198 @@ export const lineLeafList = (line: string): Leaf[] => {
   return out;
 };
 
-/** All leaves of a document in offset order, including a `nl` leaf per line
- *  break so caret movement crosses paragraphs uniformly. Memoized on the text
- *  (one slot — callers pass the memoized `serialize` result). */
-export const docLeaves = (doc: string): Leaf[] => {
-  if (leavesCache?.doc === doc) return leavesCache.leaves;
-  const out: Leaf[] = [];
-  const lines = doc.split('\n');
-  let base = 0;
-  let rubyBase = 0;
+/** Append the leaves of the lines in `[base, end)` — parsed fresh — to `out`,
+ *  starting at line index `line` with ruby ids from `rubyBase`. `trailingNl`
+ *  says the region is followed by another line (emit the final `nl`). Returns
+ *  the next line index and ruby id. */
+const pushOneLine = (out: Leaf[], lineText: string, base: number, line: number, rubyBase: number): number => {
+  let rubies = 0;
+  for (const l of lineLeafList(lineText)) {
+    out.push({ ...l, from: base + l.from, to: base + l.to, line, ruby: l.ruby < 0 ? -1 : rubyBase + l.ruby });
+    if (l.ruby >= 0) rubies = Math.max(rubies, l.ruby + 1);
+  }
+  return rubies;
+};
+
+const pushLineRun = (
+  out: Leaf[],
+  text: string,
+  base: number,
+  end: number,
+  line: number,
+  rubyBase: number,
+  trailingNl: boolean,
+): { line: number; rubyBase: number } => {
+  const lines = text.slice(base, end).split('\n');
   for (let li = 0; li < lines.length; li++) {
-    const line = lines[li]!;
-    let rubies = 0;
-    for (const l of lineLeafList(line)) {
-      out.push({ ...l, from: base + l.from, to: base + l.to, line: li, ruby: l.ruby < 0 ? -1 : rubyBase + l.ruby });
-      if (l.ruby >= 0) rubies = Math.max(rubies, l.ruby + 1);
-    }
-    rubyBase += rubies;
-    base += line.length;
-    if (li < lines.length - 1) {
-      out.push({ kind: 'nl', from: base, to: base + 1, line: li, ruby: -1, edge: null });
+    const lineText = lines[li]!;
+    rubyBase += pushOneLine(out, lineText, base, line, rubyBase);
+    base += lineText.length;
+    if (li < lines.length - 1 || trailingNl) {
+      out.push({ kind: 'nl', from: base, to: base + 1, line, ruby: -1, edge: null });
       base += 1;
     }
+    line++;
   }
-  leavesCache = { doc, leaves: out };
+  return { line, rubyBase };
+};
+
+/** Build the whole leaf list from scratch — the cold path. Exported only for
+ *  the incremental ≡ fresh equivalence test; consumers call `docLeaves`. */
+export const buildDocLeaves = (doc: string): Leaf[] => {
+  const out: Leaf[] = [];
+  pushLineRun(out, doc, 0, doc.length, 0, 0, false);
   return out;
+};
+
+/** First index whose leaf satisfies `past` (leaves are offset-ordered, so any
+ *  monotone predicate splits them in two) — `leaves.length` if none does. */
+const lowerBound = (leaves: readonly Leaf[], past: (l: Leaf) => boolean): number => {
+  let lo = 0;
+  let hi = leaves.length;
+  while (lo < hi) {
+    const mid = (lo + hi) >> 1;
+    if (past(leaves[mid]!)) hi = mid;
+    else lo = mid + 1;
+  }
+  return lo;
+};
+
+/** Splice the cached leaves around an edit: the unchanged HEAD lines' leaves
+ *  are reused by identity, only the changed lines re-parse, and the unchanged
+ *  TAIL lines' leaves are rebased numerically (offset/line/ruby deltas) —
+ *  never re-parsed. Per keystroke this turns the whole-document re-parse
+ *  (every line through `parse`) into O(changed lines) parsing plus an O(tail)
+ *  numeric copy. */
+/** The next unassigned ruby id at leaf index `k` scanning BACKWARD (last
+ *  assigned id + 1; ruby ids are document-ordered). */
+const rubyIdAfter = (leaves: readonly Leaf[], k: number): number => {
+  for (let i = k; i >= 0; i--) {
+    const r = leaves[i]!.ruby;
+    if (r >= 0) return r + 1;
+  }
+  return 0;
+};
+
+/** The first ruby id at or after leaf index `s`, or -1 when the tail holds
+ *  no ruby. */
+const firstRubyIdFrom = (leaves: readonly Leaf[], s: number): number => {
+  for (let i = s; i < leaves.length; i++) {
+    const r = leaves[i]!.ruby;
+    if (r >= 0) return r;
+  }
+  return -1;
+};
+
+/** Append `leaves[s..]` rebased by the numeric deltas (identity-reused when
+ *  every delta is zero — a same-length replacement). */
+const pushRebasedTail = (
+  out: Leaf[],
+  leaves: readonly Leaf[],
+  s: number,
+  delta: number,
+  lineDelta: number,
+  rubyDelta: number,
+): void => {
+  if (delta === 0 && lineDelta === 0 && rubyDelta === 0) {
+    for (let k = s; k < leaves.length; k++) out.push(leaves[k]!);
+    return;
+  }
+  for (let k = s; k < leaves.length; k++) {
+    const l = leaves[k]!;
+    out.push({
+      kind: l.kind,
+      from: l.from + delta,
+      to: l.to + delta,
+      line: l.line + lineDelta,
+      ruby: l.ruby < 0 ? -1 : l.ruby + rubyDelta,
+      edge: l.edge,
+    });
+  }
+};
+
+const spliceDocLeaves = (oldDoc: string, oldLeaves: readonly Leaf[], doc: string): Leaf[] => {
+  const { fromOff, sufOff, delta } = changedLineSpan(oldDoc, doc);
+  // Prefix: whole lines strictly before `fromOff` — a line start, so the
+  // previous line's `nl` leaf ends exactly there and the split is clean.
+  const p = lowerBound(oldLeaves, (l) => l.to > fromOff);
+  const out: Leaf[] = oldLeaves.slice(0, p);
+  // Line/ruby continuation off the prefix: the last prefix leaf is the `nl`
+  // that ends line `fromLine - 1`; ruby ids are document-ordered.
+  const line = p > 0 ? oldLeaves[p - 1]!.line + 1 : 0;
+  // Changed middle: `[fromOff, sufOff)` re-parses fresh (the `\n` at
+  // `sufOff - 1` becomes the middle's last `nl` leaf).
+  const mid = pushLineRun(
+    out,
+    doc,
+    fromOff,
+    sufOff === null ? doc.length : sufOff - 1,
+    line,
+    rubyIdAfter(oldLeaves, p - 1),
+    sufOff !== null,
+  );
+  if (sufOff === null) return out;
+  // Suffix: rebase the unchanged tail's leaves numerically.
+  const s = lowerBound(oldLeaves, (l) => l.from >= sufOff - delta);
+  const lineDelta = mid.line - (s > 0 ? oldLeaves[s - 1]!.line + 1 : 0);
+  const firstRuby = firstRubyIdFrom(oldLeaves, s);
+  pushRebasedTail(out, oldLeaves, s, delta, lineDelta, firstRuby < 0 ? 0 : mid.rubyBase - firstRuby);
+  return out;
+};
+
+/** All leaves of a document in offset order, including a `nl` leaf per line
+ *  break so caret movement crosses paragraphs uniformly. Memoized on the text
+ *  (one slot — callers pass the memoized `serialize` result); a text CHANGE
+ *  splices around the edit (`spliceDocLeaves`) instead of re-parsing the
+ *  whole document — this runs per keystroke. */
+export const docLeaves = (doc: string): Leaf[] => {
+  if (leavesCache?.doc === doc) return leavesCache.leaves;
+  const leaves = leavesCache ? spliceDocLeaves(leavesCache.doc, leavesCache.leaves, doc) : buildDocLeaves(doc);
+  leavesCache = { doc, leaves };
+  return leaves;
 };
 
 let lineStartsCache: { doc: string; starts: number[] } | null = null;
 
-/** Offset of each line's first character. Memoized (same single-slot
- *  discipline as docLeaves) — cursor mapping and lineOf share it. */
-export const lineStarts = (doc: string): number[] => {
-  if (lineStartsCache?.doc !== doc) {
-    const starts = [0];
-    for (let i = 0; i < doc.length; i++) if (doc[i] === '\n') starts.push(i + 1);
-    lineStartsCache = { doc, starts };
+/** Splice the cached line starts around an edit: unchanged-head starts are
+ *  copied, the changed region re-scans, the unchanged tail's starts shift by
+ *  the edit's delta. */
+const spliceLineStarts = (prev: { doc: string; starts: number[] }, doc: string): number[] => {
+  const { fromOff, sufOff, delta } = changedLineSpan(prev.doc, doc);
+  const starts: number[] = [];
+  for (const s of prev.starts) {
+    if (s > fromOff) break;
+    starts.push(s);
   }
-  return lineStartsCache.starts;
+  const scanEnd = sufOff === null ? doc.length : sufOff - 1;
+  for (let i = fromOff; i < scanEnd; i++) if (doc.charCodeAt(i) === 10) starts.push(i + 1);
+  if (sufOff === null) return starts;
+  const oldSufOff = sufOff - delta;
+  let lo = 0;
+  let hi = prev.starts.length;
+  while (lo < hi) {
+    const mid = (lo + hi) >> 1;
+    if (prev.starts[mid]! >= oldSufOff) hi = mid;
+    else lo = mid + 1;
+  }
+  for (let k = lo; k < prev.starts.length; k++) starts.push(prev.starts[k]! + delta);
+  return starts;
+};
+
+const buildLineStarts = (doc: string): number[] => {
+  const starts = [0];
+  for (let i = 0; i < doc.length; i++) if (doc.charCodeAt(i) === 10) starts.push(i + 1);
+  return starts;
+};
+
+/** Offset of each line's first character. Memoized (same single-slot
+ *  discipline as docLeaves); a text change splices around the edit
+ *  (`spliceLineStarts`) instead of re-scanning the whole document. */
+export const lineStarts = (doc: string): number[] => {
+  if (lineStartsCache?.doc === doc) return lineStartsCache.starts;
+  const starts = lineStartsCache ? spliceLineStarts(lineStartsCache, doc) : buildLineStarts(doc);
+  lineStartsCache = { doc, starts };
+  return starts;
 };
 
 /** The 0-based line index containing `offset`: memoized line starts + binary
