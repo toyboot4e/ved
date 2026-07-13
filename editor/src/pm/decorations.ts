@@ -238,11 +238,21 @@ type Parse = {
   rubyBase: number[];
   rubyCount: number;
   /** Every ruby id — the Plain policy's expanded set, one shared instance per
-   *  doc version so the rubyCache key check is an identity hit. */
-  allRubies: Set<number>;
+   *  doc version so the rubyCache key check is an identity hit. Built LAZILY
+   *  (`allRubiesOf`): only the Plain policy reads it, and the eager build ran
+   *  O(#rubies) Set inserts on every keystroke under every policy. */
+  allRubies: Set<number> | null;
   /** Lazy memo: rebased leaves per line / RubyInfo (absolute pos) per id. */
   lines: (Leaf[] | undefined)[];
   infos: (RubyInfo | undefined)[];
+};
+
+const allRubiesOf = (parse: Parse): Set<number> => {
+  if (parse.allRubies) return parse.allRubies;
+  const all = new Set<number>();
+  for (let i = 0; i < parse.rubyCount; i++) all.add(i);
+  parse.allRubies = all;
+  return all;
 };
 
 const parseDoc = (doc: PMNode): Parse => {
@@ -254,9 +264,7 @@ const parseDoc = (doc: PMNode): Parse => {
     rubyBase.push(count);
     count += paraRubies(p).length;
   }
-  const allRubies = new Set<number>();
-  for (let i = 0; i < count; i++) allRubies.add(i);
-  return { doc, text, rubyBase, rubyCount: count, allRubies, lines: [], infos: [] };
+  return { doc, text, rubyBase, rubyCount: count, allRubies: null, lines: [], infos: [] };
 };
 
 /** The leaves of line `li` in DOCUMENT coordinates, trailing `nl` leaf
@@ -694,7 +702,7 @@ export const advanceDecorationCaches = (oldDoc: PMNode, newDoc: PMNode, mapping:
     baseCache.doc === newDoc
   ) {
     const invis: Invisibles = { newline: baseCache.newline, whitespace: baseCache.whitespace };
-    const expanded = rubyCache.policy === 'plain' ? parse.allRubies : EMPTY_EXPANDED;
+    const expanded = rubyCache.policy === 'plain' ? allRubiesOf(parse) : EMPTY_EXPANDED;
     const mapped = rubyCache.set.map(mapping, newDoc);
     const set = patchParas(mapped, parse, dirty, (decos, pi) => {
       pushParaBaseDecos(decos, parse, pi, invis, at);
@@ -735,7 +743,7 @@ const caretContext = (parse: Parse, doc: PMNode, head: number): CaretContext => 
 const expandedFor = (parse: Parse, policy: Appear, ctx: CaretContext): Set<number> => {
   switch (policy) {
     case 'plain':
-      return parse.allRubies; // every delimiter shown — the one shared instance
+      return allRubiesOf(parse); // every delimiter shown — the one shared instance
     case 'rich':
       return EMPTY_EXPANDED; // every delimiter hidden
     case 'paragraph': {
