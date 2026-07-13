@@ -86,6 +86,15 @@ construction**, not convention: there is no unprefixed registration API.
   extension OWNS the body element, alive across show/hide), `quickPick`
   (modal fuzzy picker; one at a time, a new one preempts with `null`),
   `notice` (transient toast).
+- `settings.apply(fields)` sets the user-adjustable values — view config
+  (font family/size, line space, page geometry), theme, writing mode,
+  appear policy, invisibles, vim, sidebar side/width. ASSIGNMENT, not
+  registration: nothing to dispose. Every config change re-evaluates the
+  whole config from the launch baseline (below), so a removed line reverts
+  by itself; last writer wins, and `init.ts` runs last. Runtime changes
+  made through the UI are ephemeral — only what the config applies
+  survives. Invalid fields notice and skip; numbers clamp to the UI
+  controls' bounds.
 - `storage.read/write(file)` — plain files under `<configDir>/storage/<id>/`
   behind the ipc.ts contract: the ONE fs capability an extension has,
   single-segment names, id-bound so no extension can name another's dir.
@@ -129,9 +138,15 @@ full types; no npm install, no package.json for the single-file tier.
 `--dev-extension=<path>` (repeatable, equals form) links a working directory
 or file. Main watches every extension source — the `extensions/` top level
 for single files (`init.ts` included) and each project/dev tree recursively —
-and pushes debounced per-extension recompiles; the renderer hot-swaps that
-one extension: `deactivate()`, the automatic registration sweep, then
-re-activation in the same load-order slot. New files appearing after launch
+and pushes debounced per-extension recompiles; the renderer then
+**re-evaluates the whole config**: every extension deactivates (its tracked
+sweep), settings reset to the launch baseline (store defaults + the picked
+CJK font + the OS theme, captured before any extension ran), and every
+current source re-activates in load order. The end state is a pure function
+of the files on disk — precedence never drifts with edit history. A
+re-evaluation arriving during an IME composition waits for its end.
+Extension-owned panel DOM is rebuilt by a re-evaluation (any edit, any
+extension) — the price of determinism. New files appearing after launch
 need a restart; edits to known ones do not. A project's `minAppVersion`
 gates it against an older ved.
 

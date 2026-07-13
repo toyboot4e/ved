@@ -5,7 +5,8 @@
 // Both the toolbar and the editor's own shortcuts (Ctrl+1–4, Ctrl+/) write it:
 // the stable `set` is handed to VedEditor as its `setAppearPolicy` prop.
 //
-// Not persisted yet (Phase-4 config.json will hydrate it, matching view-config).
+// Hydrated from init.ts via ctx.settings (settings.ts); runtime changes are
+// ephemeral (the Vim model), so nothing persists it.
 import { AppearPolicy } from '@ved/editor';
 import { create } from 'zustand';
 

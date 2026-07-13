@@ -20,12 +20,7 @@ import { ShellPanel } from './components/shell-panel';
 import { Sidebar } from './components/sidebar';
 import { TabBar } from './components/tab-bar';
 import { Toolbar } from './components/toolbar';
-import {
-  initializeUserExtensions,
-  notifyExtensionSelectionChanged,
-  notifyExtensionTextChanged,
-  useUserExtensionsStore,
-} from './extension-host';
+import { notifyExtensionSelectionChanged, notifyExtensionTextChanged, useUserExtensionsStore } from './extension-host';
 import { useExtensionPickerStore } from './extension-ui';
 import { dirName, type FileCommand, saveOrSaveAs, saveViaDialog, type TabCommand, windowTitle } from './file-commands';
 import { useInvisiblesStore } from './invisibles';
@@ -79,11 +74,9 @@ export const App = (): React.JSX.Element => {
     notifyExtensionTextChanged(text);
   }, []);
 
-  // User extensions (extension-host.ts): loaded once at startup; the store
-  // then feeds the editor's extensions array and its keybinding table.
-  useEffect(() => {
-    void initializeUserExtensions();
-  }, []);
+  // User extensions (extension-host.ts): activated by main.tsx before the
+  // mount; the store feeds the editor's extensions array and its keybinding
+  // table.
   const userExtensions = useUserExtensionsStore((s) => s.editorExtensions);
   const keybindings = useUserExtensionsStore((s) => s.keybindings);
   // Stable identity per (vim, user-extensions) pair — the editor re-syncs

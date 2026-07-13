@@ -15,8 +15,12 @@ import { fail, finish, launchVed, pressMod, step } from './harness.ts';
 const INIT_TS = `import type { VedContext } from 'ved';
 
 export async function activate(ctx: VedContext): Promise<void> {
-  // Persistence: the SECOND activation (the hot reload) reads what the first
-  // one wrote — the driver asserts P7 after the reload.
+  // Settings: applied pre-mount, so the first paint carries them; the
+  // re-evaluation fixture (below) REMOVES this line and the driver asserts
+  // the revert to the launch baseline.
+  ctx.settings.apply({ fontSize: 23, theme: 'dark' });
+  // Persistence: the SECOND activation (the re-evaluation) reads what the
+  // first one wrote — the driver asserts P7 after the reload.
   const prev = await ctx.storage.read('count.txt');
   ctx.ui.statusItem({ text: 'P' + (prev ?? '無') });
   await ctx.storage.write('count.txt', '7');
@@ -93,6 +97,12 @@ const ved = await launchVed({
 });
 const { page } = ved;
 const text = () => page.evaluate(() => (window as unknown as ModelSeams).__vedText());
+const themeAttr = () => page.evaluate(() => document.documentElement.dataset.theme ?? '<unset>');
+const editorFontSize = () =>
+  page.evaluate(() => {
+    const content = document.getElementById('editor-content');
+    return content ? Number.parseFloat(getComputedStyle(content).fontSize) : Number.NaN;
+  });
 
 try {
   // Extensions load in a startup effect; the first assertions poll for it.
@@ -104,6 +114,14 @@ try {
   }
   if (stamped) step('keybinding Mod+7 ran the namespaced command init.stamp');
   else fail(`Mod+7 never produced the command's edit — got ${JSON.stringify(await text())}`);
+
+  // ctx.settings: init.ts applied a theme and a font size; both are live
+  // (activation runs before the mount, so the first paint carried them).
+  if ((await themeAttr()) === 'dark') step('ctx.settings.apply set the theme from init.ts');
+  else fail(`theme not applied — got ${JSON.stringify(await themeAttr())}`);
+  const size0 = await editorFontSize();
+  if (Math.abs(size0 - 23) < 0.5) step('ctx.settings.apply set the editor font size (23px)');
+  else fail(`font size not applied — got ${size0}`);
 
   await pressMod(page, '8');
   await page.waitForTimeout(150);
@@ -147,17 +165,38 @@ try {
   if (counted) step('project extension bundled (relative import) and ran via its binding');
   else fail(`project extension edit missing — got ${JSON.stringify(await text())}`);
 
-  // Hot reload: rewrite init.ts; the watcher recompiles, the renderer swaps
-  // the extension in place, and the same chord runs the NEW command body.
-  await writeFile(join(configDir, 'extensions', 'init.ts'), INIT_TS.replace("'拡張OK'", "'拡張二'"), 'utf-8');
+  // Whole-config re-evaluation: rewrite init.ts (new command body, settings
+  // line REMOVED, mod+0 binding REMOVED); the watcher recompiles and the
+  // renderer re-evaluates the whole config from the launch baseline.
+  const INIT_V2 = INIT_TS.replace("'拡張OK'", "'拡張二'")
+    .replace("  ctx.settings.apply({ fontSize: 23, theme: 'dark' });\n", '')
+    .replace("  ctx.keybindings.bind('mod+0', 'init.mark');\n", '');
+  await writeFile(join(configDir, 'extensions', 'init.ts'), INIT_V2, 'utf-8');
   let reloaded = false;
   for (let i = 0; i < 60 && !reloaded; i++) {
     await pressMod(page, '7');
     await page.waitForTimeout(150);
     reloaded = (await text()).includes('拡張二');
   }
-  if (reloaded) step('editing init.ts hot-reloaded the extension (watch → recompile → swap)');
-  else fail(`hot reload never took — got ${JSON.stringify(await text())}`);
+  if (reloaded) step('editing init.ts re-evaluated the config (watch → recompile → re-eval)');
+  else fail(`re-evaluation never took — got ${JSON.stringify(await text())}`);
+
+  // The removed settings line reverts to the launch baseline (default 18px;
+  // the theme reverts to the OS palette, which the driver cannot assume).
+  let reverted = false;
+  for (let i = 0; i < 40 && !reverted; i++) {
+    await page.waitForTimeout(100);
+    reverted = Math.abs((await editorFontSize()) - 18) < 0.5;
+  }
+  if (reverted) step('removed settings reverted to the launch baseline (18px)');
+  else fail(`font size never reverted — got ${await editorFontSize()}`);
+
+  // The dropped binding stops firing: the sweep cleared the old decoration,
+  // and re-evaluation rebuilt the table without mod+0.
+  await pressMod(page, '0');
+  await page.waitForTimeout(200);
+  if (await page.$('.vedx-init-hl')) fail('mod+0 still decorates after its binding was dropped by re-evaluation');
+  else step('a dropped keybinding stops firing after re-evaluation');
 
   const storageStatus = await page.textContent('#extension-status-items');
   if (storageStatus?.includes('P7')) step('ctx.storage round-tripped across the reload');

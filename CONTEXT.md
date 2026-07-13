@@ -154,10 +154,20 @@ _Avoid_: whitespace mode, control characters, formatting marks.
 Which color palette the product renders in — a set of `--ved-*` token values.
 `light` / `dark` (a plain toggle, its launch default seeded from the OS),
 extensible to arbitrary named palettes. A pure view concern, distinct from
-**view config** (geometry/font) and from **settings** (the eventual config file
-that will persist both).
+**view config** (geometry/font); both are **settings** fields.
 _Avoid_: dark mode (one theme, not the axis), skin, color scheme (the CSS
 media feature, not our store).
+
+**Settings**:
+The user-adjustable values an extension applies via `ctx.settings.apply` —
+**view config**, **theme**, **writing mode**, **appear policy**,
+**invisibles**, vim, sidebar side/width. Configuration IS code: `init.ts`
+applies them, any config change re-evaluates the whole config from the
+**launch baseline** (store defaults + the picked CJK font + the OS theme),
+and runtime UI changes are ephemeral — nothing persists settings, and
+nothing machine-writes user code.
+_Avoid_: preferences, options, config file (there is none — that is the
+point).
 
 **Extension** (editor):
 Third-party code driving the editor through the ONE public seam — the

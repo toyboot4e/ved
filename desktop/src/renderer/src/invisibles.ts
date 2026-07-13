@@ -3,7 +3,8 @@
 // narrow "view config" (font/geometry) stays intact. Delivered to the editor as
 // the `invisibles` prop — NOT custom properties, because the newline marker is a
 // ProseMirror widget decoration, so the editor must emit it, not just style it.
-// Not persisted yet; Phase-4 config.json will hydrate this same store.
+// Hydrated from init.ts via ctx.settings (settings.ts); runtime changes are
+// ephemeral (the Vim model), so nothing persists it.
 import type { Invisibles } from '@ved/editor';
 import { create } from 'zustand';
 

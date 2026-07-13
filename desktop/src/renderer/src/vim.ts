@@ -5,8 +5,8 @@
 // rebuilt per render. Mode flows one way: the extension reports via
 // onModeChange, the store never drives the extension.
 //
-// Not persisted yet (Phase-4 config.json will hydrate `enabled`, matching
-// view-config).
+// `enabled` is a settings field (init.ts via ctx.settings hydrates it —
+// settings.ts); runtime toggles are ephemeral, so nothing persists it.
 import type { EditorExtension } from '@ved/editor';
 import { createVimExtension, type VimKeymapConfig, type VimMode } from '@ved/vim';
 import { create } from 'zustand';
@@ -46,8 +46,9 @@ let vimExtensionsCache: readonly EditorExtension[] | null = null;
 /** The stable `extensions` prop value while Vim is on — built on the FIRST
  *  toggle (late enough for the smoke seam below; identity stable after).
  *  User keymap: `window.__vedVimKeymap` (a `VimKeymapConfig`) is the smoke
- *  seam AND the manual override until phase-4 config.json hydrates it. A
- *  rejected keymap falls back to the defaults, loudly. */
+ *  seam AND the manual override until a settings field carries it
+ *  (docs/editor-ui-plan.md Phase 4 "Later"). A rejected keymap falls back
+ *  to the defaults, loudly. */
 export const vimExtensions = (): readonly EditorExtension[] => {
   if (vimExtensionsCache) return vimExtensionsCache;
   const keymap = (globalThis as { __vedVimKeymap?: VimKeymapConfig }).__vedVimKeymap;

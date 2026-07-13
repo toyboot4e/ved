@@ -13,7 +13,8 @@
 // palette-agnostic — a named theme is a new id here + a matching
 // `:root[data-theme='id']` block in main.scss, driven by `set()`.
 //
-// Not persisted yet (Phase-4 config.json will hydrate it, matching view-config).
+// Hydrated from init.ts via ctx.settings (settings.ts); runtime changes are
+// ephemeral (the Vim model), so nothing persists it.
 import { create } from 'zustand';
 
 export type Theme = 'light' | 'dark';

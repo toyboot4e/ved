@@ -5,7 +5,8 @@
 // active. app.tsx maps it to the root layout classes and the editor prop;
 // the toolbar writes it (one button group per axis).
 //
-// Not persisted yet (Phase-4 config.json will hydrate it, matching view-config).
+// Hydrated from init.ts via ctx.settings (settings.ts); runtime changes are
+// ephemeral (the Vim model), so nothing persists it.
 import { WritingMode } from '@ved/editor';
 import { create } from 'zustand';
 

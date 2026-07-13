@@ -19,14 +19,17 @@ import type { ExtensionSource } from '../../shared/ipc';
 import { isValidCommandName, normalizeChordSpec } from './extension-model';
 import { addExtensionPanel, addStatusItem, openExtensionPicker } from './extension-ui';
 import { useNoticeStore } from './notice';
+import { applySettings, captureSettingsBaseline, resetSettingsToBaseline, type SettingsBaseline } from './settings';
 
 // ---------------------------------------------------------------------------
 // Store: what the shell (app.tsx) feeds the editor.
 
 type UserExtensionsStore = {
-  /** One loader-built EditorExtension per activated user extension, in load
-   *  order — appended to the editor's `extensions` prop. Set ONCE per launch
-   *  (stable identity; reload = restart until the dev-loop step lands). */
+  /** The host composition observer, then one loader-built EditorExtension
+   *  per activated user extension in load order — appended to the editor's
+   *  `extensions` prop. Republished by every whole-config re-evaluation:
+   *  fresh wrappers re-attach; the observer is a module constant, so it
+   *  stays attached. */
   readonly editorExtensions: readonly EditorExtension[];
   /** The editor's whole binding table: DEFAULT_KEYBINDINGS overlaid with the
    *  extension-bound chords (the prop REPLACES the map, so defaults are
@@ -344,6 +347,13 @@ const createUserExtension = (id: string, fileName: string): UserExtension => {
       },
     },
 
+    settings: {
+      // Assignment, not registration (extension-api.ts SettingsHandle):
+      // nothing is tracked — whole-config re-evaluation resets to the launch
+      // baseline before every activation pass, so removed lines revert.
+      apply: (settings) => applySettings(settings, (message) => useNoticeStore.getState().show(message)),
+    },
+
     storage: {
       read: (file) => window.ved.extensionStorageRead(id, file),
       write: (file, data) => window.ved.extensionStorageWrite(id, file, data),
@@ -360,7 +370,7 @@ const createUserExtension = (id: string, fileName: string): UserExtension => {
 };
 
 // ---------------------------------------------------------------------------
-// The loader (+ the dev-watch hot swap).
+// The loader (+ whole-config re-evaluation).
 
 type LiveExtension = {
   readonly editorExtension: EditorExtension;
@@ -368,14 +378,48 @@ type LiveExtension = {
   readonly module: Partial<ExtensionModule>;
 };
 
-/** The activated extensions by id; `loadOrder` fixes the publish order (main
- *  already sorted: regular by name, dev extensions, init.ts last), so a hot
- *  reload keeps an extension's slot instead of demoting it to the end. */
+/** The activated extensions by id; `loadOrder` fixes the activation and
+ *  publish order (main already sorted: regular by name, dev extensions,
+ *  init.ts last). */
 const liveExtensions = new Map<string, LiveExtension>();
 let loadOrder: string[] = [];
 
+/** The newest compiled source per id: re-evaluation always runs the FULL
+ *  current set, never just the changed file. */
+const latestSources = new Map<string, ExtensionSource>();
+
+/** The store values before any extension ran (captured under the first
+ *  evaluation, after main.tsx's default-font pick) — what every
+ *  re-evaluation resets to. */
+let settingsBaseline: SettingsBaseline | null = null;
+
+// Re-evaluating while an IME composition is live would churn layout under
+// the preedit (a settings reset can resize the page); hold the newest
+// pending change and flush it at composition end. The observer is a host
+// EditorExtension under the reserved 'ved' id — a module constant, so it
+// stays attached across re-evaluations (reconciliation is by identity).
+let composing = false;
+let pendingReevalFile: string | null = null;
+
+const hostObserver: EditorExtension = {
+  id: 'ved',
+  attach: () => ({
+    onCompositionStart: () => {
+      composing = true;
+    },
+    onCompositionEnd: () => {
+      composing = false;
+      if (pendingReevalFile !== null) {
+        const fileName = pendingReevalFile;
+        pendingReevalFile = null;
+        runReevaluation(fileName);
+      }
+    },
+  }),
+};
+
 const publishExtensions = (): void => {
-  const list: EditorExtension[] = [];
+  const list: EditorExtension[] = [hostObserver];
   for (const id of loadOrder) {
     const live = liveExtensions.get(id);
     if (live) list.push(live.editorExtension);
@@ -427,28 +471,48 @@ const deactivateExtension = (id: string): void => {
   liveExtensions.delete(id);
 };
 
-/** The dev-watch hot swap (main pushes a recompiled source): deactivate the
- *  old instance, activate the new one in the same load-order slot. */
-const reloadExtension = async (source: ExtensionSource): Promise<void> => {
-  deactivateExtension(source.id);
-  if (!loadOrder.includes(source.id)) loadOrder.push(source.id);
-  await activateSource(source);
+/**
+ * Evaluate the whole config from scratch: deactivate every live extension
+ * (each sweep undoes its own registrations — bindings, hooks, UI), reset
+ * settings to the launch baseline (captured on the FIRST evaluation, when no
+ * extension has run yet), then activate every current source in load order.
+ * The end state is a pure function of the sources — precedence can never
+ * drift with edit history (a per-extension swap would re-push a reloaded
+ * extension's chord ON TOP of init.ts's stack entry).
+ */
+const evaluateAll = async (): Promise<void> => {
+  for (const id of [...loadOrder].reverse()) deactivateExtension(id);
+  if (settingsBaseline === null) settingsBaseline = captureSettingsBaseline();
+  else resetSettingsToBaseline(settingsBaseline);
+  for (const id of loadOrder) {
+    const source = latestSources.get(id);
+    if (source) await activateSource(source);
+  }
   publishExtensions();
-  if (source.js !== null) useNoticeStore.getState().show(`拡張を再読み込み: ${source.fileName}`);
 };
 
-// Reloads must apply one at a time, in arrival order.
-let reloadChain: Promise<void> = Promise.resolve();
+// Re-evaluations apply one at a time, in arrival order.
+let reevalChain: Promise<void> = Promise.resolve();
+
+const runReevaluation = (fileName: string): void => {
+  reevalChain = reevalChain.then(async () => {
+    await evaluateAll();
+    useNoticeStore.getState().show(`設定を再評価: ${fileName}`);
+  });
+};
 
 /** Import and activate every user extension, in main's load order. Called
- *  once by app.tsx at startup; publishes the editor-extension wrappers when
- *  all activations settled, then subscribes to dev-watch updates. */
+ *  once by main.tsx BEFORE the mount (so init.ts settings are on the first
+ *  paint); then any watched-source change re-evaluates the whole config. */
 export const initializeUserExtensions = async (): Promise<void> => {
   const sources = await window.ved.extensionSources();
   loadOrder = sources.map((s) => s.id);
-  for (const source of sources) await activateSource(source);
-  publishExtensions();
+  for (const source of sources) latestSources.set(source.id, source);
+  await evaluateAll();
   window.ved.onExtensionUpdated((source) => {
-    reloadChain = reloadChain.then(() => reloadExtension(source));
+    latestSources.set(source.id, source);
+    if (!loadOrder.includes(source.id)) loadOrder.push(source.id);
+    if (composing) pendingReevalFile = source.fileName;
+    else runReevaluation(source.fileName);
   });
 };

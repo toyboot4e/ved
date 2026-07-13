@@ -178,6 +178,9 @@ export type VedContext = {
   /** Shell UI surfaces (status bar, panels, quick pick, notices). */
   readonly ui: UiHandle;
 
+  /** The user-adjustable settings (view config, theme, writing mode, …). */
+  readonly settings: SettingsHandle;
+
   /** This extension's persistent file storage. */
   readonly storage: StorageHandle;
 };
@@ -219,6 +222,62 @@ export type UiHandle = {
   ) => Promise<T | null>;
   /** Show a transient toast notice (bottom-left, auto-dismissing). */
   readonly notice: (message: string) => void;
+};
+
+/** The user-adjustable settings `settings.apply` accepts. Every field is
+ *  optional; an omitted field keeps its current value. Invalid values report
+ *  a notice and skip that field; numbers clamp to the same bounds the UI
+ *  controls use. */
+export type VedSettings = {
+  /** Editor font size in px — the fullwidth cell size. */
+  readonly fontSize?: number;
+  /** Leading between lines, as a fraction of the cell. */
+  readonly lineSpaceRatio?: number;
+  /** Fullwidth cells per line. */
+  readonly pageLineChars?: number;
+  /** Lines per page. */
+  readonly pageLines?: number;
+  /** Head margin between a page border and its text, in cells. */
+  readonly pageGapTopCells?: number;
+  /** Tail margin between a page's folio and the next border, in cells. */
+  readonly pageGapBottomCells?: number;
+  /** Pages per multicol band (meaningful in the columns pagings only). */
+  readonly pagesPerRow?: number;
+  /** Editor content font family; `''` inherits the shell's stack. */
+  readonly fontFamily?: string;
+  /** Color palette. The launch default follows the OS preference. */
+  readonly theme?: 'light' | 'dark';
+  /** Layout: writing orientation × paging. */
+  readonly writingMode?:
+    | 'horizontal'
+    | 'vertical'
+    | 'verticalColumns'
+    | 'verticalRows'
+    | 'horizontalColumns'
+    | 'horizontalRows';
+  /** How ruby markup renders: all markup visible (`'plain'`), expanded near
+   *  the caret (`'paragraph'` / `'char'`), or collapsed everywhere (`'rich'`). */
+  readonly appearPolicy?: 'plain' | 'paragraph' | 'char' | 'rich';
+  /** The newline / whitespace markers. */
+  readonly invisibles?: { readonly newline?: boolean; readonly whitespace?: boolean };
+  /** Whether Vim-style modal editing is on. */
+  readonly vim?: boolean;
+  /** Which window edge the sidebar docks to. */
+  readonly sidebarSide?: 'left' | 'right';
+  /** Sidebar pane width in px. */
+  readonly sidebarWidth?: number;
+};
+
+/** User settings. `apply` is ASSIGNMENT, not registration: it returns
+ *  nothing to dispose. Any config-dir source change re-evaluates the WHOLE
+ *  config from the launch baseline (store defaults + the resolved editor
+ *  font + the OS theme), so a removed `apply` line reverts by itself —
+ *  extensions load in name order with `init.ts` last, and the last writer
+ *  wins. Changes made at runtime through the UI are ephemeral: only what
+ *  the config applies survives a re-evaluation or a relaunch. */
+export type SettingsHandle = {
+  /** Apply the given fields (see `VedSettings` for validation). */
+  readonly apply: (settings: VedSettings) => void;
 };
 
 /** Per-extension persistent storage: plain files in a directory ved keeps

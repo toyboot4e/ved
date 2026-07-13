@@ -12,8 +12,8 @@
  *  the editor supplies the context at dispatch time. */
 
 /** String-valued (matching pm/leaves' Appear union exactly, checked where the
- *  editor assigns one to the other) so shells can persist/serialize a policy
- *  directly — a phase-4 config.json stores 'rich', never a brittle ordinal. */
+ *  editor assigns one to the other) so shells can serialize a policy
+ *  directly — a settings field carries 'rich', never a brittle ordinal. */
 export const AppearPolicy = {
   Plain: 'plain',
   ByParagraph: 'paragraph',

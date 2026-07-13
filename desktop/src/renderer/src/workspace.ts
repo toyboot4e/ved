@@ -4,8 +4,9 @@
 // app-level keymap are out-of-tree consumers, and the future Ctrl+P index
 // keys off the same roots.
 //
-// Not persisted yet (Phase-4 config.json will hydrate it, matching theme /
-// view-config).
+// The sidebar side/width are settings (init.ts via ctx.settings hydrates
+// them — settings.ts); roots/visibility are machine-owned app state, not
+// user configuration, and are not persisted (docs/extensions.md "Deferred").
 import { create } from 'zustand';
 
 export type SidebarSide = 'left' | 'right';

@@ -720,7 +720,8 @@ Users can supply their OWN primitives, `createVimExtension({actions})`: a
 state, so the state shape stays private — and is bindable as `{action}` RHS
 (collisions and unknown ids throw at construction).
 The shell reads `window.__vedVimKeymap` on the first toggle — the smoke seam,
-and the manual override until phase-4 `config.json` hydrates the same shape.
+and the manual override until a settings field carries the same shape
+(docs/editor-ui-plan.md Phase 4 "Later").
 
 ## Layout: writing modes and the page
 
@@ -996,8 +997,9 @@ Two gotchas the toolbar controls hit: native form controls (`button`, `input`,
 `select`) **don't inherit `color`** — they default to a system color that is
 dark-on-dark, so each gets an explicit `color: var(--ved-fg)`; and native widget
 chrome CSS can't reach (the select popup, number spinners, scrollbars, the text
-caret) follows **`color-scheme`**, set per palette in the mixins. Not persisted
-yet (Phase-4 `config.json` will hydrate the store, matching view-config).
+caret) follows **`color-scheme`**, set per palette in the mixins. `init.ts`
+hydrates the store via `ctx.settings` (docs/extensions.md); runtime toggles
+are ephemeral, so nothing persists it.
 Verified in `test/e2e/theme.ts`.
 
 ## Constraints & verified dead ends

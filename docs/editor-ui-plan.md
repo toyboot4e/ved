@@ -228,9 +228,10 @@ Decisions from the design review (see CONTEXT.md **view config**):
     per-field; one pure `viewConfigToCss` produces the custom-property
     overrides applied inline on the app root. Delivery to the editor is CSS
     custom properties only — no new `VedEditor` props.
-  - **Zustand pulled forward from Phase 2** for this store: the future config
-    watcher (Phase 4), keymap commands, and e2e assertions all write/read from
-    outside React, and the debug controls are just the first writer. Buffers
+  - **Zustand pulled forward from Phase 2** for this store: config
+    re-evaluation (Phase 4), keymap commands, and e2e assertions all
+    write/read from outside React, and the debug controls are just the first
+    writer. Buffers
     stay on `useReducer` until Phase 2 as planned.
   - Editor core: `$font-size`/`$line-space` promoted to `--cell-size` /
     `--line-space-ratio` custom properties (SCSS defaults, runtime-overridable);
@@ -241,9 +242,9 @@ Decisions from the design review (see CONTEXT.md **view config**):
     number inputs + a font free-text field + reset. Line-space lower bound is
     permissive (0.2 < the 0.5 ruby-clearing spec) so ruby collisions can be
     reproduced deliberately.
-  - No persistence: defaults on launch. Phase 4's `config.json` will hydrate
-    the same store; localStorage is rejected as renderer-owned persistence
-    that Phase 4 would have to migrate away from.
+  - No persistence: defaults on launch. Phase 4 hydrates the same store
+    from `init.ts` (`ctx.settings.apply`); localStorage is rejected as
+    renderer-owned persistence Phase 4 would have to migrate away from.
 
 - [x] **Step V.2 — invisibles (newline / whitespace markers).** *(done 2026-07)*
   - User-requested. View-only decorations (pm/decorations.ts): whitespace =
@@ -401,7 +402,8 @@ costs more than the lines it saves.
   (they keep their string and old path; save recreates) — reconciling
   buffers rides the 2b watcher. Smoke: `test/e2e/sidebar-file-ops.ts`.
 
-Roots/visibility persistence rides Phase 4's `config.json`.
+Roots/visibility persistence is machine-owned app state, not user
+configuration — deferred (docs/extensions.md "Deferred").
 
 ### Phase 3 — Ctrl+P quick open *(done 2026-07-06)*
 
@@ -481,26 +483,59 @@ The same store/overlay is built to back the **command palette**
 `items` (not `files`); the chord table deliberately leaves Shift+P
 unclaimed for it.
 
-### Phase 4 — configuration
+### Phase 4 — configuration *(done 2026-07-13)*
 
-A single `config.json` in `app.getPath('userData')`, owned by main:
+Configuration IS code (docs/extensions.md): `init.ts` — an ordinary
+extension, loaded last — is the user's configuration, typed against the
+generated `ved.d.ts`, re-evaluated on save. There is no data config file. A
+`config.json` is rejected: it would duplicate the extension loader's
+watch/validate/apply pipeline as a second, untyped one — the user's editor
+typechecks `init.ts` against real types, where a JSON schema could only
+warn at runtime; and the keybinding half of it already exists as
+`ctx.keybindings.bind`.
 
-- schema + defaults via **zod** (`VedConfig` type is inferred — one source
-  of truth); unknown keys warn, invalid values fall back per-field;
-- atomic writes; `chokidar` watch → live `onConfigChange` push to renderer
-  (hand-edit the file, the app updates — this *is* the settings UI v1);
-- first settings: font family/size, default `WritingMode` / `AppearPolicy`,
-  page size (characters per line × lines per page — already wired as the
-  `--page-line-chars` / `--page-lines` custom properties on the app root;
-  the config just sets them), sidebar width, recent workspace;
-- a `config.open` command opens the file in a ved tab — dogfooding;
-- keybinding overrides as a `keymap` section once the registry is stable.
+- **`ctx.settings.apply(settings)`** on `VedContext`: the view config
+  (font family/size, line space, page geometry), `theme`, `writingMode`,
+  `appearPolicy`, `invisibles`, `vim`, sidebar side/width.
+  `renderer/src/settings.ts` maps the names onto the existing stores;
+  invalid fields notice and skip, numbers clamp through the stores' own
+  bounds. Assignment, not registration — it returns nothing to dispose.
+- **Whole-config re-evaluation**, never per-extension patching: any watched
+  source change resets settings to the LAUNCH BASELINE (store defaults +
+  the picked CJK font + the OS theme), deactivates every extension (its
+  tracked sweep), and re-activates all of them in load order. The end
+  state is a pure function of the files on disk; precedence cannot drift
+  with edit history (under per-extension swaps, a reloaded extension's
+  chord re-pushes ON TOP of `init.ts`'s stack entry, inverting "the user's
+  bindings win"). Re-evaluation is deferred while an IME composition is
+  live and flushed at composition end (the host observer extension).
+- **Runtime changes are ephemeral** (the Vim model): the toolbar and
+  commands write the same stores, but only what `init.ts` applies survives
+  a re-evaluation or a relaunch. Nothing ever machine-writes user code —
+  if a settings GUI materializes it persists elsewhere, or not at all.
+- **The first paint carries the config**: extensions activate in
+  `main.tsx` BEFORE the React mount (bounded by a timeout so a hung
+  `activate` can never block launch), so an `init.ts` theme or font size
+  lands with no default-flash frame.
+- Machine-owned app state (window geometry, session restore, workspace
+  roots/visibility) is NOT user configuration and stays out of this phase
+  (docs/extensions.md "Deferred").
 
-`electron-store` is rejected: it's a JSON read/write wrapper around exactly
-what main already does, minus zod validation. The *user-facing* settings GUI
-panel stays out of scope until the schema stops churning; the toolbar debug
-view-config controls (the interlude step above) are the schema-churning
-sandbox, and this phase's `config.json` hydrates the same store they write.
+Steps:
+
+- [x] **4a. `ctx.settings.apply`.** `VedSettings` in the extension API
+  (types-only, self-contained), `renderer/src/settings.ts` (store mapping,
+  launch baseline capture/reset, per-field validation) + unit tests.
+- [x] **4b. Whole-config re-evaluation.** Replaces the per-extension hot
+  swap in `renderer/src/extension-host.ts`; IME deferral via the host
+  observer. Smoke: settings apply from `init.ts`, revert on removal,
+  a dropped binding stops firing after re-evaluation
+  (`test/e2e/user-extensions.ts`).
+- [x] **4c. Pre-mount activation.** `initializeUserExtensions` moves from
+  the app effect to `main.tsx`, ahead of the mount, bounded.
+
+Later, on demand: the vim keymap as a settings field (`__vedVimKeymap` is
+the seam today), a `config.open` command opening `init.ts` in a ved tab.
 
 ### Phase 6 — vertical page layouts (`VerticalRows`) *(done 2026-06-16, refined through 2026-07)*
 

@@ -1,6 +1,7 @@
 // The desktop shell's view-config STATE (the pure contract — type, bounds,
-// clamp, CSS mapping — lives in @ved/editor's view-config module). Phase 4's
-// config.json will hydrate this same store.
+// clamp, CSS mapping — lives in @ved/editor's view-config module). init.ts
+// hydrates this same store via ctx.settings (settings.ts); runtime changes
+// are ephemeral — a config re-evaluation resets to the launch baseline.
 import {
   clampViewConfig,
   VIEW_CONFIG_BOUNDS,
