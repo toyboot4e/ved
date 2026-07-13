@@ -12,7 +12,10 @@
 //   - `__vedRepairChecks` grows by O(keystrokes), not O(lines × keystrokes);
 //   - `__vedBaseRebuilds`/`__vedRubyRebuilds` stay flat (edits ADVANCE the
 //     cached sets — a rebuild would count);
-//   - `__vedLineMeasures` grows by O(keystrokes) paragraphs, not O(doc).
+//   - `__vedLineMeasures` grows by O(keystrokes) paragraphs, not O(doc);
+//   - `__vedNumberPlacements` grows by O(keystrokes) visual lines, not
+//     O(doc × keystrokes) (the overlay PLACES only the dirty window — a
+//     line-count-changing keystroke may honestly re-place the tail once).
 //
 // Usage: node test/e2e/edit-perf.ts (after pnpm run build).
 import assert from 'node:assert/strict';
@@ -29,6 +32,7 @@ type Seams = {
   __vedBaseRebuilds?: number;
   __vedRubyRebuilds?: number;
   __vedLineMeasures?: number;
+  __vedNumberPlacements?: number;
 };
 const seams = () =>
   page.evaluate(() => {
@@ -38,8 +42,10 @@ const seams = () =>
       base: g.__vedBaseRebuilds ?? 0,
       ruby: g.__vedRubyRebuilds ?? 0,
       lineMeasures: g.__vedLineMeasures ?? 0,
+      placements: g.__vedNumberPlacements ?? 0,
     };
   });
+const visualLineCount = () => page.evaluate(() => document.querySelectorAll('.vedLineNumber').length);
 const textLength = () => page.evaluate(() => (window as unknown as { __vedText(): string }).__vedText().length);
 
 const typeDoc = async (n: number) => {
@@ -68,12 +74,14 @@ const typeBurst = async () => {
     base: after.base - before.base,
     ruby: after.ruby - before.ruby,
     lineMeasures: after.lineMeasures - before.lineMeasures,
+    placements: after.placements - before.placements,
+    totalLines: await visualLineCount(),
   };
 };
 
 const assertBounded = (where: string, d: Awaited<ReturnType<typeof typeBurst>>) => {
   console.log(
-    `${where}: repairChecks=${d.repair} baseRebuilds=${d.base} rubyRebuilds=${d.ruby} lineMeasures=${d.lineMeasures} over ${KEYS} keystrokes on a ${LINES}-line ruby doc`,
+    `${where}: repairChecks=${d.repair} baseRebuilds=${d.base} rubyRebuilds=${d.ruby} lineMeasures=${d.lineMeasures} placements=${d.placements}/${d.totalLines} over ${KEYS} keystrokes on a ${LINES}-line ruby doc`,
   );
   // repair verifies only the paragraphs each keystroke created (~1 per key;
   // uncached it re-compared every paragraph: ~LINES × KEYS).
@@ -87,6 +95,14 @@ const assertBounded = (where: string, d: Awaited<ReturnType<typeof typeBurst>>) 
   assert.ok(
     d.lineMeasures < LINES / 2,
     `the overlay must re-measure O(changed) paragraphs per edit (got ${d.lineMeasures}, a full pass is ${LINES})`,
+  );
+  // The overlay PLACES only the dirty visual-line window per edit. A
+  // keystroke that changes a wrap count honestly re-places the tail once —
+  // allow one full-pass equivalent across the burst; the un-windowed cost
+  // was a full placement per keystroke (KEYS × totalLines).
+  assert.ok(
+    d.placements < d.totalLines + KEYS * 60,
+    `the overlay must place O(dirty window) numbers per edit (got ${d.placements} over ${KEYS} keys; a full pass is ${d.totalLines})`,
   );
 };
 

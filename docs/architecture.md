@@ -94,7 +94,8 @@ editor/                @ved/editor — the editor core (the only prosemirror con
     decorations.ts       per-policy ruby decorations + delimiter widgets, bold/italic/縦中横
                          RULES, rubyActive, boundary caret; cached in layers
     structure.ts         repair — the IME-safe ruby reconcile (the only structure repair)
-    leaves.ts            leaf model (isHidden per policy)
+    leaves.ts            leaf model (isHidden per policy); docLeaves/lineStarts
+                         splice around each edit (changedLineSpan)
     caret-model.ts       nextCaretOffset — model-driven character movement
     cursor.ts            plain offset ↔ backend-neutral {para, offset}
     page-gap.ts          VerticalRows page-gap widgets; both-ends-incremental measure
@@ -869,8 +870,14 @@ paragraph-0 probe guards the overlay origin), and the clean suffix is reused
 while its first paragraph's probe still matches (a shifted suffix re-measures
 whole: block flow is cumulative, so a shift never re-converges). A page-gap
 widget change reports its first changed position through `onLayoutShift`, so
-that pass is suffix-scoped too. `__vedLineMeasures` counts paragraphs
-measured per pass (`edit-perf.ts`); the shell's content resize observer
+that pass is suffix-scoped too. PLACEMENT is scoped like the measure: a
+reused paragraph entry keeps its line objects, so the edit pass re-places
+only the dirty visual-line window (`placementWindow`) — closed after the
+dirty region when the suffix was reused and the region's line count is
+unchanged (labels beyond it cannot shift), open to the end otherwise.
+`__vedLineMeasures` counts paragraphs
+measured per pass and `__vedNumberPlacements` the numbers visited
+(`edit-perf.ts`); the shell's content resize observer
 absorbs growth a pending/completed pass explains and escalates to FULL only
 for unexplained growth. A selection-only change takes a highlight-only path
 (`refreshCaret`): cached geometry, runs synchronously in the dispatch, skips

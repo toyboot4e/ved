@@ -95,14 +95,18 @@ Binding rules; the mechanisms behind them are catalogued in
   edits.** Caches key on PM node identity (immutable, never stale); glyph-rect
   walks (the most expensive operation) are scoped to the viewport or the
   selection span; per edit, structure repair verifies only dirty paragraphs,
-  the decoration sets ADVANCE through the transaction (never rebuild), and
-  the overlay measure is suffix-incremental and the page-gap measure reuses
-  BOTH unchanged ends (cached line-end offsets, suffix shifted by the edit's
-  delta); the empty-area
+  the decoration sets ADVANCE through the transaction (never rebuild),
+  the plain-text derivations splice around the edit's changed lines
+  (`changedLineSpan`: docLeaves, lineStarts, the page-gap line-end cache —
+  suffix shifted by the edit's delta, never re-parsed), per-line glyph-offset
+  lists resolve lazily, and the overlay re-measures dirty paragraphs
+  (suffix-incremental) and re-places only the dirty visual-line window; the
+  empty-area
   hit-test cache survives gestures; ByParagraph/ByCharacter caret crossings
   patch the delta rubies. Guarded by counter seams, not timing:
   `__vedGlyphWalks`, `__vedNearWalks`, `__vedBaseRebuilds`,
   `__vedRubyRebuilds`, `__vedRepairChecks`, `__vedLineMeasures`,
+  `__vedNumberPlacements`,
   `__vedGapLines` (`test/e2e/caret-move-perf.ts`, `click-perf.ts`,
   `edit-perf.ts`, `page-gap-suffix.ts`). Latency benchmarks in
   `desktop/bench/` (visible windows — hidden ones throttle frames and distort

@@ -180,8 +180,11 @@ export const mountLineNumbers = (
   };
 
   /** The shared tail of both passes: flatten the per-paragraph cache, read the
-   *  remaining inputs, then place every mark (reads strictly before writes). */
-  const finish = (env: MeasureEnv, o: DOMRect): void => {
+   *  remaining inputs, then place every mark (reads strictly before writes).
+   *  `win` is the edit pass's dirty visual-line window (null = place all);
+   *  the page marks always place whole — they are per PAGE (a fraction of the
+   *  line count), and a line-count change moves every later folio anyway. */
+  const finish = (env: MeasureEnv, o: DOMRect, win: { from: number; to: number } | null = null): void => {
     vertical = env.vert;
     steadyTol = env.groupTol;
     lines = paraCache.flatMap((c) => c.lines);
@@ -191,7 +194,7 @@ export const mountLineNumbers = (
     const marks = readPageMarkMetrics(env.cs, paged, env.bandLen);
     measuredSize = { w: content.offsetWidth, h: content.offsetHeight };
 
-    placeNumbers(overlay, pool, lines, grid);
+    placeNumbers(overlay, pool, lines, grid, win);
     placePageMarks(overlay, pagePool, sepPool, lines, grid, marks);
 
     refreshHighlight(o);
@@ -246,6 +249,7 @@ export const mountLineNumbers = (
     };
     const next: ParaLines[] = [];
     for (let i = 0; i < cleanStart; i++) next.push(cachedOrFresh(old[i], ps[i]!, true));
+    const prefixFresh = measured; // a re-measured "clean" prefix entry may have moved
     const dirtyTo = ps.length - 1 - cleanEnd;
     for (let i = cleanStart; i <= dirtyTo; i++) next.push(cachedOrFresh(undefined, ps[i]!, false));
     // Suffix: reusable only while its FIRST paragraph sits exactly where the
@@ -258,7 +262,7 @@ export const mountLineNumbers = (
     for (let i = dirtyTo + 1; i < ps.length; i++) next.push(cachedOrFresh(old[i + suffixOff], ps[i]!, suffixOk));
     bumpMeasureSeam(measured);
     paraCache = next;
-    finish(env, o);
+    finish(env, o, placementWindow(old, next, prefixFresh, cleanStart, dirtyTo, suffixOk, cleanEnd));
   };
 
   // Move the highlight to the caret's visual line, reusing the cached `lines`.
@@ -410,6 +414,35 @@ const bumpMeasureSeam = (paras: number): void => {
   w.__vedLineMeasures = (w.__vedLineMeasures ?? 0) + paras;
 };
 
+/** The visual-line window an edit pass must RE-PLACE (placeNumbers): a
+ *  paragraph entry reused by identity keeps its VisualLine objects, so its
+ *  numbers' transforms are already right — and its LABELS are right exactly
+ *  when the line count before it is unchanged. The prefix is reused by
+ *  construction (a freshly measured "clean" prefix entry disables the window
+ *  — its geometry may have moved); the window closes after the dirty region
+ *  when the suffix was reused verbatim AND the dirty region's visual-line
+ *  count is unchanged (labels beyond it cannot shift). Otherwise it runs to
+ *  the end. `null` = place everything. */
+const placementWindow = (
+  old: readonly ParaLines[],
+  next: readonly ParaLines[],
+  prefixFresh: number,
+  cleanStart: number,
+  dirtyTo: number,
+  suffixOk: boolean,
+  cleanEnd: number,
+): { from: number; to: number } | null => {
+  if (prefixFresh > 0) return null;
+  let from = 0;
+  for (let i = 0; i < cleanStart; i++) from += next[i]!.lines.length;
+  if (!suffixOk) return { from, to: Number.POSITIVE_INFINITY };
+  let newDirty = 0;
+  for (let i = cleanStart; i <= dirtyTo; i++) newDirty += next[i]!.lines.length;
+  let oldDirty = 0;
+  for (let i = cleanStart; i < old.length - cleanEnd; i++) oldDirty += old[i]!.lines.length;
+  return { from, to: newDirty === oldDirty ? from + newDirty : Number.POSITIVE_INFINITY };
+};
+
 /** The measured band lattice of the current layout, shared by both placement
  *  passes. In the multicol modes fragmentation IS physically periodic — bands
  *  repeat every `bandPeriod` (columnWidth + columnGap) from `bandStart0` along
@@ -511,25 +544,43 @@ const placeNumbers = (
   pool: HTMLElement[],
   lines: readonly VisualLine[],
   grid: BandGrid,
+  /** The visual lines whose placement can have changed — the edit pass
+   *  narrows this to the dirty window (`placementWindow`): a reused line
+   *  keeps both its geometry (same VisualLine object) and its label (the
+   *  window exists only when the line count around it is unchanged), so
+   *  visiting it is pure waste — the visit itself (a style read + string
+   *  format per line) was ~20ms/keystroke at 3000 paragraphs. `null` places
+   *  everything. */
+  win: { from: number; to: number } | null,
 ): void => {
-  lines.forEach((ln, i) => {
-    const el = pool[i] ?? makeNumber(overlay, pool);
-    const x = grid.vertical ? centerX(ln) : ln.left;
-    const y = grid.vertical ? bandStartAt(grid, ln) : (ln.top + ln.bottom) / 2;
-    // Skip writes that would not change anything: the edit pass reuses most
-    // lines' geometry verbatim, and a same-value textContent write still
-    // replaces the text node (needless DOM mutation per line per keystroke).
-    const transform = grid.vertical
-      ? `translate(${x}px, ${y}px) translate(-50%, -100%)`
-      : `translate(${x}px, ${y}px) translate(-100%, -50%)`;
-    if (el.style.transform !== transform) el.style.transform = transform;
-    const label = String(i + 1);
-    if (el.textContent !== label) el.textContent = label;
-    if (el.style.display !== '') el.style.display = '';
-  });
-  for (const el of pool.slice(lines.length)) {
-    if (el.style.display !== 'none') el.style.display = 'none';
+  const from = win ? Math.max(0, win.from) : 0;
+  const to = win ? Math.min(lines.length, win.to) : lines.length;
+  for (let i = from; i < to; i++) placeOneNumber(pool[i] ?? makeNumber(overlay, pool), lines[i]!, i, grid);
+  // Pool entries past the lines exist only when the count shrank — a windowed
+  // pass that doesn't reach the tail cannot have changed the count.
+  if (to >= lines.length) {
+    for (let i = lines.length; i < pool.length; i++) {
+      const el = pool[i]!;
+      if (el.style.display !== 'none') el.style.display = 'none';
+    }
   }
+  const w = globalThis as unknown as { __vedNumberPlacements?: number };
+  w.__vedNumberPlacements = (w.__vedNumberPlacements ?? 0) + (to - from);
+};
+
+const placeOneNumber = (el: HTMLElement, ln: VisualLine, i: number, grid: BandGrid): void => {
+  const x = grid.vertical ? centerX(ln) : ln.left;
+  const y = grid.vertical ? bandStartAt(grid, ln) : (ln.top + ln.bottom) / 2;
+  // Skip writes that would not change anything: the edit pass reuses most
+  // lines' geometry verbatim, and a same-value textContent write still
+  // replaces the text node (needless DOM mutation per line per keystroke).
+  const transform = grid.vertical
+    ? `translate(${x}px, ${y}px) translate(-50%, -100%)`
+    : `translate(${x}px, ${y}px) translate(-100%, -50%)`;
+  if (el.style.transform !== transform) el.style.transform = transform;
+  const label = String(i + 1);
+  if (el.textContent !== label) el.textContent = label;
+  if (el.style.display !== '') el.style.display = '';
 };
 
 /** The measured inputs of the page-mark pass (paged modes; `linesPerPage` 0 =
