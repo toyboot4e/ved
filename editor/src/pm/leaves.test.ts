@@ -53,6 +53,14 @@ describe('changedLineSpan', () => {
   it('yields no suffix when the tail match has no newline', () => {
     expect(changedLineSpan('ab', 'aXb').sufOff).toBeNull();
   });
+
+  it('a divergence at index 0 starts the changed span at 0 — even when the new text begins with \\n', () => {
+    // lastIndexOf('\n', -1) clamps to 0 and would match the brand-new '\n',
+    // reading it as a pre-existing line boundary (fromOff 1). "" → Enter then
+    // Backspace at offset 1 dead-ended on this (pbt-edit seed 7).
+    expect(changedLineSpan('', '\n').fromOff).toBe(0);
+    expect(changedLineSpan('あ', '\nあ').fromOff).toBe(0);
+  });
 });
 
 describe('docLeaves / lineStarts incremental ≡ fresh', () => {
@@ -65,6 +73,9 @@ describe('docLeaves / lineStarts incremental ≡ fresh', () => {
       `冒${base.slice(1, 8)}\n${base.slice(8)}追`, // Enter mid-document
       `冒${base.slice(1, 8)}${base.slice(9)}追`, // delete a newline (join)
       '', // delete everything
+      '\n', // Enter on the empty document (the new text BEGINS with \n)
+      '', // delete it again
+      '\nあ', // a \n-leading insert over the empty document
       'あ\n\n\nい', // rebuild over empty lines
       'あ\n\n\nい', // identical text (memo hit)
       'あ|新(しん)\n\n\nい', // ruby appears in place

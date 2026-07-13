@@ -51,7 +51,12 @@ export const changedLineSpan = (
   const n = Math.min(oldText.length, newText.length);
   let i = 0;
   while (i < n && oldText.charCodeAt(i) === newText.charCodeAt(i)) i++;
-  const fromOff = newText.lastIndexOf('\n', i - 1) + 1;
+  // i === 0 must yield fromOff 0 explicitly: lastIndexOf('\n', -1) CLAMPS the
+  // fromIndex to 0 and can match a newline AT position 0 — a brand-new '\n'
+  // first character then read as a pre-existing line boundary, dropping the
+  // first line from the changed span ("" → Enter left docLeaves without the
+  // nl leaf, and Backspace at offset 1 found no caret stop; pbt-edit seed 7).
+  const fromOff = i === 0 ? 0 : newText.lastIndexOf('\n', i - 1) + 1;
   // Tail match, never past the head divergence in either string.
   let j = 0;
   const maxJ = n - i;
