@@ -496,7 +496,7 @@ export const VedEditor = (props: VedEditorProps): React.JSX.Element => {
       const fix = repair(s);
       if (!fix) return s;
       const repaired = s.apply(fix);
-      advanceDecorationCaches(s.doc, repaired.doc, fix.mapping);
+      advanceDecorationCaches(s.doc, repaired.doc, fix.mapping, repaired.selection.head);
       return repaired;
     };
     /** dispatchTransaction's state chain, in the load-bearing order: apply →
@@ -508,7 +508,7 @@ export const VedEditor = (props: VedEditorProps): React.JSX.Element => {
      *  always has a DOM home before anything measures or reveals it, and the
      *  measure tail never walks a display:none paragraph). */
     const advanceForEdit = (tr: Transaction, applied: EditorState): EditorState => {
-      advanceDecorationCaches(view.state.doc, applied.doc, tr.mapping);
+      advanceDecorationCaches(view.state.doc, applied.doc, tr.mapping, applied.selection.head);
       // An edit repositions the caret along the line — drop the goal column.
       goalInlineRef.current = null;
       if (view.composing || rebuildingRef.current) return applied;

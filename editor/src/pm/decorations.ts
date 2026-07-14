@@ -624,6 +624,15 @@ export const __resetDecorationCaches = (): void => {
   rubyCache = null;
 };
 
+// Bumped whenever the EXPANDED SET actually changes (a caret crossing under
+// ByParagraph/ByCharacter, or an edit that reshapes it) — expanded rubies
+// re-wrap their lines, so layout caches keyed on "the expansion didn't move"
+// (the page-gap line-ends cache) gate their reuse on this epoch.
+let expandedSetEpoch = 0;
+
+/** The current expanded-set epoch (see above). */
+export const expandedEpoch = (): number => expandedSetEpoch;
+
 /** Replace `set`'s decorations inside the given (new-doc) paragraphs with
  *  freshly built ones: drop everything the dirty paragraphs hold, then add
  *  what `push` builds for each. Every cached decoration lives strictly inside
@@ -676,7 +685,14 @@ const dirtyParas = (oldDoc: PMNode, newDoc: PMNode): number[] => {
  *  expanded set is caret-independent there — the same gate as the page-gap
  *  suffix cache); the other policies fall back to their per-move rebuild.
  *  A miss (cold caches, an unhooked dispatch) degrades to the cold rebuild. */
-export const advanceDecorationCaches = (oldDoc: PMNode, newDoc: PMNode, mapping: TrMapping): void => {
+export const advanceDecorationCaches = (
+  oldDoc: PMNode,
+  newDoc: PMNode,
+  mapping: TrMapping,
+  /** The post-transaction selection head — lets ByParagraph/ByCharacter
+   *  advance when the expanded set is value-stable across the edit. */
+  head: number | null = null,
+): void => {
   if (oldDoc === newDoc) return;
   const parse = parseDoc(newDoc); // cheap: O(#paragraphs) over per-para caches
   if (parseCache?.doc !== newDoc) parseCache = parse;
@@ -694,15 +710,12 @@ export const advanceDecorationCaches = (oldDoc: PMNode, newDoc: PMNode, mapping:
     baseCache = { ...baseCache, doc: newDoc, set };
   }
 
-  if (
-    rubyCache &&
-    rubyCache.doc === oldDoc &&
-    (rubyCache.policy === 'rich' || rubyCache.policy === 'plain') &&
-    baseCache &&
-    baseCache.doc === newDoc
-  ) {
+  const expanded =
+    rubyCache && rubyCache.doc === oldDoc && baseCache && baseCache.doc === newDoc
+      ? advanceableExpanded(parse, newDoc, head)
+      : null;
+  if (expanded && rubyCache && baseCache) {
     const invis: Invisibles = { newline: baseCache.newline, whitespace: baseCache.whitespace };
-    const expanded = rubyCache.policy === 'plain' ? allRubiesOf(parse) : EMPTY_EXPANDED;
     const mapped = rubyCache.set.map(mapping, newDoc);
     const set = patchParas(mapped, parse, dirty, (decos, pi) => {
       pushParaBaseDecos(decos, parse, pi, invis, at);
@@ -710,7 +723,29 @@ export const advanceDecorationCaches = (oldDoc: PMNode, newDoc: PMNode, mapping:
     });
     rubyCache = { doc: newDoc, policy: rubyCache.policy, expanded, base: baseCache.set, set };
   } else if (rubyCache && rubyCache.doc !== newDoc) {
-    rubyCache = null; // stale under a caret-dependent policy — cold rebuild
+    rubyCache = null; // the expanded set moved with the edit — cold rebuild
+    expandedSetEpoch++;
+  }
+};
+
+/** The expanded set an EDIT can advance the ruby layer under — Rich/Plain
+ *  are caret-independent; ByParagraph/ByCharacter advance exactly when the
+ *  set is VALUE-stable across the edit (typing inside the expanded line:
+ *  the common case), and the CACHED instance is kept so identity-keyed
+ *  consumers stay hot. A reshaped set (caret left the line, a ruby was
+ *  created/removed/renumbered) returns null — cold rebuild. */
+const advanceableExpanded = (parse: Parse, newDoc: PMNode, head: number | null): Set<number> | null => {
+  if (!rubyCache) return null;
+  switch (rubyCache.policy) {
+    case 'plain':
+      return allRubiesOf(parse);
+    case 'rich':
+      return EMPTY_EXPANDED;
+    default: {
+      if (head === null) return null;
+      const next = expandedFor(parse, rubyCache.policy, caretContext(parse, newDoc, head));
+      return setsEq(rubyCache.expanded, next) ? rubyCache.expanded : null;
+    }
   }
 };
 
@@ -802,11 +837,13 @@ const cachedStatic = (parse: Parse, policy: Appear, expanded: Set<number>, base:
     // under ByParagraph/ByCharacter): PATCH the delta rubies instead of
     // rebuilding every ruby's decorations. O(the two lines' rubies) per move.
     const patched = patchExpandedSet(parse, rubyCache.set, rubyCache.expanded, expanded);
+    expandedSetEpoch++; // the expansion moved — position-derived caches re-measure
     if (patched) {
       rubyCache = { doc, policy, expanded, base, set: patched };
       return patched;
     }
   }
+  if (rubyCache && !setsEq(rubyCache.expanded, expanded)) expandedSetEpoch++;
   rubyCache = {
     doc,
     policy,

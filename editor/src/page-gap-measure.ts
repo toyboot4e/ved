@@ -8,6 +8,7 @@
 import type { EditorView } from 'prosemirror-view';
 import styles from './editor.module.scss';
 import type { Glyph, GlyphWalker } from './glyph-walker';
+import { expandedEpoch } from './pm/decorations';
 import type { Appear } from './pm/leaves';
 import { changedLineSpan, lineOf } from './pm/leaves';
 import { offsetToPos, posToOffset, serialize } from './pm/model';
@@ -37,6 +38,10 @@ type GapCache = {
   vertical: boolean;
   linesPerPage: number;
   pagesPerBand: number;
+  /** The expanded-set epoch the measure ran under (pm/decorations.ts) — an
+   *  expansion change re-wraps lines with no text change, so reuse under the
+   *  caret-dependent policies gates on it. */
+  expandedEpoch: number;
   lineEnds: number[];
 };
 
@@ -56,18 +61,20 @@ type MeasuredGap = { g: PageGapPos; prevLineEnd: number; nextLineEnd: number | u
  *  mid-line says nothing about that paragraph's wrapping. `serialize` is
  *  memoized per doc version (same string instance), so the identity check
  *  catches a text-preserving transaction (ruby repair, decoration meta)
- *  outright — measure nothing. Sound only while the expanded set is
- *  caret-INDEPENDENT (Rich: none; Plain: all) and the layout key is
- *  unchanged; anything else measures everything. */
+ *  outright — measure nothing. Sound while the layout key is unchanged and
+ *  the expanded set couldn't have re-wrapped a line: Rich/Plain are
+ *  caret-independent; ByParagraph/ByCharacter reuse exactly while the
+ *  expanded-set EPOCH is unchanged (pm/decorations.ts bumps it whenever the
+ *  set actually moves); anything else measures everything. */
 const reusableSpan = (
   cache: GapCache | null,
   policy: Appear,
-  cur: Pick<GapCache, 'text' | 'pitch' | 'vertical' | 'linesPerPage' | 'pagesPerBand'>,
+  cur: Pick<GapCache, 'text' | 'pitch' | 'vertical' | 'linesPerPage' | 'pagesPerBand' | 'expandedEpoch'>,
   lineCount: number,
 ): { fromLine: number; fromOff: number; toLine: number; prefixEnds: number[]; suffixEnds: number[] } => {
   const usable =
     cache !== null &&
-    (policy === 'rich' || policy === 'plain') &&
+    (policy === 'rich' || policy === 'plain' || cache.expandedEpoch === cur.expandedEpoch) &&
     cache.pitch === cur.pitch &&
     cache.vertical === cur.vertical &&
     cache.linesPerPage === cur.linesPerPage &&
@@ -295,10 +302,11 @@ export const createPageGapMeasure = (
     const vertical = contentCs.writingMode.startsWith('vertical');
     const text = serialize(view.state.doc);
     const lines = text.split('\n');
+    const epoch = expandedEpoch();
     const { fromLine, fromOff, toLine, prefixEnds, suffixEnds } = reusableSpan(
       gapCache,
       getPolicy(),
-      { text, pitch, vertical, linesPerPage, pagesPerBand },
+      { text, pitch, vertical, linesPerPage, pagesPerBand, expandedEpoch: epoch },
       lines.length,
     );
     const items = measureChangedItems(view, walker, lines, fromLine, toLine, fromOff, vertical);
@@ -310,7 +318,7 @@ export const createPageGapMeasure = (
     const w = globalThis as unknown as { __vedGapLines?: number; __vedGapLineEnds?: readonly number[] };
     w.__vedGapLines = (w.__vedGapLines ?? 0) + (toLine - fromLine);
     w.__vedGapLineEnds = lineEnds;
-    gapCache = { text, pitch, vertical, linesPerPage, pagesPerBand, lineEnds };
+    gapCache = { text, pitch, vertical, linesPerPage, pagesPerBand, expandedEpoch: epoch, lineEnds };
     measuredLineCount = lineEnds.length;
     return pageEndsFromLines(lineEnds, linesPerPage, pagesPerBand).map((end) => {
       // The boundary's neighboring line-end offsets — the composing
