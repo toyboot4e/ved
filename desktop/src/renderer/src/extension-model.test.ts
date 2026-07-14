@@ -3,23 +3,41 @@ import { isValidCommandName, normalizeChordSpec, rankLabels } from './extension-
 
 describe('normalizeChordSpec', () => {
   it('canonicalizes case and modifier order', () => {
-    expect(normalizeChordSpec('Mod+K')).toBe('Mod+K');
-    expect(normalizeChordSpec('mod+k')).toBe('Mod+K');
-    expect(normalizeChordSpec('shift+mod+z')).toBe('Shift+Mod+Z');
-    expect(normalizeChordSpec('MOD+SHIFT+z')).toBe('Shift+Mod+Z');
+    expect(normalizeChordSpec('Mod+K', false)).toBe('Mod+K');
+    expect(normalizeChordSpec('mod+k', false)).toBe('Mod+K');
+    expect(normalizeChordSpec('shift+mod+z', false)).toBe('Shift+Mod+Z');
+    expect(normalizeChordSpec('MOD+SHIFT+z', false)).toBe('Shift+Mod+Z');
+    expect(normalizeChordSpec('shift+alt+mod+z', false)).toBe('Alt+Shift+Mod+Z');
   });
 
   it('keeps multi-character keys as written (event.key names)', () => {
-    expect(normalizeChordSpec('Mod+Tab')).toBe('Mod+Tab');
-    expect(normalizeChordSpec('Mod+/')).toBe('Mod+/');
+    expect(normalizeChordSpec('Mod+Tab', false)).toBe('Mod+Tab');
+    expect(normalizeChordSpec('Mod+/', false)).toBe('Mod+/');
   });
 
-  it('rejects non-chords: bare keys, missing Mod, unknown modifiers, blanks', () => {
-    expect(normalizeChordSpec('k')).toBeNull();
-    expect(normalizeChordSpec('Shift+K')).toBeNull();
-    expect(normalizeChordSpec('Alt+Mod+K')).toBeNull();
-    expect(normalizeChordSpec('Mod+')).toBeNull();
-    expect(normalizeChordSpec('')).toBeNull();
+  it('folds the platform spelling into Mod: ctrl off macOS, super on it', () => {
+    expect(normalizeChordSpec('ctrl+k', false)).toBe('Mod+K');
+    expect(normalizeChordSpec('ctrl+mod+k', false)).toBe('Mod+K');
+    expect(normalizeChordSpec('super+k', true)).toBe('Mod+K');
+    // The distinct keys: Control on macOS, Meta/Win off it.
+    expect(normalizeChordSpec('ctrl+k', true)).toBe('Ctrl+K');
+    expect(normalizeChordSpec('super+k', false)).toBe('Super+K');
+    expect(normalizeChordSpec('ctrl+mod+k', true)).toBe('Ctrl+Mod+K');
+    expect(normalizeChordSpec('super+mod+k', false)).toBe('Super+Mod+K');
+  });
+
+  it('accepts alt chords, alone or combined', () => {
+    expect(normalizeChordSpec('alt+k', false)).toBe('Alt+K');
+    expect(normalizeChordSpec('Alt+Mod+K', false)).toBe('Alt+Mod+K');
+    expect(normalizeChordSpec('ctrl+alt+k', false)).toBe('Alt+Mod+K');
+  });
+
+  it('rejects non-chords: bare keys, shift alone, unknown modifiers, blanks', () => {
+    expect(normalizeChordSpec('k', false)).toBeNull();
+    expect(normalizeChordSpec('Shift+K', false)).toBeNull();
+    expect(normalizeChordSpec('Hyper+K', false)).toBeNull();
+    expect(normalizeChordSpec('Mod+', false)).toBeNull();
+    expect(normalizeChordSpec('', false)).toBeNull();
   });
 });
 

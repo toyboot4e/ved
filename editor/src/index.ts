@@ -5,8 +5,8 @@
 
 // Commands and keybindings — the aggregated API for user configuration and
 // extensions (see commands.ts).
-export type { Chord, ChordEvent, EditorCommandId } from './commands';
-export { AppearPolicy, DEFAULT_KEYBINDINGS } from './commands';
+export type { Chord, ChordEvent, ChordModifiers, EditorCommandId } from './commands';
+export { AppearPolicy, chordName, DEFAULT_KEYBINDINGS } from './commands';
 export type {
   EditorSearchOps,
   EditorSnapshot,

@@ -34,12 +34,9 @@ const ctxOf = (current: AppearPolicy): { ctx: EditorCommandContext; applied: App
 };
 
 describe('chordOf', () => {
-  it('requires the platform modifier: Ctrl off macOS, Cmd on it', () => {
+  it('the platform modifier is Mod: Ctrl off macOS, Cmd on it', () => {
     expect(chordOf(ev({ key: '3', ctrlKey: true }), false)).toBe('Mod+3');
     expect(chordOf(ev({ key: '3', metaKey: true }), true)).toBe('Mod+3');
-    // The other platform's modifier is not Mod.
-    expect(chordOf(ev({ key: '3', metaKey: true }), false)).toBeNull();
-    expect(chordOf(ev({ key: '3', ctrlKey: true }), true)).toBeNull();
     expect(chordOf(ev({ key: '3' }), false)).toBeNull();
   });
 
@@ -49,10 +46,26 @@ describe('chordOf', () => {
     expect(chordOf(ev({ key: '/', ctrlKey: true }), false)).toBe('Mod+/');
   });
 
-  it('never fires mid-IME composition or on Alt chords', () => {
+  it('never fires mid-IME composition', () => {
     expect(chordOf(ev({ key: '3', ctrlKey: true, isComposing: true }), false)).toBeNull();
     expect(chordOf(ev({ key: '3', ctrlKey: true, keyCode: 229 }), false)).toBeNull();
-    expect(chordOf(ev({ key: '3', ctrlKey: true, altKey: true }), false)).toBeNull();
+  });
+
+  it('widened modifiers: Alt everywhere, Ctrl on macOS, Super off it', () => {
+    expect(chordOf(ev({ key: '3', altKey: true }), false)).toBe('Alt+3');
+    expect(chordOf(ev({ key: '3', altKey: true }), true)).toBe('Alt+3');
+    // AltGr layouts report Ctrl+Alt — a chord, but harmless unless bound
+    // (an unbound chord falls through to normal input).
+    expect(chordOf(ev({ key: '3', ctrlKey: true, altKey: true }), false)).toBe('Alt+Mod+3');
+    // The real Control key exists as itself only on macOS (Cmd is Mod there)…
+    expect(chordOf(ev({ key: '3', ctrlKey: true }), true)).toBe('Ctrl+3');
+    expect(chordOf(ev({ key: '3', ctrlKey: true, metaKey: true }), true)).toBe('Ctrl+Mod+3');
+    // …and the Meta/Win key only off it.
+    expect(chordOf(ev({ key: '3', metaKey: true }), false)).toBe('Super+3');
+    // Shift alone is typing, not a chord.
+    expect(chordOf(ev({ key: '3', shiftKey: true }), false)).toBeNull();
+    // Canonical prefix order: Ctrl, Alt, Super, Shift, Mod.
+    expect(chordOf(ev({ key: 'z', altKey: true, shiftKey: true, ctrlKey: true }), false)).toBe('Alt+Shift+Mod+Z');
   });
 });
 

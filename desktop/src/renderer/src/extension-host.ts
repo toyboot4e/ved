@@ -253,9 +253,11 @@ const createUserExtension = (id: string, fileName: string): UserExtension => {
 
     keybindings: {
       bind: (chordSpec, commandId) => {
-        const chord = normalizeChordSpec(chordSpec);
+        const chord = normalizeChordSpec(chordSpec, window.ved.platform === 'darwin');
         if (chord === null) {
-          throw new Error(`invalid chord "${chordSpec}" — expected "Mod+K" / "Shift+Mod+K"`);
+          throw new Error(
+            `invalid chord "${chordSpec}" — expected mod/ctrl/alt/super/shift modifiers + a key (e.g. "mod+K", "ctrl+alt+K"), at least one non-shift modifier`,
+          );
         }
         return track(pushBinding(chord, commandId, id));
       },

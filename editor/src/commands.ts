@@ -78,19 +78,54 @@ export type ChordEvent = {
  *  'Shift+Mod+Z'. Mod is Cmd on macOS, Ctrl elsewhere. */
 export type Chord = string;
 
+/** A chord's modifiers, platform-RESOLVED: `mod` is the platform's primary
+ *  modifier (Cmd on macOS, Ctrl elsewhere); `ctrl` names the real Control
+ *  key and so exists as itself only on macOS; `super` is the Meta/Win key
+ *  and exists only off macOS. */
+export type ChordModifiers = {
+  readonly mod: boolean;
+  readonly ctrl: boolean;
+  readonly alt: boolean;
+  readonly super: boolean;
+  readonly shift: boolean;
+};
+
+/**
+ * The canonical chord string for resolved modifiers + key, or `null` when
+ * no non-Shift modifier is held (a bare or Shift-only key is typing, not a
+ * chord). ONE fixed prefix order, so bind-time specs (the desktop host's
+ * `normalizeChordSpec`) and dispatch-time events (`chordOf`) meet at
+ * identical binding-table keys. Single printable keys match
+ * case-insensitively ('z' and 'Z' are one key); Shift is its own prefix so
+ * 'Mod+Z' and 'Shift+Mod+Z' stay distinct chords.
+ */
+export const chordName = (m: ChordModifiers, key: string): Chord | null => {
+  if (!m.mod && !m.ctrl && !m.alt && !m.super) return null;
+  const prefix = [m.ctrl && 'Ctrl', m.alt && 'Alt', m.super && 'Super', m.shift && 'Shift', m.mod && 'Mod']
+    .filter(Boolean)
+    .join('+');
+  return `${prefix}+${key.length === 1 ? key.toUpperCase() : key}`;
+};
+
 /**
  * Normalizes a keydown to a `Chord`, or `null` when it cannot be one: no
- * platform modifier, an Alt chord (AltGr territory on many layouts), or
- * mid-IME composition.
+ * non-Shift modifier, or mid-IME composition. An Alt combination DOES form
+ * a chord — safe on AltGr layouts (which report Ctrl+Alt) because an
+ * UNBOUND chord falls through to normal text input (key-handler.ts); only
+ * binding that exact combination would intercept it.
  */
 export const chordOf = (event: ChordEvent, isMac: boolean): Chord | null => {
   if (event.isComposing || event.keyCode === 229) return null;
-  const mod = isMac ? event.metaKey : event.ctrlKey;
-  if (!mod || event.altKey) return null;
-  // Single printable keys match case-insensitively ('z' and 'Z' are one key);
-  // Shift is its own prefix so 'Mod+Z' and 'Shift+Mod+Z' stay distinct chords.
-  const key = event.key.length === 1 ? event.key.toUpperCase() : event.key;
-  return `${event.shiftKey ? 'Shift+' : ''}Mod+${key}`;
+  return chordName(
+    {
+      mod: isMac ? event.metaKey : event.ctrlKey,
+      ctrl: isMac && event.ctrlKey,
+      alt: event.altKey,
+      super: !isMac && event.metaKey,
+      shift: event.shiftKey,
+    },
+    event.key,
+  );
 };
 
 const toAppear =

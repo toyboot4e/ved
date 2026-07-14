@@ -162,12 +162,20 @@ export type VedContext = {
   /** Chord bindings into the editor's single binding table. */
   readonly keybindings: {
     /** Bind a chord to a command id in the editor's single binding table.
-     *  `chord` is `"Mod+K"` / `"Shift+Mod+K"` (case-insensitive; Mod = Cmd
-     *  on macOS, Ctrl elsewhere) — plain keys and multi-stroke sequences are
-     *  not chords; handle those in `addHooks.handleKey`. Later bindings win
-     *  (extensions load in name order, `init.ts` last, so the user's own
-     *  bindings take precedence); disposing restores the previous binding.
-     *  Throws on a malformed chord. */
+     *  `chord` is case-insensitive `mod`/`ctrl`/`alt`/`super`/`shift`
+     *  modifiers + one key (`"mod+K"`, `"ctrl+alt+K"`), at least one
+     *  non-shift modifier. Mod is the platform's primary modifier (Cmd on
+     *  macOS, Ctrl elsewhere), and the platform spelling folds into it —
+     *  so `ctrl` names the REAL Control key only on macOS, and `super`
+     *  (Meta/Win) is a distinct key only off it. Alt caveats: AltGr
+     *  layouts report Ctrl+Alt (an AltGr character misfires only if that
+     *  exact combination is bound), and macOS Option changes the key
+     *  value itself — bind what your layout actually reports. Plain keys
+     *  and multi-stroke sequences are not chords; handle those in
+     *  `addHooks.handleKey`. Later bindings win (extensions load in name
+     *  order, `init.ts` last, so the user's own bindings take
+     *  precedence); disposing restores the previous binding. Throws on a
+     *  malformed chord. */
     readonly bind: (chord: string, commandId: string) => Disposable;
   };
 

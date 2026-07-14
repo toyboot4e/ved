@@ -80,9 +80,14 @@ construction**, not convention: there is no unprefixed registration API.
 - `keybindings.bind(chord, commandId)` feeds the editor's single binding
   table (per-chord stacks over `DEFAULT_KEYBINDINGS`; later binders win —
   shadowing another EXTENSION notices, rebinding a default is silent;
-  dispose restores the previous binding). The chord vocabulary is `Mod+…`
-  only (`chordOf`); plain keys and multi-stroke sequences are `handleKey`
-  territory.
+  dispose restores the previous binding). Chord modifiers:
+  `mod`/`ctrl`/`alt`/`super`/`shift`, at least one non-shift. `mod` is the
+  platform's primary modifier, and the platform spelling folds into it —
+  `ctrl` names the real Control key only on macOS, `super` (Meta/Win) only
+  off it. An UNBOUND chord falls through to normal input, which is what
+  keeps AltGr layouts (reporting Ctrl+Alt) safe: an AltGr character
+  misfires only if that exact combination is bound. Plain keys and
+  multi-stroke sequences are `handleKey` territory.
 - `editor` targets the focused editor in plain text and plain offsets —
   `text`/`selection`/`replaceRange`/`moveCaret`/`caretStop`/`snapCaret`/… ,
   `addHooks` (keydown/text-input/composition edges), `onDidChangeText`,

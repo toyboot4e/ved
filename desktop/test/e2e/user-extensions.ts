@@ -29,6 +29,12 @@ export async function activate(ctx: VedContext): Promise<void> {
     return ctx.editor.replaceRange(end, end, '拡張OK');
   });
   ctx.keybindings.bind('mod+7', 'init.stamp');
+  // Widened chord vocabulary: an alt chord binds like any other.
+  ctx.commands.register('altstamp', () => {
+    const end = ctx.editor.text().length;
+    return ctx.editor.replaceRange(end, end, '代替');
+  });
+  ctx.keybindings.bind('alt+7', 'init.altstamp');
   ctx.editor.addHooks({
     handleKey: (event) => {
       if (event.key !== '8' || !(event.ctrlKey || event.metaKey)) return false;
@@ -127,6 +133,11 @@ try {
   await page.waitForTimeout(150);
   if ((await text()).startsWith('フック')) step('addHooks handleKey consumed Mod+8 and edited');
   else fail(`Mod+8 hook edit missing — got ${JSON.stringify(await text())}`);
+
+  await page.keyboard.press('Alt+7');
+  await page.waitForTimeout(150);
+  if ((await text()).includes('代替')) step('alt chord bound from init.ts fired (widened vocabulary)');
+  else fail(`Alt+7 edit missing — got ${JSON.stringify(await text())}`);
 
   const statusItem = await page.textContent('#extension-status-items');
   if (statusItem?.includes('状態OK')) step('statusItem renders in the footer');
