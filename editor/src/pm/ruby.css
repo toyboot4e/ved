@@ -464,3 +464,16 @@ ruby.rubyActive + .rubyDelimClose {
   left: 0;
   background: var(--ved-separator, #808080);
 }
+
+/* Paragraph windowing (pm/windowing.ts + windowing.ts): far-from-viewport
+ * paragraphs are display:none'd — destroyed layout objects are the point,
+ * Blink's per-key selection/layout walks scale with the RETAINED tree — and
+ * one spacer per hidden run reproduces the run's exact extent (inline
+ * block-size, logical so one rule serves both orientations). Block-flow
+ * modes only; view-only, the model never knows. */
+.vedWindowHidden {
+  display: none;
+}
+.ved-window-spacer {
+  display: block;
+}

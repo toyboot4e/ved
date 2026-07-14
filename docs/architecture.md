@@ -85,6 +85,8 @@ editor/                @ved/editor — the editor core (the only prosemirror con
   src/scroll-keep.ts     scroll offset ↔ line index per writing mode (unit-tested)
   src/line-numbers.ts    measured per-visual-line overlay: numbers, current-line highlight,
                          base-only selection, page separators/folios
+  src/windowing.ts       paragraph windowing (block-flow modes): measure extents,
+                         decide the window, dispatch; materialize disciplines
   src/editor.module.scss page geometry, writing modes
   src/pm/
     model.ts             schema (ruby = rubyBase+rubyReading + front/open/close delimiter
@@ -99,6 +101,8 @@ editor/                @ved/editor — the editor core (the only prosemirror con
     caret-model.ts       nextCaretOffset — model-driven character movement
     cursor.ts            plain offset ↔ backend-neutral {para, offset}
     page-gap.ts          VerticalRows page-gap widgets; both-ends-incremental measure
+    windowing.ts         the windowing plugin: hidden-paragraph decorations +
+                         extent-exact spacer widgets (pure math + set storage)
     drag-select.ts       geometric drag selection across read-only ruby bases (unit-tested)
     ruby.css             global ruby/syntax styles (decorations emit literal class names)
 vim/                   @ved/vim — Vim-like modal editing, an editor EXTENSION built ONLY on
@@ -839,6 +843,50 @@ the shell passes `viewConfigEpoch` (an optional editor prop) to trigger the
 re-measure (`gap-config-reflow.ts`). The same widget trick generalizes the
 columns modes into a page grid; the transpose — page columns in a rows mode —
 stays impossible (dead ends).
+
+### Paragraph windowing (`windowing.ts`, `pm/windowing.ts`)
+
+Large documents pay BLINK per keystroke: after every mutation + selection
+write, `Editor::SyncSelection` walks the RETAINED layout objects, and layout
+passes scale with the laid-out tree (~75–300ms/key at 3000 paragraphs —
+`desktop/bench/edit-bench.ts`). Only shrinking the laid-out tree fixes it, so
+past 300 paragraphs the block-flow modes render a WINDOW: paragraphs beyond
+viewport ± one viewport are `display:none` (a node decoration,
+`vedWindowHidden`), and each maximal hidden run stands behind ONE spacer
+widget (`.ved-window-spacer`) sized to the run's exact extent — block-flow
+positions hold exactly, so nothing visible moves. View-only decorations,
+dispatched page-gap style (the `pm/windowing.ts` plugin stores the set;
+`windowing.ts` measures and decides); the model never knows. The MULTICOL
+modes are not windowed: whether an empty spacer fragments across column
+bands exactly like the text it replaces is unverified.
+
+Extents are one box rect per paragraph (in block flow a paragraph's box IS
+its extent), measured while visible and cached by element under a layout key
+(writing mode / pitch / font / line length); a paragraph with no valid
+cached extent simply stays visible one pass and is learned for the next.
+The discipline:
+
+- **A caret move or edit touching a hidden paragraph materializes
+  EVERYTHING in the same flush** (`chainMaterialize`, chained into
+  dispatchTransaction like repair): the caret always has a DOM home before
+  anything measures or reveals it, and the measure tail — the overlay's
+  edit pass, the page-gap incremental measure — never walks a
+  `display:none` paragraph. The scheduled pass re-windows afterwards.
+- **Never dispatch while composing**; the compositionend schedule
+  reconciles (the page-gap discipline).
+- **Any layout change that can resize paragraphs** (mode/policy/view
+  config/fonts/resize) **materializes everything FIRST**, so the full
+  measures always see a fully rendered document; the pass re-windows after
+  they settle. Scroll re-windows with quarter-viewport hysteresis.
+
+The overlay keeps the GLOBAL numbering over hidden runs: a hidden paragraph
+contributes its last measured line count (`hiddenCount`; cold fallback =
+cached extent ÷ pitch) with no geometry, so labels and folio/page arithmetic
+extrapolate — a page's marks place from its VISIBLE member lines, and a
+fully hidden page has none (offscreen by construction). The page-gap
+line-end cache survives hiding untouched: its offsets are text-keyed, and
+the changed span is always materialized. Verified end to end in
+`test/e2e/windowing.ts`.
 
 ### The measured overlay (`line-numbers.ts`)
 

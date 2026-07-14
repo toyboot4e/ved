@@ -98,6 +98,12 @@ export const mountLineNumbers = (
    *  visibly pulse. A different column still repaints — crossing a boundary
    *  moves the highlight exactly once. */
   isSteady?: () => boolean,
+  /** Line count for a WINDOWING-HIDDEN paragraph never measured while
+   *  visible (the windowing extent cache ÷ pitch); the overlay prefers its
+   *  own last measured count (`lastCounts`). Hidden paragraphs keep their
+   *  place in the GLOBAL numbering — labels, folios, and page math must not
+   *  shift when a far paragraph loses its boxes. */
+  hiddenFallback?: (p: Element) => number | null,
 ): LineNumbers => {
   const overlay = document.createElement('div');
   overlay.className = 'vedLineNumbers';
@@ -118,7 +124,8 @@ export const mountLineNumbers = (
   let raf = 0;
   let pendingFull = false;
   let pendingEdit: { cleanStart: number; cleanEnd: number } | null = null;
-  let lines: VisualLine[] = []; // cached geometry from the last measure pass
+  let lines: VisualLine[] = []; // cached geometry from the last measure pass (VISIBLE lines)
+  let globalIdx: number[] = []; // each visible line's GLOBAL index (hidden counts included)
   // Per-paragraph geometry from the last measure pass (full or edit): the DOM
   // element, its visual lines, and a movement PROBE — the paragraph's first
   // reading-flow rect, overlay-relative. The edit pass reuses an entry when
@@ -163,13 +170,27 @@ export const mountLineNumbers = (
     return { cs, vert, colJump, groupTol, bandLen };
   };
 
-  /** Measure ONE paragraph into a cache entry (rect walk + probe). */
+  // Last measured VISIBLE line count per paragraph element — the count a
+  // windowing-hidden paragraph contributes to the global numbering (its
+  // boxes are gone, but its lines still exist between page 1 and here).
+  const lastCounts = new WeakMap<Element, number>();
+
+  /** Measure ONE paragraph into a cache entry (rect walk + probe). A
+   *  windowing-hidden paragraph has NO box at all (display:none) — it keeps
+   *  its last measured count (or the windowing fallback) instead of
+   *  geometry; a genuinely empty VISIBLE paragraph still has its box. */
   const measurePara = (p: HTMLElement, env: MeasureEnv, o: DOMRect): ParaLines => {
+    const box = p.getBoundingClientRect();
+    if (box.width === 0 && box.height === 0) {
+      return { el: p, probe: null, lines: [], hiddenCount: lastCounts.get(p) ?? hiddenFallback?.(p) ?? 0 };
+    }
     const r = firstFlowRect(p, range) ?? paraBoxRect(p);
+    const lines = linesOfParagraph(p, range, env.vert, env.colJump, env.groupTol, env.bandLen, o);
+    lastCounts.set(p, lines.length);
     return {
       el: p,
       probe: r ? { x: r.left - o.left, y: r.top - o.top } : null,
-      lines: linesOfParagraph(p, range, env.vert, env.colJump, env.groupTol, env.bandLen, o),
+      lines,
     };
   };
 
@@ -187,15 +208,30 @@ export const mountLineNumbers = (
   const finish = (env: MeasureEnv, o: DOMRect, win: { from: number; to: number } | null = null): void => {
     vertical = env.vert;
     steadyTol = env.groupTol;
-    lines = paraCache.flatMap((c) => c.lines);
+    // Flatten the VISIBLE lines (geometry) alongside each line's GLOBAL
+    // index — windowing-hidden paragraphs contribute their counts to the
+    // numbering but no geometry, so labels/folios past them stay true.
+    lines = [];
+    globalIdx = [];
+    let g = 0;
+    for (const c of paraCache) {
+      if (c.hiddenCount) {
+        g += c.hiddenCount;
+        continue;
+      }
+      for (const ln of c.lines) {
+        lines.push(ln);
+        globalIdx.push(g++);
+      }
+    }
     const multiCol = content.classList.contains(styles.multiColMode ?? '');
     const paged = multiCol || content.classList.contains(styles.rowsMode ?? '');
     const grid = readBandGrid(env.cs, vertical, multiCol, lines);
     const marks = readPageMarkMetrics(env.cs, paged, env.bandLen);
     measuredSize = { w: content.offsetWidth, h: content.offsetHeight };
 
-    placeNumbers(overlay, pool, lines, grid, win);
-    placePageMarks(overlay, pagePool, sepPool, lines, grid, marks);
+    placeNumbers(overlay, pool, lines, globalIdx, grid, win);
+    placePageMarks(overlay, pagePool, sepPool, lines, globalIdx, grid, marks);
 
     refreshHighlight(o);
     refreshSelection(o);
@@ -392,7 +428,14 @@ type MeasureEnv = {
 type Probe = { x: number; y: number };
 
 /** One paragraph's cached measure. */
-type ParaLines = { el: Element; probe: Probe | null; lines: VisualLine[] };
+type ParaLines = {
+  el: Element;
+  probe: Probe | null;
+  lines: VisualLine[];
+  /** Windowing-hidden: the lines this paragraph contributes to the GLOBAL
+   *  numbering without geometry (labels/folios past it must not shift). */
+  hiddenCount?: number;
+};
 
 /** Probe equality within a 1px slack (identical layouts reproduce identical
  *  rects; a real shift is at least a line pitch). Two invisible paragraphs
@@ -436,11 +479,23 @@ const placementWindow = (
   let from = 0;
   for (let i = 0; i < cleanStart; i++) from += next[i]!.lines.length;
   if (!suffixOk) return { from, to: Number.POSITIVE_INFINITY };
+  // The window closes only when the dirty region's VISIBLE line count (the
+  // suffix's pool indexes) AND its TOTAL line count (hidden included — the
+  // suffix's labels) are both unchanged.
   let newDirty = 0;
-  for (let i = cleanStart; i <= dirtyTo; i++) newDirty += next[i]!.lines.length;
+  let newDirtyTotal = 0;
+  for (let i = cleanStart; i <= dirtyTo; i++) {
+    newDirty += next[i]!.lines.length;
+    newDirtyTotal += next[i]!.lines.length + (next[i]!.hiddenCount ?? 0);
+  }
   let oldDirty = 0;
-  for (let i = cleanStart; i < old.length - cleanEnd; i++) oldDirty += old[i]!.lines.length;
-  return { from, to: newDirty === oldDirty ? from + newDirty : Number.POSITIVE_INFINITY };
+  let oldDirtyTotal = 0;
+  for (let i = cleanStart; i < old.length - cleanEnd; i++) {
+    oldDirty += old[i]!.lines.length;
+    oldDirtyTotal += old[i]!.lines.length + (old[i]!.hiddenCount ?? 0);
+  }
+  const closed = newDirty === oldDirty && newDirtyTotal === oldDirtyTotal;
+  return { from, to: closed ? from + newDirty : Number.POSITIVE_INFINITY };
 };
 
 /** The measured band lattice of the current layout, shared by both placement
@@ -543,6 +598,7 @@ const placeNumbers = (
   overlay: HTMLElement,
   pool: HTMLElement[],
   lines: readonly VisualLine[],
+  globalIdx: readonly number[],
   grid: BandGrid,
   /** The visual lines whose placement can have changed — the edit pass
    *  narrows this to the dirty window (`placementWindow`): a reused line
@@ -555,7 +611,8 @@ const placeNumbers = (
 ): void => {
   const from = win ? Math.max(0, win.from) : 0;
   const to = win ? Math.min(lines.length, win.to) : lines.length;
-  for (let i = from; i < to; i++) placeOneNumber(pool[i] ?? makeNumber(overlay, pool), lines[i]!, i, grid);
+  for (let i = from; i < to; i++)
+    placeOneNumber(pool[i] ?? makeNumber(overlay, pool), lines[i]!, globalIdx[i] ?? i, grid);
   // Pool entries past the lines exist only when the count shrank — a windowed
   // pass that doesn't reach the tail cannot have changed the count.
   if (to >= lines.length) {
@@ -568,7 +625,7 @@ const placeNumbers = (
   w.__vedNumberPlacements = (w.__vedNumberPlacements ?? 0) + (to - from);
 };
 
-const placeOneNumber = (el: HTMLElement, ln: VisualLine, i: number, grid: BandGrid): void => {
+const placeOneNumber = (el: HTMLElement, ln: VisualLine, globalIndex: number, grid: BandGrid): void => {
   const x = grid.vertical ? centerX(ln) : ln.left;
   const y = grid.vertical ? bandStartAt(grid, ln) : (ln.top + ln.bottom) / 2;
   // Skip writes that would not change anything: the edit pass reuses most
@@ -578,7 +635,7 @@ const placeOneNumber = (el: HTMLElement, ln: VisualLine, i: number, grid: BandGr
     ? `translate(${x}px, ${y}px) translate(-50%, -100%)`
     : `translate(${x}px, ${y}px) translate(-100%, -50%)`;
   if (el.style.transform !== transform) el.style.transform = transform;
-  const label = String(i + 1);
+  const label = String(globalIndex + 1);
   if (el.textContent !== label) el.textContent = label;
   if (el.style.display !== '') el.style.display = '';
 };
@@ -615,13 +672,14 @@ const readPageMarkMetrics = (cs: CSSStyleDeclaration, paged: boolean, bandLen: n
 
 /** The measured line step of one page, signed toward the reading direction
  *  (leftward in vertical-rl, downward in horizontal-tb); a single-line page
- *  falls back to the pitch. */
-const pageLineStep = (first: VisualLine, last: VisualLine, count: number, vertical: boolean, pitch: number): number =>
-  count >= 2
+ *  falls back to the pitch. `span` is the GLOBAL index distance between the
+ *  two measured lines — under windowing the page's first/last VISIBLE lines
+ *  need not be adjacent. */
+const pageLineStep = (first: VisualLine, last: VisualLine, span: number, vertical: boolean, pitch: number): number =>
+  span >= 1
     ? (vertical
         ? centerBlock(first, vertical) - centerBlock(last, vertical)
-        : centerBlock(last, vertical) - centerBlock(first, vertical)) /
-      (count - 1)
+        : centerBlock(last, vertical) - centerBlock(first, vertical)) / span
     : pitch;
 
 /** Place one page separator: the midpoint between the two pages' edge lines,
@@ -645,14 +703,16 @@ const placeSeparator = (
 
 /** Place one folio chip, centered on the WHOLE page area at the page's OWN
  *  measured line step (`pageLineStep` — a real-pitch deviation stays
- *  page-local). Vertical folios sit past the line length: columns center in
+ *  page-local), anchored at `pageStartCenter` — the block center of the
+ *  page's FIRST line slot (extrapolated when that line is windowing-hidden).
+ *  Vertical folios sit past the line length: columns center in
  *  the RESERVED STRIP — the first cell of the band gap, right under the page
  *  (gap下 then runs folio → border) — the other vertical modes right under
  *  the page. Horizontal folios sit bottom-center — under the page's
  *  (extrapolated) last row, centered on the line length. */
 const placeFolio = (
   chip: HTMLElement,
-  first: VisualLine,
+  pageStartCenter: number,
   grid: BandGrid,
   m: PageMarkMetrics,
   bandAnchor: number,
@@ -660,42 +720,55 @@ const placeFolio = (
 ): void => {
   const { vertical } = grid;
   if (vertical) {
-    const chipX = centerBlock(first, vertical) - (step * (m.linesPerPage - 1)) / 2;
+    const chipX = pageStartCenter - (step * (m.linesPerPage - 1)) / 2;
     chip.style.transform = grid.multiCol
       ? `translate(${chipX}px, ${bandAnchor + m.bandLen + m.cell / 2}px) translate(-50%, -50%)`
       : `translate(${chipX}px, ${bandAnchor + m.bandLen}px) translate(-50%, 0) translateY(0.4em)`;
   } else {
-    const blockEnd = centerBlock(first, vertical) + step * (m.linesPerPage - 1) + m.cell / 2;
+    const blockEnd = pageStartCenter + step * (m.linesPerPage - 1) + m.cell / 2;
     chip.style.transform = `translate(${bandAnchor + m.bandLen / 2}px, ${blockEnd}px) translate(-50%, 0) translateY(0.4em)`;
   }
 };
 
-/** Place page `p`'s marks — its separator (only when the previous page's last
- *  line shares the band: a multiCol band break separates pages physically,
- *  the scroller lattice draws the border there; see editor.module.scss) and
- *  its folio chip — bumping the pool cursors in `counts`. */
+/** Place page `p`'s marks — its separator (only when the page's first line
+ *  AND the previous page's last line are both measured and share the band: a
+ *  multiCol band break separates pages physically, the scroller lattice
+ *  draws the border there — and a windowing-hidden boundary is offscreen by
+ *  construction) and its folio chip — bumping the pool cursors in `counts`.
+ *  `i..j` are the page's VISIBLE member lines; the page's true first-line
+ *  slot is extrapolated from the first visible member at the page's own
+ *  step, so a hidden prefix leans no folio. */
 const placeMarksForPage = (
   overlay: HTMLElement,
   pagePool: HTMLElement[],
   sepPool: HTMLElement[],
   lines: readonly VisualLine[],
+  globalIdx: readonly number[],
   grid: BandGrid,
   m: PageMarkMetrics,
   p: number,
+  i: number,
+  j: number,
   counts: { chips: number; seps: number },
 ): void => {
-  const { linesPerPage } = m;
-  const count = Math.min((p + 1) * linesPerPage, lines.length) - p * linesPerPage;
-  const first = lines[p * linesPerPage] as VisualLine;
-  const last = lines[p * linesPerPage + count - 1] as VisualLine;
-  const prev = p > 0 ? (lines[p * linesPerPage - 1] as VisualLine) : null;
+  const { vertical } = grid;
+  const first = lines[i]!;
+  const last = lines[j]!;
+  const firstIdx = globalIdx[i] ?? i;
+  const lastIdx = globalIdx[j] ?? j;
   const bandAnchor = bandStartAt(grid, first);
-  if (prev && (!grid.multiCol || bandStartAt(grid, prev) === bandAnchor)) {
+  const prev = i > 0 && (globalIdx[i - 1] ?? i - 1) === p * m.linesPerPage - 1 ? lines[i - 1]! : null;
+  if (prev && firstIdx === p * m.linesPerPage && (!grid.multiCol || bandStartAt(grid, prev) === bandAnchor)) {
     placeSeparator(sepPool[counts.seps] ?? makePageSeparator(overlay, sepPool), prev, first, grid, m, bandAnchor);
     counts.seps++;
   }
+  const step = pageLineStep(first, last, lastIdx - firstIdx, vertical, m.pitch);
+  // The page's first-line slot: step BACK from the first visible member
+  // (earlier lines sit against the reading direction).
+  const back = step * (firstIdx - p * m.linesPerPage);
+  const pageStartCenter = centerBlock(first, vertical) + (vertical ? back : -back);
   const chip = pagePool[counts.chips] ?? makePageNumber(overlay, pagePool);
-  placeFolio(chip, first, grid, m, bandAnchor, pageLineStep(first, last, count, grid.vertical, m.pitch));
+  placeFolio(chip, pageStartCenter, grid, m, bandAnchor, step);
   chip.textContent = `${p + 1}`;
   chip.style.display = '';
   counts.chips++;
@@ -723,13 +796,22 @@ const placePageMarks = (
   pagePool: HTMLElement[],
   sepPool: HTMLElement[],
   lines: readonly VisualLine[],
+  globalIdx: readonly number[],
   grid: BandGrid,
   m: PageMarkMetrics,
 ): void => {
   const counts = { chips: 0, seps: 0 };
   if (m.linesPerPage > 0 && lines.length > 0) {
-    for (let p = 0; p * m.linesPerPage < lines.length; p++)
-      placeMarksForPage(overlay, pagePool, sepPool, lines, grid, m, p, counts);
+    // Group the VISIBLE lines by their GLOBAL page; a page whose lines are
+    // all windowing-hidden gets no marks (offscreen by construction).
+    let i = 0;
+    while (i < lines.length) {
+      const p = Math.floor((globalIdx[i] ?? i) / m.linesPerPage);
+      let j = i;
+      while (j + 1 < lines.length && Math.floor((globalIdx[j + 1] ?? j + 1) / m.linesPerPage) === p) j++;
+      placeMarksForPage(overlay, pagePool, sepPool, lines, globalIdx, grid, m, p, i, j, counts);
+      i = j + 1;
+    }
   }
   for (const el of pagePool.slice(counts.chips)) el.style.display = 'none';
   for (const el of sepPool.slice(counts.seps)) el.style.display = 'none';

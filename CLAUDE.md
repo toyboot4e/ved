@@ -103,7 +103,13 @@ Binding rules; the mechanisms behind them are catalogued in
   (suffix-incremental) and re-places only the dirty visual-line window; the
   empty-area
   hit-test cache survives gestures; ByParagraph/ByCharacter caret crossings
-  patch the delta rubies. Guarded by counter seams, not timing:
+  patch the delta rubies. Past 300 paragraphs the block-flow modes WINDOW
+  the layout tree (far paragraphs display:none behind extent-exact spacer
+  widgets — Blink's per-key selection/layout walks scale with RETAINED
+  layout objects; `windowing.ts`, architecture.md "Paragraph windowing"):
+  the caret's/edit's paragraphs materialize in the same flush, and full
+  measures always run against a materialized document. Guarded by counter
+  seams, not timing:
   `__vedGlyphWalks`, `__vedNearWalks`, `__vedBaseRebuilds`,
   `__vedRubyRebuilds`, `__vedRepairChecks`, `__vedLineMeasures`,
   `__vedNumberPlacements`,

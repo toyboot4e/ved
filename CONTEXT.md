@@ -191,6 +191,19 @@ the editor's search ops — undoable, structure-repaired.
 _Avoid_: find (prose only — "search" in identifiers), occurrence (use
 "match").
 
+**Windowing**:
+Rendering only the paragraphs near the viewport of a large document:
+far paragraphs are display:none'd (their layout objects destroyed — the
+per-keystroke cost driver in Blink) behind extent-exact **spacers**. Ved's
+is RETAINED windowing — the DOM nodes stay, only their boxes go; view-only
+decorations, the model never knows. Block-flow **writing modes** only.
+To **materialize** is to bring hidden paragraphs back (the caret's
+paragraph always is, before anything measures or reveals it).
+_Avoid_: virtualization/virtual scrolling (list-widget framing — ved windows
+one contenteditable flow), placeholder (that's the empty paragraph's ::before
+hint; the extent stand-in is a **spacer**), detached windowing (removing
+nodes from the DOM — not what ved does).
+
 ### Project structure
 
 **Package**:

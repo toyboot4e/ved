@@ -50,9 +50,11 @@ import {
 import { pageGapPlugin } from './pm/page-gap';
 import { RubyView } from './pm/ruby-view';
 import { repair } from './pm/structure';
+import { windowingPlugin } from './pm/windowing';
 import { caretCoords, revealCaretInScroller, useKeepScrollPosition } from './scroll-reveal';
 import { createEditorSession, createRestore, createSyncExtensions } from './session';
 import { installTestSeams } from './test-seams';
+import { createWindowing, type Windowing } from './windowing';
 import { isVerticalMode, scrollsVertically, type WritingMode, writingPaging } from './writing-mode';
 // ProseMirror's required base styles, then ved's GLOBAL ruby/syntax styles
 // (decorations + the node view emit literal class names a CSS module can't match).
@@ -346,6 +348,11 @@ export const VedEditor = (props: VedEditorProps): React.JSX.Element => {
   // The composition cell pad (ime-cell-pad.ts): dispatchTransaction calls its
   // update per composing edit, BEFORE the page-gap measure in the same flush.
   const imeCellPadRef = useRef<ImeCellPad | null>(null);
+  // Paragraph windowing (windowing.ts): far paragraphs display:none'd behind
+  // extent-exact spacers in the block-flow modes. dispatchTransaction chains
+  // its materialize step; the layout-change effects materialize everything
+  // before their full measures.
+  const windowingRef = useRef<Windowing | null>(null);
   // Mouse drag-selection is DRIVEN BY US (see the pointer handlers): the native
   // selection can't extend across a collapsed ruby's READ-ONLY base
   // (`contenteditable=false`, the atom-ruby IME-safety rule), so a native drag
@@ -419,6 +426,7 @@ export const VedEditor = (props: VedEditorProps): React.JSX.Element => {
         decoPlugin,
         pageGapPlugin(),
         imePadPlugin(),
+        windowingPlugin(),
       ],
     });
     // Always set the caret EXPLICITLY (via offsetToPos, our boundary-aware map).
@@ -481,6 +489,45 @@ export const VedEditor = (props: VedEditorProps): React.JSX.Element => {
         session.commitHistory(next);
       }
     };
+    /** Ruby structure repair applied over `s` in the same flush, with the
+     *  decoration caches advanced across the fix. */
+    const repairChain = (s: EditorState): EditorState => {
+      const fix = repair(s);
+      if (!fix) return s;
+      const repaired = s.apply(fix);
+      advanceDecorationCaches(s.doc, repaired.doc, fix.mapping);
+      return repaired;
+    };
+    /** dispatchTransaction's state chain, in the load-bearing order: apply →
+     *  decoration-cache advance (dirty paragraphs only, BEFORE updateState
+     *  pulls the new decorations — a full rebuild per keystroke scaled with
+     *  the document) → ruby structure repair (same flush, skipped during
+     *  IME) → the windowing materialize step (a caret/edit touching a HIDDEN
+     *  paragraph materializes everything in the SAME updateState — the caret
+     *  always has a DOM home before anything measures or reveals it, and the
+     *  measure tail never walks a display:none paragraph). */
+    const advanceForEdit = (tr: Transaction, applied: EditorState): EditorState => {
+      advanceDecorationCaches(view.state.doc, applied.doc, tr.mapping);
+      // An edit repositions the caret along the line — drop the goal column.
+      goalInlineRef.current = null;
+      if (view.composing || rebuildingRef.current) return applied;
+      return repairChain(applied);
+    };
+    const applyChain = (
+      tr: Transaction,
+    ): { next: EditorState; windowShift: { cleanStart: number; cleanEnd: number } | null } => {
+      let next = view.state.apply(tr);
+      if (tr.docChanged) next = advanceForEdit(tr, next);
+      const mat = windowingRef.current?.chainMaterialize(next, tr.docChanged ? view.state.doc : null) ?? null;
+      return { next: mat ? mat.state : next, windowShift: mat ? mat.shift : null };
+    };
+    /** A window change flipped which paragraphs have geometry — scope the
+     *  overlay re-measure to the flipped span, drop the hit-test cache (the
+     *  spacer is extent-exact, so nothing else moved). */
+    const afterWindowShift = (shift: { cleanStart: number; cleanEnd: number }): void => {
+      glyphWalkerRef.current?.invalidateGeometry();
+      lineNumbersRef.current?.scheduleEdit(shift.cleanStart, shift.cleanEnd);
+    };
     /** dispatchTransaction's last step: the undo anchor and the selection ping. */
     const trackSelectionOnDispatch = (tr: Transaction, next: EditorState): void => {
       // Track the caret as the pre-edit anchor for the NEXT edit's undo target.
@@ -514,23 +561,9 @@ export const VedEditor = (props: VedEditorProps): React.JSX.Element => {
       nodeViews: { ruby: (node) => new RubyView(node) },
       dispatchTransaction(tr) {
         const oldDoc = view.state.doc;
-        let next = view.state.apply(tr);
-        // Advance the cached decoration sets across the edit (dirty paragraphs
-        // only) BEFORE updateState pulls the new decorations — a full rebuild
-        // per keystroke scaled with the document (pm/decorations.ts).
-        if (tr.docChanged) advanceDecorationCaches(view.state.doc, next.doc, tr.mapping);
-        // An edit repositions the caret along the line — drop the goal column.
-        if (tr.docChanged) goalInlineRef.current = null;
-        // Ruby structure repair in the same flush, skipped during IME.
-        if (tr.docChanged && !view.composing && !rebuildingRef.current) {
-          const fix = repair(next);
-          if (fix) {
-            const repaired = next.apply(fix);
-            advanceDecorationCaches(next.doc, repaired.doc, fix.mapping);
-            next = repaired;
-          }
-        }
+        const { next, windowShift } = applyChain(tr);
         view.updateState(next);
+        if (windowShift) afterWindowShift(windowShift);
         scheduleMeasuresOnDispatch(tr, oldDoc, next.doc);
         commitOnDispatch(tr, next);
         trackSelectionOnDispatch(tr, next);
@@ -736,10 +769,17 @@ export const VedEditor = (props: VedEditorProps): React.JSX.Element => {
       caretRect,
       () => selectedGlyphRectsRef.current?.() ?? [],
       () => view.composing,
+      // A windowing-hidden paragraph never measured while visible: line
+      // count from the cached extent ÷ pitch (windowing.ts).
+      (p) => windowingRef.current?.hiddenLineFallback(p) ?? null,
     );
     lineNumbersRef.current = lineNumbers;
     lineNumbers.schedule();
     document.fonts?.ready.then(() => {
+      // Layout-change prelude: the full passes below must see the fully
+      // rendered document (the page-gap full measure has no line ends for a
+      // display:none paragraph), and a font swap staled every cached extent.
+      windowingRef.current?.materializeAll();
       lineNumbers.schedule();
       // A late webfont changes glyph advances → wraps move; also drops the
       // page-gap suffix cache and the glyph hit-test cache, which a font swap
@@ -754,6 +794,7 @@ export const VedEditor = (props: VedEditorProps): React.JSX.Element => {
     // line mover's absolute-y hit-testing (and RO is throttled in hidden
     // windows); the caret re-reveals on the next edit via dispatchTransaction.
     const resizeObserver = new ResizeObserver(() => {
+      windowingRef.current?.materializeAll(); // wraps may move — full passes need the full document
       lineNumbers.schedule();
       pageGapsRef.current?.schedule();
       walker.invalidateGeometry();
@@ -782,6 +823,7 @@ export const VedEditor = (props: VedEditorProps): React.JSX.Element => {
       const crossChanged = lastCross !== null && cross !== lastCross;
       lastCross = cross;
       if (crossChanged) {
+        windowingRef.current?.materializeAll(); // geometry shift — the full passes need the full document
         lineNumbers.schedule();
         pageGapsRef.current?.schedule();
         return;
@@ -840,6 +882,24 @@ export const VedEditor = (props: VedEditorProps): React.JSX.Element => {
     );
     pageGapsRef.current = pageGaps;
     pageGaps.schedule();
+
+    // Paragraph windowing (windowing.ts): registered LAST so its first pass's
+    // rAF runs after the overlay's and the page-gap measure's first FULL
+    // passes (FIFO) — both must see the fully rendered document once (the
+    // overlay learns per-paragraph line counts, the page-gap measure its
+    // line ends) before far paragraphs lose their boxes.
+    const windowing = createWindowing(view, mount, ({ cleanStart, cleanEnd }) => {
+      // A window change flips which paragraphs have geometry; the spacer is
+      // extent-exact so nothing ELSE moves — re-measure only the flipped
+      // span, and drop the hit-test cache.
+      walker.invalidateGeometry();
+      lineNumbersRef.current?.scheduleEdit(cleanStart, cleanEnd);
+    });
+    windowingRef.current = windowing;
+    windowing.schedule();
+    // A composition defers every window dispatch; reconcile when it ends.
+    const onCompositionEndWindowing = (): void => windowingRef.current?.schedule();
+    view.dom.addEventListener('compositionend', onCompositionEndWindowing);
 
     // Drive the model selection from the pointer. We listen on `window` (not the
     // editor) for the move/up so the drag follows the cursor even past the editor's
@@ -938,6 +998,9 @@ export const VedEditor = (props: VedEditorProps): React.JSX.Element => {
       endDrag();
       view.dom.removeEventListener('compositionstart', onCompositionStart);
       view.dom.removeEventListener('compositionend', onCompositionEnd);
+      view.dom.removeEventListener('compositionend', onCompositionEndWindowing);
+      windowing.destroy();
+      windowingRef.current = null;
       teardownCompositionSurvival();
       teardownImeCaretPin();
       imeCellPad.teardown();
@@ -993,6 +1056,11 @@ export const VedEditor = (props: VedEditorProps): React.JSX.Element => {
       ...extClassesRef.current,
     );
     view.dispatch(view.state.tr.setMeta('redecorate', true));
+    // Mode/policy changes re-wrap paragraphs (expanded rubies change line
+    // counts; the block axis itself can flip) — stale extents AND full
+    // passes that must see the whole document: materialize first, re-window
+    // after the measures settle.
+    windowingRef.current?.materializeAll();
     lineNumbersRef.current?.schedule(); // wrapping changed → re-measure line numbers
     pageGapsRef.current?.schedule(); // rows mode may have toggled → widgets in/out
     glyphWalkerRef.current?.invalidateGeometry(); // glyphs moved → drop hit-test cache
@@ -1011,6 +1079,7 @@ export const VedEditor = (props: VedEditorProps): React.JSX.Element => {
   const epoch = props.viewConfigEpoch;
   useEffect(() => {
     if (epoch === undefined) return;
+    windowingRef.current?.materializeAll(); // page geometry may resize paragraphs — see the mode effect
     lineNumbersRef.current?.schedule();
     pageGapsRef.current?.schedule();
     glyphWalkerRef.current?.invalidateGeometry();
