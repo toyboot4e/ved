@@ -19,6 +19,8 @@ const report = (message: string): void => {
 
 beforeEach(() => {
   resetSettingsToBaseline(pristine);
+  // Session state the reset deliberately leaves alone — clean it per test.
+  useWorkspaceStore.setState({ sidebarOpen: false });
   reports.length = 0;
 });
 
@@ -93,7 +95,7 @@ describe('applySettings', () => {
 });
 
 describe('the launch baseline', () => {
-  it('reset restores every store applySettings can write', () => {
+  it('reset restores every store applySettings can write — except session state', () => {
     applySettings(
       {
         fontSize: 30,
@@ -110,6 +112,9 @@ describe('the launch baseline', () => {
     );
     resetSettingsToBaseline(pristine);
     expect(captureSettingsBaseline()).toEqual(pristine);
+    // sidebarOpen is session state after startup: a re-evaluation's reset
+    // must leave a runtime toggle alone (extension-api.ts VedSettings).
+    expect(useWorkspaceStore.getState().sidebarOpen).toBe(true);
   });
 
   it('captures the CURRENT values — a font picked before capture survives resets', () => {

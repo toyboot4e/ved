@@ -44,6 +44,9 @@ export async function activate(ctx: VedContext): Promise<void> {
   });
 
   ctx.ui.statusItem({ text: '状態OK', title: 'user extension status' });
+  // The activation reason: 'startup' on the first evaluation, then
+  // 'reevaluation' — the guard for session-state settings (sidebarOpen).
+  ctx.ui.statusItem({ text: 'A:' + ctx.activation });
 
   const panel = ctx.ui.panel({ title: '拡張パネル' });
   panel.element.textContent = 'パネル内容';
@@ -142,6 +145,8 @@ try {
   const statusItem = await page.textContent('#extension-status-items');
   if (statusItem?.includes('状態OK')) step('statusItem renders in the footer');
   else fail(`status item missing — got ${JSON.stringify(statusItem)}`);
+  if (statusItem?.includes('A:startup')) step('ctx.activation reads startup on the first evaluation');
+  else fail(`activation reason missing — got ${JSON.stringify(statusItem)}`);
 
   await pressMod(page, '5');
   await page.waitForSelector('text=パネル内容', { timeout: 3000 });
@@ -208,6 +213,10 @@ try {
   await page.waitForTimeout(200);
   if (await page.$('.vedx-init-hl')) fail('mod+0 still decorates after its binding was dropped by re-evaluation');
   else step('a dropped keybinding stops firing after re-evaluation');
+
+  const reevalStatus = await page.textContent('#extension-status-items');
+  if (reevalStatus?.includes('A:reevaluation')) step('ctx.activation reads reevaluation after the config change');
+  else fail(`activation reason after re-eval — got ${JSON.stringify(reevalStatus)}`);
 
   const storageStatus = await page.textContent('#extension-status-items');
   if (storageStatus?.includes('P7')) step('ctx.storage round-tripped across the reload');

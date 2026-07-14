@@ -107,7 +107,14 @@ construction**, not convention: there is no unprefixed registration API.
   by itself; last writer wins, and `init.ts` runs last. Runtime changes
   made through the UI are ephemeral — only what the config applies
   survives. Invalid fields notice and skip; numbers clamp to the UI
-  controls' bounds.
+  controls' bounds. `sidebarOpen` is SESSION STATE after startup — the
+  re-evaluation reset leaves it alone, and a config applies it under
+  `ctx.activation === 'startup'` so a config save never yanks a runtime
+  toggle.
+- `activation` is why this activation ran — `'startup'` (the first
+  evaluation, pre-first-paint) or `'reevaluation'`. The guard for
+  session-state settings, startup-only notices, and work too expensive to
+  redo on every config save.
 - `storage.read/write(file)` — plain files under `<configDir>/storage/<id>/`
   behind the ipc.ts contract: the ONE fs capability an extension has,
   single-segment names, id-bound so no extension can name another's dir.

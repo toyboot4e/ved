@@ -133,6 +133,11 @@ export type EditorHandle = {
   ) => Disposable;
 };
 
+/** Why an activation ran: `'startup'` is the config's first evaluation
+ *  (before the first paint); `'reevaluation'` is a whole-config re-run
+ *  after a config-dir source changed. */
+export type ActivationReason = 'startup' | 'reevaluation';
+
 /** What `activate` receives: every capability, bound to this extension's id. */
 export type VedContext = {
   /** This extension's identity. */
@@ -142,6 +147,13 @@ export type VedContext = {
      *  command this extension registers. */
     readonly id: string;
   };
+
+  /** Why this activation ran. Guard SESSION-STATE work with it — e.g.
+   *  `if (ctx.activation === 'startup') ctx.settings.apply({ sidebarOpen:
+   *  true })`, so a config save doesn't yank a sidebar the user toggled at
+   *  runtime — and skip startup-only notices or expensive rebuilds on
+   *  re-evaluation. */
+  readonly activation: ActivationReason;
 
   /** Command registration (own namespace) and execution (any namespace). */
   readonly commands: {
@@ -270,7 +282,10 @@ export type VedSettings = {
   readonly invisibles?: { readonly newline?: boolean; readonly whitespace?: boolean };
   /** Whether Vim-style modal editing is on. */
   readonly vim?: boolean;
-  /** Whether the sidebar is shown. */
+  /** Whether the sidebar is shown. SESSION STATE after startup: a
+   *  re-evaluation never resets it (unlike every other field), so apply it
+   *  under an `activation === 'startup'` guard — unguarded, every config
+   *  save would force the configured value over a runtime toggle. */
   readonly sidebarOpen?: boolean;
   /** Which window edge the sidebar docks to. */
   readonly sidebarSide?: 'left' | 'right';

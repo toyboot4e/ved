@@ -14,7 +14,13 @@ import type {
 } from '@ved/editor';
 import { DEFAULT_KEYBINDINGS } from '@ved/editor';
 import { create } from 'zustand';
-import type { Disposable, EditorHooks, ExtensionModule, VedContext } from '../../shared/extension-api';
+import type {
+  ActivationReason,
+  Disposable,
+  EditorHooks,
+  ExtensionModule,
+  VedContext,
+} from '../../shared/extension-api';
 import type { ExtensionSource } from '../../shared/ipc';
 import { isValidCommandName, normalizeChordSpec } from './extension-model';
 import { addExtensionPanel, addStatusItem, openExtensionPicker } from './extension-ui';
@@ -127,7 +133,7 @@ type UserExtension = {
   readonly disposeAll: () => void;
 };
 
-const createUserExtension = (id: string, fileName: string): UserExtension => {
+const createUserExtension = (id: string, fileName: string, activation: ActivationReason): UserExtension => {
   // Every registration is tracked here, so a failed activate (or a future
   // reload) sweeps exactly this extension's contributions — no
   // extension-authored cleanup bookkeeping (docs/extensions.md
@@ -230,6 +236,8 @@ const createUserExtension = (id: string, fileName: string): UserExtension => {
 
   const context: VedContext = {
     extension: { id },
+
+    activation,
 
     commands: {
       register: (name, run) => {
@@ -433,13 +441,13 @@ const publishExtensions = (): void => {
  *  blob:` for exactly this; the `ved` specifier never reaches the runtime —
  *  it is types-only, stripped with the types) and activate it. A failure
  *  sweeps every registration the half-activated extension made. */
-const activateSource = async (source: ExtensionSource): Promise<void> => {
+const activateSource = async (source: ExtensionSource, activation: ActivationReason): Promise<void> => {
   if (source.js === null) {
     reportExtensionError(source.fileName || 'extensions', source.error);
     return;
   }
   const url = URL.createObjectURL(new Blob([source.js], { type: 'text/javascript' }));
-  const extension = createUserExtension(source.id, source.fileName);
+  const extension = createUserExtension(source.id, source.fileName, activation);
   try {
     const module = (await import(/* @vite-ignore */ url)) as Partial<ExtensionModule>;
     if (typeof module.activate !== 'function') {
@@ -484,11 +492,14 @@ const deactivateExtension = (id: string): void => {
  */
 const evaluateAll = async (): Promise<void> => {
   for (const id of [...loadOrder].reverse()) deactivateExtension(id);
+  // The first evaluation IS startup (it also captures the baseline);
+  // extensions read the distinction as ctx.activation.
+  const activation: ActivationReason = settingsBaseline === null ? 'startup' : 'reevaluation';
   if (settingsBaseline === null) settingsBaseline = captureSettingsBaseline();
   else resetSettingsToBaseline(settingsBaseline);
   for (const id of loadOrder) {
     const source = latestSources.get(id);
-    if (source) await activateSource(source);
+    if (source) await activateSource(source, activation);
   }
   publishExtensions();
 };
