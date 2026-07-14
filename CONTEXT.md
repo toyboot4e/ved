@@ -195,9 +195,10 @@ _Avoid_: find (prose only — "search" in identifiers), occurrence (use
 **Windowing**:
 Rendering only the paragraphs near the viewport of a large document:
 far paragraphs are display:none'd (their layout objects destroyed — the
-per-keystroke cost driver in Blink) behind extent-exact **spacers**. Ved's
-is RETAINED windowing — the DOM nodes stay, only their boxes go; view-only
-decorations, the model never knows. Block-flow **writing modes** only.
+per-keystroke cost driver in Blink) behind extent-exact **spacers** (sized
+blocks in block flow; forced-break band jumpers + an exact tail in the
+multicol modes). Ved's is RETAINED windowing — the DOM nodes stay, only
+their boxes go; view-only decorations, the model never knows.
 To **materialize** is to bring hidden paragraphs back (the caret's
 paragraph always is, before anything measures or reveals it).
 _Avoid_: virtualization/virtual scrolling (list-widget framing — ved windows

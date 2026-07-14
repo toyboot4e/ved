@@ -85,8 +85,8 @@ editor/                @ved/editor — the editor core (the only prosemirror con
   src/scroll-keep.ts     scroll offset ↔ line index per writing mode (unit-tested)
   src/line-numbers.ts    measured per-visual-line overlay: numbers, current-line highlight,
                          base-only selection, page separators/folios
-  src/windowing.ts       paragraph windowing (block-flow modes): measure extents,
-                         decide the window, dispatch; materialize disciplines
+  src/windowing.ts       paragraph windowing (every mode): flow-coordinate
+                         extents, window decisions, materialize disciplines
   src/editor.module.scss page geometry, writing modes
   src/pm/
     model.ts             schema (ruby = rubyBase+rubyReading + front/open/close delimiter
@@ -852,21 +852,40 @@ Large documents pay BLINK per keystroke: after every mutation + selection
 write, `Editor::SyncSelection` walks the RETAINED layout objects, and layout
 passes scale with the laid-out tree (~75–300ms/key at 3000 paragraphs —
 `desktop/bench/edit-bench.ts`). Only shrinking the laid-out tree fixes it, so
-past 300 paragraphs the block-flow modes render a WINDOW: paragraphs beyond
+past 300 paragraphs every mode renders a WINDOW: paragraphs beyond
 viewport ± one viewport are `display:none` (a node decoration,
 `vedWindowHidden`), and each maximal hidden run stands behind ONE spacer
-widget (`.ved-window-spacer`) sized to the run's exact extent — block-flow
-positions hold exactly, so nothing visible moves. View-only decorations,
+widget (`.ved-window-spacer`) reproducing the run's exact extent, so
+nothing visible moves. View-only decorations,
 dispatched page-gap style (the `pm/windowing.ts` plugin stores the set;
-`windowing.ts` measures and decides); the model never knows. The MULTICOL
-modes are not windowed: whether an empty spacer fragments across column
-bands exactly like the text it replaces is unverified.
+`windowing.ts` measures and decides); the model never knows. The spacer has
+two forms, one mechanism: in BLOCK FLOW one block sized to the run's extent;
+in the MULTICOL modes fragmentation cannot be trusted to slice a block like
+the text it replaced (probe-verified wrong), so the spacer is N zero-height
+`break-after: column` JUMPERS — each deterministically consumes one column
+band; the first breaks out of the band the spacer's box OPENS in, one band
+before the run's when the run starts exactly on a boundary — plus one
+exact-height TAIL that re-seats the following content inside its band.
 
-Extents are one box rect per paragraph (in block flow a paragraph's box IS
-its extent), measured while visible and cached by element under a layout key
-(writing mode / pitch / font / line length); a paragraph with no valid
-cached extent simply stays visible one pass and is learned for the next.
-The discipline:
+Geometry is decided in FLOW COORDINATES (band × band-capacity + the
+within-band offset, all from CONTENT-box edges; the band lattice floors
+against the container's content origin): visible paragraphs re-sync the
+flow cursor from their own rects, hidden runs from their spacer's rect.
+Extents are measured while visible and cached by element under a layout key
+(writing mode / pitch / font / line length) — in block flow a paragraph's
+box IS its extent; in multicol it is the flow delta to the next item. Each
+run's TRUE flow extent is stored on its spacer (`data-flow-extent`) and
+COMPOSED through membership changes — re-summing per-member cached extents
+accumulates per-band slack until a spec lands a whole band short and the
+wrong placement self-confirms (every live rect agrees with it). Multicol
+spacer specs are position-dependent, so a doc change in a windowed multicol
+mode schedules a re-derive pass; hide/materialize decisions use INNER/OUTER
+window hysteresis (materialize at viewport ± ¼, hide past ± 1) — the dead
+zone absorbs live-vs-cached span drift that otherwise flapped boundary
+paragraphs per keystroke. A paragraph with no valid cached extent simply
+stays visible one pass and is learned for the next; paragraph 0 (the
+overlay's origin probe) and the LAST paragraph (a multicol extent needs a
+next item) never hide. The discipline:
 
 - **A caret move or edit touching a hidden paragraph materializes
   EVERYTHING in the same flush** (`chainMaterialize`, chained into
