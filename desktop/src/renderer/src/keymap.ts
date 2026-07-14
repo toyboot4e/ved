@@ -53,6 +53,7 @@ export const matchChord = (event: ChordEvent, chord: Chord, isDarwin: boolean): 
 export type AppCommand =
   | 'quickOpen.files'
   | 'file.open'
+  | 'folder.open'
   | 'file.save'
   | 'file.saveAs'
   | 'tab.new'
@@ -72,6 +73,7 @@ export type AppCommand =
 export const APP_KEYMAP: readonly { readonly command: AppCommand; readonly chord: Chord }[] = [
   { command: 'quickOpen.files', chord: { key: 'p', mod: 'mod' } },
   { command: 'file.open', chord: { key: 'o', mod: 'mod' } },
+  { command: 'folder.open', chord: { key: 'o', mod: 'mod', shift: true } },
   { command: 'file.save', chord: { key: 's', mod: 'mod' } },
   { command: 'file.saveAs', chord: { key: 's', mod: 'mod', shift: true } },
   { command: 'tab.new', chord: { key: 'n', mod: 'mod' } },
@@ -105,6 +107,9 @@ const runAppCommand = (command: AppCommand, handlers: AppCommandHandlers): void 
       break;
     case 'file.open':
       handlers.runFileCommand('open');
+      break;
+    case 'folder.open':
+      handlers.runFileCommand('openFolder');
       break;
     case 'file.save':
       handlers.runFileCommand('save');

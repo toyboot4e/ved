@@ -21,6 +21,11 @@ describe('matchAppCommand: file commands', () => {
     expect(matchAppCommand(chord({ key: 'o', ctrlKey: true }), true)).toBeNull();
   });
 
+  it('distinguishes open-file from open-folder by shift', () => {
+    expect(matchAppCommand(chord({ key: 'O', ctrlKey: true, shiftKey: true }), false)).toBe('folder.open');
+    expect(matchAppCommand(chord({ key: 'O', metaKey: true, shiftKey: true }), true)).toBe('folder.open');
+  });
+
   it('distinguishes save from save-as by shift', () => {
     expect(matchAppCommand(chord({ ctrlKey: true }), false)).toBe('file.save');
     expect(matchAppCommand(chord({ key: 'S', ctrlKey: true, shiftKey: true }), false)).toBe('file.saveAs');

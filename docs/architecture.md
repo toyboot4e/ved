@@ -177,7 +177,8 @@ switching policies never touches the document.
 
 Ctrl+/ toggles ByCharacter ⇄ Rich: from ByCharacter to Rich, from anywhere
 else to ByCharacter. (Cmd on macOS. Letter chords are file shortcuts —
-Ctrl+O/S/Shift+S — handled at the app level, `app.tsx`.) Editor shortcuts live
+Ctrl+O/Shift+O/S/Shift+S — handled at the app level, `app.tsx`.) Editor
+shortcuts live
 in a command layer, `commands.ts`: an OPEN, namespaced command vocabulary
 (`CORE_COMMANDS` seeds the registry — the appear policies plus
 `history.undo`/`history.redo`; extensions register more) and a swappable

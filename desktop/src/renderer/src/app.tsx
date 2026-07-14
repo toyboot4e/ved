@@ -155,15 +155,20 @@ export const App = (): React.JSX.Element => {
   // below report through showNotTextNotice.
   const notice = useNoticeStore((s) => s.notice);
 
+  // A chosen folder is added as a sidebar root (revealing the sidebar),
+  // never opened as a buffer.
+  const addFolderRoot = useCallback((path: string) => {
+    const ws = useWorkspaceStore.getState();
+    ws.addRoot(path);
+    if (!ws.sidebarOpen) ws.toggleSidebar();
+  }, []);
+
   const handleOpen = useCallback(async () => {
     const opened = await window.ved.openFile();
     if (!opened) return;
-    // A folder chosen in the open dialog is added as a sidebar root (revealing
-    // the sidebar), not opened as a buffer.
+    // The open dialog can resolve to a directory (macOS unified picker).
     if (opened.kind === 'directory') {
-      const ws = useWorkspaceStore.getState();
-      ws.addRoot(opened.path);
-      if (!ws.sidebarOpen) ws.toggleSidebar();
+      addFolderRoot(opened.path);
       return;
     }
     if (opened.read.kind !== 'text') {
@@ -171,7 +176,12 @@ export const App = (): React.JSX.Element => {
       return;
     }
     dispatchBuffers({ type: 'openPath', path: opened.path, text: opened.read.text });
-  }, []);
+  }, [addFolderRoot]);
+
+  const handleOpenFolder = useCallback(async () => {
+    const path = await window.ved.openDirDialog();
+    if (path !== null) addFolderRoot(path);
+  }, [addFolderRoot]);
 
   // Opening from the sidebar tree: the path is known, no dialog. Main sniffs
   // the CONTENT and refuses non-text files, reported via the shared notice.
@@ -247,9 +257,10 @@ export const App = (): React.JSX.Element => {
   const runFileCommand = useCallback(
     (command: FileCommand) => {
       if (command === 'open') void handleOpen();
+      else if (command === 'openFolder') void handleOpenFolder();
       else void handleSave(command === 'saveAs');
     },
-    [handleOpen, handleSave],
+    [handleOpen, handleOpenFolder, handleSave],
   );
 
   const runTabCommand = useCallback(

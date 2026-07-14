@@ -22,7 +22,7 @@ export const saveViaDialog = async (api: VedFileApi, text: string): Promise<stri
 };
 
 /** A file command the shell can run (chords for these live in keymap.ts). */
-export type FileCommand = 'open' | 'save' | 'saveAs';
+export type FileCommand = 'open' | 'openFolder' | 'save' | 'saveAs';
 
 /** A tab command the shell can run (chords for these live in keymap.ts). */
 export type TabCommand = 'new' | 'close' | 'next' | 'prev';

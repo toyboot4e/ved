@@ -7,9 +7,10 @@ import type { DeletePathResult, DirEntry, ReadFileResult, RenamePathResult } fro
 
 export const readTextFile = (path: string): Promise<string> => readFile(path, 'utf-8');
 
-/** True when the path is a directory. Ctrl+O may resolve to one (the open
- * dialog allows folders), in which case the shell adds it as a workspace root
- * instead of reading it. A missing/unreadable path is not a directory. */
+/** True when the path is a directory. Ctrl+O may resolve to one (the macOS
+ * unified picker and the stub seam allow folders), in which case the shell
+ * adds it as a workspace root instead of reading it. A missing/unreadable
+ * path is not a directory. */
 export const isDirectory = async (path: string): Promise<boolean> => {
   try {
     return (await stat(path)).isDirectory();

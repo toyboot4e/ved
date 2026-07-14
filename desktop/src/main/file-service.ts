@@ -50,9 +50,15 @@ const makeOpenPicker = (
 };
 
 // Allow a FILE or a DIRECTORY: a chosen folder is added as a workspace root.
-// (macOS shows a unified picker; on Windows/Linux the two properties fold to
-// one selector — the handler branches on the resolved path's kind either way.)
-const pickOpenPath = makeOpenPicker(SMOKE_OPEN_PATH, ['openFile', 'openDirectory']);
+// Only macOS has a unified picker; on Windows/Linux the combined properties
+// FOLD TO A DIRECTORY-ONLY selector, so there Ctrl+O gets a plain file picker
+// and folders arrive via the open-folder dialog (Ctrl+Shift+O / the sidebar
+// button). The handler still branches on the resolved path's kind — the stub
+// seam and macOS can hand it a directory.
+const pickOpenPath = makeOpenPicker(
+  SMOKE_OPEN_PATH,
+  process.platform === 'darwin' ? ['openFile', 'openDirectory'] : ['openFile'],
+);
 
 const pickDirPath = makeOpenPicker(SMOKE_OPEN_DIR_PATH, ['openDirectory']);
 
