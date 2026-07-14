@@ -154,6 +154,11 @@ export const createWindowing = (
   let rewindowTimer: ReturnType<typeof setTimeout> | 0 = 0;
   let lastPassScroll: number | null = null;
   let lastPitch = 0;
+  // Whether the LAST windowing dispatch left anything hidden — only our own
+  // dispatches change membership (the set otherwise rides the mapping), so
+  // this boolean lets the per-dispatch chain check bail without deriving the
+  // hidden set from the decorations (an O(paragraphs) scan per keystroke).
+  let hasHidden = false;
 
   /** The layout inputs a cached extent is valid under. The first paragraph's
    *  inline-size stands in for the line length (`--line-length` pins every
@@ -179,6 +184,7 @@ export const createWindowing = (
   });
 
   const dispatchRuns = (runs: readonly HiddenRun[], shift: WindowShift | null): void => {
+    hasHidden = runs.length > 0;
     view.dispatch(windowingTr(view.state, runs));
     if (shift !== null) onWindowChange(shift);
   };
@@ -301,7 +307,10 @@ export const createWindowing = (
     next: EditorState,
     oldDoc: PMNode | null,
   ): { state: EditorState; shift: WindowShift } | null => {
-    if (view.composing) return null; // the caret's paragraph is already materialized
+    // The common per-keystroke path must be O(1): nothing hidden (small
+    // docs, multicol) or a composition (already materialized) bails before
+    // any decoration scan.
+    if (!hasHidden || view.composing) return null;
     const current = hiddenParas(next);
     if (current.size === 0) return null;
     if (!neededParas(next, oldDoc, current).some((i) => current.has(i))) return null;
@@ -310,6 +319,7 @@ export const createWindowing = (
     // fresh geometry the DOM can't answer yet. The scheduled pass re-windows.
     clearTimeout(rewindowTimer);
     rewindowTimer = setTimeout(schedule, 150);
+    hasHidden = false;
     return {
       state: next.apply(windowingTr(next, [])),
       shift: shiftFor(next.doc.childCount, Math.min(...current), Math.max(...current)),

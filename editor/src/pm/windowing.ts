@@ -95,18 +95,22 @@ export const windowingPlugin = (): Plugin<DecorationSet> =>
 
 /** The paragraph indexes hidden in `state`'s windowing set — derived from the
  *  node decorations (the set is the single source of truth; a side table
- *  would go stale against the mapping). */
+ *  would go stale against the mapping). ONE flat find plus one child walk —
+ *  this runs in the per-dispatch chain check on windowed documents, so a
+ *  per-paragraph set search would cost every keystroke. */
 export const hiddenParas = (state: EditorState): Set<number> => {
   const set = windowingKey.getState(state);
   const out = new Set<number>();
   if (!set) return out;
-  const doc = state.doc;
+  const decos = set.find();
+  if (decos.length === 0) return out;
+  // Node decorations are the non-degenerate ranges (spacer widgets collapse
+  // to a point); pair them with the doc-level children in one walk.
+  const ranges = new Map<number, number>();
+  for (const d of decos) if (d.to > d.from) ranges.set(d.from, d.to);
   let i = 0;
-  doc.forEach((node, offset) => {
-    // A node decoration on the paragraph lies strictly inside [offset, end].
-    if (set.find(offset, offset + node.nodeSize).some((d) => d.from === offset && d.to === offset + node.nodeSize)) {
-      out.add(i);
-    }
+  state.doc.forEach((node, offset) => {
+    if (ranges.get(offset) === offset + node.nodeSize) out.add(i);
     i++;
   });
   return out;
