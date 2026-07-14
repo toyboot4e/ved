@@ -13,6 +13,10 @@ import { create } from 'zustand';
 
 type VimStore = {
   readonly enabled: boolean;
+  /** The user keymap from settings (`vimKeymap` — settings.ts), or null
+   *  for the defaults. Handed to `vimExtensions` by app.tsx; a change
+   *  rebuilds the extension. */
+  readonly keymap: VimKeymapConfig | null;
   /** The extension's live mode; meaningful only while `enabled`. */
   readonly mode: VimMode;
   /** The live `/`?`?` search command line (`/foo`), or null when not
@@ -25,6 +29,7 @@ type VimStore = {
 
 export const useVimStore = create<VimStore>()((set) => ({
   enabled: false,
+  keymap: null,
   mode: 'normal',
   commandLine: null,
   macroRecording: null,
@@ -42,18 +47,23 @@ const VIM_OPTIONS = {
 } as const;
 
 let vimExtensionsCache: readonly EditorExtension[] | null = null;
+/** The keymap the cache was built with (identity compare — settings hand a
+ *  fresh object per apply, so a re-applied keymap rebuilds). `undefined` =
+ *  never built. */
+let cachedKeymap: VimKeymapConfig | null | undefined;
 
-/** The stable `extensions` prop value while Vim is on — built on the FIRST
- *  toggle (late enough for the smoke seam below; identity stable after).
- *  User keymap: `window.__vedVimKeymap` (a `VimKeymapConfig`) is the smoke
- *  seam AND the manual override until a settings field carries it
- *  (docs/editor-ui-plan.md Phase 4 "Later"). A rejected keymap falls back
+/** The stable `extensions` prop value while Vim is on — built on the first
+ *  toggle, rebuilt when `keymap` changes (identity). `keymap` is the
+ *  settings value (`vimKeymap` in init.ts — the vim store's field);
+ *  `window.__vedVimKeymap` (a `VimKeymapConfig`) remains the smoke seam,
+ *  used only when no settings keymap is set. A rejected keymap falls back
  *  to the defaults, loudly. */
-export const vimExtensions = (): readonly EditorExtension[] => {
-  if (vimExtensionsCache) return vimExtensionsCache;
-  const keymap = (globalThis as { __vedVimKeymap?: VimKeymapConfig }).__vedVimKeymap;
+export const vimExtensions = (keymap: VimKeymapConfig | null): readonly EditorExtension[] => {
+  const effective = keymap ?? (globalThis as { __vedVimKeymap?: VimKeymapConfig }).__vedVimKeymap ?? null;
+  if (vimExtensionsCache && cachedKeymap === effective) return vimExtensionsCache;
+  cachedKeymap = effective;
   try {
-    vimExtensionsCache = [createVimExtension({ ...VIM_OPTIONS, ...(keymap ? { keymap } : {}) })];
+    vimExtensionsCache = [createVimExtension({ ...VIM_OPTIONS, ...(effective ? { keymap: effective } : {}) })];
   } catch (err) {
     console.error('vim: user keymap rejected, using defaults —', err);
     vimExtensionsCache = [createVimExtension(VIM_OPTIONS)];

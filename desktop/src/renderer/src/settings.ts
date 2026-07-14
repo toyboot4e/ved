@@ -7,7 +7,8 @@
 // numbers ride the stores' own clamps, so a garbage value can never render
 // a broken layout.
 import { AppearPolicy, type Invisibles, WritingMode } from '@ved/editor';
-import type { VedSettings } from '../../shared/extension-api';
+import type { VimKeymapConfig } from '@ved/vim';
+import type { ActivationReason, VedSettings } from '../../shared/extension-api';
 import { useAppearPolicyStore } from './appear-policy';
 import { useInvisiblesStore } from './invisibles';
 import { type Theme, useThemeStore } from './theme';
@@ -41,6 +42,7 @@ export type SettingsBaseline = {
   readonly appearPolicy: AppearPolicy;
   readonly invisibles: Invisibles;
   readonly vimEnabled: boolean;
+  readonly vimKeymap: VimKeymapConfig | null;
   readonly sidebarSide: SidebarSide;
   readonly sidebarWidth: number;
 };
@@ -52,6 +54,7 @@ export const captureSettingsBaseline = (): SettingsBaseline => ({
   appearPolicy: useAppearPolicyStore.getState().appearPolicy,
   invisibles: useInvisiblesStore.getState().invisibles,
   vimEnabled: useVimStore.getState().enabled,
+  vimKeymap: useVimStore.getState().keymap,
   sidebarSide: useWorkspaceStore.getState().sidebarSide,
   sidebarWidth: useWorkspaceStore.getState().sidebarWidth,
 });
@@ -62,7 +65,7 @@ export const resetSettingsToBaseline = (baseline: SettingsBaseline): void => {
   useWritingModeStore.setState({ writingMode: baseline.writingMode });
   useAppearPolicyStore.setState({ appearPolicy: baseline.appearPolicy });
   useInvisiblesStore.setState({ invisibles: baseline.invisibles });
-  useVimStore.setState({ enabled: baseline.vimEnabled });
+  useVimStore.setState({ enabled: baseline.vimEnabled, keymap: baseline.vimKeymap });
   useWorkspaceStore.setState({ sidebarSide: baseline.sidebarSide, sidebarWidth: baseline.sidebarWidth });
 };
 
@@ -119,9 +122,20 @@ const applyAppearanceFields = (settings: VedSettings, bad: ReportBad): void => {
       useAppearPolicyStore.setState({ appearPolicy: settings.appearPolicy });
     } else bad('appearPolicy', settings.appearPolicy);
   }
+};
+
+const applyVimFields = (settings: VedSettings, bad: ReportBad): void => {
   if (settings.vim !== undefined) {
     if (typeof settings.vim === 'boolean') useVimStore.setState({ enabled: settings.vim });
     else bad('vim', settings.vim);
+  }
+  if (settings.vimKeymap !== undefined) {
+    // Shape-checked here only as "a plain object" — the DEEP validation is
+    // the vim extension's own compile (createVimExtension throws; vim.ts
+    // falls back to the defaults, loudly).
+    if (typeof settings.vimKeymap === 'object' && settings.vimKeymap !== null) {
+      useVimStore.setState({ keymap: settings.vimKeymap as VimKeymapConfig });
+    } else bad('vimKeymap', settings.vimKeymap);
   }
 };
 
@@ -174,6 +188,19 @@ export const applySettings = (settings: VedSettings, report: (message: string) =
   const bad: ReportBad = (key, value) => report(`設定 ${key}: 値が不正です (${JSON.stringify(value)})`);
   applyViewConfigFields(settings, bad);
   applyAppearanceFields(settings, bad);
+  applyVimFields(settings, bad);
   applyInvisiblesField(settings, bad);
   applySidebarFields(settings, bad);
+};
+
+/** `settings.applyDefault`: apply during the config's FIRST evaluation
+ *  only — a re-evaluation no-op, so the fields act as launch defaults
+ *  (extension-api.ts SettingsHandle for the exact semantics per field
+ *  class). */
+export const applySettingsDefault = (
+  settings: VedSettings,
+  activation: ActivationReason,
+  report: (message: string) => void,
+): void => {
+  if (activation === 'startup') applySettings(settings, report);
 };

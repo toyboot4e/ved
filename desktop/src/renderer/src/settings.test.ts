@@ -2,7 +2,7 @@ import { AppearPolicy, WritingMode } from '@ved/editor';
 import { beforeEach, describe, expect, it } from 'vitest';
 import { useAppearPolicyStore } from './appear-policy';
 import { useInvisiblesStore } from './invisibles';
-import { applySettings, captureSettingsBaseline, resetSettingsToBaseline } from './settings';
+import { applySettings, applySettingsDefault, captureSettingsBaseline, resetSettingsToBaseline } from './settings';
 import { useThemeStore } from './theme';
 import { useViewConfigStore, VIEW_CONFIG_BOUNDS } from './view-config';
 import { useVimStore } from './vim';
@@ -82,6 +82,15 @@ describe('applySettings', () => {
     expect(useViewConfigStore.getState().config.pageLines).toBe(30);
   });
 
+  it('applies a vim keymap object; rejects a non-object', () => {
+    const keymap = { normal: { Q: '0' } };
+    applySettings({ vimKeymap: keymap }, report);
+    expect(useVimStore.getState().keymap).toBe(keymap);
+    applySettings({ vimKeymap: 'Q->0' } as never, report);
+    expect(reports).toHaveLength(1);
+    expect(useVimStore.getState().keymap).toBe(keymap);
+  });
+
   it('reports a non-object invisibles value', () => {
     applySettings({ invisibles: 'all' } as never, report);
     expect(reports).toHaveLength(1);
@@ -91,6 +100,16 @@ describe('applySettings', () => {
   it('refuses a non-object settings value outright', () => {
     applySettings('dark' as never, report);
     expect(reports).toHaveLength(1);
+  });
+});
+
+describe('applySettingsDefault', () => {
+  it('applies at startup, no-ops on re-evaluation', () => {
+    applySettingsDefault({ fontSize: 30 }, 'startup', report);
+    expect(useViewConfigStore.getState().config.fontSize).toBe(30);
+    applySettingsDefault({ fontSize: 40 }, 'reevaluation', report);
+    expect(useViewConfigStore.getState().config.fontSize).toBe(30);
+    expect(reports).toEqual([]);
   });
 });
 

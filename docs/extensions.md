@@ -107,13 +107,16 @@ construction**, not convention: there is no unprefixed registration API.
   by itself; last writer wins, and `init.ts` runs last. Runtime changes
   made through the UI are ephemeral — only what the config applies
   survives. Invalid fields notice and skip; numbers clamp to the UI
-  controls' bounds. `sidebarOpen` is SESSION STATE after startup — the
-  re-evaluation reset leaves it alone, and a config applies it under
-  `ctx.activation === 'startup'` so a config save never yanks a runtime
-  toggle.
+  controls' bounds. `vimKeymap` carries the vim user keymap
+  (`@ved/vim`'s `VimKeymapConfig` shape; deep-validated at extension
+  build, rejected keymaps fall back loudly). `sidebarOpen` is SESSION
+  STATE after startup — the re-evaluation reset leaves it alone; apply it
+  with `settings.applyDefault`, which runs on the FIRST evaluation only
+  (fields set that way act as launch defaults), so a config save never
+  yanks a runtime toggle.
 - `activation` is why this activation ran — `'startup'` (the first
-  evaluation, pre-first-paint) or `'reevaluation'`. The guard for
-  session-state settings, startup-only notices, and work too expensive to
+  evaluation, pre-first-paint) or `'reevaluation'`. The general form of
+  `applyDefault`'s guard: startup-only notices, work too expensive to
   redo on every config save.
 - `storage.read/write(file)` — plain files under `<configDir>/storage/<id>/`
   behind the ipc.ts contract: the ONE fs capability an extension has,

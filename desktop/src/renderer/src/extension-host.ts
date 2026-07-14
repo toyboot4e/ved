@@ -25,7 +25,13 @@ import type { ExtensionSource } from '../../shared/ipc';
 import { isValidCommandName, normalizeChordSpec } from './extension-model';
 import { addExtensionPanel, addStatusItem, openExtensionPicker } from './extension-ui';
 import { useNoticeStore } from './notice';
-import { applySettings, captureSettingsBaseline, resetSettingsToBaseline, type SettingsBaseline } from './settings';
+import {
+  applySettings,
+  applySettingsDefault,
+  captureSettingsBaseline,
+  resetSettingsToBaseline,
+  type SettingsBaseline,
+} from './settings';
 
 // ---------------------------------------------------------------------------
 // Store: what the shell (app.tsx) feeds the editor.
@@ -362,6 +368,8 @@ const createUserExtension = (id: string, fileName: string, activation: Activatio
       // nothing is tracked — whole-config re-evaluation resets to the launch
       // baseline before every activation pass, so removed lines revert.
       apply: (settings) => applySettings(settings, (message) => useNoticeStore.getState().show(message)),
+      applyDefault: (settings) =>
+        applySettingsDefault(settings, activation, (message) => useNoticeStore.getState().show(message)),
     },
 
     storage: {

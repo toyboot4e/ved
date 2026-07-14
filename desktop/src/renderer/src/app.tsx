@@ -79,11 +79,12 @@ export const App = (): React.JSX.Element => {
   // table.
   const userExtensions = useUserExtensionsStore((s) => s.editorExtensions);
   const keybindings = useUserExtensionsStore((s) => s.keybindings);
-  // Stable identity per (vim, user-extensions) pair — the editor re-syncs
-  // attachments on identity change (same members stay attached).
+  const vimKeymap = useVimStore((s) => s.keymap);
+  // Stable identity per (vim, keymap, user-extensions) triple — the editor
+  // re-syncs attachments on identity change (same members stay attached).
   const editorExtensions = useMemo(
-    () => (vimEnabled ? [...vimExtensions(), ...userExtensions] : userExtensions),
-    [vimEnabled, userExtensions],
+    () => (vimEnabled ? [...vimExtensions(vimKeymap), ...userExtensions] : userExtensions),
+    [vimEnabled, vimKeymap, userExtensions],
   );
 
   // Switching to a buffer adopts its committed text + dirtiness as the live

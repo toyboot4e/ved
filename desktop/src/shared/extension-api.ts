@@ -244,6 +244,28 @@ export type UiHandle = {
   readonly notice: (message: string) => void;
 };
 
+/** One vim keymap RHS: a key sequence in Vim notation (a plain string is
+ *  noremap), `{ rhs, remap: true }` to let the RHS re-enter user mappings,
+ *  or a named primitive `{ action }`. */
+export type VedVimKeymapRhs = string | { readonly rhs: string; readonly remap?: boolean } | { readonly action: string };
+
+/** A vim keymap: per-map-mode tables of LHS (Vim key notation) → RHS —
+ *  structurally `@ved/vim`'s `VimKeymapConfig`. Validated when the vim
+ *  extension builds; a rejected keymap falls back to the defaults, loudly.
+ *  Insert-mode LHS must be plain printable characters (`jj`). */
+export type VedVimKeymap = {
+  /** Substituted for `<Leader>` in both LHS and RHS. Default `'\'`. */
+  readonly leader?: string;
+  /** Normal-mode maps (Vim's `nmap`). */
+  readonly normal?: Readonly<Record<string, VedVimKeymapRhs>>;
+  /** Visual-mode maps (Vim's `xmap`). */
+  readonly visual?: Readonly<Record<string, VedVimKeymapRhs>>;
+  /** Operator-pending maps (Vim's `omap`) — active after `d`/`c`/`y`. */
+  readonly operatorPending?: Readonly<Record<string, VedVimKeymapRhs>>;
+  /** Insert-mode maps (`jj` → `<Esc>`). */
+  readonly insert?: Readonly<Record<string, VedVimKeymapRhs>>;
+};
+
 /** The user-adjustable settings `settings.apply` accepts. Every field is
  *  optional; an omitted field keeps its current value. Invalid values report
  *  a notice and skip that field; numbers clamp to the same bounds the UI
@@ -282,6 +304,9 @@ export type VedSettings = {
   readonly invisibles?: { readonly newline?: boolean; readonly whitespace?: boolean };
   /** Whether Vim-style modal editing is on. */
   readonly vim?: boolean;
+  /** The vim user keymap (see `VedVimKeymap`). Applying rebuilds the vim
+   *  extension, so a live vim session re-attaches in normal mode. */
+  readonly vimKeymap?: VedVimKeymap;
   /** Whether the sidebar is shown. SESSION STATE after startup: a
    *  re-evaluation never resets it (unlike every other field), so apply it
    *  under an `activation === 'startup'` guard — unguarded, every config
@@ -303,6 +328,14 @@ export type VedSettings = {
 export type SettingsHandle = {
   /** Apply the given fields (see `VedSettings` for validation). */
   readonly apply: (settings: VedSettings) => void;
+  /** `apply`, but during the config's FIRST evaluation only — a
+   *  re-evaluation no-op (sugar for `if (ctx.activation === 'startup')`).
+   *  Fields set this way act as LAUNCH DEFAULTS: session-state fields
+   *  (`sidebarOpen`) simply persist afterwards, while baseline-tracked
+   *  fields REVERT to the launch baseline on the next re-evaluation (the
+   *  reset ran, nothing re-applied them) — use plain `apply` for values
+   *  that should track the config file. */
+  readonly applyDefault: (settings: VedSettings) => void;
 };
 
 /** Per-extension persistent storage: plain files in a directory ved keeps

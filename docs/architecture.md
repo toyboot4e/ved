@@ -724,9 +724,10 @@ Users can supply their OWN primitives, `createVimExtension({actions})`: a
 `VimCustomAction` reads the doc view and returns effects — never the modal
 state, so the state shape stays private — and is bindable as `{action}` RHS
 (collisions and unknown ids throw at construction).
-The shell reads `window.__vedVimKeymap` on the first toggle — the smoke seam,
-and the manual override until a settings field carries the same shape
-(docs/editor-ui-plan.md Phase 4 "Later").
+The keymap is the `vimKeymap` settings field (init.ts via `ctx.settings`; a
+change rebuilds the extension, re-attaching a live session in normal mode).
+`window.__vedVimKeymap` remains the smoke seam, consulted only when no
+settings keymap is set.
 
 ## Layout: writing modes and the page
 

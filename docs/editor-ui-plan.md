@@ -534,8 +534,7 @@ Steps:
 - [x] **4c. Pre-mount activation.** `initializeUserExtensions` moves from
   the app effect to `main.tsx`, ahead of the mount, bounded.
 
-Later, on demand: the vim keymap as a settings field (`__vedVimKeymap` is
-the seam today), a `config.open` command opening `init.ts` in a ved tab.
+Later, on demand: a `config.open` command opening `init.ts` in a ved tab.
 
 ### Phase 6 — vertical page layouts (`VerticalRows`) *(done 2026-06-16, refined through 2026-07)*
 

@@ -7,7 +7,7 @@ import { mkdir, mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import type { ModelSeams } from './harness.ts';
-import { fail, finish, launchVed, pressMod, step } from './harness.ts';
+import { caretOffset, fail, finish, launchVed, pressMod, setCaret, step } from './harness.ts';
 
 // The fixture uses the API exactly as a user would: `import type` from
 // 'ved' (types-only — stripped with the types), commands.register under the
@@ -19,6 +19,9 @@ export async function activate(ctx: VedContext): Promise<void> {
   // re-evaluation fixture (below) REMOVES this line and the driver asserts
   // the revert to the launch baseline.
   ctx.settings.apply({ fontSize: 23, theme: 'dark' });
+  // applyDefault: a launch default — startup applies it, a re-evaluation
+  // no-ops (sidebarOpen is session state, so it persists either way).
+  ctx.settings.applyDefault({ sidebarOpen: true });
   // Persistence: the SECOND activation (the re-evaluation) reads what the
   // first one wrote — the driver asserts P7 after the reload.
   const prev = await ctx.storage.read('count.txt');
@@ -131,6 +134,8 @@ try {
   const size0 = await editorFontSize();
   if (Math.abs(size0 - 23) < 0.5) step('ctx.settings.apply set the editor font size (23px)');
   else fail(`font size not applied — got ${size0}`);
+  if (await page.$('[aria-label="File browser"]')) step('applyDefault opened the sidebar at startup');
+  else fail('sidebar not visible despite applyDefault({ sidebarOpen: true })');
 
   await pressMod(page, '8');
   await page.waitForTimeout(150);
@@ -232,6 +237,33 @@ try {
   if (tsconfig.compilerOptions?.paths?.ved?.[0] === './.generated/ved.d.ts') {
     step('generated root tsconfig maps the ved specifier into .generated/');
   } else fail('tsconfig.json missing the ved path mapping');
+
+  // The applyDefault'd sidebar survived the re-evaluation (session state:
+  // the reset leaves it, the startup-only apply did not re-run).
+  if (await page.$('[aria-label="File browser"]')) step('sidebar state survived the re-evaluation');
+  else fail('sidebar closed by the re-evaluation');
+
+  // Vim from the config: a third fixture enables vim with a user keymap —
+  // the re-evaluation swaps it in live, and the remapped Q runs 0.
+  const INIT_V3 = `import type { VedContext } from 'ved';
+export function activate(ctx: VedContext): void {
+  ctx.settings.apply({ vim: true, vimKeymap: { normal: { Q: '0' } } });
+}
+`;
+  await writeFile(join(configDir, 'init.ts'), INIT_V3, 'utf-8');
+  let vimOn = false;
+  for (let i = 0; i < 60 && !vimOn; i++) {
+    await page.waitForTimeout(150);
+    vimOn = (await page.evaluate(() => document.getElementById('vim-mode')?.textContent ?? null)) === 'NORMAL';
+  }
+  if (vimOn) step('re-evaluation enabled vim from the config (vim: true)');
+  else fail('vim never enabled from the config');
+  await setCaret(page, 3);
+  await page.keyboard.press('Q');
+  await page.waitForTimeout(150);
+  const off = await caretOffset(page);
+  if (off === 0) step('vimKeymap from init.ts applied: Q → 0 (line start)');
+  else fail(`vim user keymap did not apply — caret at ${off}`);
 } finally {
   await ved.close();
   await rm(configDir, { recursive: true, force: true });
