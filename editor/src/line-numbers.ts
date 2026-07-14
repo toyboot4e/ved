@@ -254,7 +254,7 @@ export const mountLineNumbers = (
     overlay.style.fontSize = env.cs.fontSize; // numbers scale with the body
     const o = overlay.getBoundingClientRect();
     const next = contentParas().map((p) => measurePara(p, env, o));
-    bumpMeasureSeam(next.length);
+    bumpMeasureSeam(next.filter((c) => c.hiddenCount === undefined).length);
     paraCache = next;
     finish(env, o);
   };
@@ -280,8 +280,11 @@ export const mountLineNumbers = (
     let measured = 0;
     const cachedOrFresh = (c: ParaLines | undefined, p: HTMLElement, reusable: boolean): ParaLines => {
       if (reusable && c && c.el === p) return c;
-      measured++;
-      return measurePara(p, env, o);
+      const entry = measurePara(p, env, o);
+      // The seam counts REAL rect walks: a windowing-hidden paragraph costs
+      // one zero-box read, and a window flip visits hundreds of them.
+      if (entry.hiddenCount === undefined) measured++;
+      return entry;
     };
     const next: ParaLines[] = [];
     for (let i = 0; i < cleanStart; i++) next.push(cachedOrFresh(old[i], ps[i]!, true));

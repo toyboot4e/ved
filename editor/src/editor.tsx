@@ -476,6 +476,7 @@ export const VedEditor = (props: VedEditorProps): React.JSX.Element => {
       }
       if (tr.docChanged && view.composing) imeCellPadRef.current?.update();
       if (tr.docChanged) pageGapsRef.current?.schedule(false);
+      if (tr.docChanged) windowingRef.current?.onDocChanged();
       else if (tr.selectionSet) lineNumbersRef.current?.refreshCaret();
     };
     /** dispatchTransaction's commit tail: caret reveal (PM's scrollIntoView

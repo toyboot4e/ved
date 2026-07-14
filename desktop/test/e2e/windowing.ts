@@ -102,10 +102,50 @@ try {
   assert.equal(Math.min(...startLabels), 1, 'the first line is numbered 1 at the doc start');
   step('scroll-driven re-window with correct labels');
 
-  // --- multicol never windows; a mode round-trip materializes and re-windows ---
+  // --- the multicol modes window too (band jumpers + exact tail): the
+  // scroll extent must match the fully materialized layout, and typing must
+  // land — the geometry pin for the fragmentation-free spacer ---
   await clickWritingMode(page, 'Vertical Columns');
-  await page.waitForTimeout(500);
-  assert.equal(await hiddenCount(), 0, 'multicol mode materializes everything');
+  await page.waitForTimeout(400);
+  assert.ok((await waitForHidden(4000)) > 0, 'the multicol mode windows');
+  // Wait for a SETTLED window (the mode-switch observer cascade materializes
+  // and re-windows; specs re-derive across passes): two identical samples.
+  for (let same = 0, prev = -1; same < 2; ) {
+    await page.waitForTimeout(300);
+    const now = (await hiddenCount()) * 1e9 + (await page.evaluate(() => document.body.scrollHeight));
+    same = now === prev ? same + 1 : 0;
+    prev = now;
+  }
+  const spacerParts = await page.evaluate(() => {
+    const sp = document.querySelector('#editor-content > .ved-window-spacer');
+    return sp
+      ? { jumpers: sp.querySelectorAll('.ved-window-jumper').length, tail: !!sp.querySelector('.ved-window-tail') }
+      : null;
+  });
+  assert.ok(spacerParts && spacerParts.tail, 'the multicol spacer has its tail');
+  assert.ok((spacerParts?.jumpers ?? 0) > 0, 'the multicol spacer jumps whole bands');
+  const windowedExtent = await page.evaluate(
+    () => document.querySelector('#editor-content')!.parentElement!.scrollHeight,
+  );
+  // Materialize everything (a caret jump into the hidden far end chains it)
+  // and compare extents BEFORE the re-window lands: extent-exact spacers
+  // keep them equal.
+  const docLen = (await text()).length;
+  await setCaret(docLen);
+  const materializedExtent = await page.evaluate(
+    () => document.querySelector('#editor-content')!.parentElement!.scrollHeight,
+  );
+  assert.equal(await hiddenCount(), 0, 'the jump materialized everything');
+  assert.ok(
+    Math.abs(windowedExtent - materializedExtent) <= 2,
+    `windowed scroll extent equals the materialized layout (${windowedExtent} vs ${materializedExtent})`,
+  );
+  await page.keyboard.type('列');
+  await page.waitForTimeout(300);
+  assert.ok((await text()).endsWith('列'), 'typing lands in the windowed multicol mode');
+  step('multicol windows: band jumpers + exact tail, extent-exact');
+
+  // --- a mode round-trip materializes and re-windows ---
   await clickWritingMode(page, 'Vertical Rows');
   // The re-engage settles through the mode switch's observer cascade
   // (materialize-all preludes between full measures) — poll past it.

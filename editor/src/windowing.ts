@@ -1,8 +1,10 @@
 // The windowing measure/decide side (pm/windowing.ts is the plugin + pure
 // math): keep the paragraphs near the viewport (and the caret, and paragraph
-// 0) rendered, display:none the rest behind extent-exact spacers. Decided
-// per scroll/edit from ONE read phase (a box rect per visible paragraph, a
-// rect per spacer), dispatched only when the hidden set actually changes.
+// 0) rendered, display:none the rest behind extent-exact spacers — a sized
+// block in the block-flow modes; whole-band jumpers + an exact tail in the
+// multicol modes (pm/windowing.ts has the why). Decided per scroll/edit from
+// ONE read phase in FLOW coordinates (a rect per visible paragraph, a rect
+// per spacer), dispatched only when the hidden set or a spacer spec changes.
 //
 // Discipline (the page-gap precedent):
 //   - never dispatch while composing — a window change redraws around the
@@ -65,79 +67,158 @@ export type Windowing = {
   /** The overlay's cold fallback for a paragraph hidden before it was ever
    *  measured: line count from the cached extent / the line pitch. */
   readonly hiddenLineFallback: (p: Element) => number | null;
+  /** Called after every doc-changing dispatch: multicol spacer specs are
+   *  position-dependent and re-derive; block-flow needs nothing. */
+  readonly onDocChanged: () => void;
   readonly destroy: () => void;
 };
 
 type ExtentEntry = { key: string; extent: number };
 
-type SpanEnv = { key: string; vertical: boolean; winLo: number; winHi: number };
-
-/** [blockLo, blockHi] of a rect on the env's block axis. */
-const rectSpan = (r: DOMRect, env: SpanEnv): [number, number] => (env.vertical ? [r.left, r.right] : [r.top, r.bottom]);
-
-const spanHits = (lo: number, hi: number, env: SpanEnv): boolean => hi >= env.winLo && lo <= env.winHi;
-
-/** One VISIBLE paragraph: measure its box, refresh the extent cache. */
-const readVisibleSpan = (
-  el: HTMLElement,
-  extents: WeakMap<Element, ExtentEntry>,
-  env: SpanEnv,
-): { hit: boolean; ext: number | null } => {
-  const [lo, hi] = rectSpan(el.getBoundingClientRect(), env);
-  const ext = hi - lo;
-  if (ext > 0) extents.set(el, { key: env.key, extent: ext });
-  return { hit: spanHits(lo, hi, env), ext: ext > 0 ? ext : null };
+/** Flow geometry shared by both mode families. FLOW POSITION is the px
+ *  distance travelled along the reading's block progression from the
+ *  content start: in block flow that is the plain block offset (one
+ *  unbounded band); in a MULTICOL mode the flow wraps into column bands —
+ *  flowPos = bandIndex × bandCap + the within-band offset, all measured
+ *  from CONTENT edges (border-box edges include the container padding and
+ *  skew every tail by it). */
+type FlowEnv = {
+  key: string;
+  vertical: boolean;
+  multiCol: boolean;
+  /** Band 0's coordinate on the band axis (paragraph 0's first rect). */
+  band0: number;
+  /** Band pitch on the band axis (column width + gap); Infinity = one band. */
+  period: number;
+  /** Flow px one band holds; Infinity in block flow. */
+  bandCap: number;
+  /** The within-band origin: content-box right edge (vertical-rl flows
+   *  leftward) or content-box top (horizontal-tb flows downward). */
+  contentStart: number;
+  /** The OUTER window (viewport ± one viewport, flow px): a VISIBLE
+   *  paragraph hides only when fully outside it. */
+  flowLo: number;
+  flowHi: number;
+  /** The INNER window (viewport ± a quarter viewport): a HIDDEN paragraph
+   *  materializes only when it reaches it. The dead zone between the two
+   *  absorbs the drift between live-measured and cached-extent spans, which
+   *  otherwise flapped ~20 boundary paragraphs per keystroke (each flap
+   *  re-dispatches the window and re-measures the overlay tail). */
+  flowLoIn: number;
+  flowHiIn: number;
 };
 
-/** One HIDDEN paragraph: its virtual span inside the run — `runStart` is the
- *  run's block-start edge (vertical-rl flows leftward from the spacer's
- *  right edge, horizontal-tb downward from its top), `runCum` the extents
- *  before it. Unknown geometry reads as a hit: the paragraph materializes
- *  and re-learns next pass. */
-const readHiddenSpan = (runStart: number | null, runCum: number, ext: number | null, env: SpanEnv): boolean => {
-  if (runStart === null || ext === null) return true;
-  const dir = env.vertical ? -1 : 1;
-  const a = runStart + dir * runCum;
-  const b = runStart + dir * (runCum + ext);
-  return spanHits(Math.min(a, b), Math.max(a, b), env);
+/** The band a rect lies in: FLOOR against the container's content-box
+ *  origin — a lattice anchor. Anchoring on a paragraph's own line rect and
+ *  rounding mis-bands any rect past mid-band (a whole-bandCap cursor jump). */
+const bandOfRect = (r: DOMRect, env: FlowEnv): number =>
+  env.multiCol ? Math.floor(((env.vertical ? r.top : r.left) - env.band0) / env.period) : 0;
+
+/** Flow position of a rect's leading corner. */
+const flowOf = (r: DOMRect, env: FlowEnv): number => {
+  const within = env.vertical ? env.contentStart - r.right : r.top - env.contentStart;
+  if (!env.multiCol) return within;
+  return bandOfRect(r, env) * env.bandCap + within;
 };
 
-/** The read phase: one block-axis span per paragraph, checked against the
- *  expanded viewport. */
+const flowHits = (lo: number, hi: number, env: FlowEnv): boolean => hi >= env.flowLo && lo <= env.flowHi;
+
+const flowHitsInner = (lo: number, hi: number, env: FlowEnv): boolean => hi >= env.flowLoIn && lo <= env.flowHiIn;
+
+/** The first positioned client rect of an element (a multicol spacer's
+ *  leading fragment; zero-height jumpers still carry a position). */
+const firstRect = (el: Element): DOMRect | null => {
+  for (const r of el.getClientRects()) return r;
+  const b = el.getBoundingClientRect();
+  return b.width > 0 || b.height > 0 ? b : null;
+};
+
+/** The read phase, one document-order walk in FLOW coordinates: visible
+ *  paragraphs re-sync the flow cursor from their own rect (and refresh the
+ *  extent cache); a hidden run re-syncs at its SPACER's rect and bridges its
+ *  members with cached extents. `cursorBefore[i]` is each paragraph's flow
+ *  start — the multicol spacer spec (jumpers + tail) derives from it. */
 const readSpans = (
   content: HTMLElement,
   paras: NodeListOf<HTMLElement>,
   current: ReadonlySet<number>,
   extents: WeakMap<Element, ExtentEntry>,
-  env: SpanEnv,
-): { intersects: boolean[]; known: (number | null)[] } => {
+  env: FlowEnv,
+): { intersects: boolean[]; intersectsIn: boolean[]; known: (number | null)[]; cursorBefore: number[] } => {
   const spacers = content.querySelectorAll<HTMLElement>(':scope > .ved-window-spacer');
   let spacerIdx = 0;
-  let runStart: number | null = null; // block-start edge of the current hidden run
-  let runCum = 0;
+  let inRun = false;
+  let cursor = 0;
   const intersects: boolean[] = new Array(paras.length);
+  const intersectsIn: boolean[] = new Array(paras.length);
   const known: (number | null)[] = new Array(paras.length);
+  const cursorBefore: number[] = new Array(paras.length);
   for (let i = 0; i < paras.length; i++) {
     const el = paras[i]!;
     if (!current.has(i)) {
-      runStart = null;
-      const v = readVisibleSpan(el, extents, env);
-      intersects[i] = v.hit;
-      known[i] = v.ext;
+      inRun = false;
+      const r = firstRect(el);
+      const ext = measureExtent(el, paras[i + 1] ?? null, spacers[spacerIdx] ?? null, r, extents, env);
+      if (r) cursor = flowOf(r, env); // re-sync on every visible rect
+      cursorBefore[i] = cursor;
+      intersects[i] = ext === null || !r ? true : flowHits(cursor, cursor + ext, env);
+      intersectsIn[i] = ext === null || !r ? true : flowHitsInner(cursor, cursor + ext, env);
+      cursor += ext ?? 0;
+      known[i] = ext;
       continue;
     }
-    if (runStart === null) {
-      const r = spacers[spacerIdx++]?.getBoundingClientRect();
-      runStart = r ? rectSpan(r, env)[env.vertical ? 1 : 0] : null;
-      runCum = 0;
+    if (!inRun) {
+      inRun = true;
+      const sp = spacers[spacerIdx++];
+      const r = sp ? firstRect(sp) : null;
+      if (r) cursor = flowOf(r, env); // re-sync at the run's live spacer
     }
+    cursorBefore[i] = cursor;
     const entry = extents.get(el);
     const ext = entry && entry.key === env.key ? entry.extent : null;
-    intersects[i] = readHiddenSpan(runStart, runCum, ext, env);
-    runCum += ext ?? 0;
+    intersects[i] = ext === null ? true : flowHits(cursor, cursor + ext, env);
+    intersectsIn[i] = ext === null ? true : flowHitsInner(cursor, cursor + ext, env);
+    cursor += ext ?? 0;
     known[i] = ext;
   }
-  return { intersects, known };
+  return { intersects, intersectsIn, known, cursorBefore };
+};
+
+/** A visible paragraph's flow extent, cached under the layout key. In block
+ *  flow the paragraph's own box IS its extent (no fragmentation). In a
+ *  multicol mode the box lies about fragmented paragraphs, so the extent is
+ *  the FLOW DELTA to the next flow item — the next paragraph's rect, or the
+ *  following spacer's when the neighbor is hidden; the document's last
+ *  paragraph has no delta and simply stays visible (null). */
+const measureExtent = (
+  el: HTMLElement,
+  next: HTMLElement | null,
+  nextSpacer: HTMLElement | null,
+  own: DOMRect | null,
+  extents: WeakMap<Element, ExtentEntry>,
+  env: FlowEnv,
+): number | null => {
+  let ext: number | null = null;
+  if (!env.multiCol) {
+    const b = el.getBoundingClientRect();
+    ext = env.vertical ? b.width : b.height;
+    if (!(ext > 0)) ext = null;
+  } else if (own) {
+    // The next flow item after this paragraph: a hidden neighbor renders as
+    // the run's spacer, a visible one as itself.
+    const nextEl = next && next.classList.contains('vedWindowHidden') ? nextSpacer : next;
+    const nr = nextEl ? firstRect(nextEl) : null;
+    if (nr) {
+      const d = flowOf(nr, env) - flowOf(own, env);
+      ext = d > 0 ? d : null;
+    }
+  }
+  if (ext !== null) extents.set(el, { key: env.key, extent: ext });
+  else {
+    const entry = extents.get(el);
+    ext = entry && entry.key === env.key ? entry.extent : null;
+  }
+  return ext;
 };
 
 export const createWindowing = (
@@ -170,10 +251,7 @@ export const createWindowing = (
       firstPara ? getComputedStyle(firstPara).inlineSize : ''
     }`;
 
-  /** Enabled only in the block-flow modes (multicol fragmentation of a
-   *  spacer is unverified — see pm/windowing.ts) on large documents. */
-  const enabled = (): boolean =>
-    !view.dom.classList.contains(styles.multiColMode ?? '') && view.state.doc.childCount >= WINDOW_MIN_PARAS;
+  const enabled = (): boolean => view.state.doc.childCount >= WINDOW_MIN_PARAS;
 
   const paraIndexOf = ($pos: { index: (depth: number) => number }): number => $pos.index(0);
 
@@ -185,24 +263,74 @@ export const createWindowing = (
 
   const dispatchRuns = (runs: readonly HiddenRun[], shift: WindowShift | null): void => {
     hasHidden = runs.length > 0;
+    // Test seam: windowing dispatches per scenario — steady-state typing
+    // must not re-dispatch the window (edit-perf pins the overlay fallout).
+    const w = globalThis as unknown as { __vedWindowDispatches?: number };
+    w.__vedWindowDispatches = (w.__vedWindowDispatches ?? 0) + 1;
     view.dispatch(windowingTr(view.state, runs));
     if (shift !== null) onWindowChange(shift);
   };
 
-  /** The pass's environment reads: the layout key, the block axis, and the
-   *  viewport expanded by one viewport of margin on each side. */
-  const readPassEnv = (firstPara: Element | undefined): SpanEnv & { vertical: boolean } => {
+  /** The pass's environment reads: the layout key, the flow geometry, and
+   *  the viewport expanded by one viewport of margin — converted to FLOW px
+   *  (whole bands in the multicol modes). Returns null when the geometry is
+   *  unreadable (no rendered paragraph 0 yet). */
+  const readPassEnv = (firstPara: HTMLElement | undefined): FlowEnv | null => {
     const cs = getComputedStyle(view.dom);
     const vertical = cs.writingMode.startsWith('vertical');
+    const multiCol = view.dom.classList.contains(styles.multiColMode ?? '');
     lastPitch = Number.parseFloat(cs.lineHeight) || 28;
+    const border = vertical
+      ? (Number.parseFloat(cs.paddingRight) || 0) + (Number.parseFloat(cs.borderRightWidth) || 0)
+      : (Number.parseFloat(cs.paddingTop) || 0) + (Number.parseFloat(cs.borderTopWidth) || 0);
+    const contentBox = view.dom.getBoundingClientRect();
+    const contentStart = vertical ? contentBox.right - border : contentBox.top + border;
+    if (!firstPara) return null;
     const box = mount.getBoundingClientRect();
-    const margin = vertical ? mount.clientWidth : mount.clientHeight;
-    return {
+    // The scroll axis: the band axis in the multicol modes (bands tile along
+    // it), the block axis otherwise.
+    const scrollY = multiCol ? vertical : !vertical;
+    const margin = scrollY ? mount.clientHeight : mount.clientWidth;
+    const winLo = (scrollY ? box.top : box.left) - margin;
+    const winHi = (scrollY ? box.bottom : box.right) + margin;
+    const env: FlowEnv = {
       key: layoutKey(cs, firstPara),
       vertical,
-      winLo: (vertical ? box.left : box.top) - margin,
-      winHi: (vertical ? box.right : box.bottom) + margin,
+      multiCol,
+      // The band lattice anchors at the container's CONTENT-BOX origin
+      // (bands tile from it) — never a paragraph rect, whose within-band
+      // offset varies.
+      band0: multiCol
+        ? vertical
+          ? contentBox.top + (Number.parseFloat(cs.paddingTop) || 0) + (Number.parseFloat(cs.borderTopWidth) || 0)
+          : contentBox.left + (Number.parseFloat(cs.paddingLeft) || 0) + (Number.parseFloat(cs.borderLeftWidth) || 0)
+        : 0,
+      period: multiCol ? (Number.parseFloat(cs.columnWidth) || 0) + (Number.parseFloat(cs.columnGap) || 0) : Infinity,
+      bandCap: multiCol
+        ? vertical
+          ? view.dom.clientWidth - (Number.parseFloat(cs.paddingLeft) || 0) - (Number.parseFloat(cs.paddingRight) || 0)
+          : view.dom.clientHeight - (Number.parseFloat(cs.paddingTop) || 0) - (Number.parseFloat(cs.paddingBottom) || 0)
+        : Infinity,
+      contentStart,
+      flowLo: 0,
+      flowHi: 0,
+      flowLoIn: 0,
+      flowHiIn: 0,
     };
+    if (multiCol && (!(env.period > 0) || !(env.bandCap > 0))) return null;
+    // An axis window → flow px (whole bands in the multicol modes).
+    const toFlow = (lo: number, hi: number): [number, number] => {
+      if (multiCol) {
+        const bandLo = Math.floor((lo - env.band0) / env.period);
+        const bandHi = Math.floor((hi - env.band0) / env.period);
+        return [bandLo * env.bandCap, (bandHi + 1) * env.bandCap];
+      }
+      // Leftward flow in vertical-rl: larger x = earlier flow.
+      return vertical ? [contentStart - hi, contentStart - lo] : [lo - contentStart, hi - contentStart];
+    };
+    [env.flowLo, env.flowHi] = toFlow(winLo, winHi);
+    [env.flowLoIn, env.flowHiIn] = toFlow(winLo + margin * 0.75, winHi - margin * 0.75);
+    return env;
   };
 
   /** The changed-membership span between the live hidden set and the wanted
@@ -243,25 +371,130 @@ export const createWindowing = (
     const paras = view.dom.querySelectorAll<HTMLElement>(':scope > p');
     if (paras.length !== state.doc.childCount) return; // DOM mid-flight — the next schedule retries
     const env = readPassEnv(paras[0]);
+    if (!env) return;
 
-    // Selection pad: both ends, ± CARET_PAD.
+    // Selection pad: both ends, ± CARET_PAD. The document's LAST paragraph
+    // also stays visible: a multicol extent is the flow delta to the NEXT
+    // item, which the last paragraph doesn't have.
     const headPara = paraIndexOf(state.selection.$head);
     const anchorPara = paraIndexOf(state.selection.$anchor);
     const nearCaret = (i: number): boolean =>
       Math.abs(i - headPara) <= CARET_PAD || Math.abs(i - anchorPara) <= CARET_PAD;
 
-    const { intersects, known } = readSpans(view.dom, paras, current, extents, env);
-    const runs = runsFromWanted(
-      paras.length,
-      (i) => i !== 0 && !nearCaret(i) && !intersects[i],
-      (i) => known[i] ?? null,
-    );
-    // Dispatch only when the hidden MEMBERSHIP changes (an extent can only
-    // change under a new layout key, which materializes everything first).
+    const { intersects, intersectsIn, known, cursorBefore } = readSpans(view.dom, paras, current, extents, env);
+    // Hysteresis: a VISIBLE paragraph hides only when outside the OUTER
+    // window; a HIDDEN one materializes only when it reaches the INNER one.
+    // The dead zone absorbs live-vs-cached span drift at the boundary.
+    const wantHidden = (i: number): boolean => {
+      if (i === 0 || i === paras.length - 1 || nearCaret(i)) return false;
+      return current.has(i) ? !intersectsIn[i] : !intersects[i];
+    };
+    let runs = runsFromWanted(paras.length, wantHidden, (i) => known[i] ?? null);
+    if (env.multiCol) {
+      // Convert each run to the deterministic spacer spec — whole-band
+      // JUMPERS + the exact within-band TAIL. The run's TRUE flow extent is
+      // COMPOSED, never re-summed per member: existing runs contribute
+      // their stored extent (minus the cached extents of members leaving),
+      // and only fresh members (measured live this pass) add their own —
+      // per-band slack summed over hundreds of members once drifted a spec
+      // a whole band short, and the wrong placement self-confirmed.
+      const stored = storedRunExtents(current);
+      runs = runs.map((run) => {
+        const flowExtent = composeFlowExtent(run, stored, known);
+        const start = cursorBefore[run.fromPara] ?? 0;
+        const end = start + flowExtent;
+        const endBand = Math.floor(end / env.bandCap);
+        // The first jumper breaks out of the band the SPACER's box opens in
+        // — the band holding the PRECEDING content's end, which is the band
+        // BEFORE the run's when the run starts exactly on a boundary (the
+        // spacer never wraps by itself; a half-px tie-break lands it there).
+        const spacerBand = Math.floor((start - 0.5) / env.bandCap);
+        return {
+          ...run,
+          flowExtent,
+          jumpers: Math.max(0, endBand - spacerBand),
+          extent: Math.max(0, end - endBand * env.bandCap),
+        };
+      });
+    }
+    // Dispatch when the hidden MEMBERSHIP changes — or, in a multicol mode,
+    // when a surviving run's spacer SPEC drifted from the live DOM (an edit
+    // above it moved the band alignment).
     const shift = membershipShift(paras.length, current, runs);
-    if (shift === null) return;
-    dispatchRuns(runs, shift);
-    lastPassScroll = env.vertical ? mount.scrollLeft : mount.scrollTop;
+    if (shift === null && !(env.multiCol && specsDrifted(runs))) return;
+    const drift =
+      shift ??
+      shiftFor(paras.length, runs.length ? runs[0]!.fromPara : 0, runs.length ? runs[runs.length - 1]!.toPara : 0);
+    dispatchRuns(runs, drift);
+    lastPassScroll = env.multiCol === env.vertical ? mount.scrollTop : mount.scrollLeft;
+  };
+
+  /** The CURRENT runs' stored true flow extents, from the live spacers'
+   *  data-flow-extent (doc order pairs spacers with runs). Each entry:
+   *  the run's member indexes and its stored extent. */
+  const storedRunExtents = (current: ReadonlySet<number>): { members: number[]; extent: number }[] => {
+    const spacers = view.dom.querySelectorAll<HTMLElement>(':scope > .ved-window-spacer');
+    const out: { members: number[]; extent: number }[] = [];
+    let runMembers: number[] | null = null;
+    const sorted = [...current].sort((a, b) => a - b);
+    for (const i of sorted) {
+      if (runMembers && runMembers[runMembers.length - 1] === i - 1) runMembers.push(i);
+      else {
+        runMembers = [i];
+        out.push({ members: runMembers, extent: Number.NaN });
+      }
+    }
+    for (let r = 0; r < out.length; r++) {
+      const sp = spacers[r];
+      out[r]!.extent = sp ? Number.parseFloat(sp.dataset.flowExtent ?? '') : Number.NaN;
+    }
+    return out.filter((r) => Number.isFinite(r.extent));
+  };
+
+  /** A wanted run's true flow extent: stored extents of the current runs it
+   *  fully or partially covers (members LEAVING a run subtract their cached
+   *  extents — a handful, bounded error) plus the cached extents of fresh
+   *  members (visible now, measured live this pass — exact). */
+  const composeFlowExtent = (
+    run: HiddenRun,
+    stored: readonly { members: number[]; extent: number }[],
+    known: readonly (number | null)[],
+  ): number => {
+    let px = 0;
+    const inRun = (i: number): boolean => i >= run.fromPara && i <= run.toPara;
+    const covered = new Set<number>();
+    for (const c of stored) {
+      if (!c.members.some(inRun)) continue;
+      let part = c.extent;
+      for (const m of c.members) {
+        covered.add(m);
+        if (!inRun(m)) part -= known[m] ?? 0;
+      }
+      px += part;
+    }
+    for (let i = run.fromPara; i <= run.toPara; i++) if (!covered.has(i)) px += known[i] ?? 0;
+    return Math.max(0, px);
+  };
+
+  /** Whether any wanted run's (jumpers, tail) differs from the live spacer
+   *  DOM — spacers appear in document order, one per current run. Tail
+   *  drift below half a line pitch is measurement jitter, not a layout
+   *  change (extents re-derive from live fractional rects every pass — a
+   *  tight tolerance dispatched per KEYSTROKE and re-measured the whole
+   *  tail); a real shift is at least a line. */
+  const specsDrifted = (runs: readonly HiddenRun[]): boolean => {
+    const spacers = view.dom.querySelectorAll<HTMLElement>(':scope > .ved-window-spacer');
+    if (spacers.length !== runs.length) return true;
+    const tol = Math.max(2, lastPitch / 2);
+    for (let i = 0; i < runs.length; i++) {
+      const run = runs[i]!;
+      const sp = spacers[i]!;
+      const jumpers = sp.querySelectorAll('.ved-window-jumper').length;
+      const tail = sp.querySelector<HTMLElement>('.ved-window-tail');
+      const tailPx = tail ? Number.parseFloat(tail.style.blockSize) || 0 : 0;
+      if (jumpers !== (run.jumpers ?? 0) || Math.abs(tailPx - run.extent) > tol) return true;
+    }
+    return false;
   };
 
   const schedule = (): void => {
@@ -308,8 +541,8 @@ export const createWindowing = (
     oldDoc: PMNode | null,
   ): { state: EditorState; shift: WindowShift } | null => {
     // The common per-keystroke path must be O(1): nothing hidden (small
-    // docs, multicol) or a composition (already materialized) bails before
-    // any decoration scan.
+    // docs) or a composition (already materialized) bails before any
+    // decoration scan.
     if (!hasHidden || view.composing) return null;
     const current = hiddenParas(next);
     if (current.size === 0) return null;
@@ -334,19 +567,31 @@ export const createWindowing = (
 
   const onScroll = (): void => {
     if (!enabled()) return;
+    // The scroll axis: the band axis in the multicol modes, the block axis
+    // otherwise (the same rule as readPassEnv).
     const vertical = getComputedStyle(view.dom).writingMode.startsWith('vertical');
-    const cur = vertical ? mount.scrollLeft : mount.scrollTop;
-    const span = vertical ? mount.clientWidth : mount.clientHeight;
+    const multiCol = view.dom.classList.contains(styles.multiColMode ?? '');
+    const scrollY = multiCol ? vertical : !vertical;
+    const cur = scrollY ? mount.scrollTop : mount.scrollLeft;
+    const span = scrollY ? mount.clientHeight : mount.clientWidth;
     if (lastPassScroll !== null && Math.abs(cur - lastPassScroll) < span * SCROLL_HYSTERESIS) return;
     schedule();
   };
   mount.addEventListener('scroll', onScroll, { passive: true });
+
+  /** A doc change in a windowed MULTICOL mode re-derives downstream spacer
+   *  specs (they are position-dependent — an edit above a run moves its band
+   *  alignment); block-flow extents are content-local and need nothing. */
+  const onDocChanged = (): void => {
+    if (hasHidden && view.dom.classList.contains(styles.multiColMode ?? '')) schedule();
+  };
 
   return {
     schedule,
     materializeAll,
     chainMaterialize,
     hiddenLineFallback,
+    onDocChanged,
     destroy: (): void => {
       mount.removeEventListener('scroll', onScroll);
       cancelAnimationFrame(raf);

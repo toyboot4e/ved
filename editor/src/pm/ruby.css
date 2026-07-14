@@ -468,12 +468,24 @@ ruby.rubyActive + .rubyDelimClose {
 /* Paragraph windowing (pm/windowing.ts + windowing.ts): far-from-viewport
  * paragraphs are display:none'd — destroyed layout objects are the point,
  * Blink's per-key selection/layout walks scale with the RETAINED tree — and
- * one spacer per hidden run reproduces the run's exact extent (inline
- * block-size, logical so one rule serves both orientations). Block-flow
- * modes only; view-only, the model never knows. */
+ * one spacer per hidden run reproduces the run's exact extent. View-only,
+ * the model never knows. The spacer's parts: each JUMPER deterministically
+ * consumes one multicol column band via a forced break (fragmentation
+ * cannot be trusted to slice an empty block like the text it replaced), and
+ * the TAIL's inline blockSize (logical, so one rule serves both
+ * orientations) re-seats the following content inside its band. Block flow
+ * uses zero jumpers and the tail alone. */
 .vedWindowHidden {
   display: none;
 }
 .ved-window-spacer {
+  display: block;
+}
+.ved-window-jumper {
+  display: block;
+  block-size: 0;
+  break-after: column;
+}
+.ved-window-tail {
   display: block;
 }

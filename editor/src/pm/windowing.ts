@@ -9,10 +9,13 @@
 // decoration (`vedWindowHidden`) per hidden paragraph plus one widget spacer
 // per run. The model never knows.
 //
-// The multicol modes are NOT windowed: whether an empty spacer fragments
-// across column bands exactly like the text it replaces is unverified
-// (docs/architecture.md "Constraints & verified dead ends" gets the entry
-// when it is settled); block-flow positions are probe-verified exact.
+// The spacer has two forms, one mechanism (a widget decoration at the run's
+// start): in BLOCK FLOW one block sized to the run's exact extent; in the
+// MULTICOL modes fragmentation cannot be trusted to slice a block like the
+// text it replaced (probe-verified wrong), so the spacer is N zero-height
+// `break-after: column` JUMPERS — each deterministically consumes one column
+// band, no slicing arithmetic — plus one exact-height TAIL that re-seats the
+// following content inside its band. Block flow is the 0-jumper case.
 
 import type { Node as PMNode } from 'prosemirror-model';
 import type { EditorState, Transaction } from 'prosemirror-state';
@@ -22,18 +25,41 @@ import { Decoration, DecorationSet } from 'prosemirror-view';
 export const windowingKey = new PluginKey<DecorationSet>('vedWindowing');
 
 /** One maximal run of consecutive hidden paragraphs: child indexes
- *  `[fromPara, toPara]` inclusive, and the spacer's block extent in px (the
- *  sum of the members' measured extents). */
-export type HiddenRun = { readonly fromPara: number; readonly toPara: number; readonly extent: number };
+ *  `[fromPara, toPara]` inclusive, plus the spacer spec — `jumpers` forced
+ *  column breaks (multicol bands the run spans; 0 in block flow) and the
+ *  `extent` of the sized block after them (the whole run in block flow, the
+ *  final partial band in multicol). */
+export type HiddenRun = {
+  readonly fromPara: number;
+  readonly toPara: number;
+  readonly extent: number;
+  readonly jumpers?: number;
+  /** The run's TRUE total flow extent in px — measured from real rects when
+   *  the run formed and composed through membership changes (windowing.ts).
+   *  Stored on the spacer element (data-flow-extent) so re-derivations never
+   *  re-SUM per-member extents: per-band slack accumulated over hundreds of
+   *  members once drifted a spec a whole band short, and the wrong placement
+   *  then self-confirmed (every live rect agreed with it). */
+  readonly flowExtent?: number;
+};
 
-const spacerDOM = (extent: number) => (): HTMLElement => {
+const spacerDOM = (extent: number, jumpers: number, flowExtent: number) => (): HTMLElement => {
   const el = document.createElement('div');
   el.className = 'ved-window-spacer';
-  // Logical size: width in vertical-rl, height in horizontal-tb — one rule
-  // serves both orientations, like the page-gap widget.
-  el.style.blockSize = `${extent}px`;
+  el.dataset.flowExtent = String(Math.round(flowExtent * 100) / 100);
   // Read-only like every ved widget; the caret can never enter it.
   el.setAttribute('contenteditable', 'false');
+  for (let i = 0; i < jumpers; i++) {
+    const j = document.createElement('div');
+    j.className = 'ved-window-jumper';
+    el.appendChild(j);
+  }
+  const tail = document.createElement('div');
+  tail.className = 'ved-window-tail';
+  // Logical size: width in vertical-rl, height in horizontal-tb — one rule
+  // serves both orientations, like the page-gap widget.
+  tail.style.blockSize = `${extent}px`;
+  el.appendChild(tail);
   return el;
 };
 
@@ -55,11 +81,13 @@ const buildWindowDecos = (doc: PMNode, runs: readonly HiddenRun[]): Decoration[]
     const from = paraPos[run.fromPara];
     if (from === undefined) continue;
     decos.push(
-      // The spacer key is content-derived (position + extent): a run whose
+      // The spacer key is content-derived (position + spec): a run whose
       // boundary or size changed re-renders; an untouched run keeps its DOM.
-      Decoration.widget(from, spacerDOM(run.extent), {
+      Decoration.widget(from, spacerDOM(run.extent, run.jumpers ?? 0, run.flowExtent ?? run.extent), {
         side: -1,
-        key: `ved-window-spacer-${from}-${Math.round(run.extent)}`,
+        key: `ved-window-spacer-${from}-${run.jumpers ?? 0}-${Math.round(run.extent)}-${Math.round(
+          run.flowExtent ?? run.extent,
+        )}`,
       }),
     );
     for (let i = run.fromPara; i <= run.toPara; i++) {
