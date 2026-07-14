@@ -270,17 +270,7 @@ export const createWindowing = (
     // cached decorations, so this dispatch's updateState pulls sets that
     // agree with the new visibility.
     const doc = view.state.doc;
-    if (runs.length === 0) setWindowedNodes(null);
-    else {
-      const ws = new WeakSet<PMNode>();
-      for (const run of runs) {
-        for (let i = run.fromPara; i <= run.toPara; i++) {
-          const n = doc.maybeChild(i);
-          if (n) ws.add(n);
-        }
-      }
-      setWindowedNodes(ws);
-    }
+    installWindowedNodes(doc, runs);
     patchDecorationWindow(doc, flipped);
     // Test seam: windowing dispatches per scenario — steady-state typing
     // must not re-dispatch the window (edit-perf pins the overlay fallout).
@@ -564,24 +554,110 @@ export const createWindowing = (
     if (!hasHidden || view.composing) return null;
     const current = hiddenParas(next);
     if (current.size === 0) return null;
-    if (!neededParas(next, oldDoc, current).some((i) => current.has(i))) return null;
-    // Materialize EVERYTHING: a jump into a hidden region is rare (search,
-    // goto, undo, replaceAll), and splitting runs mid-dispatch would need
-    // fresh geometry the DOM can't answer yet. The scheduled pass re-windows.
+    const need = [...new Set(neededParas(next, oldDoc, current).filter((i) => current.has(i)))].sort((a, b) => a - b);
+    if (need.length === 0) return null;
+    // Materialize ONLY the needed paragraphs by SPLITTING their runs — with
+    // decoration windowing, materializing everything costs an O(doc)
+    // decoration rebuild per jump. Sub-run extents compose from the stored
+    // run extents minus the removed members' cached extents (bounded error,
+    // assigned to each run's last segment); multicol sub-run specs derive
+    // from the original spacer's live rect (readable mid-dispatch) plus the
+    // same arithmetic — approximate past the split for one frame, exact
+    // -ified by the immediately scheduled pass. A replaceAll-scale need
+    // still materializes everything.
     clearTimeout(rewindowTimer);
-    rewindowTimer = setTimeout(schedule, 150);
-    hasHidden = false;
-    // Decoration windowing: restore the flipped paragraphs' decorations in
-    // the SAME flush (before this state's updateState pulls them).
-    setWindowedNodes(null);
-    patchDecorationWindow(
-      next.doc,
-      [...current].sort((a, b) => a - b),
-    );
+    rewindowTimer = setTimeout(schedule, 0);
+    if (need.length > LARGE_EDIT_PARAS) {
+      hasHidden = false;
+      setWindowedNodes(null);
+      patchDecorationWindow(
+        next.doc,
+        [...current].sort((a, b) => a - b),
+      );
+      return {
+        state: next.apply(windowingTr(next, [])),
+        shift: shiftFor(next.doc.childCount, Math.min(...current), Math.max(...current)),
+      };
+    }
+    const runs = splitRunsAround(current, new Set(need));
+    hasHidden = runs.length > 0;
+    installWindowedNodes(next.doc, runs);
+    patchDecorationWindow(next.doc, need);
     return {
-      state: next.apply(windowingTr(next, [])),
-      shift: shiftFor(next.doc.childCount, Math.min(...current), Math.max(...current)),
+      state: next.apply(windowingTr(next, runs)),
+      shift: shiftFor(next.doc.childCount, need[0]!, need[need.length - 1]!),
     };
+  };
+
+  /** The current runs minus `needSet`'s members, extents composed from the
+   *  stored run extents (each run's measurement slack lands on its LAST
+   *  segment) and multicol specs re-derived arithmetically from each run's
+   *  live spacer rect. */
+  const splitRunsAround = (current: ReadonlySet<number>, needSet: ReadonlySet<number>): HiddenRun[] => {
+    const stored = storedRunExtents(current);
+    const paras = view.dom.querySelectorAll<HTMLElement>(':scope > p');
+    const spacers = view.dom.querySelectorAll<HTMLElement>(':scope > .ved-window-spacer');
+    const env = readPassEnv(paras[0]);
+    const runs: HiddenRun[] = [];
+    stored.forEach((c, idx) => {
+      const cached = (m: number): number => {
+        const el = paras[m];
+        const entry = el ? extents.get(el) : undefined;
+        return entry && env && entry.key === env.key ? entry.extent : 0;
+      };
+      const sumCached = c.members.reduce((px, m) => px + cached(m), 0);
+      const correction = c.extent - sumCached;
+      // Walk the members with a flow cursor anchored at the run's live
+      // spacer rect (multicol; block flow needs no positions).
+      const spacerRect = env?.multiCol ? (spacers[idx] ? firstRect(spacers[idx]!) : null) : null;
+      let cursor = spacerRect && env ? flowOf(spacerRect, env) : 0;
+      let seg: { from: number; ext: number; start: number } | null = null;
+      const segs: { from: number; to: number; ext: number; start: number }[] = [];
+      for (const m of c.members) {
+        if (needSet.has(m)) {
+          if (seg) segs.push({ from: seg.from, to: m - 1, ext: seg.ext, start: seg.start });
+          seg = null;
+        } else {
+          seg ??= { from: m, ext: 0, start: cursor };
+          seg.ext += cached(m);
+        }
+        cursor += cached(m);
+      }
+      if (seg) segs.push({ from: seg.from, to: c.members[c.members.length - 1]!, ext: seg.ext, start: seg.start });
+      if (segs.length > 0) segs[segs.length - 1]!.ext += correction;
+      for (const s of segs) {
+        if (!env?.multiCol) {
+          runs.push({ fromPara: s.from, toPara: s.to, extent: Math.max(0, s.ext), flowExtent: Math.max(0, s.ext) });
+          continue;
+        }
+        const end = s.start + s.ext;
+        const endBand = Math.floor(end / env.bandCap);
+        runs.push({
+          fromPara: s.from,
+          toPara: s.to,
+          flowExtent: Math.max(0, s.ext),
+          jumpers: Math.max(0, endBand - Math.floor((s.start - 0.5) / env.bandCap)),
+          extent: Math.max(0, end - endBand * env.bandCap),
+        });
+      }
+    });
+    return runs;
+  };
+
+  /** Install the decoration-windowing node set for `runs` against `doc`. */
+  const installWindowedNodes = (doc: PMNode, runs: readonly HiddenRun[]): void => {
+    if (runs.length === 0) {
+      setWindowedNodes(null);
+      return;
+    }
+    const ws = new WeakSet<PMNode>();
+    for (const run of runs) {
+      for (let i = run.fromPara; i <= run.toPara; i++) {
+        const n = doc.maybeChild(i);
+        if (n) ws.add(n);
+      }
+    }
+    setWindowedNodes(ws);
   };
 
   const hiddenLineFallback = (p: Element): number | null => {

@@ -643,6 +643,9 @@ export const expandedEpoch = (): number => expandedSetEpoch;
 // paragraph's node never changes while hidden (edits materialize first), and
 // indexes shift under edits while identities don't.
 let windowedNodes: WeakSet<PMNode> | null = null;
+// A window flip invalidated the caches: the NEXT cold rebuild is designed
+// (O(visible)) and counts on __vedWindowRebuilds, not the accidental seams.
+let windowRebuildPending = false;
 
 /** Install the set of windowing-hidden paragraph NODES (null = none). The
  *  per-paragraph builders skip members, so cold builds, edit advances, and
@@ -666,10 +669,13 @@ export const patchDecorationWindow = (doc: PMNode, flipped: readonly number[]): 
   if (flipped.length === 0) return;
   // A window-recenter/materialize-all flips hundreds of paragraphs —
   // patchParas (a set find + removal + add per paragraph) costs more there
-  // than a cold rebuild, which the new windowed set keeps small anyway.
+  // than a cold rebuild, which the new windowed set keeps small anyway
+  // (O(visible paragraphs)). The rebuild is DESIGNED, so it counts on its
+  // own seam, not the accidental-rebuild ones the perf suites pin flat.
   if (flipped.length > 64) {
     baseCache = null;
     rubyCache = null;
+    windowRebuildPending = true;
     return;
   }
   if (!parseCache || parseCache.doc !== doc) parseCache = parseDoc(doc);
@@ -878,9 +884,11 @@ const cachedBase = (
     };
     // Test seam: count O(document) base rebuilds. A caret move must reuse the
     // cache, and an EDIT must advance it (no increment either way) —
-    // caret-move-perf / edit-perf assert this.
-    const w = globalThis as unknown as { __vedBaseRebuilds?: number };
-    w.__vedBaseRebuilds = (w.__vedBaseRebuilds ?? 0) + 1;
+    // caret-move-perf / edit-perf assert this. A WINDOW-triggered rebuild is
+    // designed and O(visible): it counts separately.
+    const w = globalThis as unknown as { __vedBaseRebuilds?: number; __vedWindowRebuilds?: number };
+    if (windowRebuildPending) w.__vedWindowRebuilds = (w.__vedWindowRebuilds ?? 0) + 1;
+    else w.__vedBaseRebuilds = (w.__vedBaseRebuilds ?? 0) + 1;
   }
   return baseCache.set;
 };
@@ -913,9 +921,13 @@ const cachedStatic = (parse: Parse, policy: Appear, expanded: Set<number>, base:
   // Test seam: count O(rubies) static rebuilds. A caret move under ANY fixed
   // policy must reuse or patch the cache, and an edit under Rich/Plain must
   // advance it (no increment any of those ways) — click-perf / edit-perf
-  // assert this.
-  const w = globalThis as unknown as { __vedRubyRebuilds?: number };
-  w.__vedRubyRebuilds = (w.__vedRubyRebuilds ?? 0) + 1;
+  // assert this. A WINDOW-triggered rebuild is designed and O(visible): it
+  // counts separately, and completes the pending pair (base then ruby).
+  const w = globalThis as unknown as { __vedRubyRebuilds?: number; __vedWindowRebuilds?: number };
+  if (windowRebuildPending) {
+    w.__vedWindowRebuilds = (w.__vedWindowRebuilds ?? 0) + 1;
+    windowRebuildPending = false;
+  } else w.__vedRubyRebuilds = (w.__vedRubyRebuilds ?? 0) + 1;
   return rubyCache.set;
 };
 

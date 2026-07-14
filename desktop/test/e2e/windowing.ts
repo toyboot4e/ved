@@ -1,9 +1,11 @@
 // Paragraph windowing (editor windowing.ts + pm/windowing.ts): on a large
-// block-flow document, far-from-viewport paragraphs are display:none'd
-// behind extent-exact spacers — and NOTHING observable changes: the text
+// document, far-from-viewport paragraphs are display:none'd behind
+// extent-exact spacers (sized blocks in block flow; band jumpers + an exact
+// tail in the multicol modes) — and NOTHING observable changes: the text
 // model, the global line numbering, typing at either end, jumps into hidden
-// regions (materialize-before-caret), and mode switches (materialize-all)
-// all behave exactly as without windowing. Multicol modes never window.
+// regions (materialize-before-caret; a jump SPLITS its run rather than pay
+// an O(doc) decoration rebuild), and mode switches (materialize-all) all
+// behave exactly as without windowing.
 //
 // Usage: node test/e2e/windowing.ts (after pnpm run build).
 import assert from 'node:assert/strict';
@@ -106,10 +108,22 @@ try {
   // scroll extent must match the fully materialized layout, and typing must
   // land — the geometry pin for the fragmentation-free spacer ---
   await clickWritingMode(page, 'Vertical Columns');
-  await page.waitForTimeout(400);
+  // The mode switch MATERIALIZES everything first (the layout-change
+  // prelude) — sample the fully materialized scroll extent as the truth the
+  // windowed layout must reproduce.
+  let materializedExtent = 0;
+  for (let tries = 0; tries < 20 && materializedExtent === 0; tries++) {
+    await page.waitForTimeout(100);
+    if ((await hiddenCount()) === 0) {
+      materializedExtent = await page.evaluate(
+        () => document.querySelector('#editor-content')!.parentElement!.scrollHeight,
+      );
+    }
+  }
+  assert.ok(materializedExtent > 0, 'sampled the materialized extent after the mode switch');
   assert.ok((await waitForHidden(4000)) > 0, 'the multicol mode windows');
-  // Wait for a SETTLED window (the mode-switch observer cascade materializes
-  // and re-windows; specs re-derive across passes): two identical samples.
+  // Wait for a SETTLED window (specs re-derive across passes): two
+  // identical samples.
   for (let same = 0, prev = -1; same < 2; ) {
     await page.waitForTimeout(300);
     const now = (await hiddenCount()) * 1e9 + (await page.evaluate(() => document.body.scrollHeight));
@@ -127,23 +141,26 @@ try {
   const windowedExtent = await page.evaluate(
     () => document.querySelector('#editor-content')!.parentElement!.scrollHeight,
   );
-  // Materialize everything (a caret jump into the hidden far end chains it)
-  // and compare extents BEFORE the re-window lands: extent-exact spacers
-  // keep them equal.
-  const docLen = (await text()).length;
-  await setCaret(docLen);
-  const materializedExtent = await page.evaluate(
-    () => document.querySelector('#editor-content')!.parentElement!.scrollHeight,
-  );
-  assert.equal(await hiddenCount(), 0, 'the jump materialized everything');
   assert.ok(
     Math.abs(windowedExtent - materializedExtent) <= 2,
     `windowed scroll extent equals the materialized layout (${windowedExtent} vs ${materializedExtent})`,
   );
+  // A caret jump into the hidden far end SPLITS its run (materializing only
+  // the caret pad — a jump must not pay an O(doc) decoration rebuild) and
+  // preserves the total extent.
+  const docLen = (await text()).length;
+  await setCaret(docLen);
+  await page.waitForTimeout(120);
+  assert.ok((await hiddenCount()) > 0, 'the jump split the run instead of materializing everything');
+  const splitExtent = await page.evaluate(() => document.querySelector('#editor-content')!.parentElement!.scrollHeight);
+  assert.ok(
+    Math.abs(splitExtent - materializedExtent) <= Math.max(6, materializedExtent / 1000),
+    `the split preserves the scroll extent (${splitExtent} vs ${materializedExtent})`,
+  );
   await page.keyboard.type('列');
   await page.waitForTimeout(300);
   assert.ok((await text()).endsWith('列'), 'typing lands in the windowed multicol mode');
-  step('multicol windows: band jumpers + exact tail, extent-exact');
+  step('multicol windows: band jumpers + exact tail, extent-exact; jumps split runs');
 
   // --- a mode round-trip materializes and re-windows ---
   await clickWritingMode(page, 'Vertical Rows');
