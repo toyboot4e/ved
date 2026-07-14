@@ -101,7 +101,7 @@ construction**, not convention: there is no unprefixed registration API.
   `notice` (transient toast).
 - `settings.apply(fields)` sets the user-adjustable values — view config
   (font family/size, line space, page geometry), theme, writing mode,
-  appear policy, invisibles, vim, sidebar side/width. ASSIGNMENT, not
+  appear policy, invisibles, vim, sidebar visibility/side/width. ASSIGNMENT, not
   registration: nothing to dispose. Every config change re-evaluates the
   whole config from the launch baseline (below), so a removed line reverts
   by itself; last writer wins, and `init.ts` runs last. Runtime changes

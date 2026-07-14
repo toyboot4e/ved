@@ -39,6 +39,7 @@ export type SettingsBaseline = {
   readonly appearPolicy: AppearPolicy;
   readonly invisibles: Invisibles;
   readonly vimEnabled: boolean;
+  readonly sidebarOpen: boolean;
   readonly sidebarSide: SidebarSide;
   readonly sidebarWidth: number;
 };
@@ -50,6 +51,7 @@ export const captureSettingsBaseline = (): SettingsBaseline => ({
   appearPolicy: useAppearPolicyStore.getState().appearPolicy,
   invisibles: useInvisiblesStore.getState().invisibles,
   vimEnabled: useVimStore.getState().enabled,
+  sidebarOpen: useWorkspaceStore.getState().sidebarOpen,
   sidebarSide: useWorkspaceStore.getState().sidebarSide,
   sidebarWidth: useWorkspaceStore.getState().sidebarWidth,
 });
@@ -61,7 +63,11 @@ export const resetSettingsToBaseline = (baseline: SettingsBaseline): void => {
   useAppearPolicyStore.setState({ appearPolicy: baseline.appearPolicy });
   useInvisiblesStore.setState({ invisibles: baseline.invisibles });
   useVimStore.setState({ enabled: baseline.vimEnabled });
-  useWorkspaceStore.setState({ sidebarSide: baseline.sidebarSide, sidebarWidth: baseline.sidebarWidth });
+  useWorkspaceStore.setState({
+    sidebarOpen: baseline.sidebarOpen,
+    sidebarSide: baseline.sidebarSide,
+    sidebarWidth: baseline.sidebarWidth,
+  });
 };
 
 /** The view-config fields of `VedSettings`, all optional numbers but
@@ -142,6 +148,10 @@ const applyInvisiblesField = (settings: VedSettings, bad: ReportBad): void => {
 };
 
 const applySidebarFields = (settings: VedSettings, bad: ReportBad): void => {
+  if (settings.sidebarOpen !== undefined) {
+    if (typeof settings.sidebarOpen === 'boolean') useWorkspaceStore.setState({ sidebarOpen: settings.sidebarOpen });
+    else bad('sidebarOpen', settings.sidebarOpen);
+  }
   if (settings.sidebarSide !== undefined) {
     if (settings.sidebarSide === 'left' || settings.sidebarSide === 'right') {
       useWorkspaceStore.setState({ sidebarSide: settings.sidebarSide });

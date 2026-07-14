@@ -496,7 +496,7 @@ warn at runtime; and the keybinding half of it already exists as
 
 - **`ctx.settings.apply(settings)`** on `VedContext`: the view config
   (font family/size, line space, page geometry), `theme`, `writingMode`,
-  `appearPolicy`, `invisibles`, `vim`, sidebar side/width.
+  `appearPolicy`, `invisibles`, `vim`, sidebar visibility/side/width.
   `renderer/src/settings.ts` maps the names onto the existing stores;
   invalid fields notice and skip, numbers clamp through the stores' own
   bounds. Assignment, not registration — it returns nothing to dispose.

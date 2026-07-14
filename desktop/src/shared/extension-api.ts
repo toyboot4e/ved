@@ -270,6 +270,8 @@ export type VedSettings = {
   readonly invisibles?: { readonly newline?: boolean; readonly whitespace?: boolean };
   /** Whether Vim-style modal editing is on. */
   readonly vim?: boolean;
+  /** Whether the sidebar is shown. */
+  readonly sidebarOpen?: boolean;
   /** Which window edge the sidebar docks to. */
   readonly sidebarSide?: 'left' | 'right';
   /** Sidebar pane width in px. */

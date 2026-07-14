@@ -45,6 +45,7 @@ describe('applySettings', () => {
         appearPolicy: 'plain',
         invisibles: { whitespace: true },
         vim: true,
+        sidebarOpen: true,
         sidebarSide: 'right',
         sidebarWidth: 300,
       },
@@ -55,6 +56,7 @@ describe('applySettings', () => {
     // Partial: the omitted key keeps its current value.
     expect(useInvisiblesStore.getState().invisibles).toEqual({ ...pristine.invisibles, whitespace: true });
     expect(useVimStore.getState().enabled).toBe(true);
+    expect(useWorkspaceStore.getState().sidebarOpen).toBe(true);
     expect(useWorkspaceStore.getState().sidebarSide).toBe('right');
     expect(useWorkspaceStore.getState().sidebarWidth).toBe(300);
     expect(reports).toEqual([]);
@@ -100,6 +102,7 @@ describe('the launch baseline', () => {
         appearPolicy: 'char',
         invisibles: { newline: false, whitespace: true },
         vim: true,
+        sidebarOpen: true,
         sidebarSide: 'right',
         sidebarWidth: 320,
       },
