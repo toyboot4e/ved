@@ -373,6 +373,7 @@ const pushWhitespaceMarks = (decos: Decoration[], line: string, base: number, at
  *  on the contenteditable=false span and confirmed every composed character
  *  raw (mozc-verified at the page-boundary line end). */
 const pushParaBaseDecos = (decos: Decoration[], parse: Parse, pi: number, invis: Invisibles, at: OffsetToPos): void => {
+  if (isWindowed(parse, pi)) return; // no boxes — no decorations (windowing)
   const { paras, paraPos, prefixOff } = docIndex(parse.doc);
   const para = paras[pi];
   if (!para) return;
@@ -465,6 +466,7 @@ const buildBase = (
  *  The caret-dependent class (`rubyActive`) is a separate,
  *  O(1)-ish DELTA added on top in buildDecorations. */
 const pushParaRubyDecos = (nodes: Decoration[], parse: Parse, pi: number, expanded: Set<number>): void => {
+  if (isWindowed(parse, pi)) return; // no boxes — no decorations (windowing)
   const { paras, paraPos } = docIndex(parse.doc);
   const para = paras[pi];
   if (!para) return;
@@ -632,6 +634,63 @@ let expandedSetEpoch = 0;
 
 /** The current expanded-set epoch (see above). */
 export const expandedEpoch = (): number => expandedSetEpoch;
+
+// DECORATION WINDOWING: paragraphs the windowing hid (display:none — no
+// boxes) carry no per-paragraph decorations at all. A dense-ruby document
+// holds ~100k+ decorations and ProseMirror MAPS the whole set tree through
+// every transaction — building the layers only for materialized paragraphs
+// cuts that walk by the window ratio. Keyed by NODE identity: a hidden
+// paragraph's node never changes while hidden (edits materialize first), and
+// indexes shift under edits while identities don't.
+let windowedNodes: WeakSet<PMNode> | null = null;
+
+/** Install the set of windowing-hidden paragraph NODES (null = none). The
+ *  per-paragraph builders skip members, so cold builds, edit advances, and
+ *  window patches all agree through one chokepoint. */
+export const setWindowedNodes = (nodes: WeakSet<PMNode> | null): void => {
+  windowedNodes = nodes;
+};
+
+const isWindowed = (parse: Parse, pi: number): boolean => {
+  if (!windowedNodes) return false;
+  const para = docIndex(parse.doc).paras[pi];
+  return para !== undefined && windowedNodes.has(para);
+};
+
+/** Re-derive the cached per-paragraph decorations of the paragraphs whose
+ *  WINDOW membership flipped — called by windowing BEFORE its dispatch (and
+ *  inside the chain-materialize flush), so updateState pulls sets that agree
+ *  with the new visibility. The ruby layer is rebuilt ON TOP of the patched
+ *  base (the advance-path recipe: `base` identity encodes every base input). */
+export const patchDecorationWindow = (doc: PMNode, flipped: readonly number[]): void => {
+  if (flipped.length === 0) return;
+  // A window-recenter/materialize-all flips hundreds of paragraphs —
+  // patchParas (a set find + removal + add per paragraph) costs more there
+  // than a cold rebuild, which the new windowed set keeps small anyway.
+  if (flipped.length > 64) {
+    baseCache = null;
+    rubyCache = null;
+    return;
+  }
+  if (!parseCache || parseCache.doc !== doc) parseCache = parseDoc(doc);
+  const parse = parseCache;
+  const at: OffsetToPos = (o) => offsetToPos(doc, o);
+  if (baseCache && baseCache.doc === doc) {
+    const invis: Invisibles = { newline: baseCache.newline, whitespace: baseCache.whitespace };
+    const set = patchParas(baseCache.set, parse, flipped, (decos, pi) =>
+      pushParaBaseDecos(decos, parse, pi, invis, at),
+    );
+    if (rubyCache && rubyCache.doc === doc && rubyCache.base === baseCache.set) {
+      const expanded = rubyCache.expanded;
+      const rubySet = patchParas(rubyCache.set, parse, flipped, (decos, pi) => {
+        pushParaBaseDecos(decos, parse, pi, invis, at);
+        pushParaRubyDecos(decos, parse, pi, expanded);
+      });
+      rubyCache = { ...rubyCache, base: set, set: rubySet };
+    }
+    baseCache = { ...baseCache, set };
+  }
+};
 
 /** Replace `set`'s decorations inside the given (new-doc) paragraphs with
  *  freshly built ones: drop everything the dirty paragraphs hold, then add

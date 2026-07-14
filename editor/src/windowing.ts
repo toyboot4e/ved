@@ -28,6 +28,7 @@ import type { Node as PMNode } from 'prosemirror-model';
 import type { EditorState } from 'prosemirror-state';
 import type { EditorView } from 'prosemirror-view';
 import styles from './editor.module.scss';
+import { patchDecorationWindow, setWindowedNodes } from './pm/decorations';
 import { changedParagraphSpan } from './pm/model';
 import { type HiddenRun, hiddenParas, runsFromWanted, windowingTr } from './pm/windowing';
 
@@ -261,8 +262,26 @@ export const createWindowing = (
     cleanEnd: Math.max(0, paraCount - 1 - last),
   });
 
-  const dispatchRuns = (runs: readonly HiddenRun[], shift: WindowShift | null): void => {
+  const dispatchRuns = (runs: readonly HiddenRun[], shift: WindowShift | null, flipped: readonly number[]): void => {
     hasHidden = runs.length > 0;
+    // DECORATION WINDOWING: hidden paragraphs carry no per-paragraph
+    // decorations (pm/decorations.ts). Install the new node set FIRST (the
+    // patch's builders consult it), then re-derive the flipped paragraphs'
+    // cached decorations, so this dispatch's updateState pulls sets that
+    // agree with the new visibility.
+    const doc = view.state.doc;
+    if (runs.length === 0) setWindowedNodes(null);
+    else {
+      const ws = new WeakSet<PMNode>();
+      for (const run of runs) {
+        for (let i = run.fromPara; i <= run.toPara; i++) {
+          const n = doc.maybeChild(i);
+          if (n) ws.add(n);
+        }
+      }
+      setWindowedNodes(ws);
+    }
+    patchDecorationWindow(doc, flipped);
     // Test seam: windowing dispatches per scenario — steady-state typing
     // must not re-dispatch the window (edit-perf pins the overlay fallout).
     const w = globalThis as unknown as { __vedWindowDispatches?: number };
@@ -339,18 +358,13 @@ export const createWindowing = (
     paraCount: number,
     current: ReadonlySet<number>,
     runs: readonly HiddenRun[],
-  ): WindowShift | null => {
+  ): { shift: WindowShift; flipped: number[] } | null => {
     const next = new Set<number>();
     for (const run of runs) for (let i = run.fromPara; i <= run.toPara; i++) next.add(i);
-    let first: number | null = null;
-    let last = 0;
-    for (let i = 0; i < paraCount; i++) {
-      if (current.has(i) !== next.has(i)) {
-        first ??= i;
-        last = i;
-      }
-    }
-    return first === null ? null : shiftFor(paraCount, first, last);
+    const flipped: number[] = [];
+    for (let i = 0; i < paraCount; i++) if (current.has(i) !== next.has(i)) flipped.push(i);
+    if (flipped.length === 0) return null;
+    return { shift: shiftFor(paraCount, flipped[0]!, flipped[flipped.length - 1]!), flipped };
   };
 
   /** One window pass: read geometry, decide the hidden set, dispatch on
@@ -420,12 +434,12 @@ export const createWindowing = (
     // Dispatch when the hidden MEMBERSHIP changes — or, in a multicol mode,
     // when a surviving run's spacer SPEC drifted from the live DOM (an edit
     // above it moved the band alignment).
-    const shift = membershipShift(paras.length, current, runs);
-    if (shift === null && !(env.multiCol && specsDrifted(runs))) return;
+    const change = membershipShift(paras.length, current, runs);
+    if (change === null && !(env.multiCol && specsDrifted(runs))) return;
     const drift =
-      shift ??
+      change?.shift ??
       shiftFor(paras.length, runs.length ? runs[0]!.fromPara : 0, runs.length ? runs[runs.length - 1]!.toPara : 0);
-    dispatchRuns(runs, drift);
+    dispatchRuns(runs, drift, change?.flipped ?? []);
     lastPassScroll = env.multiCol === env.vertical ? mount.scrollTop : mount.scrollLeft;
   };
 
@@ -510,7 +524,11 @@ export const createWindowing = (
     timer = 0;
     const current = hiddenParas(view.state);
     if (current.size > 0) {
-      dispatchRuns([], shiftFor(view.state.doc.childCount, Math.min(...current), Math.max(...current)));
+      dispatchRuns(
+        [],
+        shiftFor(view.state.doc.childCount, Math.min(...current), Math.max(...current)),
+        [...current].sort((a, b) => a - b),
+      );
     }
     // Re-window after the full measures settle (they are rAF/60ms-coalesced).
     clearTimeout(rewindowTimer);
@@ -553,6 +571,13 @@ export const createWindowing = (
     clearTimeout(rewindowTimer);
     rewindowTimer = setTimeout(schedule, 150);
     hasHidden = false;
+    // Decoration windowing: restore the flipped paragraphs' decorations in
+    // the SAME flush (before this state's updateState pulls them).
+    setWindowedNodes(null);
+    patchDecorationWindow(
+      next.doc,
+      [...current].sort((a, b) => a - b),
+    );
     return {
       state: next.apply(windowingTr(next, [])),
       shift: shiftFor(next.doc.childCount, Math.min(...current), Math.max(...current)),
@@ -594,6 +619,7 @@ export const createWindowing = (
     onDocChanged,
     destroy: (): void => {
       mount.removeEventListener('scroll', onScroll);
+      setWindowedNodes(null); // the decoration module is shared across mounts
       cancelAnimationFrame(raf);
       clearTimeout(timer);
       clearTimeout(rewindowTimer);
