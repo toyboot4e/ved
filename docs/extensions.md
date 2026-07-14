@@ -4,9 +4,10 @@ An extension adds behavior to ved — commands, keybindings, editor behavior,
 shell UI. ONE concept (the word "plugin" is not used), in three packaging
 tiers that share a single contract:
 
-- a **single `.ts` file** in the config dir's `extensions/` — zero setup,
-  the Emacs-init ergonomic; `init.ts` is by convention the user's own
-  configuration (there is no data config file — configuration IS code);
+- a **single `.ts` file** — zero setup, the Emacs-init ergonomic:
+  `<configDir>/init.ts` is the user's own configuration (there is no data
+  config file — configuration IS code), further ones live in the config
+  dir's `extensions/`;
 - a **project directory** there (or linked via `--dev-extension`) with a
   `package.json` manifest — multi-file sources and npm dependencies;
 - an **in-repo workspace package** (`@ved/vim` is the reference) built
@@ -28,22 +29,29 @@ isolation seam (`test/e2e/user-extensions.ts`). Resolution:
 
 ```
 <configDir>/
+  init.ts              # the user's config — an ordinary extension, loaded LAST
   extensions/
-    init.ts            # the user's config — an ordinary extension, loaded LAST
     reflow.ts          # single-file extension (id: "reflow")
     word-count/        # project extension (id from its manifest)
       package.json     #   { "ved": { "id": "…", "entry": "src/main.ts", "minAppVersion": "…" } }
       src/…
-    ved.d.ts           # generated at launch — do not edit
-    tsconfig.json      # generated at launch — do not edit
+  tsconfig.json        # generated at launch — do not edit (must stay at the
+                       #   root: editors discover it walking UP from a source)
+  .generated/ved.d.ts  # generated at launch — do not edit
   storage/<id>/        # per-extension persistent files (ctx.storage)
 ```
 
 Load order is deterministic: regular extensions name-sorted, then
 `--dev-extension` links, then `init.ts` LAST — so the user's own keybindings
-win collisions against extension-shipped defaults. Machine-owned app state
-(window geometry, session restore) is NOT user configuration and lives
-elsewhere; nothing ever machine-writes user code.
+and settings win collisions against extension-shipped defaults. An
+`extensions/init.ts` next to a root `init.ts` is refused as shadowed (with
+the root one absent it still loads, so the pre-root layout keeps working);
+stale generated files inside `extensions/` are removed at launch (marker
+checked — never a user's file). Machine-owned app state (window geometry,
+session restore, the Chromium profile) is NOT user configuration and lives
+elsewhere — on Linux, userData is moved to the XDG data dir
+(`~/.local/share/ved`) so the config dir stays clean enough to version;
+nothing ever machine-writes user code.
 
 ## The module contract
 
@@ -125,20 +133,21 @@ has no fs and no TypeScript, so main compiles and the renderer imports
    at bundle time: the renderer sandbox is the point. An extension that
    legitimately needs fs gets a capability on `VedContext`, never Node.
 
-**Typing without setup**: at launch ved writes `ved.d.ts` — the VERBATIM raw
-source of `shared/extension-api.ts`, so the declaration users see cannot
-drift from the implementation (keep that file types-only and
-self-contained) — and a `tsconfig.json` mapping the `ved` path, with
+**Typing without setup**: at launch ved writes `.generated/ved.d.ts` — the
+VERBATIM raw source of `shared/extension-api.ts`, so the declaration users
+see cannot drift from the implementation (keep that file types-only and
+self-contained) — and a root `tsconfig.json` mapping the `ved` path, with
 `verbatimModuleSyntax` making the checker enforce what the runtime does.
-Any editor opened on `extensions/` resolves `import type … from 'ved'` with
-full types; no npm install, no package.json for the single-file tier.
+Any editor opened on the config dir resolves `import type … from 'ved'`
+with full types, for `init.ts` and everything under `extensions/`; no npm
+install, no package.json for the single-file tier.
 
 ## The dev loop
 
 `--dev-extension=<path>` (repeatable, equals form) links a working directory
-or file. Main watches every extension source — the `extensions/` top level
-for single files (`init.ts` included) and each project/dev tree recursively —
-and pushes debounced per-extension recompiles; the renderer then
+or file. Main watches every extension source — the root `init.ts`, the
+`extensions/` top level for single files, and each project/dev tree
+recursively — and pushes debounced per-extension recompiles; the renderer then
 **re-evaluates the whole config**: every extension deactivates (its tracked
 sweep), settings reset to the launch baseline (store defaults + the picked
 CJK font + the OS theme, captured before any extension ran), and every

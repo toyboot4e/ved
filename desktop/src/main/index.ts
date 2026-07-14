@@ -15,6 +15,14 @@ import { killAllShells, registerShellService } from './shell-service';
 // (and pollute) the shared userData — session restore, Chromium caches.
 if (process.env.VED_SMOKE_USER_DATA) {
   app.setPath('userData', process.env.VED_SMOKE_USER_DATA);
+} else if (process.platform === 'linux') {
+  // Keep Chromium's profile OUT of the config dir: Electron defaults
+  // userData to ~/.config/ved — the very directory the user's init.ts and
+  // extensions live in (docs/extensions.md), which Cache/Cookies/GPUCache/
+  // Crashpad would bury. Machine-owned state belongs in the XDG data dir.
+  // macOS and Windows keep the platform default (their conventions don't
+  // separate config from data).
+  app.setPath('userData', join(process.env.XDG_DATA_HOME || join(homedir(), '.local', 'share'), 'ved'));
 }
 
 // IME (fcitx5/ibus + mozc) support on Linux. Without these switches Chromium

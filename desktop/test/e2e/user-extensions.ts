@@ -1,8 +1,8 @@
 // User extensions end to end (docs/extensions.md): a fixture
-// init.ts in an isolated `--config-dir` registers a namespaced command,
-// binds a chord to it, and adds a raw key hook; the driver exercises both
-// paths through real keydowns and checks the generated typing files
-// (ved.d.ts + tsconfig.json) appear next to the fixture.
+// init.ts at the ROOT of an isolated `--config-dir` registers a namespaced
+// command, binds a chord to it, and adds a raw key hook; the driver
+// exercises both paths through real keydowns and checks the generated
+// typing files (root tsconfig.json + .generated/ved.d.ts) appear.
 import { mkdir, mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
@@ -63,7 +63,7 @@ export async function activate(ctx: VedContext): Promise<void> {
 
 const configDir = await mkdtemp(join(tmpdir(), 'ved-ext-e2e-'));
 await mkdir(join(configDir, 'extensions'), { recursive: true });
-await writeFile(join(configDir, 'extensions', 'init.ts'), INIT_TS, 'utf-8');
+await writeFile(join(configDir, 'init.ts'), INIT_TS, 'utf-8');
 
 // A PROJECT extension: a directory with a manifest and a relative import —
 // esbuild bundles the graph in main (docs/extensions.md "How loading works").
@@ -171,7 +171,7 @@ try {
   const INIT_V2 = INIT_TS.replace("'拡張OK'", "'拡張二'")
     .replace("  ctx.settings.apply({ fontSize: 23, theme: 'dark' });\n", '')
     .replace("  ctx.keybindings.bind('mod+0', 'init.mark');\n", '');
-  await writeFile(join(configDir, 'extensions', 'init.ts'), INIT_V2, 'utf-8');
+  await writeFile(join(configDir, 'init.ts'), INIT_V2, 'utf-8');
   let reloaded = false;
   for (let i = 0; i < 60 && !reloaded; i++) {
     await pressMod(page, '7');
@@ -205,12 +205,13 @@ try {
     step('storage file landed under <configDir>/storage/<id>/');
   } else fail('storage file missing on disk');
 
-  const dts = await readFile(join(configDir, 'extensions', 'ved.d.ts'), 'utf-8');
+  const dts = await readFile(join(configDir, '.generated', 'ved.d.ts'), 'utf-8');
   if (dts.includes('export type VedContext')) step('generated ved.d.ts carries the API declaration');
   else fail('ved.d.ts missing or without VedContext');
-  const tsconfig = JSON.parse(await readFile(join(configDir, 'extensions', 'tsconfig.json'), 'utf-8'));
-  if (tsconfig.compilerOptions?.paths?.ved?.[0] === './ved.d.ts') step('generated tsconfig maps the ved specifier');
-  else fail('tsconfig.json missing the ved path mapping');
+  const tsconfig = JSON.parse(await readFile(join(configDir, 'tsconfig.json'), 'utf-8'));
+  if (tsconfig.compilerOptions?.paths?.ved?.[0] === './.generated/ved.d.ts') {
+    step('generated root tsconfig maps the ved specifier into .generated/');
+  } else fail('tsconfig.json missing the ved path mapping');
 } finally {
   await ved.close();
   await rm(configDir, { recursive: true, force: true });

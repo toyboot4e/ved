@@ -2,7 +2,7 @@
  *
  *  This file is the SINGLE SOURCE of the user-extension API. It is
  *  types-only and self-contained (no imports), because its raw source is
- *  written verbatim to `<configDir>/extensions/ved.d.ts` at startup — that is
+ *  written verbatim to `<configDir>/.generated/ved.d.ts` at startup — that is
  *  how a user extension gets full typing with no package setup (the generated
  *  tsconfig.json maps the `ved` specifier here). The renderer's extension
  *  host (renderer/src/extension-host.ts) implements `VedContext` against

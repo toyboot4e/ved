@@ -93,7 +93,12 @@ export const launchVed = async ({ env, args }: LaunchOptions = {}): Promise<VedA
   }
   const app = await _electron.launch({
     executablePath: electronPath as unknown as string,
-    args: [`${root}out/main/index.js`, ...(args?.(tmp) ?? [])],
+    // Isolated config dir FIRST: a driver must never load the user's real
+    // ~/.config/ved (a real init.ts would skew every default the suites
+    // assert) nor write generated files into it. A driver's own
+    // `--config-dir=` fixture comes later and wins (last occurrence,
+    // config-dir.ts).
+    args: [`${root}out/main/index.js`, `--config-dir=${join(tmp, 'config')}`, ...(args?.(tmp) ?? [])],
     env: merged,
   });
   const page = await app.firstWindow();
