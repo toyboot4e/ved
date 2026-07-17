@@ -32,10 +32,15 @@ import { patchDecorationWindow, setWindowedNodes } from './pm/decorations';
 import { changedParagraphSpan } from './pm/model';
 import { type HiddenRun, hiddenParas, runsFromWanted, windowingTr } from './pm/windowing';
 
-/** Windowing engages only past this paragraph count — below it the retained
- *  layout tree is small enough that Blink's per-key walks don't hurt, and
- *  small documents never pay the machinery. */
+/** Windowing engages past EITHER bound — many paragraphs OR a large total
+ *  text. Counting paragraphs alone let a few hundred LONG paragraphs (the
+ *  novel-prose shape: each wraps to dozens of visual lines) sail under the
+ *  threshold with the whole Blink wall intact: 120 × 850-char paragraphs
+ *  measured 394ms/key unwindowed vs 34ms for the same text split small.
+ *  Below both bounds the retained layout tree is small enough that Blink's
+ *  per-key walks don't hurt, and small documents never pay the machinery. */
 export const WINDOW_MIN_PARAS = 300;
+export const WINDOW_MIN_SIZE = 20_000;
 /** Paragraphs within this many of the caret (either selection end) stay
  *  materialized — line moves measure adjacent columns. */
 const CARET_PAD = 2;
@@ -252,7 +257,8 @@ export const createWindowing = (
       firstPara ? getComputedStyle(firstPara).inlineSize : ''
     }`;
 
-  const enabled = (): boolean => view.state.doc.childCount >= WINDOW_MIN_PARAS;
+  const enabled = (): boolean =>
+    view.state.doc.childCount >= WINDOW_MIN_PARAS || view.state.doc.content.size >= WINDOW_MIN_SIZE;
 
   const paraIndexOf = ($pos: { index: (depth: number) => number }): number => $pos.index(0);
 

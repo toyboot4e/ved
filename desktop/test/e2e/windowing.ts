@@ -170,6 +170,26 @@ try {
   assert.ok((await waitForHidden(4000)) > 0, 'back in a block-flow mode the window re-engages');
   step('mode switches materialize and re-window');
 
+  // --- LONG paragraphs engage windowing by TOTAL SIZE: a few hundred
+  // novel-prose paragraphs sail under the paragraph-count bound while
+  // carrying the whole layout wall (394ms/key measured unwindowed) ---
+  await clickWritingMode(page, 'Vertical Rows');
+  await page.waitForTimeout(300);
+  await page.evaluate(() => getSelection()!.selectAllChildren(document.getElementById('editor-content')!));
+  await page.keyboard.press('Backspace');
+  await page.waitForTimeout(100);
+  await page.keyboard.insertText(
+    Array.from({ length: 120 }, (_, i) => `第${i + 1}段落、${'|漢字(かんじ)と仮名の本文が続く。'.repeat(40)}`).join(
+      '\n',
+    ),
+  );
+  await page.waitForTimeout(1500);
+  assert.ok((await waitForHidden(4000)) > 0, 'long-paragraph documents window by total size');
+  await page.keyboard.type('長');
+  await page.waitForTimeout(300);
+  assert.ok((await text()).endsWith('長'), 'typing lands in the long-paragraph document');
+  step('long paragraphs window by total size');
+
   // --- below the threshold everything materializes (select-all delete) ---
   await page.evaluate(() => getSelection()!.selectAllChildren(document.getElementById('editor-content')!));
   await page.keyboard.press('Backspace');
