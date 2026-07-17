@@ -1,7 +1,12 @@
-// Hand-curated overlay for the keybinding reference — the MANUAL half of the
-// generator's inputs (the mechanical halves are Vim's index.txt and our
-// VIM_BINDINGS catalog). Keyed by Vim help TAG (the stable id in index.txt,
-// e.g. `dd`, `CTRL-R`, `v_iw`). Every field is optional:
+// Schema + decoder for keybindings.overlay.json — the hand-curated overlay for
+// the keybinding reference, the MANUAL half of the generator's inputs (the
+// mechanical halves are Vim's index.txt and our VIM_BINDINGS catalog).
+//
+// The JSON is an ordered list of curation groups (`about` + `entries`): the
+// out-of-scope families first, then the staged worklist of scope-'core'
+// bindings with their intended @ved/vim surface (docs/keybindings.md renders
+// it in the API column). Entries are keyed by Vim help TAG (the stable id in
+// index.txt, e.g. `dd`, `CTRL-R`, `v_iw`). Every field is optional:
 //
 //   scope    'core'  — a binding we intend to support (default for matched
 //                       rows; unmatched rows we might still do → a TODO).
@@ -21,67 +26,49 @@ export type OverlayEntry = {
   readonly note?: string;
 };
 
-export const OVERLAY: Readonly<Record<string, OverlayEntry>> = {
-  // --- Whole families out of scope (collapsed in the reference) ---------------
-  'CTRL-W': { scope: 'out', note: 'window management — ved has no vim windows' },
-  z: { scope: 'out', category: 'Folds', note: 'folding is not modeled' },
-  'CTRL-]': { scope: 'out', note: 'tag jumps — no tag stack' },
-  q: { category: 'Macros' },
+/** The overlay flattened for the join: Vim help tag → curation. */
+export type Overlay = Readonly<Record<string, OverlayEntry>>;
 
-  // --- The implementation list -------------------------------------------------
-  // Everything below is scope 'core' with its intended @ved/vim surface — the
-  // staged worklist (docs/keybindings.md renders it in the API column).
+const ENTRY_KEYS = new Set(['scope', 'category', 'api', 'note']);
 
-  // Stage: line joins.
-  gJ: { scope: 'core', category: 'Editing', api: "G_SEQUENCES 'gJ' — join removing only the newline" },
-  v_J: { scope: 'core', category: 'Editing', api: "action 'visual.join' — join every selected line (policy spacing)" },
-  v_gJ: { scope: 'core', category: 'Editing', api: "G_SEQUENCES 'gJ' in visual — join selected lines, newline only" },
+const fail = (msg: string): never => {
+  throw new Error(`keybindings.overlay.json: ${msg}`);
+};
 
-  // Stage: word/line motion gaps.
-  ge: { scope: 'core', category: 'Motions', api: "MotionId 'wordEndBack' — backward to the end of a word" },
-  gE: { scope: 'core', category: 'Motions', api: "MotionId 'bigWordEndBack' — backward to the end of a WORD" },
-  g_: { scope: 'core', category: 'Motions', api: "MotionId 'lastNonBlank' — to the last non-blank of the line" },
-  '(': {
-    scope: 'core',
-    category: 'Motions',
-    api: "MotionId 'sentenceBack' — 。！？-aware (config.ts, Japanese-first)",
-  },
-  ')': { scope: 'core', category: 'Motions', api: "MotionId 'sentenceForward' — 。！？-aware (config.ts)" },
-  H: { scope: 'core', category: 'Motions', api: "MotionId 'screenTop' — needs a viewport seam in VimDocView" },
-  L: { scope: 'core', category: 'Motions', api: "MotionId 'screenBottom' — needs a viewport seam in VimDocView" },
-  M: { scope: 'core', category: 'Motions', api: "MotionId 'screenMiddle' — needs a viewport seam in VimDocView" },
+const parseEntry = (tag: string, raw: unknown): OverlayEntry => {
+  if (typeof raw !== 'object' || raw === null || Array.isArray(raw)) fail(`entry '${tag}' must be an object`);
+  const rec = raw as Record<string, unknown>;
+  for (const [key, value] of Object.entries(rec)) {
+    if (!ENTRY_KEYS.has(key)) fail(`entry '${tag}' has unknown field '${key}'`);
+    if (typeof value !== 'string') fail(`entry '${tag}' field '${key}' must be a string`);
+  }
+  if ('scope' in rec && rec.scope !== 'core' && rec.scope !== 'out') {
+    fail(`entry '${tag}' scope must be 'core' or 'out'`);
+  }
+  return rec as OverlayEntry;
+};
 
-  // Stage: case operators (normal g-operators + their visual forms).
-  'g~': { scope: 'core', category: 'Operators', api: "operator 'swapCase' — 'tildeop' over Nmove text" },
-  gu: { scope: 'core', category: 'Operators', api: "operator 'lowercase' — make Nmove text lowercase" },
-  gU: { scope: 'core', category: 'Operators', api: "operator 'uppercase' — make Nmove text uppercase" },
-  'v_~': { scope: 'core', category: 'Editing', api: "action 'visual.toggleCase' — swap case over the selection" },
-  v_u: { scope: 'core', category: 'Editing', api: "action 'visual.lowercase'" },
-  v_U: { scope: 'core', category: 'Editing', api: "action 'visual.uppercase'" },
+const parseGroup = (group: unknown): ReadonlyArray<readonly [string, OverlayEntry]> => {
+  if (typeof group !== 'object' || group === null) fail('each group must be an object');
+  const { about, entries, ...rest } = group as Record<string, unknown>;
+  if (typeof about !== 'string') fail("each group needs an 'about' string");
+  if (Object.keys(rest).length > 0) fail(`group '${about}' has unknown fields: ${Object.keys(rest).join(', ')}`);
+  if (typeof entries !== 'object' || entries === null || Array.isArray(entries)) {
+    fail(`group '${about}' needs an 'entries' record`);
+  }
+  return Object.entries(entries as Record<string, unknown>).map(([tag, entry]) => [tag, parseEntry(tag, entry)]);
+};
 
-  // Stage: indent operators (fullwidth-aware shiftwidth is the open design
-  // question — a 全角 indent cell vs. ASCII spaces).
-  '>': { scope: 'core', category: 'Operators', api: "operator 'indent' — shift Nmove lines one shiftwidth right" },
-  '<': { scope: 'core', category: 'Operators', api: "operator 'dedent' — shift Nmove lines one shiftwidth left" },
-
-  // Stage: scrolling the caret line (the editor's scroll seam exists —
-  // scrollPage — these need a line-scoped variant).
-  zz: { scope: 'core', category: 'Scrolling', api: "action 'scroll.cursorCenter'" },
-  zt: { scope: 'core', category: 'Scrolling', api: "action 'scroll.cursorTop'" },
-  zb: { scope: 'core', category: 'Scrolling', api: "action 'scroll.cursorBottom'" },
-  'CTRL-E': { scope: 'core', category: 'Scrolling', api: "action 'scroll.lineDown'" },
-  'CTRL-Y': { scope: 'core', category: 'Scrolling', api: "action 'scroll.lineUp'" },
-
-  // Stage: Replace mode.
-  R: { scope: 'core', category: 'Mode entry', api: "action 'replace.enter' — overtype; Esc restores mode" },
-
-  // Stage: named registers, then marks (each is a state-shape addition, not a
-  // binding tweak — sized as their own efforts).
-  quote: { scope: 'core', category: 'Registers', api: '"{register} prefix — a registers map in VimState' },
-  m: { scope: 'core', category: 'Marks', api: "m{a-z} + `{a-z}/'{a-z} — plain-offset marks, edit-adjusted" },
-
-  // Small extras once their dependencies land.
-  gi: { scope: 'core', category: 'Mode entry', api: "action 'insert.atLastInsert' — needs the ^-mark equivalent" },
-  gp: { scope: 'core', category: 'Registers', api: 'paste variant — cursor AFTER the pasted text' },
-  gP: { scope: 'core', category: 'Registers', api: 'paste variant — cursor AFTER the pasted text' },
+/** Decode the parsed JSON (validating shape — the type checker no longer sees
+ *  the data) and flatten the groups into one tag-keyed record. */
+export const parseOverlay = (raw: unknown): Overlay => {
+  if (!Array.isArray(raw)) fail('expected an array of groups');
+  const flat: Record<string, OverlayEntry> = {};
+  for (const group of raw as unknown[]) {
+    for (const [tag, entry] of parseGroup(group)) {
+      if (tag in flat) fail(`duplicate tag '${tag}'`);
+      flat[tag] = entry;
+    }
+  }
+  return flat;
 };
