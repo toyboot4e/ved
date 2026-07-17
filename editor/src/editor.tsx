@@ -889,13 +889,7 @@ export const VedEditor = (props: VedEditorProps): React.JSX.Element => {
     // passes (FIFO) — both must see the fully rendered document once (the
     // overlay learns per-paragraph line counts, the page-gap measure its
     // line ends) before far paragraphs lose their boxes.
-    const windowing = createWindowing(view, mount, ({ cleanStart, cleanEnd }) => {
-      // A window change flips which paragraphs have geometry; the spacer is
-      // extent-exact so nothing ELSE moves — re-measure only the flipped
-      // span, and drop the hit-test cache.
-      walker.invalidateGeometry();
-      lineNumbersRef.current?.scheduleEdit(cleanStart, cleanEnd);
-    });
+    const windowing = createWindowing(view, mount, afterWindowShift);
     windowingRef.current = windowing;
     windowing.schedule();
     // A composition defers every window dispatch; reconcile when it ends.

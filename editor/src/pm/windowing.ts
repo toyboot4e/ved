@@ -68,8 +68,14 @@ const spacerDOM = (extent: number, jumpers: number, flowExtent: number) => (): H
 export const windowingTr = (state: EditorState, runs: readonly HiddenRun[]): Transaction =>
   state.tr.setMeta(windowingKey, runs);
 
-/** Decorations for the hidden runs against `doc`: one node decoration per
- *  hidden paragraph, one spacer widget at each run's start boundary. */
+/** Decorations for the hidden runs against `doc`: ONE spacer widget per
+ *  run — and nothing per paragraph. Hiding is a DIRECT class on the <p>
+ *  elements (windowing.ts): a per-paragraph node decoration here put
+ *  O(hidden paragraphs) entries in the set, and ProseMirror's per-child
+ *  decoration iteration then cost ~100ms/key at 5000 paragraphs. The
+ *  elements are safe class carriers — a hidden paragraph's node never
+ *  changes while hidden (edits materialize first), so PM never recreates
+ *  its element; the windowing pass re-asserts the classes anyway. */
 const buildWindowDecos = (doc: PMNode, runs: readonly HiddenRun[]): Decoration[] => {
   const decos: Decoration[] = [];
   // Child offsets: paragraph i spans [pos, pos + nodeSize) at the doc level.
@@ -90,12 +96,6 @@ const buildWindowDecos = (doc: PMNode, runs: readonly HiddenRun[]): Decoration[]
         )}`,
       }),
     );
-    for (let i = run.fromPara; i <= run.toPara; i++) {
-      const pos = paraPos[i];
-      const node = doc.maybeChild(i);
-      if (pos === undefined || !node) continue;
-      decos.push(Decoration.node(pos, pos + node.nodeSize, { class: 'vedWindowHidden' }));
-    }
   }
   return decos;
 };
@@ -120,29 +120,6 @@ export const windowingPlugin = (): Plugin<DecorationSet> =>
       },
     },
   });
-
-/** The paragraph indexes hidden in `state`'s windowing set — derived from the
- *  node decorations (the set is the single source of truth; a side table
- *  would go stale against the mapping). ONE flat find plus one child walk —
- *  this runs in the per-dispatch chain check on windowed documents, so a
- *  per-paragraph set search would cost every keystroke. */
-export const hiddenParas = (state: EditorState): Set<number> => {
-  const set = windowingKey.getState(state);
-  const out = new Set<number>();
-  if (!set) return out;
-  const decos = set.find();
-  if (decos.length === 0) return out;
-  // Node decorations are the non-degenerate ranges (spacer widgets collapse
-  // to a point); pair them with the doc-level children in one walk.
-  const ranges = new Map<number, number>();
-  for (const d of decos) if (d.to > d.from) ranges.set(d.from, d.to);
-  let i = 0;
-  state.doc.forEach((node, offset) => {
-    if (ranges.get(offset) === offset + node.nodeSize) out.add(i);
-    i++;
-  });
-  return out;
-};
 
 /** Group a wanted-hidden predicate over `paraCount` paragraphs into maximal
  *  runs, summing `extentOf` per member. A paragraph with an unknown extent

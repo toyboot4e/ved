@@ -852,13 +852,23 @@ Large documents pay BLINK per keystroke: after every mutation + selection
 write, `Editor::SyncSelection` walks the RETAINED layout objects, and layout
 passes scale with the laid-out tree (~75–300ms/key at 3000 paragraphs —
 `desktop/bench/edit-bench.ts`). Only shrinking the laid-out tree fixes it, so
-past 300 paragraphs every mode renders a WINDOW: paragraphs beyond
-viewport ± one viewport are `display:none` (a node decoration,
-`vedWindowHidden`), and each maximal hidden run stands behind ONE spacer
+past 300 paragraphs OR 20k characters (a few hundred LONG paragraphs pay
+the same wall) every mode renders a WINDOW: paragraphs beyond
+viewport ± one viewport are `display:none` (the `vedWindowHidden` class),
+and each maximal hidden run stands behind ONE spacer
 widget (`.ved-window-spacer`) reproducing the run's exact extent, so
-nothing visible moves. View-only decorations,
+nothing visible moves. The spacers are view-only decorations,
 dispatched page-gap style (the `pm/windowing.ts` plugin stores the set;
-`windowing.ts` measures and decides); the model never knows. The spacer has
+`windowing.ts` measures and decides); the model never knows. The HIDING
+is NOT a decoration: per-paragraph node decorations make ProseMirror's
+per-child decoration iteration itself O(hidden) on every update (~100ms/key
+at 5000 paragraphs), so the class is applied DIRECTLY to the paragraph
+elements — safe because a hidden paragraph's element is never redrawn
+while hidden — after `updateState` (PM's outer-deco patching wipes foreign
+classes during an update) and inside `domObserver.stop()/start()` (PM's
+DOM observer silently reverts foreign mutations). Membership reads back
+from the DOM classes; `chainMaterialize` checks the caret's neighborhood
+via `nodeDOM`, never a full-child query per keystroke. The spacer has
 two forms, one mechanism: in BLOCK FLOW one block sized to the run's extent;
 in the MULTICOL modes fragmentation cannot be trusted to slice a block like
 the text it replaced (probe-verified wrong), so the spacer is N zero-height

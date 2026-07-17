@@ -30,7 +30,7 @@ import type { EditorView } from 'prosemirror-view';
 import styles from './editor.module.scss';
 import { patchDecorationWindow, setWindowedNodes } from './pm/decorations';
 import { changedParagraphSpan } from './pm/model';
-import { type HiddenRun, hiddenParas, runsFromWanted, windowingTr } from './pm/windowing';
+import { type HiddenRun, runsFromWanted, windowingTr } from './pm/windowing';
 
 /** Windowing engages past EITHER bound — many paragraphs OR a large total
  *  text. Counting paragraphs alone let a few hundred LONG paragraphs (the
@@ -63,9 +63,10 @@ export type Windowing = {
    *  re-window after the full measures settle. */
   readonly materializeAll: () => void;
   /** dispatchTransaction's chain step: if the caret/selection or the edit's
-   *  changed span touches a hidden paragraph, return a state with everything
-   *  materialized (applied in the same updateState) plus the changed span
-   *  for the scoped re-measures; null = nothing to do. */
+   *  changed span touches a hidden paragraph, return a state with those
+   *  paragraphs materialized (their runs split; applied in the same
+   *  updateState) plus the changed span for the scoped re-measures;
+   *  null = nothing to do. */
   readonly chainMaterialize: (
     next: EditorState,
     oldDoc: PMNode | null,
@@ -80,6 +81,15 @@ export type Windowing = {
 };
 
 type ExtentEntry = { key: string; extent: number };
+
+/** The paragraph indexes hidden in the LIVE DOM — the classes windowing
+ *  applies are the membership's source of truth (elements track node
+ *  identity, so edits above a run never shift it). */
+const hiddenParasFromDOM = (paras: NodeListOf<HTMLElement>): Set<number> => {
+  const out = new Set<number>();
+  for (let i = 0; i < paras.length; i++) if (paras[i]!.classList.contains('vedWindowHidden')) out.add(i);
+  return out;
+};
 
 /** Flow geometry shared by both mode families. FLOW POSITION is the px
  *  distance travelled along the reading's block progression from the
@@ -283,6 +293,10 @@ export const createWindowing = (
     const w = globalThis as unknown as { __vedWindowDispatches?: number };
     w.__vedWindowDispatches = (w.__vedWindowDispatches ?? 0) + 1;
     view.dispatch(windowingTr(view.state, runs));
+    // AFTER updateState: ProseMirror's outer-deco patching rewrites the
+    // elements' attributes during the update and wipes foreign classes
+    // applied before it.
+    applyHiddenClasses(runs);
     if (shift !== null) onWindowChange(shift);
   };
 
@@ -373,12 +387,12 @@ export const createWindowing = (
     timer = 0;
     if (view.composing) return;
     const state = view.state;
-    const current = hiddenParas(state);
+    const paras = view.dom.querySelectorAll<HTMLElement>(':scope > p');
+    const current = hiddenParasFromDOM(paras);
     if (!enabled()) {
       if (current.size > 0) materializeAll();
       return;
     }
-    const paras = view.dom.querySelectorAll<HTMLElement>(':scope > p');
     if (paras.length !== state.doc.childCount) return; // DOM mid-flight — the next schedule retries
     const env = readPassEnv(paras[0]);
     if (!env) return;
@@ -518,7 +532,7 @@ export const createWindowing = (
     clearTimeout(timer);
     raf = 0;
     timer = 0;
-    const current = hiddenParas(view.state);
+    const current = hiddenParasFromDOM(view.dom.querySelectorAll<HTMLElement>(':scope > p'));
     if (current.size > 0) {
       dispatchRuns(
         [],
@@ -535,7 +549,7 @@ export const createWindowing = (
    *  their neighbors (line moves measure adjacent columns), plus a doc
    *  change's dirty span (a replaceAll-scale span shortcuts to "everything
    *  hidden"). */
-  const neededParas = (next: EditorState, oldDoc: PMNode | null, current: ReadonlySet<number>): number[] => {
+  const neededParas = (next: EditorState, oldDoc: PMNode | null): number[] | 'all' => {
     const need: number[] = [];
     for (const end of [next.selection.$head, next.selection.$anchor]) {
       const at = paraIndexOf(end);
@@ -544,8 +558,8 @@ export const createWindowing = (
     if (oldDoc) {
       const { cleanStart, cleanEnd } = changedParagraphSpan(oldDoc, next.doc);
       const dirtyTo = next.doc.childCount - 1 - cleanEnd;
-      if (dirtyTo - cleanStart > LARGE_EDIT_PARAS) need.push(...current);
-      else for (let i = cleanStart; i <= dirtyTo; i++) need.push(i);
+      if (dirtyTo - cleanStart > LARGE_EDIT_PARAS) return 'all'; // replaceAll-scale
+      for (let i = cleanStart; i <= dirtyTo; i++) need.push(i);
     }
     return need;
   };
@@ -558,9 +572,29 @@ export const createWindowing = (
     // docs) or a composition (already materialized) bails before any
     // decoration scan.
     if (!hasHidden || view.composing) return null;
-    const current = hiddenParas(next);
+    const needRaw = neededParas(next, oldDoc);
+    // O(needed) membership checks via nodeDOM and caret-local child-size
+    // walks — a ':scope > p' query here cost O(paragraphs) per keystroke
+    // (~33ms/key at 5000 paragraphs), and `need` is caret-local by
+    // construction (replaceAll-scale edits return 'all' instead).
+    const head = next.selection.$head.index(0);
+    const headPos = next.selection.$head.before(1);
+    const isHiddenAt = (i: number): boolean => {
+      if (i < 0 || i >= next.doc.childCount) return false;
+      let pos = headPos;
+      if (i < head) for (let k = head - 1; k >= i; k--) pos -= next.doc.child(k).nodeSize;
+      else for (let k = head; k < i; k++) pos += next.doc.child(k).nodeSize;
+      const dom = view.nodeDOM(pos);
+      return dom instanceof HTMLElement && dom.classList.contains('vedWindowHidden');
+    };
+    if (needRaw !== 'all' && !needRaw.some(isHiddenAt)) return null; // the common keystroke: no full-child query
+    const paras = view.dom.querySelectorAll<HTMLElement>(':scope > p');
+    const current = hiddenParasFromDOM(paras);
     if (current.size === 0) return null;
-    const need = [...new Set(neededParas(next, oldDoc, current).filter((i) => current.has(i)))].sort((a, b) => a - b);
+    const need =
+      needRaw === 'all'
+        ? [...current].sort((a, b) => a - b)
+        : [...new Set(needRaw.filter(isHiddenAt))].sort((a, b) => a - b);
     if (need.length === 0) return null;
     // Materialize ONLY the needed paragraphs by SPLITTING their runs — with
     // decoration windowing, materializing everything costs an O(doc)
@@ -576,6 +610,9 @@ export const createWindowing = (
     if (need.length > LARGE_EDIT_PARAS) {
       hasHidden = false;
       setWindowedNodes(null);
+      mutateUnobserved(() => {
+        for (const i of current) paras[i]?.classList.remove('vedWindowHidden');
+      });
       patchDecorationWindow(
         next.doc,
         [...current].sort((a, b) => a - b),
@@ -588,6 +625,9 @@ export const createWindowing = (
     const runs = splitRunsAround(current, new Set(need));
     hasHidden = runs.length > 0;
     installWindowedNodes(next.doc, runs);
+    mutateUnobserved(() => {
+      for (const i of need) paras[i]?.classList.remove('vedWindowHidden');
+    });
     patchDecorationWindow(next.doc, need);
     return {
       state: next.apply(windowingTr(next, runs)),
@@ -648,6 +688,37 @@ export const createWindowing = (
       }
     });
     return runs;
+  };
+
+  /** Apply the hide classes DIRECTLY to the run members' elements (and
+   *  clear everything else's) — hiding lives on the elements, not in
+   *  decorations: per-paragraph node decorations made ProseMirror's
+   *  per-child decoration iteration O(hidden) per keystroke (~100ms at 5000
+   *  paragraphs). Elements are safe carriers (a hidden paragraph's node
+   *  never changes while hidden), and every dispatch re-asserts the full
+   *  membership, so a PM redraw that drops a class self-heals. */
+  const applyHiddenClasses = (runs: readonly HiddenRun[]): void => {
+    const paras = view.dom.querySelectorAll<HTMLElement>(':scope > p');
+    const want = new Set<number>();
+    for (const run of runs) for (let i = run.fromPara; i <= run.toPara; i++) want.add(i);
+    mutateUnobserved(() => {
+      for (let i = 0; i < paras.length; i++) paras[i]!.classList.toggle('vedWindowHidden', want.has(i));
+    });
+  };
+
+  /** Run direct DOM mutations with ProseMirror's DOM observer PAUSED — it
+   *  otherwise treats a foreign class change inside its content as stray
+   *  input and reverts it on the next flush (silently: the element is
+   *  redrawn, no attribute-removal ever fires). The same PM internal
+   *  ime-survival.ts already leans on. */
+  const mutateUnobserved = (fn: () => void): void => {
+    const observer = (view as unknown as { domObserver?: { stop(): void; start(): void } }).domObserver;
+    observer?.stop();
+    try {
+      fn();
+    } finally {
+      observer?.start();
+    }
   };
 
   /** Install the decoration-windowing node set for `runs` against `doc`. */

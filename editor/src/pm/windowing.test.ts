@@ -5,7 +5,7 @@
 import { EditorState } from 'prosemirror-state';
 import { describe, expect, it } from 'vitest';
 import { docFromText } from './model';
-import { hiddenParas, runsFromWanted, windowingPlugin, windowingTr } from './windowing';
+import { runsFromWanted, windowingPlugin, windowingTr } from './windowing';
 
 describe('runsFromWanted', () => {
   const extents = [10, 20, 30, 40, 50];
@@ -48,7 +48,7 @@ describe('windowing plugin round-trip', () => {
       plugins: [windowingPlugin()],
     });
 
-  it('hiddenParas mirrors the dispatched runs, and an empty dispatch clears', () => {
+  it('one spacer widget per run — and nothing per paragraph', () => {
     let s = state();
     s = s.apply(
       windowingTr(s, [
@@ -56,16 +56,18 @@ describe('windowing plugin round-trip', () => {
         { fromPara: 4, toPara: 4, extent: 30 },
       ]),
     );
-    expect([...hiddenParas(s)].sort((a, b) => a - b)).toEqual([1, 2, 4]);
+    const decos = s.plugins[0]!.getState(s)!.find();
+    expect(decos.length).toBe(2); // hiding is a DIRECT element class, not decorations
     s = s.apply(windowingTr(s, []));
-    expect(hiddenParas(s).size).toBe(0);
+    expect(s.plugins[0]!.getState(s)!.find().length).toBe(0);
   });
 
-  it('the set rides an edit between dispatches', () => {
+  it('the spacers ride an edit between dispatches', () => {
     let s = state();
     s = s.apply(windowingTr(s, [{ fromPara: 3, toPara: 4, extent: 60 }]));
-    // Insert text into paragraph 0 — the hidden paragraphs keep their nodes.
-    s = s.apply(s.tr.insertText('あ', 2));
-    expect([...hiddenParas(s)].sort((a, b) => a - b)).toEqual([3, 4]);
+    const before = s.plugins[0]!.getState(s)!.find()[0]!.from;
+    s = s.apply(s.tr.insertText('ああ', 2));
+    const after = s.plugins[0]!.getState(s)!.find()[0]!.from;
+    expect(after).toBe(before + 2);
   });
 });
