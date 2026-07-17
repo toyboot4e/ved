@@ -4,16 +4,8 @@
  *  Vim's own runtime `index.txt` to render the reference doc (what we have vs.
  *  what Vim defines). Nothing here executes the reducer; it reads its tables. */
 
-import {
-  FIND_BINDINGS,
-  G_SEQUENCES,
-  MOTION_BINDINGS,
-  MOTIONS,
-  NORMAL_BINDINGS,
-  TEXT_OBJECT_KEYS,
-  VISUAL_BINDINGS,
-  Z_SEQUENCES,
-} from './model';
+import { FIND_BINDINGS, TEXT_OBJECT_KEYS } from './config';
+import { G_SEQUENCES, MOTION_BINDINGS, MOTIONS, NORMAL_BINDINGS, VISUAL_BINDINGS, Z_SEQUENCES } from './model';
 
 /** Which index.txt section a binding belongs to (its dispatch context). */
 export type VimBindingMode = 'normal' | 'visual';

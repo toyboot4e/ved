@@ -106,7 +106,15 @@
  *  join spacing) lives in ONE place — config.ts; user KEY mappings ride the
  *  keymap option (extension.ts). */
 
-import { BRACKET_PAIRS, FIND_CHORDS, INDENT_ASCII_WIDTH, INDENT_UNIT, joinNeedsSpace } from './config';
+import {
+  FIND_BINDINGS,
+  FIND_CHORDS,
+  INDENT_ASCII_WIDTH,
+  INDENT_UNIT,
+  joinNeedsSpace,
+  NAMED_KEYS,
+  TEXT_OBJECT_KEYS,
+} from './config';
 import {
   buildTrie,
   type CompiledKeymap,
@@ -813,19 +821,6 @@ const motionTarget = (m: string, count: number, hasCount: boolean, doc: VimDocVi
   return target == null ? null : { target, inclusive: def.inclusive, linewise: def.linewise };
 };
 
-/** The find-family keys: f/F/t/T take a {char} argument (dispatch stages them
- *  via charPending); ;/, repeat the last find (`,` reversed). Declared as data
- *  for the reference catalog — `bindings.ts` reads it; the runtime resolves
- *  f/F/t/T through `findTarget` and ;/, through `repeatFind`. */
-export const FIND_BINDINGS: Readonly<Record<string, { readonly desc: string; readonly takesChar: boolean }>> = {
-  f: { desc: 'to the N-th occurrence of {char} to the right (inclusive)', takesChar: true },
-  F: { desc: 'to the N-th occurrence of {char} to the left', takesChar: true },
-  t: { desc: 'till before the N-th occurrence of {char} to the right', takesChar: true },
-  T: { desc: 'till after the N-th occurrence of {char} to the left', takesChar: true },
-  ';': { desc: 'repeat the last f/F/t/T [count] times', takesChar: false },
-  ',': { desc: 'repeat the last f/F/t/T in the opposite direction', takesChar: false },
-};
-
 /** The N-th occurrence of `ch` to the RIGHT of `from`, before the line end
  *  `le`; null when the line runs out. */
 const findCharForward = (text: string, from: number, le: number, ch: string, count: number): number | null => {
@@ -899,16 +894,6 @@ const clearPending = (state: VimState): VimState => ({
   operator: null,
   charPending: null,
 });
-
-/** Keys with names longer than one character, remapped to their one-char vim
- *  equivalent. Everything else non-printable falls through unhandled (arrows,
- *  Home/End, F-keys — the editor's own handlers own those). */
-const NAMED_KEYS: Readonly<Record<string, string>> = {
-  Enter: 'j',
-  Backspace: 'h',
-  Delete: 'x',
-  ' ': 'l',
-};
 
 /** True when `state` is at rest — a normal-mode caret with no pending prefix,
  *  count, operator, sequence walk, or command line. Marks the end of a
@@ -1419,13 +1404,6 @@ export const G_SEQUENCES: Readonly<Record<string, VimAction>> = {
     };
   },
 };
-
-/** Every key `textObjectRange` understands: word/WORD, paragraph, quotes,
- *  `b`/`B` aliases, and BOTH chars of every bracket pair (config.ts —
- *  Japanese brackets included). */
-export const TEXT_OBJECT_KEYS: readonly string[] = [
-  ...new Set(['w', 'W', 'b', 'B', '"', "'", '`', 'p', ...BRACKET_PAIRS.flat()]),
-];
 
 const textObjectSequences = (): Record<string, VimAction> => {
   const out: Record<string, VimAction> = {};

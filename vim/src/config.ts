@@ -22,6 +22,37 @@ export const BRACKET_PAIRS: readonly (readonly [open: string, close: string])[] 
   ['〖', '〗'],
 ];
 
+/** Every key the `i`/`a` text objects understand: word/WORD, paragraph,
+ *  quotes, `b`/`B` aliases, and BOTH chars of every bracket pair (Japanese
+ *  brackets included). */
+export const TEXT_OBJECT_KEYS: readonly string[] = [
+  ...new Set(['w', 'W', 'b', 'B', '"', "'", '`', 'p', ...BRACKET_PAIRS.flat()]),
+];
+
+/** The find-family keys: f/F/t/T take a {char} argument (dispatch stages them
+ *  via charPending); ;/, repeat the last find (`,` reversed). The reducer only
+ *  tests membership (the runtime resolves f/F/t/T through `findTarget` and ;/,
+ *  through `repeatFind`); the metadata feeds the reference catalog
+ *  (`bindings.ts`). */
+export const FIND_BINDINGS: Readonly<Record<string, { readonly desc: string; readonly takesChar: boolean }>> = {
+  f: { desc: 'to the N-th occurrence of {char} to the right (inclusive)', takesChar: true },
+  F: { desc: 'to the N-th occurrence of {char} to the left', takesChar: true },
+  t: { desc: 'till before the N-th occurrence of {char} to the right', takesChar: true },
+  T: { desc: 'till after the N-th occurrence of {char} to the left', takesChar: true },
+  ';': { desc: 'repeat the last f/F/t/T [count] times', takesChar: false },
+  ',': { desc: 'repeat the last f/F/t/T in the opposite direction', takesChar: false },
+};
+
+/** Keys with names longer than one character, remapped to their one-char vim
+ *  equivalent. Everything else non-printable falls through unhandled (arrows,
+ *  Home/End, F-keys — the editor's own handlers own those). */
+export const NAMED_KEYS: Readonly<Record<string, string>> = {
+  Enter: 'j',
+  Backspace: 'h',
+  Delete: 'x',
+  ' ': 'l',
+};
+
 /** f/F/t/T character-argument shortcuts: while a find is pending, a Ctrl-chord
  *  key (`event.key`) resolves to this TARGET character. The defaults put the
  *  two most common Japanese punctuation marks a chord away — `Ctrl+j` → `、`,
