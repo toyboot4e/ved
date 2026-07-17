@@ -454,6 +454,63 @@ try {
     );
     step('undo after a crossing composition returns the caret to the composition start');
   }
+
+  // ========== Band wider than the WINDOW: composing never scrolls. =========
+  // Blink reveal-scrolls the selection on every composition update; when the
+  // two-page band overflows the window horizontally, a band-crossing preedit
+  // makes that reveal yank a shell ancestor sideways and the whole page
+  // wobbled a column per keystroke (the slot-dependent border stray).
+  // ime-scroll-hold.ts freezes every ancestor's scroll offsets while
+  // composing and reconciles with one reveal at compositionend. pageLines
+  // derives from the live viewport so the band overflows on ANY slot.
+  {
+    const innerW = await page.evaluate(() => window.innerWidth);
+    const overLines = Math.ceil(innerW / (2 * PITCH)) + 3;
+    await page.fill('#view-config-pageLines', String(overLines));
+    await page.waitForTimeout(250);
+    const overChars = 20 * overLines;
+    const overDoc = 'あ'.repeat(overChars * 5);
+    const overOff = 2 * overChars - 3; // 3 chars before the band boundary
+    await page.evaluate(() => getSelection()!.selectAllChildren(document.getElementById('editor-content')!));
+    await page.keyboard.press('Backspace');
+    await page.waitForTimeout(80);
+    await page.keyboard.insertText(overDoc);
+    await page.waitForTimeout(500);
+    await page.evaluate((o) => (window as unknown as ModelSeams).__vedSetSelection(o, o), overOff);
+    await page.waitForTimeout(250);
+    await m.escape();
+    // Every ancestor's scroll offsets, editor content up to the document.
+    const scrollChain = () =>
+      page.evaluate(() => {
+        const out: number[] = [];
+        for (let el: Element | null = document.getElementById('editor-content'); el; el = el.parentElement) {
+          out.push(Math.round(el.scrollLeft), Math.round(el.scrollTop));
+        }
+        return out.join(',');
+      });
+    const sepLefts = () =>
+      page.evaluate(() =>
+        Array.from(document.querySelectorAll('.vedPageSeparator'))
+          .filter((el) => (el as HTMLElement).style.display !== 'none')
+          .map((el) => Math.round(el.getBoundingClientRect().left)),
+      );
+    const chainBefore = await scrollChain();
+    const sepsIdle = await sepLefts();
+    await startFrames();
+    await m.type('nekodaisuki');
+    const chainComposing = await scrollChain(); // still composing
+    const overFrames = await stopFrames();
+    assert.equal(chainComposing, chainBefore, 'overflowing band: composing scrolled an ancestor');
+    const strayO = overFrames.flatMap((f) => f.seps).find((x) => !sepsIdle.some((l) => Math.abs(x - l) <= PITCH / 2));
+    assert.equal(strayO, undefined, `overflowing band: a border strayed to x=${strayO} (idle: ${sepsIdle.join(',')})`);
+    const overGot = await m.commit();
+    assert.equal(
+      overGot,
+      `${overDoc.slice(0, overOff)}ねこだいすき${overDoc.slice(overOff)}`,
+      'overflowing band: committed in place through the held scroll',
+    );
+    step('overflowing band: no ancestor scrolls and no border moves while composing');
+  }
 } catch (e) {
   fail(e instanceof Error ? e.message : String(e));
 } finally {

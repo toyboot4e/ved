@@ -22,6 +22,7 @@ import { createGlyphWalker, type GlyphWalker } from './glyph-walker';
 import type { PlainTextHistory } from './history';
 import { installImeCaretPin } from './ime-caret-pin';
 import { createImeCellPad, type ImeCellPad } from './ime-cell-pad';
+import { installImeScrollHold } from './ime-scroll-hold';
 import { installCompositionSurvival } from './ime-survival';
 import { createKeyHandler } from './key-handler';
 import { type CaretRect, type LineNumbers, mountLineNumbers } from './line-numbers';
@@ -666,6 +667,10 @@ export const VedEditor = (props: VedEditorProps): React.JSX.Element => {
       isVertical: () => isVerticalMode(live.current.writingMode),
     });
     imeCellPadRef.current = imeCellPad;
+    // Blink reveal-scrolls the selection per composition update; hold every
+    // scroll offset while composing and reconcile with one reveal at the end
+    // (ime-scroll-hold.ts — the wobble a band-crossing preedit caused).
+    const teardownImeScrollHold = installImeScrollHold(view, { onRelease: revealSoon });
     installTestSeams(view, goalInlineRef);
 
     const { searchOps, extensionCtx } = createEditorOps({
@@ -998,6 +1003,7 @@ export const VedEditor = (props: VedEditorProps): React.JSX.Element => {
       windowingRef.current = null;
       teardownCompositionSurvival();
       teardownImeCaretPin();
+      teardownImeScrollHold();
       imeCellPad.teardown();
       imeCellPadRef.current = null;
       resizeObserver.disconnect();
