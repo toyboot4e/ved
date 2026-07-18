@@ -33,32 +33,32 @@ The writing mode's page-breaking axis: `continuous` (one unbroken flow),
 _Avoid_: page mode, pagination.
 
 **Dankumi**:
-The multi-page VERTICAL layout family (`VerticalColumns` and `VerticalRows`)
-— vertical lines packed into fixed pages, with the pages tiled across the
-viewport. Reserve the word for the vertical orientation; the horizontal
-paged modes are just "the horizontal columns/rows modes".
+The multi-page *vertical* layout family (`VerticalColumns` and
+`VerticalRows`) — vertical lines packed into fixed pages, with the pages
+tiled across the viewport. Reserve the word for the vertical orientation;
+the horizontal paged modes are just "the horizontal columns/rows modes".
 _Avoid_: columns (ambiguous with CSS columns), 段組み in identifiers.
 
 **VerticalColumns**:
 A dankumi mode (vertical orientation × columns paging): pages tile into a
-vertical COLUMN (stack downward), so the major scroll axis is vertical. One
-page per row; rows accumulate as the document grows.
+vertical *column*, stacking downward, so the major scroll axis is vertical.
+One page per row; rows accumulate as the document grows.
 _Avoid_: down-dankumi (use the canonical name in identifiers).
 
 **VerticalRows**:
 A dankumi mode (vertical orientation × rows paging): pages tile into a
-horizontal ROW (extend leftward in vertical-rl), so the major scroll axis is
-horizontal — like turning the pages of a Japanese book. One page per column;
-columns accumulate leftward as the document grows.
+horizontal *row*, extending leftward in vertical-rl, so the major scroll
+axis is horizontal — like turning the pages of a Japanese book. One page per
+column; columns accumulate leftward as the document grows.
 _Avoid_: left-dankumi, book-mode.
 
 **HorizontalColumns**:
-Horizontal orientation × columns paging: multicol pages tile RIGHTWARD, so
+Horizontal orientation × columns paging: multicol pages tile rightward, so
 the major scroll axis is horizontal. The transpose of VerticalColumns.
 _Avoid_: right-dankumi (dankumi is the vertical family).
 
 **HorizontalRows**:
-Horizontal orientation × rows paging: arithmetic pages stack DOWNWARD, so
+Horizontal orientation × rows paging: arithmetic pages stack downward, so
 the major scroll axis is vertical — like scrolling a manuscript of stacked
 pages. The transpose of VerticalRows.
 _Avoid_: page-scroll mode, manuscript mode.
@@ -83,11 +83,11 @@ _Avoid_: line-height (the CSS property), leading, gap.
 
 **Page row**:
 A row of **pages** laid side by side — the unit that tiles downward in
-VerticalColumns. Holds a configurable number of pages (pages-per-row);
-one page per row is the default. In HorizontalColumns the same knob stacks
-pages vertically within each rightward-tiling band. The rows-paging modes
-have no counterpart (a page grid needs a second fragmentation direction —
-one per flow; see docs/architecture.md).
+VerticalColumns. Holds a configurable number of pages (pages-per-row); one
+page per row is the default. In HorizontalColumns the same knob stacks pages
+vertically within each rightward-tiling band. The rows-paging modes have no
+counterpart — a page grid needs a second fragmentation direction, and CSS
+gives one per flow (see docs/architecture.md).
 _Avoid_: band (implementation word), grid row.
 
 ### Document and annotation
@@ -116,11 +116,11 @@ _Avoid_: ruby text (collides with **ruby**), furigana.
 ### Model
 
 **Identity rich text model**:
-The invariant that the rich (PM) representation encodes exactly the plain
-string — conversion between them is lossless, character for character, including
-the markup characters `|`, `(`, `)`, which are never model text: `serialize`
-reconstructs them at the node boundaries. Displayed text and model text can
-never diverge.
+The invariant that the rich (ProseMirror) representation encodes exactly the
+plain string — conversion between them is lossless, character for character,
+including the markup characters `|`, `(`, `)`, which are never model text:
+`serialize` reconstructs them at the node boundaries. Displayed text and
+model text can never diverge.
 _Avoid_: identity text model (the former name — it dropped the "rich"),
 source model, WYSIWYG (it is explicitly not WYSIWYG).
 
@@ -138,43 +138,43 @@ _Avoid_: open, revealed.
 **View config**:
 The user-adjustable rendering values: font size (the **cell** size), **line
 space**, **page** geometry, font family. A pure view concern — orthogonal to
-the document string and to **appear policy**. Does NOT include **invisibles**
-or **theme** — those are separate view concerns with their own stores.
+the document string and to **appear policy**. Does not include
+**invisibles** or **theme** — those are separate view concerns with their
+own stores.
 _Avoid_: settings (broader — includes keymaps, workspace), preferences.
 
 **Invisibles**:
 The optional newline (↵) and whitespace (space ·, full-width space □, tab →)
-markers. View-only decorations over the same model text — never model text, so
-copy stays plain. Newline on by default, whitespace opt-in; toggled per kind.
-Orthogonal to **appear
-policy** and **view config**.
+markers. View-only decorations over the same model text — never model text,
+so copy stays plain. Newline on by default, whitespace opt-in; toggled per
+kind. Orthogonal to **appear policy** and **view config**.
 _Avoid_: whitespace mode, control characters, formatting marks.
 
 **Theme**:
-Which color palette the product renders in — a set of `--ved-*` token values.
-`light` / `dark` (a plain toggle, its launch default seeded from the OS),
-extensible to arbitrary named palettes. A pure view concern, distinct from
-**view config** (geometry/font); both are **settings** fields.
+Which color palette the product renders in — a set of `--ved-*` token
+values. `light` / `dark` (a plain toggle, its launch default seeded from the
+OS), extensible to arbitrary named palettes. A pure view concern, distinct
+from **view config** (geometry/font); both are **settings** fields.
 _Avoid_: dark mode (one theme, not the axis), skin, color scheme (the CSS
 media feature, not our store).
 
 **Settings**:
 The user-adjustable values an extension applies via `ctx.settings.apply` —
 **view config**, **theme**, **writing mode**, **appear policy**,
-**invisibles**, vim, sidebar visibility/side/width. Configuration IS code:
-`init.ts`
-applies them, any config change re-evaluates the whole config from the
-**launch baseline** (store defaults + the picked CJK font + the OS theme),
-and runtime UI changes are ephemeral — nothing persists settings, and
-nothing machine-writes user code.
+**invisibles**, vim, sidebar visibility/side/width. Configuration *is*
+code: `init.ts` applies them, any config change re-evaluates the whole
+config from the **launch baseline** (store defaults + the picked CJK font +
+the OS theme), and runtime UI changes are ephemeral — nothing persists
+settings, and nothing machine-writes user code.
 _Avoid_: preferences, options, config file (there is none — that is the
 point).
 
 **Extension** (editor):
-Third-party code driving the editor through the ONE public seam — the
-`extensions` prop and `EditorExtensionContext` (plain strings + plain offsets,
-never ProseMirror values). Registers **commands**, intercepts non-IME keys,
-edits via the exact plain-string paths. `@ved/vim` is the reference extension.
+Third-party code driving the editor through the one public seam — the
+`extensions` prop and `EditorExtensionContext` (plain strings + plain
+offsets, never ProseMirror values). Registers **commands**, intercepts
+non-IME keys, edits via the exact plain-string paths. `@ved/vim` is the
+reference extension.
 _Avoid_: plugin (ProseMirror `Plugin` is an editor-core internal — an
 extension never sees one), addon.
 
@@ -187,24 +187,24 @@ Always "Vim mode" with the qualifier — see the "mode" ambiguity flag.
 The find/replace facility over the active buffer's plain string (Ctrl+F /
 Ctrl+R). A **match** is a plain-offset range; highlights are view-only
 decorations (never model state), with **highlight all** toggling between
-every match and the active one. Replaces are exact plain-string edits through
-the editor's search ops — undoable, structure-repaired.
+every match and the active one. Replaces are exact plain-string edits
+through the editor's search ops — undoable, structure-repaired.
 _Avoid_: find (prose only — "search" in identifiers), occurrence (use
 "match").
 
 **Windowing**:
-Rendering only the paragraphs near the viewport of a large document:
-far paragraphs are display:none'd (their layout objects destroyed — the
+Rendering only the paragraphs near the viewport of a large document: far
+paragraphs are display:none'd (their layout objects destroyed — the
 per-keystroke cost driver in Blink) behind extent-exact **spacers** (sized
 blocks in block flow; forced-break band jumpers + an exact tail in the
-multicol modes). Ved's is RETAINED windowing — the DOM nodes stay, only
-their boxes go; view-only decorations, the model never knows.
-To **materialize** is to bring hidden paragraphs back (the caret's
-paragraph always is, before anything measures or reveals it).
+multicol modes). ved's is *retained* windowing — the DOM nodes stay, only
+their boxes go; view-only decorations, the model never knows. To
+**materialize** is to bring hidden paragraphs back (the caret's paragraph
+always is, before anything measures or reveals it).
 _Avoid_: virtualization/virtual scrolling (list-widget framing — ved windows
-one contenteditable flow), placeholder (that's the empty paragraph's ::before
-hint; the extent stand-in is a **spacer**), detached windowing (removing
-nodes from the DOM — not what ved does).
+one contenteditable flow), placeholder (that's the empty paragraph's
+::before hint; the extent stand-in is a **spacer**), detached windowing
+(removing nodes from the DOM — not what ved does).
 
 ### Project structure
 
