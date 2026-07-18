@@ -39,7 +39,7 @@
         // that stricter, more valuable rule. Off by design.
         "noNonNullAssertion": "off"
       },
-      "preset": "recommended"
+      "recommended": true
     }
   },
   "javascript": {

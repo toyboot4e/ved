@@ -150,31 +150,33 @@
           default = pkgs.mkShell {
             buildInputs = with pkgs; [ pkg-config ] ++ deps;
 
-            packages = with pkgs; [
-              biome
-              just
-              ni
-              nodejs_26
-              pnpm
-              pinact
-              zizmor
-            ]
-            # Wayland key injection for the real-mozc e2e suite (test/e2e/mozc):
-            # wtype speaks the virtual-keyboard protocol (wlroots/sway), ydotool
-            # goes through uinput. The suite's X11 path uses xdotool, already on
-            # NixOS hosts via /run/current-system.
-            #
-            # These are the WAYLAND injectors, but the gate is `isLinux`, not
-            # "isWayland": a pure flake can't see the entering session's
-            # XDG_SESSION_TYPE (the devShell closure is evaluated once and shared;
-            # builtins.getEnv is empty under pure eval), so there is no eval-time
-            # Wayland predicate. They are tiny and inert on X11 (unused — the
-            # harness picks xdotool there). A Wayland-only closure would need a
-            # separate `devShells.wayland`, not runtime detection.
-            ++ pkgs.lib.optionals pkgs.stdenvNoCC.isLinux [
-              wtype
-              ydotool
-            ];
+            packages =
+              with pkgs;
+              [
+                biome
+                just
+                ni
+                nodejs_26
+                pnpm
+                pinact
+                zizmor
+              ]
+              # Wayland key injection for the real-mozc e2e suite (test/e2e/mozc):
+              # wtype speaks the virtual-keyboard protocol (wlroots/sway), ydotool
+              # goes through uinput. The suite's X11 path uses xdotool, already on
+              # NixOS hosts via /run/current-system.
+              #
+              # These are the WAYLAND injectors, but the gate is `isLinux`, not
+              # "isWayland": a pure flake can't see the entering session's
+              # XDG_SESSION_TYPE (the devShell closure is evaluated once and shared;
+              # builtins.getEnv is empty under pure eval), so there is no eval-time
+              # Wayland predicate. They are tiny and inert on X11 (unused — the
+              # harness picks xdotool there). A Wayland-only closure would need a
+              # separate `devShells.wayland`, not runtime detection.
+              ++ pkgs.lib.optionals pkgs.stdenvNoCC.isLinux [
+                wtype
+                ydotool
+              ];
 
             shellHook = pkgs.lib.optionalString pkgs.stdenvNoCC.isLinux ''
               export LD_LIBRARY_PATH="$LD_LIBRARY_PATH:${pkgs.lib.makeLibraryPath deps}"
