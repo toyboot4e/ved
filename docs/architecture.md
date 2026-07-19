@@ -21,9 +21,18 @@ PM doc      paragraph[ text "字は", ruby[ rubyBase "漢", rubyReading "かん"
 plaintext   "字は|漢(かん)字"        (identical, by construction)
 ```
 
-This document explains why each mechanism exists and how it works. The binding
-one-line rules live in `CLAUDE.md`; the extension authoring guide is
-`docs/extensions.md`.
+This document explains why each of the editor core's mechanisms exists and
+how it works. The binding one-line rules live in `CLAUDE.md`. Companion docs:
+`docs/extensions.md` (extension authoring), `docs/vim.md` (the @ved/vim
+design), `docs/desktop.md` (shell features: search, quick open, theming),
+`docs/debugging-layout.md` (the layout-debugging discipline).
+
+How to read it: orienting yourself, read to the end of the module map and
+stop. Touching IME or caret behaviour: "What we override in `contenteditable`"
+and the caret sections. Touching layout, the overlay, or large-document
+performance: "Layout: writing modes and the page" onward. Before proposing a
+new approach, check "Constraints & verified dead ends" — it may already be
+buried there.
 
 ## What we override in `contenteditable` (and why)
 
@@ -418,141 +427,36 @@ invisibles rebuilds nothing — the `__vedBaseRebuilds` invariant holds. A
 toggle updates `invisiblesRef` and dispatches the same `redecorate` meta the
 appear-policy switch uses.
 
-## Search and replace
+## The desktop shell seams
 
-The shell's search bar (desktop `search.ts` + `components/search-bar.tsx`;
-Ctrl+F, or Ctrl+R for the replace field) searches the *active buffer's plain
-string*: literal `indexOf` scanning (`findMatches`, case-insensitive where
-lowercasing preserves length), so a match can span ruby markup and readings
-like any other characters. The store recomputes matches on every text change
-and tab switch. (Main drops the default Electron menu off macOS so its
-reload/close accelerators can't shadow renderer chords.)
+Search/replace, quick open (Ctrl+P), and theming are product features of the
+desktop shell — their design lives in `docs/desktop.md`. What matters to the
+editor core is the seams they cross, all speaking plain strings and offsets:
 
-Two seams cross into the editor core, both speaking plain offsets:
-
-- **Highlights down** — the `searchHighlights` prop (`{ ranges, active }`):
-  inline `vedSearchMatch` / `vedSearchActive` decorations folded into the
-  doc-keyed base layer. The cache keys on the object identity, so caret moves
-  rebuild nothing (`__vedBaseRebuilds` holds); a query or active-match change
-  hands down a new object and rebuilds once. Styling is background-only — no
-  metric changes, so every cached measurement stands. "Highlight all" is the
-  bar's toggle; off, the shell passes only the active match down.
-- **Ops up** — `onSearchOps` hands the shell `{ select, replace, replaceAll }`.
-  `select` sets the model selection and reveals it (paged modes snap the page
-  start, like any caret reveal). `replace` selects the range and takes the
-  `plainInsertTr` path — an exact plain-string edit, repaired, one history
-  entry. `replaceAll` splices every range into the plain string and rebuilds
-  the whole document in one transaction — one history entry, one repair pass.
-  All three refuse while `view.composing` (IME safety).
-
-The bar owns the focus while open. Its inputs are IME targets themselves, so
-its Enter/Esc handling (and the shell's chord matching) is ignored
-mid-composition. Esc closes and refocuses the editor, dropping the highlights
-with the bar — they are never model state. Verified in
-`test/e2e/search-replace.ts`.
-
-## Quick open (Ctrl+P)
-
-A picker in one of four views — workspace **files** and open **buffers** (tab
-switching) by *name*, and each again by *content* (検索, a per-line grep) —
-split across the process boundary; only plain paths and offsets cross it.
-Verified in `test/e2e/quick-open.ts`.
-
-### Matching (`shared/match.ts`)
-
-The one matcher behind every picker — quick-open names, content grep, the
-extension quick-pick. A query is an AND of space-separated *literal*
-substrings, case-insensitive and NFKC-folded (fullwidth ＡＢＣ matches abc),
-each term contiguous; results are filtered in the caller's order. It is
-deliberately never per-character fuzzy: scatter matches (query あいう hitting
-あXいXう) read as noise — `fuzzysort` was removed for exactly that.
-
-### The index (main, `main/workspace-index.ts`)
-
-`listWorkspaceFiles(roots)` walks each root into one flat `WorkspaceFile`
-(`{ path, label, isText }`) list, sorted by label — the palette's empty-query
-view is this list verbatim, and raw walk order reads as "files are missing".
-
-`.gitignore` is honoured with the `ignore` package: a directory's
-`.gitignore` becomes a `Layer` that governs its subtree only (nested files
-stack; each layer re-relativises the path, since `ignore` matches relative to
-the file's own location). `.git` is skipped at every depth, directory
-symlinks are never followed (loop safety), and `MAX_FILES_PER_ROOT` bounds a
-pathological tree.
-
-Per-root results are cached and deduped by absolute path; `invalidateRoot` is
-the seam the phase-2 fs watcher will call (dormant until then, so the index
-is a fresh-on-open snapshot). Labels get the root base name prefixed when
-more than one root is open. No `electron` import — the module is unit-tested.
-
-### The store (renderer, `quick-open.ts`)
-
-`rankFiles`/`rankBuffers` filter the label pools into mode-agnostic
-`QuickOpenItem`s (match indices for highlighting; `bufferId` when choosing
-means a tab switch), capped at `RESULT_LIMIT` (500) with the uncapped `total`
-alongside — the list footer reports the overflow ("type to narrow"), so
-nothing silently looks missing. An empty query yields the whole (sorted) pool
-up to the cap.
-
-A text-only checkbox (テキストファイルのみ, `textOnly`, kept across opens)
-drops non-text files by `WorkspaceFile.isText` — decided in *main* while
-indexing (fs-io.ts `isTextFile`: extension denylist → size cap → NUL head
-sniff, verdicts cached by mtime+size), the same truth the open path uses.
-The checkbox applies to the files-by-name view only.
-
-The Zustand store snapshots both pools on open — the index asynchronously
-from main, the tab strip synchronously (the active buffer contributes its
-*live* text) — and re-ranks the active one per keystroke; matching never
-touches React. `openPalette('buffers')` starts directly in open-file search
-(the seam for a future shortcut); Ctrl+P always opens files-by-name, and
-`setView` (the four header buttons) switches views keeping the query.
-
-### Content search (検索)
-
-The two grep views run `shared/grep.ts grepLines` per line, trimming long
-lines to a window around the match. Files grep runs in main
-(`grepWorkspaceFiles` over the indexed `isText` files; the overlay debounces
-180 ms and drops stale replies by sequence; `GREP_TOTAL_CAP` 200); buffers
-grep runs synchronously over the snapshot.
-
-Choosing a row places the caret *on* the match: a ved line is a paragraph, so
-`CursorState = { para: line-1, offset: col }` lands via a snapshot dispatched
-before the switched editor renders. A match inside the currently *rendered*
-buffer commits the live text and bumps an epoch in the editor key to force
-the remount (`app.tsx placeCursor` — safe, because the palette owns focus so
-no editor composition is live). The editor reveals a mounted caret from the
-first paint (`editor.tsx` — the keep-the-caret-in-view invariant).
-
-### The overlay (`components/quick-open.tsx`)
-
-A near-fullscreen modal: a view row (ファイル / 開いているファイル /
-ファイルを検索 / 開いているファイルを検索, the text-only checkbox at the
-right edge) over the input on its own row, over a two-pane body — the result
-list (each row the relative path with match highlights; grep rows prefix
-path:line) and a *preview* pane that reads the selected entry's path on
-demand (`readFile`, cached per path, binary/empty states, char-capped; an
-untitled buffer has no path — empty pane), split by a draggable ARIA
-window-splitter (a store-clamped % of the body, kept across opens).
-
-Arrow keys + Enter navigate; Esc or a backdrop click closes; hover selects.
-Choosing dispatches by item: grep rows jump (above), `bufferId` → tab switch,
-else path → the content-sniffed open. The input owns focus while open; the
-editor stays mounted underneath, so its selection survives with no
-save/restore, and `closeQuickOpen` just refocuses it (mirroring
-`closeSearch`). Navigation/close keys are ignored mid-composition.
-
-### Shell chords (`keymap.ts`)
-
-The shell's chords live in one declarative table (renderer `keymap.ts`:
-`APP_KEYMAP`, plan-style command ids like `file.save`), dispatched by
-`handleAppKeydown` from the single window keydown listener `app.tsx`
-installs. While the palette is open, that dispatcher defers to
-`handleQuickOpenKey`, which swallows *any* table hit (Ctrl+W and friends must
-not leak to the shell) but lets editing chords and printable keys reach the
-input — the `overlay` scope of the keymap, so a new binding is overlay-safe
-by construction. The store is built generic (`items`, not `files`) so the
-same overlay can back a future Ctrl+Shift+P command palette; the table leaves
-Shift+P unclaimed.
+- **Search highlights down** — the `searchHighlights` prop (`{ ranges,
+  active }`): inline `vedSearchMatch` / `vedSearchActive` decorations folded
+  into the doc-keyed base layer. The cache keys on the object identity, so
+  caret moves rebuild nothing (`__vedBaseRebuilds` holds); a query or
+  active-match change hands down a new object and rebuilds once. Styling is
+  background-only — no metric changes, so every cached measurement stands.
+- **Search ops up** — `onSearchOps` hands the shell `{ select, replace,
+  replaceAll }`. `select` sets the model selection and reveals it (paged
+  modes snap the page start, like any caret reveal). `replace` selects the
+  range and takes the `plainInsertTr` path — an exact plain-string edit,
+  repaired, one history entry. `replaceAll` splices every range into the
+  plain string and rebuilds the whole document in one transaction — one
+  history entry, one repair pass. All three refuse while `view.composing`
+  (IME safety).
+- **Quick-open jumps** — a caret placement arrives as a `CursorState`
+  snapshot dispatched before the switched editor renders; a jump into the
+  currently *rendered* buffer commits the live text and remounts the editor
+  via an epoch in its key (safe, because the palette owns focus so no
+  composition is live). The editor reveals a mounted caret from the first
+  paint (the keep-the-caret-in-view invariant).
+- **Theme tokens** — every colour is a `--ved-*` custom property defined by
+  the shell, cascading into the editor core's CSS exactly like `--cell-size`
+  / `--font-family`; the editor's stylesheets carry each token's light value
+  as the `var()` fallback, so the editor renders correctly standalone.
 
 ## Structure repair
 
@@ -784,203 +688,14 @@ edit at a legal time.
 
 ### `@ved/vim`
 
-The Vim extension splits model from view. `model.ts` is a pure reducer —
-`(state, key, {text, selection, caretStop}) → state + effects` (select /
-replace / moveVisual / scrollPage / command / breakUndo) — so the modal
-semantics unit-test as plain functions. `extension.ts` merely executes
-effects against the extension context and reports mode changes; the shell's
-`useVimStore` renders the toggle and mode chip (`desktop vim.ts`). The full
-key set and its deviations — motions, operators + text objects
-(`iw`/`a(`/`ip`…), `%`, `~`, etc. — are catalogued in the `model.ts` header;
-ex commands are deferred. The whole loop is pinned by `test/e2e/vim-mode.ts`.
-
-#### Motions and the cursor
-
-Bare h/j/k/l are the *arrow keys* (spatial — `moveCaretVisual`): the editor
-resolves each screen direction to the right axis. In vertical writing h/l
-move between columns (a logical paragraph walk — a ved line is a paragraph)
-and j/k walk the characters up/down the column; in horizontal writing they
-are the classic directions. `g`+hjkl is the display (wrapped) line/column
-walk instead (`moveCaretVisual`'s `visualLine`). As operator targets, h/l
-stay pure character motions.
-
-Normal and visual mode never *rest* the cursor past a line's last character —
-Vim's past-end column exists only in insert mode. The reducer's own targets
-respect this, but the editor-resolved motions (`moveVisual`) can stop at a
-paragraph end, so the adapter clamps each handled step's head back one caret
-stop (`clampLineEnd`); an empty line keeps its one position, and Esc from
-insert already steps back in the reducer. (Deviation: the clamp resets the
-goal column, so a line move that clamps at a short paragraph forgets the
-wider column Vim's `curswant` would keep.)
-
-`gg`/`G` keep the column. `Ctrl+A`/`Ctrl+X` increment/decrement the number at
-the caret. `gi` re-enters insert where the last insert/replace session ended;
-`gp`/`gP` paste with the cursor after the text.
-
-Vim's `Ctrl+F/B/D/U` map to `scrollPage`, consumed *ahead of* the app's
-Ctrl+F search and Ctrl+B sidebar in normal mode (the editor
-`stopPropagation`s a consumed key so it never reaches the app's window
-listener); insert mode leaves those chords to the app.
-
-#### Search
-
-`/` `?` `n` `N` `*` `#` run in the reducer as a command-line mode: the
-pattern accumulates in state, the extension reports it via `onCommandLine`,
-and the shell renders the `/pattern` line. Matching is literal and
-case-sensitive, not incremental, and not IME-aware (raw keydowns). The
-searches stay live in visual mode, *extending* the selection.
-
-#### Visual modes
-
-Linewise `V` keeps the cursor and highlights the paragraph; charwise `v` is
-inclusive of the anchor cell (both render via `setVisualSelection`).
-
-**Block visual** (`Ctrl+V`) is the rectangle between anchor and head: their
-line range × their *character-column* range, both inclusive (ved's
-one-character-per-cell grid; a deviation from Vim's screen columns). The
-editor renders it as the `'block'` visual-selection kind — one overlay rect
-per line, clipped to each line's end. `d`/`x`/`c`/`s`/`y` take the per-line
-segments into a *blockwise* register that `p`/`P` re-insert as a column
-(padding short lines, creating missing ones). `I`/`A` insert on the block's
-top line (`A` after the right edge, padding a short top line; after `$`, at
-every line's end), and Escape repeats the typed text on the remaining lines —
-the text accumulates through the same channels as the dot-repeat recording,
-so IME-committed text repeats too (`mozc/vim-block-ime.ts`). Enter/Delete (or
-backspacing past the insert start) abort the repeat; block changes are not
-dot-repeatable (like all visual changes, v1), and block-visual paste is not
-supported (v1).
-
-Visual `r{char}` overwrites every selected character (per-segment in a block;
-newlines survive; no register write).
-
-Every motion *declares* its effect on the `$`-block flag
-(`MotionDef.blockEol`, a required field) — the classification is exhaustive
-by construction, not by a hand-kept key list.
-
-`gv` reselects the selection the last visual mode *ended* with — kind and
-`$`-flag included; from inside visual mode it swaps with the live selection
-(`gv gv` toggles between the two). The stored offsets are not edit-adjusted
-(Vim's `'<`/`'>` are best-effort there too), only clamped on reselect.
-
-#### Replace mode (`R`)
-
-Typing overtypes, clamped at the line end (past it, R appends). The *adapter*
-owns the overwrite: typed text through the beforeinput hook, an IME commit by
-consuming the displaced characters at compositionend — the composition itself
-is never disturbed (`mozc/vim-replace-ime.ts` pins the loop). Backspace
-restores the overwritten text within the session (`replaceStack`) and only
-moves left below it; Enter inserts; the whole session dot-repeats as an
-overtype.
-
-#### Dot-repeat (`.`)
-
-A `record()` wrapper keeps the last change as `lastChange`: the normal-mode
-*keys*, plus the insert phase's literal *text* (`VimChangeItem`). Insert text
-is recorded as text because keystrokes cannot represent it — live typed and
-IME-committed text reach the recording through `vimRecordText`, fed by the
-adapter's `handleTextInput` (the beforeinput literal) and a
-compositionstart/end document diff; composing keydowns are 229-guarded and
-never reach the reducer. Insert-mode Enter/Backspace/Delete stay key items;
-the adapter's feed loop performs them on replay (Enter = `\n`, so repeated
-changes keep their newlines).
-
-`.` emits a `repeat` effect and the *adapter* replays it — keys
-re-dispatched, text inserted as-is (the reducer can't step a mutating
-document within one call). `mozc/vim-dot-repeat.ts` pins the real-IME loop.
-
-#### Macros, registers, and marks
-
-**Macros**: `q{reg}`…`q` records the *typed* keys. Capture lives in
-`vimKeydown` and excludes fed/replayed keys, so a replay (`@{reg}`, `@@`,
-counts multiply) re-expands through user mappings, and `.` after a macro
-repeats the last change *within* it, as in Vim. The adapter runs all fed keys
-through one explicit queue — recursion would overflow a counted macro — and
-`onMacroRecording` reports the live register.
-
-**Named registers** (`"a`–`"z`; `"A`–`"Z` append): every yank/delete still
-writes the unnamed register; a pending `"x` routes the next write/read. The
-macro registers stay a separate space — a deviation.
-
-**Marks**: `m{a-z}` + `` ` ``/`'` jumps (operators compose; `'` is linewise).
-Marks are plain offsets, adjusted over the reducer's own replace effects and
-only *clamped* across editor-side insert sessions (best-effort, like
-`'<`/`'>`).
-
-#### Word motions
-
-`w`/`b`/`e` run over the raw plain text and then `snapCaret` their target to
-a legal stop, so a boundary landing inside a collapsed ruby's markup skips
-out to the ruby edge instead of stranding the caret.
-
-Word granularity is a pluggable `WordModel` (`{next, prev, end}`) the reducer
-consults via `doc.words`. The default (`CLASS_WORDS`) is character-class
-runs; `createVimExtension({japaneseWords: true})` swaps in a segmenter model
-(`words-ja.ts`, `Intl.Segmenter('ja', {granularity: 'word'})`, memoised by
-text identity, falling back to `CLASS_WORDS` off Chromium), so `w`/`b`/`e`
-split kana/kanji runs at real word boundaries instead of jumping a whole run.
-Its targets pass through the same `snapCaret`, so it stays ruby-aware. The
-desktop shell turns it on (ved is Japanese-first); a caller may pass a custom
-`WordModel` instead of `true`.
-
-#### Tunables (`config.ts`)
-
-Every tunable, locale-dependent value lives in one data leaf: the bracket
-pairs `%` and the bracket text objects match (Japanese 「」（）【】…
-included), the f/F/t/T Ctrl-chord targets (`Ctrl+j` → `、`, `Ctrl+l` → `。`),
-and the `J` join-spacing policy (a space for Latin, none between 全角).
-
-#### User key mappings
-
-`createVimExtension({keymap})` takes a JSON-serialisable `VimKeymapConfig` —
-deliberately, since the same shape is the future config-file schema — per map
-mode (normal/visual/operator-pending), in Vim notation (`keys.ts parseKeys`:
-plain characters, `<C-x>`/`<A-x>`, the named specials `<Esc> <CR> <Space>
-<Tab> <BS> <Del> <Bar> <lt> <Leader>` with the leader defaulting to `\`;
-unknown `<…>` specials are compile errors; Shift is carried by the character
-itself — `H`, never `<S-…>`). Bindings are noremap by default (`{rhs, remap:
-true}` opts in per binding).
-
-The keymap compiles *eagerly* into per-mode tries: a broken keymap throws at
-construction, so the caller can fall back to defaults and report, and prefix
-conflicts are compile errors — a pure reducer cannot time out to
-disambiguate. `vimKeydown` walks the tries as a front layer: user LHS win
-over built-ins; a match emits a `feedKeys` effect the adapter re-enters key
-by key (the dot-repeat loop generalised, budget-guarded against mapping
-cycles); a dead-ended walk replays its swallowed keys through the built-ins
-as if typed. Fed keys record, so `.` repeats the expansion. The layer never
-runs where a key is an *argument* (`f`/`r`, the search line).
-
-Insert maps (`jj` → `<Esc>`) use a different walk that never swallows: the
-prefix types live, and a match deletes it before feeding the RHS. An
-interrupting composition or click loses nothing — the walk just resets at
-compositionstart — and a match strips the prefix keys from the dot-repeat
-recording, so `.` replays the net change. Insert LHS keys must be plain
-printable characters.
-
-The keymap is the `vimKeymap` settings field (`init.ts` via `ctx.settings`; a
-change rebuilds the extension, re-attaching a live session in normal mode).
-`window.__vedVimKeymap` remains the smoke seam, consulted only when no
-settings keymap is set.
-
-#### Built-in sequences and named actions
-
-The built-in multi-key sequences — `gg`, `g`+hjkl, every text object
-(`iw`/`a(`/`i「`…) — ride the same walk discipline as the user-keymap layer
-(`builtinLayerKey`, per-context tries: normal / visual / operator-pending, so
-`i` is a text-object prefix only where Vim's omap/xmap would bind it). The
-builtin layer is always active — fed and replayed keys resolve sequences
-identically — its steps record (a replay re-walks them), and a dead end
-swallows and clears pendings (`gx` types nothing).
-
-Built-in normal/visual commands are *named actions* in data tables (key → id
-→ pure function, `model.ts` `NORMAL_ACTIONS`/`VISUAL_ACTIONS`). An RHS can
-bind one directly — `{action: 'delete.charForward'}` — validated against
-`VIM_ACTIONS_BY_MODE` at construction (not dot-repeatable, like Vim's
-`<Plug>` without repeat.vim). Users can supply their *own* primitives via
-`createVimExtension({actions})`: a `VimCustomAction` reads the doc view and
-returns effects — never the modal state, so the state shape stays private —
-and is bindable as an `{action}` RHS (collisions and unknown ids throw at
-construction).
+The Vim extension is the proof the seam suffices: built only on the public
+entry, it splits model from view — `model.ts` is a pure reducer
+(`(state, key, doc view) → state + effects`), so the modal semantics
+unit-test as plain functions, and `extension.ts` merely executes effects
+against the extension context. Its full design — motions, visual modes,
+replace mode, dot-repeat, macros/registers/marks, word models, user key
+mappings — is `docs/vim.md`; the key set and its deviations are catalogued
+in the `model.ts` header. The whole loop is pinned by `test/e2e/vim-mode.ts`.
 
 ## Layout: writing modes and the page
 
@@ -1314,61 +1029,8 @@ ambiguous; each has a chosen anchor:
   its paint, and every line overruns the separator. The band's start padding
   is exactly the gutter — no extra caret margin.
 
-### Debugging a layout bug
-
-vertical-rl + multicol is where "it looks wrong but I can't see why" bugs
-live. The discipline that fixes them in one pass instead of ten:
-
-- **Get a screenshot of the failing case before theorising.** It carries the
-  three things measurements don't give at once: the writing mode, the kind of
-  content that triggers it (a long *wrapping* line, a ruby, an over-length
-  run — never a tidy sample), and the visual itself.
-- **Don't trust `getBoundingClientRect` in fragmented layouts.** For a
-  paragraph split across multicol columns it can report the capped extent
-  while a line visibly overruns. Use rects to confirm a hypothesis, never to
-  form one.
-- **If the local environment can't reproduce it** (font, window size, device
-  scale), say so and get the user's screenshot — a large window whose
-  fallback CJK font renders fullwidth glyphs at ~1em "confirms" layouts the
-  user's font breaks. `VED_SMOKE_SCALE` pins fractional HiDPI scales.
-- **Capture harness**: a throwaway driver that launches the built app in a
-  *visible* window (Playwright's `page.screenshot` stalls on the hidden
-  smoke window; `webContents.capturePage().toDataURL()` does not), types the
-  scenario matched to the report, switches to the exact mode named in the
-  bug, and writes PNGs. Shrink a tall capture to read it inline
-  (`magick cap.png -resize 900x cap-small.png`). The driver stays a temp
-  file — the durable artifact is an e2e regression test in `test/e2e/`.
-
-## Theming
-
-Every colour in the product is a `--ved-*` custom-property token, so a theme
-is just a set of token *values*. The palettes (`ved-light` / `ved-dark`
-mixins) live in the desktop shell's `main.scss`; the store (`theme.ts`,
-`light | dark`) writes `data-theme` to `<html>` (applied in `app.tsx`), and
-CSS resolves the palette from it. The launch default is the OS preference
-(`theme.ts` seeds from `prefers-color-scheme`); before JS runs,
-`:root:not([data-theme])` follows the OS too, so a dark-OS launch never
-flashes light. The toolbar's icon button (`theme-toggle.tsx`) flips
-Light ⇄ Dark. The store is a plain string id, so adding a named theme is one
-more `:root[data-theme='id']` block driven by `set()` — the two-state toggle
-is just today's UI over it.
-
-The tokens are defined on `:root` (the shell) and cascade into the editor
-core's CSS exactly like `--cell-size` / `--font-family` do. The editor's
-stylesheets (`editor.module.scss`, `pm/ruby.css`) reference each token with
-its light value as the `var()` fallback, so the editor still renders
-correctly standalone — the web preview and any no-theme-root host get the
-light look with no shell dependency. SVG chrome icons use `currentColor`, so
-they recolour for free.
-
-Two gotchas the toolbar controls hit: native form controls (`button`,
-`input`, `select`) don't inherit `color` — they default to a system colour
-that is dark-on-dark, so each gets an explicit `color: var(--ved-fg)`; and
-the native widget chrome CSS can't reach (the select popup, number spinners,
-scrollbars, the text caret) follows `color-scheme`, set per palette in the
-mixins. `init.ts` hydrates the store via `ctx.settings`
-(docs/extensions.md); runtime toggles are ephemeral, so nothing persists it.
-Verified in `test/e2e/theme.ts`.
+The discipline for cornering one of these — screenshot first, the capture
+harness, what rects can and can't tell you — is `docs/debugging-layout.md`.
 
 ## Constraints & verified dead ends
 

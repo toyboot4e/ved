@@ -268,7 +268,7 @@ Decisions from the design review (see CONTEXT.md **view config**):
     explicit `--ved-fg` (form controls don't inherit `color`) and each palette
     sets `color-scheme` so native widgets follow.
     Not persisted yet (Phase 4). Smoke: `test/e2e/theme.ts`. See
-    architecture.md "Theming".
+    desktop.md "Theming".
 
 - [x] **Step V.4 — search & replace bar.** *(done 2026-07-05)*
   - User-requested. Ctrl+F opens the bar (Ctrl+R opens it on the replace
@@ -283,7 +283,7 @@ Decisions from the design review (see CONTEXT.md **view config**):
     replace-all is ONE transaction (one undo step). IME-safe: chords and the
     bar's Enter/Esc are ignored mid-composition, and the ops refuse while
     `view.composing`. Smoke: `test/e2e/search-replace.ts`. See
-    architecture.md "Search and replace".
+    desktop.md "Search and replace".
   - *(2026-07-05)* The bar docks at the BOTTOM of the editor area (a
     full-width row above the shell panel, in `app.module.scss .main`), not as
     a row inside the fixed-width page column — so it spans the window and
@@ -452,7 +452,7 @@ configuration — deferred (docs/extensions.md "Deferred").
     printable keys reach the input. This is the `overlay` scope of the keymap
     registry (step 4 of the architecture notes above).
   - Smoke: `test/e2e/quick-open.ts`. Units: `main/workspace-index.test.ts`,
-    `renderer/src/quick-open.test.ts`. See architecture.md "Quick open".
+    `renderer/src/quick-open.test.ts`. See desktop.md "Quick open".
   - *(2026-07-08)* The list/preview divider is DRAGGABLE (an ARIA
     window-splitter, pointer-captured drag + arrow keys — the sidebar
     handle's pattern); the list width is a store-clamped % of the body,
