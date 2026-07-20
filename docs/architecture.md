@@ -891,12 +891,14 @@ the next; paragraph 0 (the overlay's origin probe) and the *last* paragraph
 
 The discipline:
 
-- **A caret move or edit touching a hidden paragraph materialises everything
-  in the same flush** (`chainMaterialize`, chained into dispatchTransaction
-  like repair): the caret always has a DOM home before anything measures or
-  reveals it, and the measure tail — the overlay's edit pass, the page-gap
-  incremental measure — never walks a `display:none` paragraph. The scheduled
-  pass re-windows afterwards.
+- **A caret move or edit touching a hidden paragraph materialises the
+  touched paragraphs in the same flush** (`chainMaterialize`, chained into
+  dispatchTransaction like repair; runs split around them — a large paste's
+  span filters against the actually-hidden set rather than materialising the
+  whole document): the caret always has a DOM home before anything measures
+  or reveals it, and the measure tail — the overlay's edit pass, the
+  page-gap incremental measure — never walks a `display:none` paragraph.
+  The scheduled pass re-windows afterwards.
 - **Never dispatch while composing**; the compositionend schedule reconciles
   (the page-gap discipline).
 - **Any layout change that can resize paragraphs** (mode / policy / view

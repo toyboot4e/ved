@@ -44,8 +44,10 @@ export const WINDOW_MIN_SIZE = 20_000;
 /** Paragraphs within this many of the caret (either selection end) stay
  *  materialized — line moves measure adjacent columns. */
 const CARET_PAD = 2;
-/** An edit whose changed span exceeds this materializes everything (a
- *  replaceAll-scale rebuild) instead of splitting runs precisely. */
+/** An edit that needs more than this many HIDDEN paragraphs materializes
+ *  everything (a replaceAll-scale rebuild) instead of splitting runs
+ *  precisely — the count of actually-hidden members, never the dirty span's
+ *  raw size (a large paste's span is mostly new, visible paragraphs). */
 const LARGE_EDIT_PARAS = 64;
 /** Re-run the scroll-driven pass only after the viewport moved this fraction
  *  of itself — the margin is a whole viewport, so a quarter keeps well ahead
@@ -547,21 +549,25 @@ export const createWindowing = (
 
   /** The paragraphs a transaction NEEDS rendered: the selection ends with
    *  their neighbors (line moves measure adjacent columns), plus a doc
-   *  change's dirty span (a replaceAll-scale span shortcuts to "everything
-   *  hidden"). */
-  const neededParas = (next: EditorState, oldDoc: PMNode | null): number[] | 'all' => {
+   *  change's dirty span. A span past LARGE_EDIT_PARAS comes back flagged
+   *  `large` but is NEVER shortcut to "everything hidden": a large paste is
+   *  caret-local and its span is mostly NEW paragraphs (not hidden ones) —
+   *  the shortcut materialized the whole document per paste, an O(doc)
+   *  layout + overlay measure (bench/paste-probe.ts). */
+  const neededParas = (next: EditorState, oldDoc: PMNode | null): { need: number[]; large: boolean } => {
     const need: number[] = [];
     for (const end of [next.selection.$head, next.selection.$anchor]) {
       const at = paraIndexOf(end);
       for (let d = -CARET_PAD; d <= CARET_PAD; d++) need.push(at + d);
     }
+    let large = false;
     if (oldDoc) {
       const { cleanStart, cleanEnd } = changedParagraphSpan(oldDoc, next.doc);
       const dirtyTo = next.doc.childCount - 1 - cleanEnd;
-      if (dirtyTo - cleanStart > LARGE_EDIT_PARAS) return 'all'; // replaceAll-scale
+      large = dirtyTo - cleanStart > LARGE_EDIT_PARAS;
       for (let i = cleanStart; i <= dirtyTo; i++) need.push(i);
     }
-    return need;
+    return { need, large };
   };
 
   const chainMaterialize = (
@@ -572,11 +578,13 @@ export const createWindowing = (
     // docs) or a composition (already materialized) bails before any
     // decoration scan.
     if (!hasHidden || view.composing) return null;
-    const needRaw = neededParas(next, oldDoc);
+    const { need: needRaw, large } = neededParas(next, oldDoc);
     // O(needed) membership checks via nodeDOM and caret-local child-size
     // walks — a ':scope > p' query here cost O(paragraphs) per keystroke
     // (~33ms/key at 5000 paragraphs), and `need` is caret-local by
-    // construction (replaceAll-scale edits return 'all' instead).
+    // construction. A LARGE span skips this pre-check: the per-member walk is
+    // quadratic over the span, and the edit already paid O(span) — one
+    // ':scope > p' query + classList checks filter it instead.
     const head = next.selection.$head.index(0);
     const headPos = next.selection.$head.before(1);
     const isHiddenAt = (i: number): boolean => {
@@ -587,14 +595,12 @@ export const createWindowing = (
       const dom = view.nodeDOM(pos);
       return dom instanceof HTMLElement && dom.classList.contains('vedWindowHidden');
     };
-    if (needRaw !== 'all' && !needRaw.some(isHiddenAt)) return null; // the common keystroke: no full-child query
+    if (!large && !needRaw.some(isHiddenAt)) return null; // the common keystroke: no full-child query
     const paras = view.dom.querySelectorAll<HTMLElement>(':scope > p');
     const current = hiddenParasFromDOM(paras);
     if (current.size === 0) return null;
-    const need =
-      needRaw === 'all'
-        ? [...current].sort((a, b) => a - b)
-        : [...new Set(needRaw.filter(isHiddenAt))].sort((a, b) => a - b);
+    const hiddenInDOM = (i: number): boolean => paras[i]?.classList.contains('vedWindowHidden') ?? false;
+    const need = [...new Set(needRaw.filter(large ? hiddenInDOM : isHiddenAt))].sort((a, b) => a - b);
     if (need.length === 0) return null;
     // Materialize ONLY the needed paragraphs by SPLITTING their runs — with
     // decoration windowing, materializing everything costs an O(doc)
