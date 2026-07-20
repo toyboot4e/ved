@@ -117,11 +117,12 @@ type FlowEnv = {
    *  paragraph hides only when fully outside it. */
   flowLo: number;
   flowHi: number;
-  /** The INNER window (viewport ± a quarter viewport): a HIDDEN paragraph
-   *  materializes only when it reaches it. The dead zone between the two
-   *  absorbs the drift between live-measured and cached-extent spans, which
-   *  otherwise flapped ~20 boundary paragraphs per keystroke (each flap
-   *  re-dispatches the window and re-measures the overlay tail). */
+  /** The INNER window (viewport ± three quarters of a viewport): a HIDDEN
+   *  paragraph materializes only when it reaches it. The dead zone between
+   *  the two absorbs the drift between live-measured and cached-extent
+   *  spans, which otherwise flapped ~20 boundary paragraphs per keystroke
+   *  (each flap re-dispatches the window and re-measures the overlay
+   *  tail). */
   flowLoIn: number;
   flowHiIn: number;
 };
@@ -253,6 +254,9 @@ export const createWindowing = (
   let rewindowTimer: ReturnType<typeof setTimeout> | 0 = 0;
   let lastPassScroll: number | null = null;
   let lastPitch = 0;
+  // The live spacer elements (refreshed per dispatch; PM may recreate widget
+  // DOM between dispatches — a disconnected entry re-queries lazily).
+  let spacerEls: HTMLElement[] = [];
   // Whether the LAST windowing dispatch left anything hidden — only our own
   // dispatches change membership (the set otherwise rides the mapping), so
   // this boolean lets the per-dispatch chain check bail without deriving the
@@ -299,6 +303,9 @@ export const createWindowing = (
     // elements' attributes during the update and wipes foreign classes
     // applied before it.
     applyHiddenClasses(runs);
+    // Cache the live spacer elements for onScroll's blank-visible check —
+    // a per-scroll-event ':scope > *' query would be O(paragraphs).
+    spacerEls = runs.length ? [...view.dom.querySelectorAll<HTMLElement>(':scope > .ved-window-spacer')] : [];
     if (shift !== null) onWindowChange(shift);
   };
 
@@ -360,7 +367,12 @@ export const createWindowing = (
       return vertical ? [contentStart - hi, contentStart - lo] : [lo - contentStart, hi - contentStart];
     };
     [env.flowLo, env.flowHi] = toFlow(winLo, winHi);
-    [env.flowLoIn, env.flowHiIn] = toFlow(winLo + margin * 0.75, winHi - margin * 0.75);
+    // The INNER (materialize) window keeps a ¾-viewport lookahead: a fast
+    // scroll must meet materialized text, not a spacer popping in a frame
+    // late (the fast-scroll flicker). The ¼-viewport dead zone to the OUTER
+    // (hide) window stays — it absorbs live-vs-cached span drift, and the
+    // steady-state live set is bounded by the OUTER window either way.
+    [env.flowLoIn, env.flowHiIn] = toFlow(winLo + margin * 0.25, winHi - margin * 0.25);
     return env;
   };
 
@@ -749,8 +761,30 @@ export const createWindowing = (
     return Math.max(1, Math.round(entry.extent / lastPitch));
   };
 
+  /** Is a spacer's box inside the viewport — i.e. is the blank it stands in
+   *  for about to PAINT? (In multicol the spacer's bounding rect is the union
+   *  of its jumper/tail fragments, which covers the hidden bands.) */
+  const blankInViewport = (): boolean => {
+    if (!hasHidden) return false;
+    if (spacerEls.some((el) => !el.isConnected))
+      spacerEls = [...view.dom.querySelectorAll<HTMLElement>(':scope > .ved-window-spacer')];
+    const m = mount.getBoundingClientRect();
+    return spacerEls.some((el) => {
+      const r = el.getBoundingClientRect();
+      return r.bottom > m.top && r.top < m.bottom && r.right > m.left && r.left < m.right;
+    });
+  };
+
   const onScroll = (): void => {
     if (!enabled()) return;
+    // A spacer inside the viewport is blank ALREADY headed for the screen:
+    // run the pass NOW — the scroll event precedes this frame's paint, so a
+    // synchronous materialize never shows the blank, where hysteresis + the
+    // rAF would flash it for a frame or more (the fast-scroll flicker).
+    if (blankInViewport()) {
+      pass();
+      return;
+    }
     // The scroll axis: the band axis in the multicol modes, the block axis
     // otherwise (the same rule as readPassEnv).
     const vertical = getComputedStyle(view.dom).writingMode.startsWith('vertical');

@@ -883,7 +883,8 @@ position-dependent, so a doc change in a windowed multicol mode schedules a
 re-derive pass.
 
 Hide/materialise decisions use inner/outer window **hysteresis** (materialise
-at viewport ± ¼, hide past ± 1) — the dead zone absorbs live-vs-cached span
+at viewport ± ¾ — a fast scroll must meet text, not a spacer popping in a
+frame late — hide past ± 1) — the dead zone absorbs live-vs-cached span
 drift that otherwise flaps boundary paragraphs per keystroke. A paragraph
 with no valid cached extent simply stays visible one pass and is learned for
 the next; paragraph 0 (the overlay's origin probe) and the *last* paragraph
@@ -904,7 +905,10 @@ The discipline:
 - **Any layout change that can resize paragraphs** (mode / policy / view
   config / fonts / resize) **materialises everything first**, so the full
   measures always see a fully rendered document; the pass re-windows after
-  they settle. Scroll re-windows with quarter-viewport hysteresis.
+  they settle. Scroll re-windows with quarter-viewport hysteresis — except
+  when a spacer's box already intersects the viewport: then the scroll
+  handler runs the pass synchronously (the scroll event precedes the frame's
+  paint), so the blank the spacer stands in for never reaches the screen.
 
 The overlay keeps the global numbering over hidden runs: a hidden paragraph
 contributes its last measured line count (`hiddenCount`; cold fallback =
