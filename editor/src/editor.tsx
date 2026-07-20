@@ -957,6 +957,25 @@ export const VedEditor = (props: VedEditorProps): React.JSX.Element => {
         }
       }
     };
+    // A Shift+press EXTENDS the selection from the EXISTING anchor — driven by
+    // us, like the drag: ProseMirror defers a shift-press to the browser
+    // (allowDefault), and the native extension can't cross a collapsed ruby's
+    // read-only base and often just collapses to a caret (backwards
+    // especially), so "shift+click moved the cursor instead of selecting".
+    // Hit-test the press point against the glyph cache (like the empty-area
+    // press this also works past the line ends) and keep the model anchor;
+    // pre-seating dragAnchorRef makes a shift+DRAG keep extending from it.
+    const resolveShiftExtendPress = (e: MouseEvent): void => {
+      const head = walker.offsetAtPoint(e.clientX, e.clientY);
+      if (head == null) return;
+      e.preventDefault(); // the native (caret-collapsing) selection update must not race the model one
+      const { doc } = view.state;
+      const anchor = posToOffset(doc, view.state.selection.anchor);
+      dragAnchorRef.current = anchor;
+      const sel = TextSelection.create(doc, offsetToPos(doc, anchor), offsetToPos(doc, head));
+      if (!sel.eq(view.state.selection)) view.dispatch(view.state.tr.setSelection(sel));
+      view.focus();
+    };
     // A press ends any line-move run and arms a drag (left button): cache the glyph
     // geometry, record the anchor, and listen for the move/release.
     const onPointerDown = (e: MouseEvent): void => {
@@ -965,9 +984,10 @@ export const VedEditor = (props: VedEditorProps): React.JSX.Element => {
       if (e.button !== 0) return;
       // NO glyph measurement here: a plain in-content click never consumes the
       // cache. Record the press point; the anchor (and the cache) resolve on the
-      // first drag move — or in resolveEmptyAreaPress, for an empty-area press.
+      // first drag move — or in the shift-extend/empty-area press resolvers.
       walker.beginGesture(e.clientX, e.clientY);
-      resolveEmptyAreaPress(e);
+      if (e.shiftKey && !view.composing) resolveShiftExtendPress(e);
+      else resolveEmptyAreaPress(e);
       window.addEventListener('mousemove', onDragMove);
       window.addEventListener('mouseup', endDrag);
     };
