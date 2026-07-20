@@ -70,6 +70,42 @@ try {
     step(`forwards shift+click extends across the ruby (anchor ${sel.anchor}, head ${sel.head})`);
   }
 
+  // --- the in-ruby highlight survives a range selection: head strictly
+  // inside the base → the OUTLINE class (rubyActiveRange), never the
+  // collapsed-caret fill (rubyActive) — and the fill returns when the
+  // selection collapses there ---
+  const inBase = await caretPointAt(7); // strictly inside |漢字(かんじ)
+  await setCaret(page, 1);
+  await shiftClick(inBase);
+  sel = await selection();
+  const rangeClasses = await page.evaluate(() => ({
+    range: !!document.querySelector('ruby.rubyActiveRange'),
+    fill: !!document.querySelector('ruby.rubyActive'),
+  }));
+  if (sel.head <= 5 || sel.head >= 13) {
+    fail(`shift+click into the base landed outside it (head ${sel.head}, expected 6..12)`);
+  } else if (!rangeClasses.range || rangeClasses.fill) {
+    fail(
+      `range selection into a ruby base: expected the outline highlight only ` +
+        `(rubyActiveRange=${rangeClasses.range}, rubyActive=${rangeClasses.fill})`,
+    );
+  } else {
+    step(`range head inside the base keeps the outline highlight (head ${sel.head})`);
+  }
+  await setCaret(page, sel.head); // collapse at the same spot
+  const collapsedClasses = await page.evaluate(() => ({
+    range: !!document.querySelector('ruby.rubyActiveRange'),
+    fill: !!document.querySelector('ruby.rubyActive'),
+  }));
+  if (!collapsedClasses.fill || collapsedClasses.range) {
+    fail(
+      `collapsed caret inside the base: expected the fill highlight only ` +
+        `(rubyActive=${collapsedClasses.fill}, rubyActiveRange=${collapsedClasses.range})`,
+    );
+  } else {
+    step('collapsing the selection restores the fill highlight');
+  }
+
   // --- a SECOND shift+click re-extends from the SAME anchor (backwards) ---
   const mid = await caretPointAt(4); // back before the ruby
   await setCaret(page, 1);

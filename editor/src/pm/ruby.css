@@ -308,6 +308,17 @@ ruby.rubyActive + .rubyDelimClose {
   background-color: var(--ved-ruby-active, rgba(255, 200, 50, 0.25));
 }
 
+/* The ruby holding a RANGE selection's head (strictly inside, like above).
+ * An OUTLINE, not the fill: the fill would fight the text-selection
+ * highlight painted over the same glyphs, an outline composes with it.
+ * Inset so it stays within the ruby's box — ruby lines run tight and a
+ * protruding outline would clip against neighboring lines. */
+ruby.rubyActiveRange,
+ruby.rubyActiveRange + .rubyDelimClose {
+  outline: 1px solid var(--ved-ruby-active-outline, rgba(255, 170, 0, 0.8));
+  outline-offset: -1px;
+}
+
 /* Boundary caret (pm/decorations.ts): a rendered caret at a text-less ruby seam,
  * where the native caret has no DOM text node to sit on. The span takes NO inline
  * space (so it doesn't shift the text); the ::after draws a 1px line in the inline

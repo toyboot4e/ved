@@ -993,10 +993,11 @@ const strictlyInside = (parse: Parse, ruby: number, offset: number): boolean => 
 
 /** The active-ruby part of the delta — while the caret sits strictly inside a
  *  ruby's markup span:
- *   - The `rubyActive` tint marks the ruby the EDITING caret sits in. Suppress
- *     it while a non-empty selection is active (`selFrom !== selTo`): there is
- *     no single editing position then, and its (yellow) tint would clash with —
- *     and visually override — the (blue) text-selection highlight on that ruby.
+ *   - The `rubyActive` tint marks the ruby the EDITING caret sits in. While a
+ *     non-empty selection is active (`selFrom !== selTo`, the HEAD strictly
+ *     inside) it switches to `rubyActiveRange` — an OUTLINE, not the fill:
+ *     the (yellow) tint would clash with and visually override the (blue)
+ *     text-selection highlight on that ruby, an outline composes with it.
  *   - An atom ruby's base un-locks while the caret is strictly inside it (the
  *     IME then edits the base char-by-char) — drop its cached read-only deco
  *     (found in the static set by its vedAtomBase spec). */
@@ -1013,7 +1014,7 @@ const pushActiveRubyDelta = (
   if (!strictlyInside(parse, active, headOffset)) return;
   const r = rubyInfoOf(parse, active);
   if (!r) return;
-  if (selFrom === selTo) add.push(Decoration.node(r.pos, r.pos + r.size, { class: 'rubyActive' }));
+  add.push(Decoration.node(r.pos, r.pos + r.size, { class: selFrom === selTo ? 'rubyActive' : 'rubyActiveRange' }));
   const ab = atomBaseDeco(staticSet, r);
   if (ab) remove.push(ab);
 };
