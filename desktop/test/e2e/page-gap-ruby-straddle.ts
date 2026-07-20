@@ -9,7 +9,7 @@
 // VISIBLE window: the overlay separator places on a rAF, which stalls hidden.
 // Usage: node test/e2e/page-gap-ruby-straddle.ts  (after a build)
 import assert from 'node:assert/strict';
-import { fail, finish, launchVed, step } from './harness.ts';
+import { fail, finish, launchVed, setViewConfig, step } from './harness.ts';
 
 const ved = await launchVed({ env: () => ({ VED_SMOKE_CLOSE_RESPONSE: 'discard', VED_SMOKE_HIDDEN: '' }) });
 const { page } = ved;
@@ -18,11 +18,13 @@ try {
   // 20-cell lines × 20 lines × 2 pages per band; all-ruby document. Line 20 =
   // nine 2-cell rubies (18 cells) + the first two cells of the BIG base
   // (ルネ); its tail コダイスキビ opens page 2's first line.
-  await page.fill('#view-config-fontSize', '18');
-  await page.fill('#view-config-lineSpaceRatio', '0.55');
-  await page.fill('#view-config-pageLineChars', '20');
-  await page.fill('#view-config-pageLines', '20');
-  await page.fill('#view-config-pagesPerRow', '2');
+  await setViewConfig(page, {
+    fontSize: '18',
+    lineSpaceRatio: '0.55',
+    pageLineChars: '20',
+    pageLines: '20',
+    pagesPerRow: '2',
+  });
   await page.waitForTimeout(150);
   await page.click('button:has-text("Rich")');
   await page.waitForTimeout(100);

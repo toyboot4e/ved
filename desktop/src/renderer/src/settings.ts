@@ -9,8 +9,10 @@
 import { AppearPolicy, type Invisibles, WritingMode } from '@ved/editor';
 import type { VimKeymapConfig } from '@ved/vim';
 import type { ActivationReason, VedSettings } from '../../shared/extension-api';
+import { type AppKeymapOverrides, parseAppChord, useAppKeymapStore } from './app-keymap';
 import { useAppearPolicyStore } from './appear-policy';
 import { useInvisiblesStore } from './invisibles';
+import { type AppCommand, type Chord, isAppCommand } from './keymap';
 import { type Theme, useThemeStore } from './theme';
 import { clampViewConfig, useViewConfigStore, type ViewConfig } from './view-config';
 import { useVimStore } from './vim';
@@ -45,6 +47,7 @@ export type SettingsBaseline = {
   readonly vimKeymap: VimKeymapConfig | null;
   readonly sidebarSide: SidebarSide;
   readonly sidebarWidth: number;
+  readonly appKeybindings: AppKeymapOverrides;
 };
 
 export const captureSettingsBaseline = (): SettingsBaseline => ({
@@ -57,6 +60,7 @@ export const captureSettingsBaseline = (): SettingsBaseline => ({
   vimKeymap: useVimStore.getState().keymap,
   sidebarSide: useWorkspaceStore.getState().sidebarSide,
   sidebarWidth: useWorkspaceStore.getState().sidebarWidth,
+  appKeybindings: useAppKeymapStore.getState().overrides,
 });
 
 export const resetSettingsToBaseline = (baseline: SettingsBaseline): void => {
@@ -67,6 +71,7 @@ export const resetSettingsToBaseline = (baseline: SettingsBaseline): void => {
   useInvisiblesStore.setState({ invisibles: baseline.invisibles });
   useVimStore.setState({ enabled: baseline.vimEnabled, keymap: baseline.vimKeymap });
   useWorkspaceStore.setState({ sidebarSide: baseline.sidebarSide, sidebarWidth: baseline.sidebarWidth });
+  useAppKeymapStore.setState({ overrides: baseline.appKeybindings });
 };
 
 /** The view-config fields of `VedSettings`, all optional numbers but
@@ -157,6 +162,26 @@ const applyInvisiblesField = (settings: VedSettings, bad: ReportBad): void => {
   useInvisiblesStore.setState({ invisibles: { ...current, ...patch } });
 };
 
+const applyAppKeybindingsField = (settings: VedSettings, bad: ReportBad): void => {
+  if (settings.appKeybindings === undefined) return;
+  if (typeof settings.appKeybindings !== 'object' || settings.appKeybindings === null) {
+    bad('appKeybindings', settings.appKeybindings);
+    return;
+  }
+  const patch: Partial<Record<AppCommand, Chord>> = {};
+  for (const [command, spec] of Object.entries(settings.appKeybindings)) {
+    const chord = typeof spec === 'string' ? parseAppChord(spec) : null;
+    if (!isAppCommand(command) || chord === null) {
+      bad(`appKeybindings.${command}`, spec);
+      continue;
+    }
+    patch[command] = chord;
+  }
+  if (Object.keys(patch).length === 0) return;
+  const current = useAppKeymapStore.getState().overrides;
+  useAppKeymapStore.setState({ overrides: { ...current, ...patch } });
+};
+
 const applySidebarFields = (settings: VedSettings, bad: ReportBad): void => {
   if (settings.sidebarOpen !== undefined) {
     if (typeof settings.sidebarOpen === 'boolean') useWorkspaceStore.setState({ sidebarOpen: settings.sidebarOpen });
@@ -190,6 +215,7 @@ export const applySettings = (settings: VedSettings, report: (message: string) =
   applyAppearanceFields(settings, bad);
   applyVimFields(settings, bad);
   applyInvisiblesField(settings, bad);
+  applyAppKeybindingsField(settings, bad);
   applySidebarFields(settings, bad);
 };
 

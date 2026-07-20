@@ -17,7 +17,7 @@
 // Linux + fcitx5 + mozc + xdotool only; SKIPS elsewhere. STEALS X focus while
 // it runs — don't type. Run: node test/e2e/mozc/gap-compose.ts
 import assert from 'node:assert/strict';
-import { clickWritingMode, fail, finish, setCaret, setDoc, step } from '../harness.ts';
+import { clickWritingMode, fail, finish, setCaret, setDoc, setViewConfig, step } from '../harness.ts';
 import { mozcAvailable, openMozc } from './harness.ts';
 
 if (!mozcAvailable()) {
@@ -73,11 +73,13 @@ try {
   await page.keyboard.up('Control');
   await page.waitForTimeout(150);
 
-  await page.fill('#view-config-fontSize', '18');
-  await page.fill('#view-config-lineSpaceRatio', '0.55');
-  await page.fill('#view-config-pageLineChars', '40');
-  await page.fill('#view-config-pageLines', '20');
-  await page.fill('#view-config-pagesPerRow', '2');
+  await setViewConfig(page, {
+    fontSize: '18',
+    lineSpaceRatio: '0.55',
+    pageLineChars: '40',
+    pageLines: '20',
+    pagesPerRow: '2',
+  });
   await page.waitForTimeout(200);
   await clickWritingMode(page, 'Vertical Rows');
 

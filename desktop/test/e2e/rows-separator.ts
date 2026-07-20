@@ -13,15 +13,14 @@
 // silently no-op (same as vrows-ruby-seam-line-move).
 // Usage: node test/e2e/rows-separator.ts  (after a build)
 import assert from 'node:assert/strict';
-import { clickWritingMode, fail, finish, launchVed, step } from './harness.ts';
+import { clickWritingMode, fail, finish, launchVed, setViewConfig, step } from './harness.ts';
 
 const ved = await launchVed({ env: () => ({ VED_SMOKE_CLOSE_RESPONSE: 'discard', VED_SMOKE_HIDDEN: '' }) });
 const { page } = ved;
 
 try {
-  // Small pages via the view-config toolbar: 12字 × 6行, gap = 1 cell
-  await page.fill('#view-config-pageLineChars', '12');
-  await page.fill('#view-config-pageLines', '6');
+  // Small pages via the settings popover: 12字 × 6行, gap = 1 cell
+  await setViewConfig(page, { pageLineChars: '12', pageLines: '6' });
   await page.waitForTimeout(150);
   await page.evaluate(() => getSelection()!.selectAllChildren(document.getElementById('editor-content')!));
   await page.keyboard.press('Backspace');

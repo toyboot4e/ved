@@ -1,5 +1,6 @@
 import { AppearPolicy, WritingMode } from '@ved/editor';
 import { beforeEach, describe, expect, it } from 'vitest';
+import { useAppKeymapStore } from './app-keymap';
 import { useAppearPolicyStore } from './appear-policy';
 import { useInvisiblesStore } from './invisibles';
 import { applySettings, applySettingsDefault, captureSettingsBaseline, resetSettingsToBaseline } from './settings';
@@ -91,6 +92,19 @@ describe('applySettings', () => {
     expect(useVimStore.getState().keymap).toBe(keymap);
   });
 
+  it('applies app keybinding overrides; reports unknown commands and bad chords', () => {
+    applySettings(
+      { appKeybindings: { 'view.toggleSettings': 'ctrl+shift+y', 'view.nope': 'mod+k', 'file.save': 'alt+s' } },
+      report,
+    );
+    expect(useAppKeymapStore.getState().overrides).toEqual({
+      'view.toggleSettings': { key: 'y', mod: 'ctrl', shift: true },
+    });
+    expect(reports).toHaveLength(2);
+    applySettings({ appKeybindings: 'mod+k' } as never, report);
+    expect(reports).toHaveLength(3);
+  });
+
   it('reports a non-object invisibles value', () => {
     applySettings({ invisibles: 'all' } as never, report);
     expect(reports).toHaveLength(1);
@@ -126,6 +140,7 @@ describe('the launch baseline', () => {
         sidebarOpen: true,
         sidebarSide: 'right',
         sidebarWidth: 320,
+        appKeybindings: { 'view.toggleSettings': 'mod+shift+k' },
       },
       report,
     );

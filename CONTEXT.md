@@ -161,7 +161,9 @@ media feature, not our store).
 **Settings**:
 The user-adjustable values an extension applies via `ctx.settings.apply` —
 **view config**, **theme**, **writing mode**, **appear policy**,
-**invisibles**, vim, sidebar visibility/side/width. Configuration *is*
+**invisibles**, vim, sidebar visibility/side/width, app keybindings. The
+settings panel (the toolbar gear's popover, Mod+,) hosts the runtime
+**view config** and **invisibles** controls. Configuration *is*
 code: `init.ts` applies them, any config change re-evaluates the whole
 config from the **launch baseline** (store defaults + the picked CJK font +
 the OS theme), and runtime UI changes are ephemeral — nothing persists

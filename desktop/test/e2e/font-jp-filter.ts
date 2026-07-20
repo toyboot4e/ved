@@ -5,7 +5,7 @@
 // Usage: node test/e2e/font-jp-filter.ts  (after a build; window stays hidden)
 import assert from 'node:assert/strict';
 import { pickDefaultFont } from '../../src/renderer/src/local-fonts.ts';
-import { fail, finish, launchVed, step } from './harness.ts';
+import { fail, finish, launchVed, openSettings, step } from './harness.ts';
 
 const ved = await launchVed();
 const { page } = ved;
@@ -37,6 +37,9 @@ const settledOptions = async (): Promise<string[]> => {
 };
 
 try {
+  // The picker lives in the settings popover; every probe below reads it.
+  await openSettings(page);
+
   // The startup default: the first installed PREFERRED_DEFAULT_FONTS entry,
   // resolved before mount (main.tsx) — the select starts on it, not inherit.
   const installed = await page.evaluate(async () => {

@@ -9,16 +9,13 @@
 // Usage: node test/e2e/line-highlight-wrap-end.ts  (after a build)
 import assert from 'node:assert/strict';
 import type { ModelSeams } from './harness.ts';
-import { fail, finish, launchVed, step } from './harness.ts';
+import { fail, finish, launchVed, setViewConfig, step } from './harness.ts';
 
 const ved = await launchVed({ env: () => ({ VED_SMOKE_CLOSE_RESPONSE: 'discard', VED_SMOKE_HIDDEN: '' }) });
 const { page } = ved;
 
 try {
-  await page.fill('#view-config-fontSize', '18');
-  await page.fill('#view-config-lineSpaceRatio', '0.55');
-  await page.fill('#view-config-pageLineChars', '20');
-  await page.fill('#view-config-pageLines', '20');
+  await setViewConfig(page, { fontSize: '18', lineSpaceRatio: '0.55', pageLineChars: '20', pageLines: '20' });
   await page.waitForTimeout(150);
   await page.click('#editor-content');
   // ONE paragraph wrapping at 20 cells: offset 20 = the line 1|2 seam.

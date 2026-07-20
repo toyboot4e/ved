@@ -6,14 +6,13 @@
 // Also: the text block (and folios) stay centered in the visible frame.
 // Usage: node test/e2e/ruby-pages.ts  (after a build; window stays hidden)
 import assert from 'node:assert/strict';
-import { fail, finish, launchVed, step } from './harness.ts';
+import { closeSettings, fail, finish, launchVed, openSettings, setViewConfig, step } from './harness.ts';
 
 const ved = await launchVed({ env: () => ({ VED_SMOKE_CLOSE_RESPONSE: 'discard' }) });
 const { page } = ved;
 
 try {
-  await page.fill('#view-config-pageLineChars', '10');
-  await page.fill('#view-config-pageLines', '5');
+  await setViewConfig(page, { pageLineChars: '10', pageLines: '5' });
   await page.waitForTimeout(150);
   await page.evaluate(() => getSelection()!.selectAllChildren(document.getElementById('editor-content')!));
   await page.keyboard.press('Backspace');
@@ -76,22 +75,25 @@ try {
   // resolver's pick) the old −0.1em left every ruby paragraph 1.16px over
   // pitch: ~23px accumulated across a 20-line band, past the rt allowance,
   // and the band packed only 19 lines (18px cell, 0.55 lead — the defaults).
-  await page.fill('#view-config-pageLineChars', '40');
-  await page.fill('#view-config-pageLines', '20');
+  await setViewConfig(page, { pageLineChars: '40', pageLines: '20' });
   // PIN the font: the growth needs a big-metric rt font, and the async
   // default-font resolution (main.tsx) races the fixture — the session may
   // still be on the shell stack when we type. Skip the phase gracefully on a
   // machine without Noto.
+  await openSettings(page);
   const havNoto = await page.evaluate(() => {
     const sel = document.querySelector('select[id*="fontFamily"]') as HTMLSelectElement | null;
     return !!sel && [...sel.options].some((o) => o.label === 'Noto Sans CJK JP');
   });
+  await closeSettings(page);
   await page.waitForTimeout(150);
   await page.evaluate(() => getSelection()!.selectAllChildren(document.getElementById('editor-content')!));
   await page.keyboard.press('Backspace');
   await page.waitForTimeout(80);
   if (havNoto) {
+    await openSettings(page);
     await page.selectOption('select[id*="fontFamily"]', { label: 'Noto Sans CJK JP' });
+    await closeSettings(page);
     await page.waitForTimeout(200);
     const RUBY_LINE = '|漢字(かんじ)の|振仮名(ふりがな)が|多(おお)い行。';
     for (let i = 0; i < 25; i++) {

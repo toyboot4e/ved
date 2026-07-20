@@ -330,6 +330,21 @@ Decisions from the design review (see CONTEXT.md **view config**):
     (`mozc/vim-normal-composition`). See architecture.md "Extensions" and
     `docs/extensions.md`.
 
+- [x] **Step V.6 — settings panel (gear popover).** *(done 2026-07-20)*
+  - User-requested. The view-config group and the invisibles toggles move
+    OFF the toolbar row into a popover anchored under a new gear button
+    (`components/settings-panel.tsx`; the controls themselves — element ids
+    included — are unchanged). `view.toggleSettings` joins the app keymap on
+    `Mod+,`; Esc / an outside click / the gear dismiss it, and closing
+    refocuses the editor (the search-bar pattern). App chords became
+    user-configurable by command id:
+    `ctx.settings.apply({ appKeybindings: { 'view.toggleSettings': 'mod+shift+,' } })`
+    REPLACES a command's default chord (`app-keymap.ts` store;
+    baseline-tracked, so re-evaluation reverts), and the gear tooltip shows
+    the effective chord. Smoke: `test/e2e/settings-panel.ts`; the
+    view-config-driving suites go through the harness's
+    `openSettings`/`setViewConfig`. See desktop.md "Settings panel".
+
 ### Phase 2 — file browser sidebar
 
 A **workspace** is a SET of root directories ("open folder…" appends; each

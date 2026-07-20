@@ -28,6 +28,7 @@ import {
   pressLineMove,
   setCaret,
   setDoc,
+  setViewConfig,
   step,
 } from './harness.ts';
 
@@ -140,9 +141,8 @@ try {
   assert.deepEqual(buttons.paging, ['Continuous', 'Columns', 'Rows'], 'paging group: 3 buttons');
   step('toolbar is orientation × paging (5 buttons, 6 modes)');
 
-  // Small pages via the view-config toolbar: 12字 × 6行.
-  await page.fill('#view-config-pageLineChars', '12');
-  await page.fill('#view-config-pageLines', '6');
+  // Small pages via the settings popover: 12字 × 6行.
+  await setViewConfig(page, { pageLineChars: '12', pageLines: '6' });
   await page.waitForTimeout(150);
   await page.click('#editor-content');
   await page.waitForTimeout(150);
@@ -276,7 +276,7 @@ try {
   // pagesPerRow in HorizontalColumns: pages STACK within each band (the
   // VerticalColumns page grid transposed) — intra-band boundaries get gap
   // widgets, band breaks stay physical.
-  await page.fill('#view-config-pagesPerRow', '2');
+  await setViewConfig(page, { pagesPerRow: '2' });
   await page.waitForTimeout(600);
   const grid = await measureLines();
   assert.ok(grid.widgets > 0, `pagesPerRow=2 places intra-band gap widgets (got ${grid.widgets})`);
@@ -289,7 +289,7 @@ try {
     `two pages per band halve the band count (${gridLefts.length} < ${lefts.length})`,
   );
   step('pagesPerRow stacks pages within a horizontal band');
-  await page.fill('#view-config-pagesPerRow', '1');
+  await setViewConfig(page, { pagesPerRow: '1' });
   await page.waitForTimeout(300);
 
   // Caret line moves ACROSS the band break. Paragraph p3 straddles it: its

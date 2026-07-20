@@ -241,6 +241,33 @@ export const clickWritingMode = async (
   await page.waitForTimeout(150);
 };
 
+/** The settings popover (toolbar gear / Mod+,) — the view-config and
+ *  invisibles controls live inside it (components/settings-panel.tsx). */
+const SETTINGS_DIALOG = '[role="dialog"][aria-label="設定"]';
+
+/** Open the settings popover via the toolbar gear (no-op when already open). */
+export const openSettings = async (page: Page): Promise<void> => {
+  if ((await page.$(SETTINGS_DIALOG)) !== null) return;
+  await page.click('button[aria-label="Settings"]');
+  await page.waitForSelector(SETTINGS_DIALOG);
+};
+
+/** Close the settings popover with Esc (no-op when closed). Closing hands
+ *  focus back to the editor (settings-panel.ts). */
+export const closeSettings = async (page: Page): Promise<void> => {
+  if ((await page.$(SETTINGS_DIALOG)) === null) return;
+  await page.keyboard.press('Escape');
+  await page.waitForSelector(SETTINGS_DIALOG, { state: 'detached' });
+};
+
+/** Set view-config fields through the settings popover (open → fill each
+ *  `#view-config-<field>` input → close). Values are input strings. */
+export const setViewConfig = async (page: Page, fields: Record<string, string>): Promise<void> => {
+  await openSettings(page);
+  for (const [field, value] of Object.entries(fields)) await page.fill(`#view-config-${field}`, value);
+  await closeSettings(page);
+};
+
 // --- model seams (window.__ved*, exposed by editor.tsx) ---
 
 /** A rect as the seams report it (viewport CSS pixels). */

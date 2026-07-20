@@ -133,6 +133,28 @@ by construction. The store is built generic (`items`, not `files`) so the
 same overlay can back a future Ctrl+Shift+P command palette; the table leaves
 Shift+P unclaimed.
 
+App chords are user-configurable by command id:
+`ctx.settings.apply({ appKeybindings: { 'view.toggleSettings': 'mod+shift+,' } })`
+REPLACES that command's default chord (the `app-keymap.ts` overrides store;
+chord parsing/formatting lives there too). Overrides are baseline-tracked
+like every settings field, so a re-evaluation with the line removed reverts
+them; the settings gear's tooltip renders the *effective* chord, so a rebind
+shows itself.
+
+## Settings panel
+
+The toolbar gear (`components/settings-panel.tsx`) opens a popover anchored
+under it hosting the runtime configuration controls that used to sit inline
+on the toolbar row — the view-config group and the invisibles toggles (the
+controls and their element ids are unchanged; e2e drivers reach them through
+the harness's `openSettings` / `closeSettings` / `setViewConfig`).
+`view.toggleSettings` (default Mod+,) toggles it; Esc, an outside click, or
+the gear dismiss it, and closing hands focus back to the editor (the
+search-bar pattern, `settings-panel.ts`). The popover is non-modal and
+floats over the editor — never in flow, so opening it cannot shift the page
+geometry. Runtime changes made in it stay ephemeral; `init.ts` is the
+durable config. Verified in `test/e2e/settings-panel.ts`.
+
 ## Theming
 
 Every colour in the product is a `--ved-*` custom-property token, so a theme

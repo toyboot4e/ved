@@ -19,9 +19,8 @@ import {
   PagingRowsIcon,
   VerticalIcon,
 } from './icons/WritingModeIcons';
-import { InvisiblesControls } from './invisibles-controls';
+import { SettingsControls } from './settings-panel';
 import { ThemeToggle } from './theme-toggle';
-import { ViewConfigControls } from './view-config-controls';
 import { VimToggle } from './vim-toggle';
 
 // The writing mode is a COMBINATION of two orthogonal axes (writing-mode.ts),
@@ -161,10 +160,9 @@ export const Toolbar = (): React.JSX.Element => {
           </button>
         ))}
       </fieldset>
-      <InvisiblesControls />
-      <ViewConfigControls writingMode={writingMode} />
       <VimToggle />
       <ThemeToggle />
+      <SettingsControls writingMode={writingMode} />
     </div>
   );
 };

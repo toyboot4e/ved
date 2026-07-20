@@ -3,10 +3,11 @@ import type React from 'react';
 import { preserveFocus } from '../focus';
 import { type Invisibles, useInvisiblesStore } from '../invisibles';
 
-// Invisibles toggles: a toolbar group of press-to-toggle buttons, styled like
-// the writing-mode/ruby button rows. Writes the invisibles store; app.tsx passes
+// Invisibles toggles: a group of press-to-toggle buttons, styled like the
+// writing-mode/ruby button rows. Writes the invisibles store; app.tsx passes
 // it to VedEditor, which renders the markers as view-only decorations (copy stays
-// plain). Debug-adjacent, so it sits next to the view-config controls.
+// plain). Debug-adjacent, so it lives in the settings popover next to the
+// view-config controls (components/settings-panel.tsx).
 
 const items: { key: keyof Invisibles; label: string; title: string }[] = [
   { key: 'newline', label: '改行', title: 'Show a ↵ marker at each line end (newline)' },

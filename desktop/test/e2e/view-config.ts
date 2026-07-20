@@ -1,10 +1,11 @@
-// The debug view-config controls (toolbar "View" group) must restyle the
-// editor live: font size / line-space ratio / page geometry land as CSS
-// custom properties on the app root (view-config.ts), and the editor's page
-// box follows. Reset returns to the defaults.
+// The debug view-config controls (the settings popover's "View" group) must
+// restyle the editor live: font size / line-space ratio / page geometry land
+// as CSS custom properties on the app root (view-config.ts), and the editor's
+// page box follows. Reset returns to the defaults. The popover stays open for
+// the control-driving part and closes before the typing check.
 // Usage: node test/e2e/view-config.ts  (after a build; window stays hidden)
 import assert from 'node:assert/strict';
-import { fail, finish, launchVed, step } from './harness.ts';
+import { closeSettings, fail, finish, launchVed, openSettings, step } from './harness.ts';
 
 const ved = await launchVed();
 const { page } = ved;
@@ -34,6 +35,9 @@ const _GUTTER = 2.2 * 18;
 const leadPad = (cell: number): number => cell;
 
 try {
+  // The controls live in the settings popover (toolbar gear).
+  await openSettings(page);
+
   // Launch defaults (VerticalColumns): 18px cell, 0.55 leading, 40字 × 20行
   const initial = await contentStyle();
   near(initial.fontSize, 18, 'default font size');
@@ -123,6 +127,7 @@ try {
   step('reset returns to the defaults');
 
   // The editor still edits after a restyle (the config is pure view)
+  await closeSettings(page);
   await page.click('#editor-content');
   await page.keyboard.insertText('あ');
   await page.waitForTimeout(150);

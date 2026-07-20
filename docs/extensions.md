@@ -117,7 +117,7 @@ fuzzy picker; one at a time, a new one preempts the old with `null`), and
 
 `settings.apply(fields)` sets the user-adjustable values — view config (font
 family/size, line space, page geometry), theme, writing mode, appear policy,
-invisibles, vim, sidebar visibility/side/width. It is *assignment*, not
+invisibles, vim, sidebar visibility/side/width, app keybindings. It is *assignment*, not
 registration: there is nothing to dispose. Every config change re-evaluates
 the whole config from the launch baseline (see "The dev loop"), so a removed
 line reverts by itself; last writer wins, and `init.ts` runs last. Runtime
@@ -127,6 +127,13 @@ bounds.
 
 `vimKeymap` carries the vim user keymap (`@ved/vim`'s `VimKeymapConfig`
 shape; deep-validated at extension build, rejected keymaps fall back loudly).
+
+`appKeybindings` rebinds the app-shell chords by command id
+(`'view.toggleSettings'`, `'file.save'`, … — the `APP_KEYMAP` table): each
+entry's spec — exactly one of `mod`/`ctrl`, optional `shift`, one key
+(`'mod+,'`) — *replaces* that command's default chord. Alt/super chords are
+editor-table territory (`ctx.keybindings.bind`); unknown commands and
+malformed specs notice and skip.
 
 `sidebarOpen` is *session state* after startup — the re-evaluation reset
 leaves it alone. Apply it with `settings.applyDefault`, which runs on the

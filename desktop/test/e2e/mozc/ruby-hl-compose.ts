@@ -16,7 +16,7 @@
 // char's LEADING edge (editor.tsx caretRect), interior to the real column, so
 // every keystroke's band must cover the tail glyph's column center.
 // Usage: node test/e2e/mozc/ruby-hl-compose.ts  (after a build)
-import { clickWritingMode, fail, finish, step } from '../harness.ts';
+import { clickWritingMode, fail, finish, setViewConfig, step } from '../harness.ts';
 import { mozcAvailable, openMozc } from './harness.ts';
 
 if (!mozcAvailable()) {
@@ -75,7 +75,7 @@ const setDoc = async (markup: string) => {
 
 try {
   await clickWritingMode(page, 'Vertical Rows');
-  await page.fill('#view-config-pageLineChars', '10');
+  await setViewConfig(page, { pageLineChars: '10' });
   await page.waitForTimeout(150);
   // Rich: markup hidden — the all-ruby column carries the fat reading strip.
   await page.evaluate(() => {

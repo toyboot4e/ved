@@ -1,0 +1,35 @@
+// The settings popover: anchored under the toolbar gear, floating over the
+// editor (never in flow, so opening it can't shift the page geometry).
+// Tokens only — the palettes live in main.scss.
+
+.anchor {
+  position: relative;
+  display: flex;
+}
+
+.panel {
+  position: absolute;
+  top: calc(100% + 6px);
+  right: 0;
+  z-index: 30;
+  display: flex;
+  flex-direction: column;
+  align-items: stretch;
+  gap: 8px;
+  width: max-content;
+  max-width: min(440px, calc(100vw - 24px));
+  margin: 0;
+  padding: 10px;
+  border: 1px solid var(--ved-border-faint);
+  border-radius: 6px;
+  background: var(--ved-panel-bg);
+  color: var(--ved-fg);
+  box-shadow: 0 4px 18px rgba(0, 0, 0, 0.25);
+
+  // The moved toolbar groups keep their inline cell look but wrap into the
+  // panel's column width instead of running as one long row.
+  fieldset {
+    flex-wrap: wrap;
+    width: auto;
+  }
+}

@@ -14,11 +14,13 @@
 // Command ids are plan-style names (`file.save`, `view.quickOpen`, …) — the
 // future command palette's catalog and the config file's keybinding keys.
 import type { ChordEvent } from '@ved/editor';
+import { type AppKeymapOverrides, useAppKeymapStore } from './app-keymap';
 import { settleExtensionPicker, useExtensionPickerStore } from './extension-ui';
 import type { FileCommand, TabCommand } from './file-commands';
 import { isComposingEvent } from './ime';
 import { closeQuickOpen, useQuickOpenStore } from './quick-open';
 import { closeSearch, useSearchStore } from './search';
+import { closeSettingsPanel, toggleSettingsPanel, useSettingsPanelStore } from './settings-panel';
 import { useShellStore } from './shells';
 import { useWorkspaceStore } from './workspace';
 
@@ -62,6 +64,7 @@ export type AppCommand =
   | 'tab.prev'
   | 'view.toggleSidebar'
   | 'view.toggleShell'
+  | 'view.toggleSettings'
   | 'search.find'
   | 'search.replace';
 
@@ -82,14 +85,33 @@ export const APP_KEYMAP: readonly { readonly command: AppCommand; readonly chord
   { command: 'tab.prev', chord: { key: 'tab', mod: 'ctrl', shift: true } },
   { command: 'view.toggleSidebar', chord: { key: 'b', mod: 'mod' } },
   { command: 'view.toggleShell', chord: { key: '`', mod: 'mod' } },
+  { command: 'view.toggleSettings', chord: { key: ',', mod: 'mod' } },
   { command: 'search.find', chord: { key: 'f', mod: 'mod' } },
   { command: 'search.replace', chord: { key: 'r', mod: 'mod' } },
 ];
 
+/** Is `id` an app command name (the `appKeybindings` settings validation)? */
+export const isAppCommand = (id: string): id is AppCommand => APP_KEYMAP.some((binding) => binding.command === id);
+
+/** The chord that fires `command`: its `appKeybindings` override when the
+ *  user set one (app-keymap.ts), else the table default. */
+export const appChordFor = (command: AppCommand, overrides: AppKeymapOverrides): Chord =>
+  overrides[command] ?? APP_KEYMAP.find((binding) => binding.command === command)!.chord;
+
 /** The command whose chord `event` presses, or `null` when the event is not
- *  ours (chords are disjoint, so at most one entry matches). */
-export const matchAppCommand = (event: ChordEvent, isDarwin: boolean): AppCommand | null =>
-  APP_KEYMAP.find((binding) => matchChord(event, binding.chord, isDarwin))?.command ?? null;
+ *  ours (the default chords are disjoint; an override that collides with a
+ *  default fires the first table entry). `overrides` defaults to the live
+ *  app-keymap store — pass it explicitly in unit tests. */
+export const matchAppCommand = (
+  event: ChordEvent,
+  isDarwin: boolean,
+  overrides?: AppKeymapOverrides,
+): AppCommand | null => {
+  const effective = overrides ?? useAppKeymapStore.getState().overrides;
+  return (
+    APP_KEYMAP.find((binding) => matchChord(event, appChordFor(binding.command, effective), isDarwin))?.command ?? null
+  );
+};
 
 /** The app-state closures a command needs from the shell (app.tsx); commands
  *  that only touch a store dispatch to it directly. */
@@ -134,6 +156,9 @@ const runAppCommand = (command: AppCommand, handlers: AppCommandHandlers): void 
       break;
     case 'view.toggleShell':
       useShellStore.getState().toggle();
+      break;
+    case 'view.toggleSettings':
+      toggleSettingsPanel();
       break;
     case 'search.find':
       handlers.openSearch('find');
@@ -197,11 +222,17 @@ export const handleAppKeydown = (event: KeyboardEvent, isDarwin: boolean, handle
     runAppCommand(command, handlers);
     return;
   }
-  // Esc closes an open search bar from anywhere (the bar's inputs handle
-  // their own Esc; this covers focus back in the editor). Never mid-IME —
-  // Esc there cancels the composition.
-  if (event.key === 'Escape' && !isComposingEvent(event) && useSearchStore.getState().open) {
-    event.preventDefault();
-    closeSearch();
+  // Esc closes an open settings popover or search bar from anywhere (their
+  // inner inputs don't consume Esc; closing refocuses the editor). The
+  // popover — visually on top — goes first. Never mid-IME — Esc there
+  // cancels the composition.
+  if (event.key === 'Escape' && !isComposingEvent(event)) {
+    if (useSettingsPanelStore.getState().open) {
+      event.preventDefault();
+      closeSettingsPanel();
+    } else if (useSearchStore.getState().open) {
+      event.preventDefault();
+      closeSearch();
+    }
   }
 };

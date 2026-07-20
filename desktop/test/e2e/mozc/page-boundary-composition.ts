@@ -17,7 +17,7 @@
 // it runs — don't type. Run: node test/e2e/mozc/page-boundary-composition.ts
 import assert from 'node:assert/strict';
 import type { ModelSeams } from '../harness.ts';
-import { fail, finish, step } from '../harness.ts';
+import { fail, finish, setViewConfig, step } from '../harness.ts';
 import { mozcAvailable, openMozc } from './harness.ts';
 
 if (!mozcAvailable()) {
@@ -34,11 +34,13 @@ const LINE = text.indexOf('\n') + 1;
 const m = await openMozc();
 const { page } = m;
 
-await page.fill('#view-config-fontSize', '18');
-await page.fill('#view-config-lineSpaceRatio', '0.55');
-await page.fill('#view-config-pageLineChars', '40');
-await page.fill('#view-config-pageLines', '20');
-await page.fill('#view-config-pagesPerRow', '2');
+await setViewConfig(page, {
+  fontSize: '18',
+  lineSpaceRatio: '0.55',
+  pageLineChars: '40',
+  pageLines: '20',
+  pagesPerRow: '2',
+});
 await page.waitForTimeout(200);
 await page.keyboard.down('Control');
 await page.keyboard.press('Digit4'); // Rich

@@ -6,7 +6,7 @@
 // Electron windows never composite, so page.screenshot hangs there).
 // Usage: node test/e2e/pages-grid.ts  (after a build)
 import assert from 'node:assert/strict';
-import { fail, finish, launchVed, step } from './harness.ts';
+import { fail, finish, launchVed, setViewConfig, step } from './harness.ts';
 
 const ved = await launchVed({ env: () => ({ VED_SMOKE_CLOSE_RESPONSE: 'discard', VED_SMOKE_HIDDEN: '' }) });
 const { page } = ved;
@@ -14,9 +14,7 @@ const { page } = ved;
 try {
   // 10字 × 5行 pages, 2 pages per row, gap = 1 cell. Default mode is already
   // VerticalColumns. One long wrapping paragraph = 16 lines = 3.2 pages.
-  await page.fill('#view-config-pageLineChars', '10');
-  await page.fill('#view-config-pageLines', '5');
-  await page.fill('#view-config-pagesPerRow', '2');
+  await setViewConfig(page, { pageLineChars: '10', pageLines: '5', pagesPerRow: '2' });
   await page.waitForTimeout(150);
   await page.evaluate(() => getSelection()!.selectAllChildren(document.getElementById('editor-content')!));
   await page.keyboard.press('Backspace');

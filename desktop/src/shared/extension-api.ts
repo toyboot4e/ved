@@ -307,6 +307,19 @@ export type VedSettings = {
   /** The vim user keymap (see `VedVimKeymap`). Applying rebuilds the vim
    *  extension, so a live vim session re-attaches in normal mode. */
   readonly vimKeymap?: VedVimKeymap;
+  /** App-shell shortcut overrides: command id → chord spec, e.g.
+   *  `{ 'view.toggleSettings': 'mod+shift+,' }`. The command ids are the app
+   *  keymap's: `quickOpen.files`, `file.open`, `folder.open`, `file.save`,
+   *  `file.saveAs`, `tab.new`, `tab.close`, `tab.next`, `tab.prev`,
+   *  `view.toggleSidebar`, `view.toggleShell`, `view.toggleSettings`,
+   *  `search.find`, `search.replace`. A spec is exactly one of `mod` (the
+   *  platform modifier — Cmd on macOS, Ctrl elsewhere) or `ctrl` (Ctrl on
+   *  both), optional `shift`, and one key (`'mod+,'`, `'ctrl+shift+tab'`);
+   *  alt/super chords are not app chords — bind those to editor commands via
+   *  `ctx.keybindings.bind`. An override REPLACES the command's default
+   *  chord; an unknown command or malformed spec reports a notice and is
+   *  skipped. */
+  readonly appKeybindings?: Readonly<Record<string, string>>;
   /** Whether the sidebar is shown. SESSION STATE after startup: a
    *  re-evaluation never resets it (unlike every other field), so apply it
    *  under an `activation === 'startup'` guard — unguarded, every config

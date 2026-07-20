@@ -7,7 +7,7 @@
 // Usage: node test/e2e/invisibles.ts  (after a build; window stays hidden)
 import assert from 'node:assert/strict';
 import type { ModelSeams } from './harness.ts';
-import { clickWritingMode, fail, finish, launchVed, step } from './harness.ts';
+import { clickWritingMode, closeSettings, fail, finish, launchVed, openSettings, step } from './harness.ts';
 
 const ved = await launchVed({ env: () => ({ VED_SMOKE_CLOSE_RESPONSE: 'discard' }) });
 const { page } = ved;
@@ -20,8 +20,12 @@ const LINES = ['a b c', 'x\ty', 'あ　い'];
 const EXPECT = LINES.join('\n');
 
 const count = (sel: string) => page.evaluate((s) => document.querySelectorAll(s).length, sel);
+// The toggles live in the settings popover — open it around each click so
+// the editor keeps focus (and its caret) between toggles.
 const clickToggle = async (titleSub: string) => {
+  await openSettings(page);
   await page.click(`button[title*="${titleSub}"]`);
+  await closeSettings(page);
   await page.waitForTimeout(120);
 };
 

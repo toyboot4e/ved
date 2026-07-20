@@ -4,8 +4,9 @@ import { type JapaneseScanUpdate, scanJapaneseSupport } from '../font-coverage';
 import { GENERIC_FONT_FAMILIES, localFontFamilies } from '../local-fonts';
 import { useViewConfigStore, VIEW_CONFIG_BOUNDS, type ViewConfig } from '../view-config';
 
-// Debug view-config controls: an inline toolbar group like the writing-mode
-// switcher (editor-ui-plan "Interlude — debug view-config controls"). Writes
+// Debug view-config controls: a control group inside the settings popover
+// (components/settings-panel.tsx; it began as an inline toolbar group —
+// editor-ui-plan "Interlude — debug view-config controls"). Writes
 // the view-config store; app.tsx turns the store into custom properties on
 // the app root. Raw values commit live on every change; clamping happens at
 // CSS generation (view-config.ts) so typing through the bounds stays smooth.

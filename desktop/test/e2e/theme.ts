@@ -5,7 +5,7 @@
 // read back from a real element — and that a second click returns.
 // Usage: node test/e2e/theme.ts  (after a build; window stays hidden)
 import assert from 'node:assert/strict';
-import { fail, finish, launchVed, step } from './harness.ts';
+import { closeSettings, fail, finish, launchVed, openSettings, step } from './harness.ts';
 
 const ved = await launchVed({ env: () => ({ VED_SMOKE_CLOSE_RESPONSE: 'discard' }) });
 const { page } = ved;
@@ -22,16 +22,22 @@ const pageBg = () =>
     return getComputedStyle(el).getPropertyValue('--ved-bg').trim();
   });
 const bodyBg = () => page.evaluate(() => getComputedStyle(document.body).backgroundColor);
-// A debug-toolbar control's text color (buttons/inputs don't inherit `color`,
-// so they went invisible on the dark field until pinned to --ved-fg).
-const controlColors = () =>
-  page.evaluate(() => {
+// A debug control's text color (buttons/inputs don't inherit `color`, so
+// they went invisible on the dark field until pinned to --ved-fg). The
+// number inputs live in the settings popover — open it around the read (the
+// theme click itself is an outside-pointerdown, which would dismiss it).
+const controlColors = async () => {
+  await openSettings(page);
+  const colors = await page.evaluate(() => {
     const read = (sel: string) => {
       const el = document.querySelector(sel);
       return el ? getComputedStyle(el).color : '<none>';
     };
     return { button: read('button[aria-pressed]'), input: read('input[type="number"]') };
   });
+  await closeSettings(page);
+  return colors;
+};
 
 try {
   // Launch default = the OS preference (light or dark; no third state).

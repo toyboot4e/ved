@@ -12,14 +12,13 @@
 // pixel-scans a screenshot, which hangs in hidden windows).
 // Usage: node test/e2e/gap-config-reflow.ts  (after a build)
 import assert from 'node:assert/strict';
-import { clickWritingMode, fail, finish, launchVed, step } from './harness.ts';
+import { clickWritingMode, fail, finish, launchVed, setViewConfig, step } from './harness.ts';
 
 const ved = await launchVed({ env: () => ({ VED_SMOKE_HIDDEN: '', VED_SMOKE_CLOSE_RESPONSE: 'discard' }) });
 const { page } = ved;
 
 const setGap = async (top: string, bottom: string) => {
-  await page.fill('#view-config-pageGapTopCells', top);
-  await page.fill('#view-config-pageGapBottomCells', bottom);
+  await setViewConfig(page, { pageGapTopCells: top, pageGapBottomCells: bottom });
   await page.waitForTimeout(600);
 };
 
@@ -40,8 +39,7 @@ const measure = () =>
   });
 
 try {
-  await page.fill('#view-config-pageLineChars', '10');
-  await page.fill('#view-config-pageLines', '5');
+  await setViewConfig(page, { pageLineChars: '10', pageLines: '5' });
   await page.waitForTimeout(200);
   await page.click('#editor-content');
   await clickWritingMode(page, 'Vertical Rows');

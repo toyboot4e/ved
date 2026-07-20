@@ -13,7 +13,7 @@
 // Runs VISIBLE: the reveal is rAF-deferred, and hidden windows throttle rAF.
 // Usage: node test/e2e/page-reveal.ts  (after a build)
 import assert from 'node:assert/strict';
-import { clickWritingMode, fail, finish, launchVed, step } from './harness.ts';
+import { clickWritingMode, fail, finish, launchVed, setViewConfig, step } from './harness.ts';
 
 const ved = await launchVed({
   env: () => ({ VED_SMOKE_HIDDEN: '', VED_SMOKE_CLOSE_RESPONSE: 'discard' }),
@@ -116,8 +116,7 @@ const textLength = () => page.evaluate(() => (window as unknown as { __vedText()
 try {
   // Shrink the page so a whole one fits the test window on both axes:
   // 20字 × 10行 → 360px tall (columns band), ~280px wide (rows page).
-  await page.fill('#view-config-pageLineChars', '20');
-  await page.fill('#view-config-pageLines', '10');
+  await setViewConfig(page, { pageLineChars: '20', pageLines: '10' });
   await page.waitForTimeout(200);
   await page.click('#editor-content');
   await page.waitForTimeout(150);

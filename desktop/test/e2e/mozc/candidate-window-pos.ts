@@ -12,7 +12,7 @@
 // it runs — don't type. Run: node test/e2e/mozc/candidate-window-pos.ts
 import assert from 'node:assert/strict';
 import type { ModelSeams } from '../harness.ts';
-import { fail, finish, pressMod, step } from '../harness.ts';
+import { fail, finish, pressMod, setViewConfig, step } from '../harness.ts';
 import { mozcAvailable, openMozc, sh } from './harness.ts';
 
 if (!mozcAvailable()) {
@@ -29,11 +29,13 @@ const { page, app } = m;
 const FONT = 18;
 const LINE_LEN = 20 * FONT; // px
 const PITCH = FONT * (1 + 0.55);
-await page.fill('#view-config-fontSize', String(FONT));
-await page.fill('#view-config-lineSpaceRatio', '0.55');
-await page.fill('#view-config-pageLineChars', '20');
-await page.fill('#view-config-pageLines', '10');
-await page.fill('#view-config-pagesPerRow', '1');
+await setViewConfig(page, {
+  fontSize: String(FONT),
+  lineSpaceRatio: '0.55',
+  pageLineChars: '20',
+  pageLines: '10',
+  pagesPerRow: '1',
+});
 await page.waitForTimeout(200);
 await page.keyboard.down('Control');
 await page.keyboard.press('Digit4'); // Rich
@@ -151,8 +153,7 @@ try {
   // DOM caret — the candidate window then lost its anchor entirely. The
   // page-gap measure now runs composing edits in the SAME flush
   // (page-gap-measure.ts): border stable per frame, caret repairs run last.
-  await page.fill('#view-config-pageLines', '20');
-  await page.fill('#view-config-pagesPerRow', '2');
+  await setViewConfig(page, { pageLines: '20', pagesPerRow: '2' });
   await page.waitForTimeout(250);
   const PAGE_CHARS = 20 * 20; // one page of text
   const long = 'あ'.repeat(PAGE_CHARS * 5); // 5 pages, ONE paragraph
@@ -466,7 +467,7 @@ try {
   {
     const innerW = await page.evaluate(() => window.innerWidth);
     const overLines = Math.ceil(innerW / (2 * PITCH)) + 3;
-    await page.fill('#view-config-pageLines', String(overLines));
+    await setViewConfig(page, { pageLines: String(overLines) });
     await page.waitForTimeout(250);
     const overChars = 20 * overLines;
     const overDoc = 'あ'.repeat(overChars * 5);

@@ -1,4 +1,5 @@
 import { describe, expect, it } from 'vitest';
+import type { AppKeymapOverrides } from './app-keymap';
 import { type ChordEvent, matchAppCommand } from './keymap';
 
 const chord = (overrides: Partial<ChordEvent>): ChordEvent => ({
@@ -107,5 +108,29 @@ describe('matchAppCommand: IME safety', () => {
     expect(matchAppCommand(chord({ ctrlKey: true, keyCode: 229 }), false)).toBeNull();
     expect(matchAppCommand(chord({ key: 'n', ctrlKey: true, isComposing: true }), false)).toBeNull();
     expect(matchAppCommand(chord({ key: 'p', ctrlKey: true, keyCode: 229 }), false)).toBeNull();
+  });
+});
+
+describe('matchAppCommand: settings', () => {
+  it('maps Mod+, to the settings-panel toggle', () => {
+    expect(matchAppCommand(chord({ key: ',', ctrlKey: true }), false)).toBe('view.toggleSettings');
+    expect(matchAppCommand(chord({ key: ',', metaKey: true }), true)).toBe('view.toggleSettings');
+    expect(matchAppCommand(chord({ key: ',' }), false)).toBeNull();
+  });
+});
+
+describe('matchAppCommand: appKeybindings overrides', () => {
+  it('an override replaces the default chord', () => {
+    const overrides: AppKeymapOverrides = { 'view.toggleSettings': { key: 'y', mod: 'ctrl', shift: true } };
+    expect(matchAppCommand(chord({ key: 'Y', ctrlKey: true, shiftKey: true }), false, overrides)).toBe(
+      'view.toggleSettings',
+    );
+    // The default chord no longer fires the command.
+    expect(matchAppCommand(chord({ key: ',', ctrlKey: true }), false, overrides)).toBeNull();
+  });
+
+  it('an override colliding with a default fires the first table entry', () => {
+    const overrides: AppKeymapOverrides = { 'view.toggleSettings': { key: 'p', mod: 'mod' } };
+    expect(matchAppCommand(chord({ key: 'p', ctrlKey: true }), false, overrides)).toBe('quickOpen.files');
   });
 });
