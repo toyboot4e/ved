@@ -93,6 +93,12 @@ export const launchVed = async ({ env, args }: LaunchOptions = {}): Promise<VedA
   }
   const app = await _electron.launch({
     executablePath: electronPath as unknown as string,
+    // Run WITH the Chromium sandbox (Playwright injects --no-sandbox by
+    // default). Real launches (`just dev`, the packaged app) are sandboxed,
+    // and an Electron whose sandbox setup crashes (e.g. the raw nix store
+    // binary without its CHROME_DEVEL_SANDBOX wrapper) dies with a silent
+    // SIGILL that an unsandboxed suite can never see.
+    chromiumSandbox: true,
     // Isolated config dir FIRST: a driver must never load the user's real
     // ~/.config/ved (a real init.ts would skew every default the suites
     // assert) nor write generated files into it. A driver's own

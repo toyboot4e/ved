@@ -143,8 +143,15 @@ try {
   else fail(`Mod+8 hook edit missing — got ${JSON.stringify(await text())}`);
 
   await page.keyboard.press('Alt+7');
-  await page.waitForTimeout(150);
-  if ((await text()).includes('代替')) step('alt chord bound from init.ts fired (widened vocabulary)');
+  // Poll instead of one fixed wait: under the parallel pool the edit can land
+  // later than 150ms (observed flake — the earlier Mod+8 edit present, this
+  // one not yet).
+  let altEdited = false;
+  for (let i = 0; i < 20 && !altEdited; i++) {
+    await page.waitForTimeout(100);
+    altEdited = (await text()).includes('代替');
+  }
+  if (altEdited) step('alt chord bound from init.ts fired (widened vocabulary)');
   else fail(`Alt+7 edit missing — got ${JSON.stringify(await text())}`);
 
   const statusItem = await page.textContent('#extension-status-items');

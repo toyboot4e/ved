@@ -23,6 +23,9 @@ await writeFile(binary, Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x00, 0x01, 0x02]))
 
 const app = await _electron.launch({
   executablePath: electronPath as unknown as string,
+  // Sandbox on, like launchVed — Playwright's default --no-sandbox would
+  // mask launch crashes real (dev/packaged) runs hit (harness.ts).
+  chromiumSandbox: true,
   args: [`${root}out/main/index.js`, existing, missing, binary],
   env: {
     ...(process.env as Record<string, string>),
