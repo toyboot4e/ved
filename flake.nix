@@ -98,47 +98,7 @@
       devShells = forAllSystems (
         pkgs:
         let
-          deps =
-            with pkgs;
-            lib.optionals stdenvNoCC.isLinux [
-              glib
-              util-linux
-              nss
-              nspr
-              dbus
-              atk
-              cups
-              gtk3
-              # GSettings schemas: GTK's file/print dialogs abort at runtime
-              # ("No GSettings schemas are installed") unless the default
-              # schema source can find a gschemas.compiled. gtk3 provides
-              # org.gtk.Settings.FileChooser; gsettings-desktop-schemas the
-              # org.gnome.desktop.* set. Wired onto XDG_DATA_DIRS in shellHook.
-              gsettings-desktop-schemas
-              pango
-              cairo
-              # Wayland (required for native Wayland and its text-input IME protocol)
-              wayland
-              libx11
-              libxcomposite
-              libxdamage
-              libxext
-              libxfixes
-              libxrandr
-              libxcb
-              libgbm
-              expat
-              libxkbcommon
-              alsa-lib
-              libdrm
-              libGL
-              # libudev.so.1 — Electron 42 dynamically links it (was loaded via
-              # NixOS' /run/current-system on host setups; explicit here so
-              # `LD_LIBRARY_PATH` from `nix develop` is enough on its own).
-              udev
-            ];
-
-          # IM module cache so the prebuilt Electron's gtk3 can resolve
+          # IM module cache so Electron's gtk3 can resolve
           # GTK_IM_MODULE=fcitx/fcitx5 — required for IME on X11.
           # (The gtk3 package's own cache knows nothing about fcitx5-gtk.)
           gtk3ImmodulesCache = pkgs.runCommand "gtk3-immodules.cache" { } ''
@@ -148,8 +108,6 @@
         in
         {
           default = pkgs.mkShell {
-            buildInputs = with pkgs; [ pkg-config ] ++ deps;
-
             packages =
               with pkgs;
               [
@@ -179,9 +137,25 @@
               ];
 
             shellHook = pkgs.lib.optionalString pkgs.stdenvNoCC.isLinux ''
-              export LD_LIBRARY_PATH="$LD_LIBRARY_PATH:${pkgs.lib.makeLibraryPath deps}"
+              # Dev runs nixpkgs' rpath-linked Electron — the same binary the
+              # packaged app wraps — instead of the npm prebuilt (which has no
+              # rpath and would need a global LD_LIBRARY_PATH; that variable
+              # shadows the RUNPATH of every other Nix program launched from
+              # this shell, e.g. breaking the system browser). The electron
+              # npm module honors this override; keep pkgs.electron_42 in
+              # step with desktop/package.json's electron version.
+              export ELECTRON_OVERRIDE_DIST_PATH=${pkgs.electron_42}/libexec/electron
+              # electron-vite resolves node_modules/electron/dist itself and
+              # ignores the override above; it honors this full-path variable
+              # instead (`just dev` breaks without it).
+              export ELECTRON_EXEC_PATH=${pkgs.electron_42}/libexec/electron/electron
+              export ELECTRON_SKIP_BINARY_DOWNLOAD=1
               export GTK_IM_MODULE_FILE=${gtk3ImmodulesCache}
-              # Expose compiled GSettings schemas to GLib (see deps note above).
+              # GSettings schemas: GTK's file/print dialogs abort at runtime
+              # ("No GSettings schemas are installed") unless the default
+              # schema source can find a gschemas.compiled. gtk3 provides
+              # org.gtk.Settings.FileChooser; gsettings-desktop-schemas the
+              # org.gnome.desktop.* set.
               export XDG_DATA_DIRS="${pkgs.gtk3}/share/gsettings-schemas/${pkgs.gtk3.name}:${pkgs.gsettings-desktop-schemas}/share/gsettings-schemas/${pkgs.gsettings-desktop-schemas.name}:$XDG_DATA_DIRS"
             '';
           };
