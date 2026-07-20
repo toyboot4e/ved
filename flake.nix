@@ -144,11 +144,18 @@
               # this shell, e.g. breaking the system browser). The electron
               # npm module honors this override; keep pkgs.electron_42 in
               # step with desktop/package.json's electron version.
-              export ELECTRON_OVERRIDE_DIST_PATH=${pkgs.electron_42}/libexec/electron
+              #
+              # Both variables MUST point at the bin/ WRAPPER, never the raw
+              # libexec/ binary: the wrapper exports CHROME_DEVEL_SANDBOX,
+              # without which Electron requires a SUID chrome-sandbox next to
+              # the exe (impossible in /nix/store) and dies on a release
+              # CHECK — a silent SIGILL, no output at all. The e2e harness
+              # runs with chromiumSandbox: true to keep this path covered.
+              export ELECTRON_OVERRIDE_DIST_PATH=${pkgs.electron_42}/bin
               # electron-vite resolves node_modules/electron/dist itself and
               # ignores the override above; it honors this full-path variable
               # instead (`just dev` breaks without it).
-              export ELECTRON_EXEC_PATH=${pkgs.electron_42}/libexec/electron/electron
+              export ELECTRON_EXEC_PATH=${pkgs.lib.getExe pkgs.electron_42}
               export ELECTRON_SKIP_BINARY_DOWNLOAD=1
               export GTK_IM_MODULE_FILE=${gtk3ImmodulesCache}
               # GSettings schemas: GTK's file/print dialogs abort at runtime
