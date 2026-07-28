@@ -11,7 +11,7 @@
     "format:fix": "biome format --fix",
     "lint": "biome lint",
     "lint:fix": "biome lint --fix",
-    "typecheck": "pnpm -r typecheck",
+    "typecheck": "tsc --noEmit -p tsconfig.json && pnpm -r typecheck",
     "test": "vitest run",
     "test:ui": "vitest --ui",
     "dev": "pnpm -C desktop dev",

@@ -7,7 +7,7 @@
     ".": "./src/index.ts"
   },
   "scripts": {
-    "typecheck": "tsc --noEmit -p tsconfig.json --composite false"
+    "typecheck": "tsc --noEmit -p tsconfig.json"
   },
   "dependencies": {
     "clsx": "^2.1.1",
