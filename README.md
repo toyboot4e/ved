@@ -14,14 +14,14 @@ nix run github:toyboot4e/ved
 
 If you're using Nix, run `direnv allow`.
 
-`bun` is the primary build tool:
+`bun` is the primary build tool. See [./Justfile](./Justfile) for more commands.
 
 ```sh
 bun install
 bun run dev
 ```
 
-See [./Justfile](./Justfile) for more commands.
+Currently, the development is done by Claude Code.
 
 ## Documents
 
