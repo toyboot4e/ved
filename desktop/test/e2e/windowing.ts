@@ -7,7 +7,7 @@
 // an O(doc) decoration rebuild), and mode switches (materialize-all) all
 // behave exactly as without windowing.
 //
-// Usage: node test/e2e/windowing.ts (after pnpm run build).
+// Usage: node test/e2e/windowing.ts (after bun run build).
 import assert from 'node:assert/strict';
 import { clickWritingMode, fail, finish, launchVed, step } from './harness.ts';
 

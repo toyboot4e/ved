@@ -9,7 +9,7 @@
 //      bottom, switch to VerticalRows — the scroll should now be on the
 //      horizontal axis at the same logical line.
 //
-// Usage: node test/e2e/writing-mode-rows.ts (after pnpm run build).
+// Usage: node test/e2e/writing-mode-rows.ts (after bun run build).
 import assert from 'node:assert/strict';
 import { clickWritingMode, fail, finish, launchVed, step } from './harness.ts';
 

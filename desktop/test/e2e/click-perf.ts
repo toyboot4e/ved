@@ -29,7 +29,7 @@
 // selection crosses a read-only ruby base) — but via the viewport-scoped
 // walk, never the whole document.
 //
-// Usage: node test/e2e/click-perf.ts (after pnpm run build).
+// Usage: node test/e2e/click-perf.ts (after bun run build).
 import assert from 'node:assert/strict';
 import { clickWritingMode, fail, finish, launchVed, pressMod, step } from './harness.ts';
 

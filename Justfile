@@ -15,42 +15,42 @@ alias a := all
 
 # builds the app (typecheck + electron-vite build)
 build:
-    pnpm run build
+    bun run build
 
 [private]
 alias b := build
 
 # runs checks
 ci:
-    pnpm run typecheck
-    pnpm run check
-    pnpm run test
-    pnpm run build
+    bun run typecheck
+    bun run check
+    bun run test
+    bun run build
 
 # runs biome check --fix
 check:
-    pnpm run check:fix
+    bun run check:fix
 
 [private]
 alias c := check
 
 # runs biome check --fix ignoring errors
 check-force:
-    pnpm run check:fix --format-with-errors true --diagnostic-level error
+    bun run check:fix --format-with-errors true --diagnostic-level error
 
 [private]
 alias cf := check-force
 
 # starts the desktop development server (HMR)
 dev:
-    pnpm run dev
+    bun run dev
 
 [private]
 alias d := dev
 
 # starts the @ved/web preview site (Vite dev server on http://localhost:5173)
 serve:
-    pnpm run dev:web
+    bun run dev:web
 
 [private]
 alias web := serve
@@ -60,14 +60,14 @@ alias w := serve
 
 # installs dependencies (also downloads the Electron binary)
 install:
-    pnpm install
+    bun install
 
 [private]
 alias i := install
 
 # previews the built app
 run:
-    pnpm run start
+    bun run start
 
 [private]
 alias r := run
@@ -77,7 +77,7 @@ alias r := run
 # visible windows map on a private Xvfb display when the host has one
 # (VED_SMOKE_NO_XVFB=1 forces the real display).
 smoke: build
-    pnpm run smoke
+    bun run smoke
 
 [private]
 alias s := smoke
@@ -87,12 +87,12 @@ alias s := smoke
 # `[seed] [iters|duration]` — duration like 5m/30m/90s for a long soak, e.g.
 # `just fuzz`, `just fuzz 7`, `just fuzz '' 30m`.
 fuzz *args: build
-    pnpm -C desktop run fuzz {{args}}
+    bun run --cwd desktop fuzz {{args}}
 
 # runs the unit tests; with NO test-name also runs the full E2E suite, so a bare
 # `just test` covers everything (`just test cursor-map` stays a fast unit filter)
 test *args:
-    pnpm run test {{args}} {{ if args == "" { "&& just smoke" } else { "" } }}
+    bun run test {{args}} {{ if args == "" { "&& just smoke" } else { "" } }}
 
 [private]
 alias t := test
@@ -101,14 +101,14 @@ alias t := test
 # per-test pass/fail + duration, re-runs on save. Open http://localhost:51204/ in a
 # browser (or use `test-ui-open`). `just test-ui cursor-map` filters by test name.
 test-ui *args:
-    pnpm exec vitest --ui {{args}}
+    bun x vitest --ui {{args}}
 
 [private]
 alias tu := test-ui
 
 # runs unit tests, typecheck, lint, build, and the smoke test
 test-all:
-    pnpm run test && pnpm run check && just smoke
+    bun run test && bun run check && just smoke
 
 [private]
 alias ta := test-all
@@ -118,12 +118,12 @@ alias ta := test-all
 # TypeScript via ox-content's OXC extraction, and builds the static site
 # (docs/api/ Markdown, out/api-docs/ HTML). Fails on extraction diagnostics.
 doc:
-    pnpm run api-docs
+    bun run api-docs
 
 # serves the API reference on a Vite dev server (http://localhost:5273) and
 # opens it in the browser; re-extracts whenever a documented source changes
 doc-open:
-    pnpm run api-docs:serve
+    bun run api-docs:serve
 
 [private]
 alias do := doc-open
@@ -131,39 +131,43 @@ alias do := doc-open
 # regenerates the Vim keybinding reference (vim/docs/keybindings.{json,md}) by
 # joining Vim's own index.txt against @ved/vim's declared binding catalog
 vim-keys:
-    pnpm -C vim run keybindings
+    bun run --cwd vim keybindings
 
 [private]
 alias vk := vim-keys
 
 # typechecks both the node and web tsconfigs
 typecheck:
-    pnpm run typecheck
+    bun run typecheck
 
 [private]
 alias tc := typecheck
 
-# refreshes flake.nix's pnpmDeps.hash from the current pnpm-lock.yaml. Run
-# after any lockfile change, or `nix flake check` fails with
-# ERR_PNPM_NO_OFFLINE_TARBALL. Builds the deps FOD with a fake hash and writes
-# the `got:` hash back; restores the old hash if the build fails otherwise.
+# refreshes flake.nix's bunDeps.hash from the current bun.lock. Run after any
+# lockfile change, or `nix flake check` fails with a hash mismatch (or an
+# offline install error inside the sandbox). Builds the deps FOD with a fake
+# hash and writes the `got:` hash back; restores the old hash if the build
+# fails otherwise.
 bump-hash:
     #!/usr/bin/env bash
     set -euo pipefail
     cd {{justfile_directory()}}
     system=$(nix eval --impure --raw --expr 'builtins.currentSystem')
-    old=$(grep -oP '^\s*hash = "\K[^"]*' flake.nix)
-    sed -i "s|hash = \"$old\";|hash = \"\";|" flake.nix
-    trap 'sed -i "s|hash = \"\";|hash = \"$old\";|" flake.nix' EXIT
-    log=$(nix build --no-link ".#packages.$system.ved.pnpmDeps" 2>&1) || true
+    if ! grep -qP "^\s*$system = \"" flake.nix; then
+        sed -i "s|bunDepsHash = {|bunDepsHash = {\n        $system = \"\";|" flake.nix
+    fi
+    old=$(grep -oP "^\s*$system = \"\K[^\"]*" flake.nix)
+    sed -i "s|$system = \"$old\";|$system = \"\";|" flake.nix
+    trap 'sed -i "s|$system = \"\";|$system = \"$old\";|" flake.nix' EXIT
+    log=$(nix build --no-link ".#packages.$system.ved.bunDeps" 2>&1) || true
     new=$(grep -oP 'got:\s+\K\S+' <<<"$log" || true)
     if [ -z "$new" ]; then echo "$log" >&2; exit 1; fi
     trap - EXIT
-    sed -i "s|hash = \"\";|hash = \"$new\";|" flake.nix
+    sed -i "s|$system = \"\";|$system = \"$new\";|" flake.nix
     if [ "$new" = "$old" ]; then
-        echo "pnpmDeps.hash already up to date: $new"
+        echo "bunDeps.hash already up to date: $new"
     else
-        echo "pnpmDeps.hash: $old -> $new"
+        echo "bunDeps.hash: $old -> $new"
     fi
 
 [private]
@@ -171,9 +175,9 @@ alias bh := bump-hash
 
 # updates dependency versions aggressively. It can fail.
 update:
-    pnpm dlx npm-check-updates -u && pnpm install && just bump-hash
+    bun x npm-check-updates -u && bun install && just bump-hash
 
 # creates a new electron-vite project. This is just a note.
 [private]
 create:
-    pnpm create @quick-start/electron@latest
+    bun create @quick-start/electron@latest

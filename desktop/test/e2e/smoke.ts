@@ -1,5 +1,5 @@
-// End-to-end smoke test against the built app (run `pnpm run build` first).
-// Usage: pnpm run smoke   (or: node test/e2e/smoke.ts)
+// End-to-end smoke test against the built app (run `bun run build` first).
+// Usage: bun run smoke   (or: node test/e2e/smoke.ts)
 import assert from 'node:assert/strict';
 import { readFile, writeFile } from 'node:fs/promises';
 import { join } from 'node:path';

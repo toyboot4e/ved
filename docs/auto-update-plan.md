@@ -162,7 +162,7 @@ Each phase is independently shippable and ends with `just test-all` green.
 ### Phase 0 — groundwork (no behavior change)
 
 The prerequisite checklist above, plus the `electron-updater` and `yaml`
-dependencies. Verify `pnpm build:unpack` and a Linux `--linux` build still
+dependencies. Verify `bun run build:unpack` and a Linux `--linux` build still
 produce artifacts.
 
 ### Phase 1 — check + notify (all platforms, zero installer risk)

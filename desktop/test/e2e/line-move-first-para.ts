@@ -4,7 +4,7 @@
 // is no line above — which read as "the caret leaps to the beginning". It should
 // stay put instead.
 //
-// Usage: node test/e2e/line-move-first-para.ts (after pnpm run build).
+// Usage: node test/e2e/line-move-first-para.ts (after bun run build).
 import assert from 'node:assert/strict';
 import { caretToStart, clickWritingMode, fail, finish, launchVed, step } from './harness.ts';
 

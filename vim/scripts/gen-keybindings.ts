@@ -90,7 +90,7 @@ if (check) {
     !existsSync(mdPath) ||
     readFileSync(mdPath, 'utf8') !== md;
   if (stale) {
-    console.error('keybinding docs are stale — run `pnpm -C vim run keybindings`');
+    console.error('keybinding docs are stale — run `bun run --cwd vim keybindings`');
     process.exit(1);
   }
   console.log('keybinding docs are up to date');

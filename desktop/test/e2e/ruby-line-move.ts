@@ -12,7 +12,7 @@
 // ever moves FORWARD and reaches the last paragraph — a backward step or an
 // early plateau is the bug.
 //
-// Usage: node test/e2e/ruby-line-move.ts (after pnpm run build).
+// Usage: node test/e2e/ruby-line-move.ts (after bun run build).
 import assert from 'node:assert/strict';
 import { caretOffset, caretToStart, fail, finish, launchVed, pressLineMove, step } from './harness.ts';
 

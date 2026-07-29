@@ -2,7 +2,7 @@
 // — no hand-maintained list (the old `&&` chain drifted out of date). Helpers and
 // the on-demand exploratory fuzz are skipped; the mozc suite lives in a subdir and
 // is run separately (`smoke:mozc`). Each driver is a standalone node script that
-// launches the BUILT app, so build first (`just smoke` / `pnpm run build`).
+// launches the BUILT app, so build first (`just smoke` / `bun run build`).
 //
 // Drivers run CONCURRENTLY in a pool (each has its own Electron, temp profile,
 // and — when visible — Xvfb display; the perf suites assert counter seams, not

@@ -25,21 +25,82 @@
 
       version = (builtins.fromJSON (builtins.readFile ./package.json)).version;
 
-      # Offline pnpm store, shared by the package build and the node-based
-      # checks so there is a single hash to bump when the lockfile changes.
-      pnpmDepsFor =
+      # Per-system output hashes for the bun deps FOD below. bun downloads
+      # only the current platform's optional dependencies (platform
+      # binaries), so the tree differs per system. `just bump-hash` refreshes
+      # the running system's entry (adding it first if missing); an empty
+      # string makes Nix print the correct hash on the first build.
+      bunDepsHash = {
+        x86_64-linux = "sha256-UGyc1/N+3S6vYo6UsTmJIyjPu/FhD4nRuHWzuprYA5Q=";
+      };
+
+      # Offline node_modules trees, shared by the package build and the
+      # node-based checks so there is a single hash to bump when the lockfile
+      # changes. bun cannot install offline — even a --frozen-lockfile
+      # install consults registry manifests to resolve workspace
+      # dependencies, and bun's manifest cache is HTTP metadata
+      # (nondeterministic) — so instead of an offline store this FOD ships
+      # the fully *linked* trees: a dev flavor for building/checking and a
+      # prod flavor for the shipped app. The isolated-linker layout is
+      # relative-symlinked throughout (verified: independent installs are
+      # NAR-identical), so plain copies preserve it.
+      bunDepsFor =
         pkgs:
-        pkgs.fetchPnpmDeps {
-          pname = "ved";
+        pkgs.stdenvNoCC.mkDerivation {
+          pname = "ved-bun-deps";
           inherit version;
           src = self;
-          pnpm = pkgs.pnpm_10;
-          fetcherVersion = 3;
-          hash = "sha256-Oqyaj4P7Qa456Zgy3S4P1RbZERPLoYGk7PCs8j+xO1U=";
+          nativeBuildInputs = [
+            pkgs.bun
+            pkgs.cacert
+          ];
+          buildPhase = ''
+            runHook preBuild
+            export HOME=$TMPDIR
+            export BUN_INSTALL_CACHE_DIR=$TMPDIR/bun-cache
+            export ELECTRON_SKIP_BINARY_DOWNLOAD=1
+            export SSL_CERT_FILE=${pkgs.cacert}/etc/ssl/certs/ca-bundle.crt
+            for flavor in dev prod; do
+              work=$TMPDIR/work-$flavor
+              cp -rT . $work
+              flag=""
+              [ $flavor = prod ] && flag="--production"
+              (cd $work && bun install --frozen-lockfile --ignore-scripts $flag)
+              for d in . editor desktop vim web; do
+                if [ -d $work/$d/node_modules ]; then
+                  mkdir -p $out/$flavor/$d
+                  mv $work/$d/node_modules $out/$flavor/$d/node_modules
+                fi
+              done
+            done
+            runHook postBuild
+          '';
+          dontInstall = true;
+          dontFixup = true;
+          outputHashAlgo = "sha256";
+          outputHashMode = "recursive";
+          outputHash = bunDepsHash.${pkgs.stdenv.hostPlatform.system} or "";
         };
 
-      # A sandboxed check that runs a pnpm script against a node_modules
-      # materialized from the offline store (mirrors the package build's env).
+      # Materializes one flavor's node_modules trees into the unpacked source
+      # (the bun analogue of nixpkgs' pnpmConfigHook). u+w because tools
+      # write next to their packages (vite's dep cache). patchShebangs:
+      # bun's .bin entries are symlinks to the packages' own bin scripts,
+      # whose `#!/usr/bin/env node` does not exist in the build sandbox
+      # (pnpm's shims were #!/bin/sh, which does). Patching happens here, on
+      # the copies — never in the FOD, whose hash must stay layout-pure.
+      copyBunDeps = deps: flavor: ''
+        for d in . editor desktop vim web; do
+          if [ -d ${deps}/${flavor}/$d/node_modules ]; then
+            cp -r ${deps}/${flavor}/$d/node_modules $d/node_modules
+            chmod -R u+w $d/node_modules
+            patchShebangs --build $d/node_modules >/dev/null
+          fi
+        done
+      '';
+
+      # A sandboxed check that runs a bun script against the offline
+      # node_modules (mirrors the package build's env).
       nodeCheck =
         pkgs: name: command:
         pkgs.stdenv.mkDerivation {
@@ -47,16 +108,15 @@
           src = self;
           nativeBuildInputs = with pkgs; [
             nodejs_26
-            pnpm_10
-            pnpmConfigHook
+            bun
           ];
-          pnpmDeps = pnpmDepsFor pkgs;
           env.ELECTRON_SKIP_BINARY_DOWNLOAD = "1";
           # vitest 4 starts a Vite server bound to localhost; the macOS build
           # sandbox blocks loopback by default (Linux already allows it).
           __darwinAllowLocalNetworking = true;
           buildPhase = ''
             runHook preBuild
+            ${copyBunDeps (bunDepsFor pkgs) "dev"}
             ${command}
             runHook postBuild
           '';
@@ -88,9 +148,9 @@
           touch $out
         '';
 
-        typecheck = nodeCheck pkgs "typecheck" "pnpm run typecheck";
+        typecheck = nodeCheck pkgs "typecheck" "bun run typecheck";
 
-        test = nodeCheck pkgs "test" "pnpm run test";
+        test = nodeCheck pkgs "test" "bun run test";
 
         build = self.packages.${pkgs.stdenv.hostPlatform.system}.ved;
       });
@@ -112,10 +172,10 @@
               with pkgs;
               [
                 biome
+                bun
                 just
                 ni
                 nodejs_26
-                pnpm
                 pinact
                 zizmor
               ]
@@ -181,15 +241,11 @@
           inherit version;
           src = self;
 
-          # pnpm 10, not 11: pnpm 11's store writes a SQLite index whose file
-          # descriptor is guarded on macOS; pnpm's cleanup closes fds by number
-          # and gets SIGKILLed with EXC_GUARD inside the fetchDeps build.
           # nodejs_26 is the build-tooling Node (vite/tsc/vitest); the shipped
           # app runs on the Node bundled in nixpkgs' electron, not this one.
           nativeBuildInputs = with pkgs; [
             nodejs_26
-            pnpm_10
-            pnpmConfigHook
+            bun
             makeWrapper
             # Collects GSettings schemas (and GIO modules) from buildInputs into
             # $gappsWrapperArgs so the shipped wrapper can find a
@@ -211,7 +267,8 @@
           # splice its $gappsWrapperArgs into our makeWrapper call instead.
           dontWrapGApps = true;
 
-          pnpmDeps = pnpmDepsFor pkgs;
+          # `just bump-hash` builds .#packages.<system>.ved.bunDeps.
+          passthru.bunDeps = bunDepsFor pkgs;
 
           # The electron npm package's binary download is skipped; the wrapper
           # below runs the app with the nixpkgs electron instead.
@@ -219,24 +276,38 @@
 
           buildPhase = ''
             runHook preBuild
-            pnpm -C desktop exec electron-vite build
+            ${copyBunDeps (bunDepsFor pkgs) "dev"}
+            (cd desktop && ./node_modules/.bin/electron-vite build)
             runHook postBuild
           '';
 
-          # @ved/desktop's node_modules is a pnpm symlink farm into the root
-          # store, so it can't be copied directly. `pnpm deploy` materializes a
-          # self-contained, symlink-free prod tree (with the built out/) under
-          # $out/share/ved. electron-vite externalizes the main/preload
-          # `dependencies` (@electron-toolkit/*, electron-updater), which the
-          # deployed node_modules provides; the renderer bundle is self-contained.
-          # CI=true: deploy re-lays node_modules and pnpm won't purge without a
-          # TTY confirmation inside the build sandbox.
+          # The bun analogue of `pnpm deploy`: a workspace-shaped prod tree
+          # under $out/share/ved — the workspace manifests and sources plus
+          # the FOD's prod node_modules, whose relative symlinks (including
+          # the @ved/* workspace links) stay intact inside the copied tree.
+          # electron-vite externalizes the main/preload `dependencies`
+          # (@electron-toolkit/*, node-pty, …), which desktop/node_modules
+          # provides; the renderer bundle is self-contained. The app dir the
+          # wrapper points at is $out/share/ved/desktop.
           installPhase = ''
             runHook preInstall
-            mkdir -p $out/share $out/bin
-            CI=true pnpm --filter=@ved/desktop --prod --ignore-scripts \
-              --config.inject-workspace-packages=true \
-              deploy $out/share/ved
+            mkdir -p $out/share/ved $out/bin
+            cp package.json $out/share/ved/
+            for p in editor vim web; do
+              mkdir -p $out/share/ved/$p
+              cp $p/package.json $out/share/ved/$p/
+              cp -r $p/src $out/share/ved/$p/src
+            done
+            mkdir -p $out/share/ved/desktop
+            cp desktop/package.json $out/share/ved/desktop/
+            cp -r desktop/out $out/share/ved/desktop/out
+            cp -r desktop/resources $out/share/ved/desktop/resources
+            for d in . editor desktop vim web; do
+              if [ -d ${bunDepsFor pkgs}/prod/$d/node_modules ]; then
+                cp -r ${bunDepsFor pkgs}/prod/$d/node_modules \
+                  $out/share/ved/$d/node_modules
+              fi
+            done
             runHook postInstall
           '';
 
@@ -245,7 +316,7 @@
           preFixup = ''
             makeWrapper ${pkgs.lib.getExe pkgs.electron_42} $out/bin/ved \
               "''${gappsWrapperArgs[@]}" \
-              --add-flags $out/share/ved
+              --add-flags $out/share/ved/desktop
           '';
 
           meta.mainProgram = "ved";

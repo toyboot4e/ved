@@ -10,7 +10,7 @@
 // caret). The fix renders the `)` as a real widget element (pm/decorations.ts) so
 // the caret has a genuine after-`)` position with a real, non-degenerate rect.
 //
-// Usage: node test/e2e/ruby-expanded-caret.ts (after pnpm run build).
+// Usage: node test/e2e/ruby-expanded-caret.ts (after bun run build).
 import assert from 'node:assert/strict';
 import type { ModelSeams, Rect } from './harness.ts';
 import { fail, finish, launchVed, pressMod, step } from './harness.ts';

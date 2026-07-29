@@ -3,7 +3,7 @@
 // cases/caret-end-ruby.cases.ts; the executor in cases/edit-runner.ts.
 //
 // Plain caret only (no IME), so this runs in a hidden window.
-// Usage: node test/e2e/caret-end-ruby.ts (after pnpm run build).
+// Usage: node test/e2e/caret-end-ruby.ts (after bun run build).
 import { cases } from './cases/caret-end-ruby.cases.ts';
 import { runEditCases } from './cases/edit-runner.ts';
 import { fail, finish, launchVed } from './harness.ts';

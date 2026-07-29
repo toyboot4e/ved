@@ -217,7 +217,7 @@ committed-rect protocol trace on Wayland.
 
 ## Module map
 
-Monorepo (pnpm workspace); paths relative to the package roots.
+Monorepo (bun workspace); paths relative to the package roots.
 
 ```
 editor/                @ved/editor — the editor core (the only prosemirror consumer)
@@ -288,7 +288,7 @@ NixOS specifics live in `flake.nix`: Electron's runtime libs via
 `LD_LIBRARY_PATH`, plus a generated GTK immodules cache (`GTK_IM_MODULE_FILE`)
 so the prebuilt Electron's gtk3 loads the fcitx5 IM module on X11. Main sets
 `ozone-platform-hint=auto`, `enable-wayland-ime`, `wayland-text-input-version=3`
-for Wayland. Package manager is pnpm; electron@42 ships no postinstall, so the
+for Wayland. Package manager is bun; electron@42 ships no postinstall, so the
 project's `postinstall` runs `node node_modules/electron/install.js`.
 
 ## Document model
@@ -1080,7 +1080,7 @@ Hard limits and approaches that failed — don't re-derive or re-try:
 
 ## Known papercuts / future work
 
-- **The real-mozc suite** (`test/e2e/mozc/`, `pnpm smoke:mozc` in `desktop/`;
+- **The real-mozc suite** (`test/e2e/mozc/`, `bun run smoke:mozc`;
   recipe in the `CLAUDE.md` invariant) steals X focus while running; guarded
   on `mozcAvailable()`. Owed: isolate it on Xvfb too — needs fcitx5 on the
   virtual display (blocked on a NixOS dbus session.conf path); the non-IME

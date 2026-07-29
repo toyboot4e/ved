@@ -17,7 +17,7 @@
 //     O(doc × keystrokes) (the overlay PLACES only the dirty window — a
 //     line-count-changing keystroke may honestly re-place the tail once).
 //
-// Usage: node test/e2e/edit-perf.ts (after pnpm run build).
+// Usage: node test/e2e/edit-perf.ts (after bun run build).
 import assert from 'node:assert/strict';
 import { caretToStart, clickWritingMode, fail, finish, launchVed, pressMod, step } from './harness.ts';
 

@@ -14,11 +14,11 @@ nix run github:toyboot4e/ved
 
 If you're using Nix, run `direnv allow`.
 
-`pnpm` is the primary build tool:
+`bun` is the primary build tool:
 
 ```sh
-pnpm install
-pnpm run dev
+bun install
+bun run dev
 ```
 
 See [./Justfile](./Justfile) for more commands.

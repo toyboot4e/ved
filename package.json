@@ -3,6 +3,7 @@
   "version": "0.1.0",
   "private": true,
   "description": "ved monorepo — workspace root (no shipped code).",
+  "workspaces": ["editor", "desktop", "vim", "web"],
   "scripts": {
     "check": "biome check",
     "check:fix": "biome check --fix",
@@ -11,28 +12,29 @@
     "format:fix": "biome format --fix",
     "lint": "biome lint",
     "lint:fix": "biome lint --fix",
-    "typecheck": "tsc --noEmit -p tsconfig.json && pnpm -r typecheck",
+    "typecheck": "tsc --noEmit -p tsconfig.json && bun run --cwd editor typecheck && bun run --cwd vim typecheck && bun run --cwd desktop typecheck && bun run --cwd web typecheck",
     "test": "vitest run",
     "test:ui": "vitest --ui",
-    "dev": "pnpm -C desktop dev",
-    "dev:web": "pnpm -C web dev",
-    "start": "pnpm -C desktop start",
-    "build": "pnpm -C desktop build",
-    "build:web": "pnpm -C web build",
-    "smoke": "pnpm -C desktop smoke",
-    "smoke:mozc": "pnpm -C desktop smoke:mozc",
+    "dev": "bun run --cwd desktop dev",
+    "dev:web": "bun run --cwd web dev",
+    "start": "bun run --cwd desktop start",
+    "build": "bun run --cwd desktop build",
+    "build:web": "bun run --cwd web build",
+    "smoke": "bun run --cwd desktop smoke",
+    "smoke:mozc": "bun run --cwd desktop smoke:mozc",
     "api-docs": "vite build --config vite.docs.config.ts",
     "api-docs:serve": "vite --config vite.docs.config.ts --open"
   },
+  "trustedDependencies": ["electron", "node-pty"],
   "devDependencies": {
     "@biomejs/biome": "2.5.3",
     "@ox-content/napi": "^2.76.0",
     "@ox-content/vite-plugin": "2.76.0",
     "@types/node": "^26.1.0",
+    "node-gyp": "^11.0.0",
     "@vitest/ui": "^4.1.10",
     "typescript": "^7.0.2",
     "vite": "^8.1.5",
     "vitest": "^4.1.10"
-  },
-  "packageManager": "pnpm@11.5.3"
+  }
 }

@@ -12,7 +12,7 @@
 //   - moving the caret across the boundaries causes NO layout shift (the
 //     highlight is a background; the markup is never revealed in Rich).
 //
-// Usage: node test/e2e/caret-boundary.ts (after `pnpm run build`).
+// Usage: node test/e2e/caret-boundary.ts (after `bun run build`).
 import assert from 'node:assert/strict';
 import type { ModelSeams, Rect } from './harness.ts';
 import { fail, finish, launchVed, pressMod, step } from './harness.ts';

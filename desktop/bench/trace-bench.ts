@@ -2,7 +2,7 @@
 // trace (devtools.timeline + input) around clicks on a large VerticalColumns
 // doc and sums event durations by name, to attribute the native (non-JS) click
 // cost — HitTest, PrePaint, Layout, EventDispatch.
-// Usage: node bench/trace-bench.ts (after pnpm run build)
+// Usage: node bench/trace-bench.ts (after bun run build)
 import { readFileSync } from 'node:fs';
 import { mkdtemp, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';

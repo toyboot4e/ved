@@ -211,7 +211,7 @@ one contenteditable flow), placeholder (that's the empty paragraph's
 ### Project structure
 
 **Package**:
-A workspace unit of the ved monorepo (a `package.json` under the pnpm
+A workspace unit of the ved monorepo (a `package.json` under the bun
 workspace) with its own dependencies and boundary. The canonical unit of
 the split; "ved" (the **project**) is the whole monorepo, never one package.
 The four packages are `@ved/editor` (the **editor core** — the sole

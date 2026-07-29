@@ -8,7 +8,7 @@ Electron + React + ProseMirror editor for Japanese vertical writing (tategaki)
 with ruby annotations. **Read `docs/architecture.md` before touching the
 editor core** (`editor/src/`, mainly `editor/src/pm/`).
 
-**Monorepo (pnpm workspace).** Four packages, flat at the root; paths in this
+**Monorepo (bun workspace).** Four packages, flat at the root; paths in this
 file are relative to these package roots:
 
 - `@ved/editor` (`editor/`) — the editor core, the only prosemirror consumer.
@@ -18,7 +18,7 @@ file are relative to these package roots:
   renderer, tabs, files, the e2e + mozc suites.
 - `@ved/web` (`web/`) — a throwaway Vite preview site.
 
-prosemirror is declared only in `@ved/editor`; pnpm's isolation makes a
+prosemirror is declared only in `@ved/editor`; bun's isolated linker makes a
 prosemirror import from the other packages fail to resolve (a Biome rule
 flags it too). The editor is consumed as *source* via the `@ved/editor`
 exports entry — never deep-import its internals.

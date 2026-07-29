@@ -1,0 +1,22 @@
+[install]
+# pnpm-style isolation, NOT bun's default hoisted layout: hoisting would let
+# desktop/web resolve prosemirror and defeat the scope boundary (ADR-0009 —
+# prosemirror is declared only by @ved/editor). No electron hoist is needed
+# (pnpm wanted publicHoistPattern for electron-vite): electron is a peer
+# dependency of electron-vite, and the isolated store links peers adjacent,
+# so electron-vite resolves electron/package.json from its own location.
+linker = "isolated"
+
+# Supply-chain cooldown: refuse versions published less than 24h ago (bun
+# counts in seconds). When `just update` trips this on a fresh release either
+# wait, or add a temporary `minimumReleaseAgeExcludes = ["<name>"]` here —
+# bun exempts by package NAME (it has no per-version exclude like pnpm's),
+# so remove the exemption again after the update lands.
+minimumReleaseAge = 86400
+
+# Dependency lifecycle scripts run only for the root package.json's
+# trustedDependencies allowlist (electron, node-pty); bun's built-in
+# default allowlist is replaced by ours, so esbuild, @parcel/watcher,
+# electron-winstaller and puppeteer stay script-less as before (platform
+# binaries ship as optional dependencies; puppeteer's Chrome can be
+# fetched on demand).

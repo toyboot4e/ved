@@ -3,7 +3,7 @@
 // The counter seams (edit-perf.ts) pin the algorithmic bounds; this measures
 // what the user actually feels — sync handler time, time to the committed
 // frame, forced-layout metrics — and CPU-profiles a burst for attribution.
-// Usage: node bench/edit-bench.ts [lines] [show] (after pnpm run build).
+// Usage: node bench/edit-bench.ts [lines] [show] (after bun run build).
 // `show` spawns a VISIBLE window — hidden windows throttle frames and distort
 // latency, so perceived-latency numbers need `show`.
 import { caretToStart, clickWritingMode, launchVed, setCaret, step } from '../test/e2e/harness.ts';

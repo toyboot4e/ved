@@ -3,7 +3,7 @@
 // time, time-to-frame, highlight latency, geometry-query counts — then
 // CPU-profiles one click and attributes the native time (layout vs style vs
 // hit-test) via Performance metrics and a DOM MutationObserver.
-// Usage: node bench/click-bench.ts [paragraphs] [ruby] [show] (after pnpm run
+// Usage: node bench/click-bench.ts [paragraphs] [ruby] [show] (after bun run
 // build). `show` spawns a VISIBLE window — paint/raster costs are throttled away
 // in the default hidden mode, so perceived-latency numbers need `show`.
 import { clickWritingMode, launchVed, step } from '../test/e2e/harness.ts';

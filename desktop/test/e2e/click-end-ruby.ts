@@ -11,7 +11,7 @@
 // only redirect missed.
 //
 // VISIBLE window: needs real layout to compute the click coordinates.
-// Usage: node test/e2e/click-end-ruby.ts (after pnpm run build).
+// Usage: node test/e2e/click-end-ruby.ts (after bun run build).
 import assert from 'node:assert/strict';
 import type { ModelSeams } from './harness.ts';
 import { clickWritingMode, fail, finish, launchVed, pressMod, step } from './harness.ts';

@@ -8,7 +8,7 @@
 // (editor.tsx; pm/model.ts rubyClickOutsidePos).
 //
 // VISIBLE window: needs real layout to compute the rt click coordinates.
-// Usage: node test/e2e/click-ruby-reading.ts (after pnpm run build).
+// Usage: node test/e2e/click-ruby-reading.ts (after bun run build).
 import assert from 'node:assert/strict';
 import type { ModelSeams } from './harness.ts';
 import { clickWritingMode, fail, finish, launchVed, pressMod, step } from './harness.ts';

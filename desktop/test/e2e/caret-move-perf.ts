@@ -12,7 +12,7 @@
 // EVERY move. This replaces an end-to-end latency measurement, which flaked on
 // layout-reflow / RAF-throttling variance under load.
 //
-// Usage: node test/e2e/caret-move-perf.ts (after pnpm run build).
+// Usage: node test/e2e/caret-move-perf.ts (after bun run build).
 import assert from 'node:assert/strict';
 import { caretToStart, clickWritingMode, fail, finish, launchVed, pressMod, step } from './harness.ts';
 

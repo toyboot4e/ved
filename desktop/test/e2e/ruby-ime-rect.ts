@@ -13,7 +13,7 @@
 // 1 (the base start, where an IME composition begins). We assert the caret rect
 // at both positions sits AT THE RUBY (not the corner) and is non-degenerate.
 //
-// Usage: node test/e2e/ruby-ime-rect.ts (after pnpm run build).
+// Usage: node test/e2e/ruby-ime-rect.ts (after bun run build).
 import assert from 'node:assert/strict';
 import type { ModelSeams, Rect } from './harness.ts';
 import { fail, finish, launchVed, pressMod, step } from './harness.ts';

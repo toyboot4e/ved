@@ -3,7 +3,7 @@
 // cases/ruby-boundary-insert.cases.ts; the executor in cases/edit-runner.ts.
 //
 // Plain typing only (no IME), so this runs in a hidden window.
-// Usage: node test/e2e/ruby-boundary-insert.ts (after pnpm run build).
+// Usage: node test/e2e/ruby-boundary-insert.ts (after bun run build).
 
 import { runEditCases } from './cases/edit-runner.ts';
 import { cases } from './cases/ruby-boundary-insert.cases.ts';

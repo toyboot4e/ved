@@ -6,7 +6,7 @@
 // land where no lookahead can have prepared — and asserts the blank clears
 // within a couple of frames, with windowing still engaged afterwards.
 //
-// Usage: node test/e2e/scroll-blank.ts (after pnpm run build).
+// Usage: node test/e2e/scroll-blank.ts (after bun run build).
 import { clickWritingMode, fail, finish, launchVed, step } from './harness.ts';
 
 // Visible window: rAF-driven passes throttle in hidden ones (the 70ms

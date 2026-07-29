@@ -13,7 +13,7 @@
 // incrementally maintained line ends must EXACTLY equal a forced full
 // re-measure's (`__vedGapLineEnds`; a mode round-trip drops the cache).
 //
-// Usage: node test/e2e/page-gap-suffix.ts (after pnpm run build).
+// Usage: node test/e2e/page-gap-suffix.ts (after bun run build).
 import assert from 'node:assert/strict';
 import { clickWritingMode, fail, finish, launchVed, step } from './harness.ts';
 

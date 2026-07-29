@@ -271,13 +271,13 @@ The rules the seam is built around:
 ### Package setup (in-repo only)
 
 A flat workspace package depending only on `@ved/editor`'s public entry
-(`"@ved/editor": "workspace:*"`; never deep-import its internals — pnpm
-isolation and Biome both block prosemirror imports). Declare the
-asset-import shapes (`src/env.d.ts`, copy vim's), add the package to
-`pnpm-workspace.yaml`, root `tsconfig.json` references, `vitest.config.ts`
-projects, and the Biome prosemirror-restriction override. After
-`pnpm install`, refresh the Nix hash: `just bump-hash`. (User extensions
-skip *all* of this — that is the loader tier's point.)
+(`"@ved/editor": "workspace:*"`; never deep-import its internals — bun's
+isolated linker and Biome both block prosemirror imports). Declare the
+asset-import shapes (`src/env.d.ts`, copy vim's), add the package to the
+root `package.json` `workspaces` list, root `tsconfig.json` references,
+`vitest.config.ts` projects, and the Biome prosemirror-restriction
+override. After `bun install`, refresh the Nix hash: `just bump-hash`.
+(User extensions skip *all* of this — that is the loader tier's point.)
 
 ## Testing
 

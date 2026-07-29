@@ -5,7 +5,7 @@
 // resolves the press against the glyph hit-test and keeps the model anchor
 // (resolveShiftExtendPress). Verified in the Rich × Vertical Columns view.
 //
-// Usage: node test/e2e/shift-click-select.ts (after pnpm run build).
+// Usage: node test/e2e/shift-click-select.ts (after bun run build).
 import { clickWritingMode, fail, finish, launchVed, type Rect, setCaret, step } from './harness.ts';
 
 const ved = await launchVed({ env: () => ({ VED_SMOKE_CLOSE_RESPONSE: 'discard', VED_SMOKE_HIDDEN: '' }) });

@@ -8,7 +8,7 @@
 // the column up — by the time you reach the next long line the column is lost.
 // A real editor remembers the ORIGINAL goal column across consecutive moves.
 //
-// Usage: node test/e2e/line-movement.ts (after `pnpm run build`).
+// Usage: node test/e2e/line-movement.ts (after `bun run build`).
 import assert from 'node:assert/strict';
 import type { ModelSeams } from './harness.ts';
 import { fail, finish, launchVed, step } from './harness.ts';

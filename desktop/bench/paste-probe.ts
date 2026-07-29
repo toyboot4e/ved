@@ -11,7 +11,7 @@
 // Scenarios: ruby-dense paste into an empty doc (the report), a plain paste of
 // the same size (isolates the ruby markup cost), and a ruby paste at the end
 // of a large doc (windowing active → the full-materialization path).
-// Usage: node bench/paste-probe.ts [paras] (after pnpm run build)
+// Usage: node bench/paste-probe.ts [paras] (after bun run build)
 import { clickWritingMode, launchVed, step } from '../test/e2e/harness.ts';
 
 const PARAS = Number(process.argv[2] ?? 200);
