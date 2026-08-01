@@ -13,8 +13,8 @@
   "dependencies": {
     "@ved/editor": "workspace:*",
     "clsx": "^2.1.1",
-    "react": "^19.2.7",
-    "react-dom": "^19.2.7"
+    "react": "^19.2.8",
+    "react-dom": "^19.2.8"
   },
   "devDependencies": {
     "@electron-toolkit/tsconfig": "^2.0.0",
