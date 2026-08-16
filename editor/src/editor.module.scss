@@ -277,6 +277,21 @@ $footer-height: $font-size + $pad-y * 2;
   color: var(--ved-fg, #222);
 }
 
+// Compact variant for the page-layout toolbar group: the values are small
+// (pages/gaps one digit, 字/行 at most three), so `field-sizing: content`
+// shrinks each cell to its own value instead of the fixed 3.6em above. A
+// min-width keeps the spin buttons reachable at one digit.
+.toolbarNumberInputCompact {
+  font-size: 12px;
+  field-sizing: content;
+  min-width: 1.5em;
+  padding: 1px 2px;
+  border: 1px solid var(--ved-input-border, #c0c0c0);
+  border-radius: 2px;
+  background: var(--ved-input-bg, #fff);
+  color: var(--ved-fg, #222);
+}
+
 // Dropdown cell (the font picker): the input look on a native select.
 .toolbarSelect {
   font-size: 12px;

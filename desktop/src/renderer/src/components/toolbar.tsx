@@ -21,6 +21,7 @@ import {
 } from './icons/WritingModeIcons';
 import { SettingsControls } from './settings-panel';
 import { ThemeToggle } from './theme-toggle';
+import { PagesPerRowControl } from './view-config-controls';
 import { VimToggle } from './vim-toggle';
 
 // The writing mode is a COMBINATION of two orthogonal axes (writing-mode.ts),
@@ -139,6 +140,7 @@ export const Toolbar = (): React.JSX.Element => {
           </button>
         ))}
       </fieldset>
+      <PagesPerRowControl writingMode={writingMode} />
       <fieldset className={styles.toolbarGroup} aria-label='Ruby display' onMouseDown={preserveFocus}>
         <span
           className={styles.toolbarGroupLabel}

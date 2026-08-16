@@ -4,12 +4,13 @@ import { type JapaneseScanUpdate, scanJapaneseSupport } from '../font-coverage';
 import { GENERIC_FONT_FAMILIES, localFontFamilies } from '../local-fonts';
 import { useViewConfigStore, VIEW_CONFIG_BOUNDS, type ViewConfig } from '../view-config';
 
-// Debug view-config controls: a control group inside the settings popover
-// (components/settings-panel.tsx; editor-ui-plan "Interlude — debug
-// view-config controls"). Writes
-// the view-config store; app.tsx turns the store into custom properties on
-// the app root. Raw values commit live on every change; clamping happens at
-// CSS generation (view-config.ts) so typing through the bounds stays smooth.
+// View-config controls, split across two homes. Only pages-per-row
+// (PagesPerRowControl) rides the toolbar directly (components/toolbar.tsx) —
+// the two-up spread knob worth reaching without a click; everything else stays
+// in the settings popover (components/settings-panel.tsx). Both write the
+// view-config store; app.tsx turns the store into custom properties on the app
+// root. Raw values commit live on every change; clamping happens at CSS
+// generation (view-config.ts) so typing through the bounds stays smooth.
 
 type NumberFieldSpec = {
   readonly field: keyof typeof VIEW_CONFIG_BOUNDS;
@@ -18,7 +19,14 @@ type NumberFieldSpec = {
   readonly step: number;
 };
 
-const numberFields: NumberFieldSpec[] = [
+// Promoted to the toolbar: pages-per-row (段組). A one-digit value (1–6), so the
+// toolbar renders it with a content-sized cell.
+const pagesPerRowFields: NumberFieldSpec[] = [
+  { field: 'pagesPerRow', label: '頁/段', title: 'Pages side by side per page row (VerticalColumns only)', step: 1 },
+];
+
+// Left in the popover: everything else.
+const popoverFields: NumberFieldSpec[] = [
   { field: 'fontSize', label: 'px', title: 'Font size in px (the fullwidth cell size)', step: 1 },
   {
     field: 'lineSpaceRatio',
@@ -42,10 +50,69 @@ const numberFields: NumberFieldSpec[] = [
       'Tail margin: space between the page number and the next border, in cells (folio→border; the VerticalColumns row gap = 1-cell folio strip + A + B, floored at the line-number gutter)',
     step: 0.5,
   },
-  { field: 'pagesPerRow', label: '頁/段', title: 'Pages side by side per page row (VerticalColumns only)', step: 1 },
 ];
 
 const fieldId = (field: string): string => `view-config-${field}`;
+
+// The shared cell renderer for both homes: a labelled number input per spec,
+// keyed to the store. `inputClassName` swaps the compact (toolbar) look for the
+// fixed-width (popover) one; 頁/段 grays out where it means nothing.
+const NumberFieldCells = ({
+  specs,
+  writingMode,
+  inputClassName,
+}: {
+  readonly specs: readonly NumberFieldSpec[];
+  readonly writingMode: WritingMode;
+  readonly inputClassName: string | undefined;
+}): React.JSX.Element => {
+  const config = useViewConfigStore((s) => s.config);
+  const set = useViewConfigStore((s) => s.set);
+  const commitNumber = (field: keyof ViewConfig) => (event: React.ChangeEvent<HTMLInputElement>) => {
+    const value = event.target.valueAsNumber;
+    if (Number.isFinite(value)) set({ [field]: value });
+  };
+  return (
+    <>
+      {specs.map(({ field, label, title, step }) => {
+        // 頁/段 only means something under VerticalColumns (app.tsx pins it to 1
+        // elsewhere; a VerticalRows page GRID is a Chromium impossibility).
+        // Gray it out so it doesn't present as broken.
+        const inert = field === 'pagesPerRow' && writingPaging(writingMode) !== 'columns';
+        return (
+          <label key={field} className={styles.toolbarField} title={inert ? `${title} — inert in this mode` : title}>
+            {label}
+            <input
+              id={fieldId(field)}
+              className={inputClassName}
+              type='number'
+              min={VIEW_CONFIG_BOUNDS[field].min}
+              max={VIEW_CONFIG_BOUNDS[field].max}
+              step={step}
+              value={config[field]}
+              disabled={inert}
+              onChange={commitNumber(field)}
+            />
+          </label>
+        );
+      })}
+    </>
+  );
+};
+
+// Pages-per-row, promoted out of the popover to sit in the toolbar. No
+// preserveFocus on the group (unlike the button groups): the input needs the
+// real focus to be typed into. The 頁/段 label rides the field itself, so the
+// group carries no separate label.
+export const PagesPerRowControl = ({ writingMode }: { readonly writingMode: WritingMode }): React.JSX.Element => (
+  <fieldset className={styles.toolbarGroup} aria-label='Pages per row'>
+    <NumberFieldCells
+      specs={pagesPerRowFields}
+      writingMode={writingMode}
+      inputClassName={styles.toolbarNumberInputCompact}
+    />
+  </fieldset>
+);
 
 /**
  * The font picker's option list: inherit + the CSS generics synchronously
@@ -93,11 +160,6 @@ export const ViewConfigControls = ({ writingMode }: { readonly writingMode: Writ
   // impossible (jpScan.available false) — never filter on bogus verdicts.
   const shownFamilies = jpOnly && jpScan?.available ? jpScan.jpFamilies : fontFamilies;
 
-  const commitNumber = (field: keyof ViewConfig) => (event: React.ChangeEvent<HTMLInputElement>) => {
-    const value = event.target.valueAsNumber;
-    if (Number.isFinite(value)) set({ [field]: value });
-  };
-
   return (
     // No preserveFocus here (unlike the button groups): the inputs need the
     // real focus to be typed into.
@@ -105,28 +167,7 @@ export const ViewConfigControls = ({ writingMode }: { readonly writingMode: Writ
       <span className={styles.toolbarGroupLabel} aria-hidden='true' title='Debug view config (not persisted)'>
         View
       </span>
-      {numberFields.map(({ field, label, title, step }) => {
-        // 頁/段 only means something under VerticalColumns (app.tsx pins it to 1
-        // elsewhere; a VerticalRows page GRID is a Chromium impossibility).
-        // Gray it out so it doesn't present as broken.
-        const inert = field === 'pagesPerRow' && writingPaging(writingMode) !== 'columns';
-        return (
-          <label key={field} className={styles.toolbarField} title={inert ? `${title} — inert in this mode` : title}>
-            {label}
-            <input
-              id={fieldId(field)}
-              className={styles.toolbarNumberInput}
-              type='number'
-              min={VIEW_CONFIG_BOUNDS[field].min}
-              max={VIEW_CONFIG_BOUNDS[field].max}
-              step={step}
-              value={config[field]}
-              disabled={inert}
-              onChange={commitNumber(field)}
-            />
-          </label>
-        );
-      })}
+      <NumberFieldCells specs={popoverFields} writingMode={writingMode} inputClassName={styles.toolbarNumberInput} />
       <label className={styles.toolbarField} title='Editor font family (inherit = the app font)'>
         font
         <select

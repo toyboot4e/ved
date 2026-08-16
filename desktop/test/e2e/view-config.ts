@@ -1,6 +1,7 @@
-// The settings popover's "View" controls restyle the editor live: values land
-// as CSS custom properties on the app root (view-config.ts) and the page box
-// follows; Reset returns to the defaults.
+// The view-config controls restyle the editor live: values land as CSS custom
+// properties on the app root (view-config.ts) and the page box follows; Reset
+// returns to the defaults. Pages-per-row (頁/段) rides the toolbar directly;
+// everything else stays in the settings popover.
 import assert from 'node:assert/strict';
 import { closeSettings, fail, finish, launchVed, openSettings, step } from './harness.ts';
 
@@ -31,6 +32,21 @@ const _GUTTER = 2.2 * 18;
 const leadPad = (cell: number): number => cell;
 
 try {
+  // Pages-per-row sits in the toolbar, so it restyles the page with the
+  // settings popover shut — no gear click needed (default mode is
+  // VerticalColumns, where 頁/段 is live rather than inert).
+  assert.equal(await page.$('[role="dialog"][aria-label="設定"]'), null, 'settings popover starts closed');
+  assert.ok(await page.isVisible('#view-config-pagesPerRow'), '頁/段 cell is visible without opening settings');
+  await page.fill('#view-config-pagesPerRow', '2');
+  await page.waitForTimeout(150);
+  const ppr = await page.evaluate(() =>
+    Number.parseFloat(getComputedStyle(document.getElementById('editor-content')!).getPropertyValue('--pages-per-row')),
+  );
+  assert.equal(ppr, 2, '--pages-per-row follows the toolbar cell');
+  await page.fill('#view-config-pagesPerRow', '1'); // restore the default for the rest
+  await page.waitForTimeout(50);
+  step('頁/段 restyles live from the toolbar (popover shut)');
+
   await openSettings(page);
 
   const initial = await contentStyle();
