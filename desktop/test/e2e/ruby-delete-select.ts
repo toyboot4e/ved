@@ -62,7 +62,6 @@ try {
   assert.ok(!sel.openOwnTint && !sel.parenOwnTint && !sel.closeOwnTint, 'no delimiter paints its own (darker) tint');
   step('Plain Ctrl+A paints the markup | ( ) with the overlay tint only — no darker layer');
 
-  // Collapsing the selection drops the overlay rects again.
   await setCaret(page, 0, 120);
   const rectsAfter = await page.evaluate(
     () =>

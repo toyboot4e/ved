@@ -27,11 +27,9 @@ const dirtyTabs = () =>
   );
 
 try {
-  // One untitled buffer at start
   assert.deepEqual(await tabTitles(), ['無題']);
   step('starts with one untitled tab');
 
-  // Open two files (via the Ctrl+O command) → three tabs, b active
   await page.click('#editor-content');
   await pressMod(page, 'o');
   await page.waitForFunction(() => document.querySelectorAll('[role=tab]').length === 2);
@@ -41,7 +39,6 @@ try {
   assert.equal(await editorText(), 'BBB');
   step('opening two files adds two tabs, latest active');
 
-  // Edit b, then switch to a: a is intact, b's tab shows dirty
   await page.click('#editor-content');
   await caretToStart(page);
   await page.waitForTimeout(120);
@@ -53,7 +50,6 @@ try {
   assert.deepEqual(await dirtyTabs(), ['b.txt']);
   step('switching away preserves the other buffer; edited tab marked dirty');
 
-  // Switch back to b: the edit survived
   await page.click('[role=tab]:has-text("b.txt")');
   await page.waitForTimeout(200);
   assert.equal(await editorText(), 'XBBB');

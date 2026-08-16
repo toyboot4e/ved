@@ -1,13 +1,8 @@
-// The document model, expressed as *ranges over the plaintext* — backend
-// neutral (imports only parse.ts). A document is a plain string; each line is
-// parsed into plain/ruby spans, and every character keeps its own document
-// offset. This turns a document into the ordered list of "leaves" the caret
-// model, cursor map, and ruby decorations share.
-//
-// Because the markup characters (the front marker and reading brackets) are
-// real characters in the text, a hidden delimiter still occupies a real
-// offset: a ruby boundary needs no synthetic pair of same-pixel caret points —
-// it is just two adjacent offsets separated by the (zero-width) delimiter.
+// The document model as *ranges over the plaintext* — backend neutral. Each
+// line parses into plain/ruby spans; every character keeps its own document
+// offset. Because the markup characters are real text, a ruby boundary is
+// just two adjacent offsets separated by the (zero-width) delimiter — no
+// synthetic same-pixel caret points.
 import { parse, type Ruby } from '../parse';
 
 export type Appear = 'rich' | 'plain' | 'paragraph' | 'char';
@@ -26,36 +21,28 @@ export type Leaf = {
   edge: 'lead' | 'trail' | null;
 };
 
-// Single-slot memo: `serialize` (pm/model.ts) is memoized per doc version and
-// returns the SAME string instance for repeat calls, so the identity check here
-// makes every same-version docLeaves/lineOf call O(1) instead of re-parsing the
-// whole text — these run on every caret move (decorations, caret model).
+// `serialize` (pm/model.ts) returns the same string instance per doc version,
+// so this single-slot identity memo makes same-version calls O(1) — these run
+// on every caret move.
 let leavesCache: { doc: string; leaves: Leaf[] } | null = null;
 
-/** The model-line span an edit changed, by matching the unchanged text HEAD
- *  and TAIL: lines before `fromOff` are untouched; lines from `sufOff` (a new
- *  -text offset; its old-text twin is `sufOff - delta`) are untouched too and
- *  merely shifted by `delta`. The suffix must start at a `\n` INSIDE the
- *  matched tail — a tail match entering the edited line mid-way says nothing
- *  about that line. `sufOff` is null when no line survives after the edit.
- *  The incremental derivations per keystroke (docLeaves, lineStarts, the
- *  page-gap measure) all splice around this span. */
+/** The model-line span an edit changed: lines before `fromOff` are untouched;
+ *  lines from `sufOff` (a new-text offset; old-text twin `sufOff - delta`) are
+ *  merely shifted by `delta`, null when no line survives. The suffix must
+ *  start at a `\n` INSIDE the matched tail — a tail match entering the edited
+ *  line mid-way says nothing about that line. */
 export const changedLineSpan = (
   oldText: string,
   newText: string,
 ): { fromOff: number; sufOff: number | null; delta: number } => {
-  // One edit is diffed by several derivations in the same flush (docLeaves,
-  // lineStarts, the page-gap measure) against the same memoized string
-  // instances — scan once, not per caller.
+  // Several derivations diff the same edit in one flush — scan once.
   if (spanCache && spanCache.oldText === oldText && spanCache.newText === newText) return spanCache.span;
   const n = Math.min(oldText.length, newText.length);
   let i = 0;
   while (i < n && oldText.charCodeAt(i) === newText.charCodeAt(i)) i++;
-  // i === 0 must yield fromOff 0 explicitly: lastIndexOf('\n', -1) CLAMPS the
-  // fromIndex to 0 and can match a newline AT position 0 — a brand-new '\n'
-  // first character then read as a pre-existing line boundary, dropping the
-  // first line from the changed span ("" → Enter left docLeaves without the
-  // nl leaf, and Backspace at offset 1 found no caret stop; pbt-edit seed 7).
+  // i === 0 must yield 0 explicitly: lastIndexOf('\n', -1) clamps to 0 and
+  // reads a brand-new leading '\n' as a pre-existing line boundary, dropping
+  // the first line from the span (pbt-edit seed 7).
   const fromOff = i === 0 ? 0 : newText.lastIndexOf('\n', i - 1) + 1;
   // Tail match, never past the head divergence in either string.
   let j = 0;
@@ -73,10 +60,8 @@ let spanCache: {
   span: { fromOff: number; sufOff: number | null; delta: number };
 } | null = null;
 
-/** Push one parsed ruby's leaves in offset order — lead delimiter, base body,
- *  mid delimiter, reading, trail delimiter (an empty base/reading span emits
- *  no leaf). `base` is the line's document offset, `li` its index, `r` the
- *  ruby's id. */
+/** Push one parsed ruby's leaves in offset order; an empty base/reading span
+ *  emits no leaf. */
 const pushRubyLeaves = (out: Leaf[], fmt: Ruby, base: number, li: number, r: number): void => {
   out.push({
     kind: 'delim',
@@ -103,12 +88,10 @@ const pushRubyLeaves = (out: Leaf[], fmt: Ruby, base: number, li: number, r: num
   });
 };
 
-/** The leaves of ONE line in LOCAL coordinates — offsets from the line start,
- *  ruby ids from 0, `line` 0 — and WITHOUT the trailing `nl` leaf. The
- *  per-paragraph decoration caches (pm/decorations.ts) key this on the
- *  immutable paragraph node and rebase per line, so an edit re-parses only its
- *  own paragraphs; `docLeaves` assembles the whole document from the same
- *  walk. */
+/** The leaves of ONE line in LOCAL coordinates, WITHOUT the trailing `nl`.
+ *  The per-paragraph decoration caches (pm/decorations.ts) key this on the
+ *  immutable paragraph node, so an edit re-parses only its own paragraphs;
+ *  `docLeaves` assembles the document from the same walk. */
 export const lineLeafList = (line: string): Leaf[] => {
   const out: Leaf[] = [];
   let cursor = 0;
@@ -126,10 +109,6 @@ export const lineLeafList = (line: string): Leaf[] => {
   return out;
 };
 
-/** Append the leaves of the lines in `[base, end)` — parsed fresh — to `out`,
- *  starting at line index `line` with ruby ids from `rubyBase`. `trailingNl`
- *  says the region is followed by another line (emit the final `nl`). Returns
- *  the next line index and ruby id. */
 const pushOneLine = (out: Leaf[], lineText: string, base: number, line: number, rubyBase: number): number => {
   let rubies = 0;
   for (const l of lineLeafList(lineText)) {
@@ -170,8 +149,7 @@ export const buildDocLeaves = (doc: string): Leaf[] => {
   return out;
 };
 
-/** First index whose leaf satisfies `past` (leaves are offset-ordered, so any
- *  monotone predicate splits them in two) — `leaves.length` if none does. */
+/** First index satisfying the monotone `past`, or `leaves.length`. */
 const lowerBound = (leaves: readonly Leaf[], past: (l: Leaf) => boolean): number => {
   let lo = 0;
   let hi = leaves.length;
@@ -183,14 +161,8 @@ const lowerBound = (leaves: readonly Leaf[], past: (l: Leaf) => boolean): number
   return lo;
 };
 
-/** Splice the cached leaves around an edit: the unchanged HEAD lines' leaves
- *  are reused by identity, only the changed lines re-parse, and the unchanged
- *  TAIL lines' leaves are rebased numerically (offset/line/ruby deltas) —
- *  never re-parsed. Per keystroke this turns the whole-document re-parse
- *  (every line through `parse`) into O(changed lines) parsing plus an O(tail)
- *  numeric copy. */
-/** The next unassigned ruby id at leaf index `k` scanning BACKWARD (last
- *  assigned id + 1; ruby ids are document-ordered). */
+/** The next unassigned ruby id at leaf index `k` scanning BACKWARD (ruby ids
+ *  are document-ordered). */
 const rubyIdAfter = (leaves: readonly Leaf[], k: number): number => {
   for (let i = k; i >= 0; i--) {
     const r = leaves[i]!.ruby;
@@ -199,8 +171,7 @@ const rubyIdAfter = (leaves: readonly Leaf[], k: number): number => {
   return 0;
 };
 
-/** The first ruby id at or after leaf index `s`, or -1 when the tail holds
- *  no ruby. */
+/** The first ruby id at or after leaf index `s`, or -1. */
 const firstRubyIdFrom = (leaves: readonly Leaf[], s: number): number => {
   for (let i = s; i < leaves.length; i++) {
     const r = leaves[i]!.ruby;
@@ -209,8 +180,8 @@ const firstRubyIdFrom = (leaves: readonly Leaf[], s: number): number => {
   return -1;
 };
 
-/** Append `leaves[s..]` rebased by the numeric deltas (identity-reused when
- *  every delta is zero — a same-length replacement). */
+/** Append `leaves[s..]` rebased by the deltas (identity-reused when all
+ *  zero). */
 const pushRebasedTail = (
   out: Leaf[],
   leaves: readonly Leaf[],
@@ -236,17 +207,16 @@ const pushRebasedTail = (
   }
 };
 
+/** Splice the cached leaves around an edit: unchanged HEAD leaves reuse by
+ *  identity, changed lines re-parse, unchanged TAIL leaves rebase numerically
+ *  — O(changed lines) parsing per keystroke instead of a whole-doc re-parse. */
 const spliceDocLeaves = (oldDoc: string, oldLeaves: readonly Leaf[], doc: string): Leaf[] => {
   const { fromOff, sufOff, delta } = changedLineSpan(oldDoc, doc);
-  // Prefix: whole lines strictly before `fromOff` — a line start, so the
-  // previous line's `nl` leaf ends exactly there and the split is clean.
+  // `fromOff` is a line start, so the previous line's `nl` ends exactly there.
   const p = lowerBound(oldLeaves, (l) => l.to > fromOff);
   const out: Leaf[] = oldLeaves.slice(0, p);
-  // Line/ruby continuation off the prefix: the last prefix leaf is the `nl`
-  // that ends line `fromLine - 1`; ruby ids are document-ordered.
   const line = p > 0 ? oldLeaves[p - 1]!.line + 1 : 0;
-  // Changed middle: `[fromOff, sufOff)` re-parses fresh (the `\n` at
-  // `sufOff - 1` becomes the middle's last `nl` leaf).
+  // The `\n` at `sufOff - 1` becomes the middle's last `nl` leaf.
   const mid = pushLineRun(
     out,
     doc,
@@ -257,7 +227,6 @@ const spliceDocLeaves = (oldDoc: string, oldLeaves: readonly Leaf[], doc: string
     sufOff !== null,
   );
   if (sufOff === null) return out;
-  // Suffix: rebase the unchanged tail's leaves numerically.
   const s = lowerBound(oldLeaves, (l) => l.from >= sufOff - delta);
   const lineDelta = mid.line - (s > 0 ? oldLeaves[s - 1]!.line + 1 : 0);
   const firstRuby = firstRubyIdFrom(oldLeaves, s);
@@ -265,11 +234,9 @@ const spliceDocLeaves = (oldDoc: string, oldLeaves: readonly Leaf[], doc: string
   return out;
 };
 
-/** All leaves of a document in offset order, including a `nl` leaf per line
- *  break so caret movement crosses paragraphs uniformly. Memoized on the text
- *  (one slot — callers pass the memoized `serialize` result); a text CHANGE
- *  splices around the edit (`spliceDocLeaves`) instead of re-parsing the
- *  whole document — this runs per keystroke. */
+/** All leaves in offset order, including a `nl` leaf per line break so caret
+ *  movement crosses paragraphs uniformly. Single-slot memo on the text; a
+ *  change splices around the edit (`spliceDocLeaves`) — runs per keystroke. */
 export const docLeaves = (doc: string): Leaf[] => {
   if (leavesCache?.doc === doc) return leavesCache.leaves;
   const leaves = leavesCache ? spliceDocLeaves(leavesCache.doc, leavesCache.leaves, doc) : buildDocLeaves(doc);
@@ -279,9 +246,8 @@ export const docLeaves = (doc: string): Leaf[] => {
 
 let lineStartsCache: { doc: string; starts: number[] } | null = null;
 
-/** Splice the cached line starts around an edit: unchanged-head starts are
- *  copied, the changed region re-scans, the unchanged tail's starts shift by
- *  the edit's delta. */
+/** Splice the cached line starts around an edit: copy the head, re-scan the
+ *  changed region, shift the tail by `delta`. */
 const spliceLineStarts = (prev: { doc: string; starts: number[] }, doc: string): number[] => {
   const { fromOff, sufOff, delta } = changedLineSpan(prev.doc, doc);
   const starts: number[] = [];
@@ -310,9 +276,8 @@ const buildLineStarts = (doc: string): number[] => {
   return starts;
 };
 
-/** Offset of each line's first character. Memoized (same single-slot
- *  discipline as docLeaves); a text change splices around the edit
- *  (`spliceLineStarts`) instead of re-scanning the whole document. */
+/** Offset of each line's first character; same single-slot memo + splice
+ *  discipline as docLeaves. */
 export const lineStarts = (doc: string): number[] => {
   if (lineStartsCache?.doc === doc) return lineStartsCache.starts;
   const starts = lineStartsCache ? spliceLineStarts(lineStartsCache, doc) : buildLineStarts(doc);
@@ -320,9 +285,9 @@ export const lineStarts = (doc: string): number[] => {
   return starts;
 };
 
-/** The 0-based line index containing `offset`: memoized line starts + binary
- *  search — the old per-call char scan was O(offset) on every caret move. The
- *  `\n` itself belongs to the line it ends, exactly like the scan it replaces. */
+/** The 0-based line index containing `offset` (a `\n` belongs to the line it
+ *  ends). Memoized starts + binary search — a per-call char scan is O(offset)
+ *  on every caret move. */
 export const lineOf = (doc: string, offset: number): number => {
   const starts = lineStarts(doc);
   let lo = 0;
@@ -339,8 +304,7 @@ export const lineOf = (doc: string, offset: number): number => {
 };
 
 /** The [start, end) span of the line containing `offset` (end excludes the
- *  `\n`). An offset ON a `\n` belongs to the line it ends — the same
- *  convention as `lineOf`. */
+ *  `\n`); same `\n`-belongs-to-the-line-it-ends convention as `lineOf`. */
 export const lineSpanAt = (text: string, offset: number): { start: number; end: number } => {
   const start = offset === 0 ? 0 : text.lastIndexOf('\n', offset - 1) + 1;
   const endIdx = text.indexOf('\n', offset);
@@ -359,22 +323,19 @@ export const activeRuby = (leaves: Leaf[], offset: number): number => {
   return found;
 };
 
-/** Is this leaf hidden (skipped by arrow movement) under the policy? When a ruby
- *  is collapsed its markup (`delim`) and reading (`rt`) are hidden. The caret then
- *  steps through the base's INTERIOR (the `rubyActive` highlight lights up there,
- *  and an IME composes into the base), but the base's START/END edges coincide
- *  with the ruby's outer boundary and are NOT stops — typing/IME at a ruby boundary
- *  lands OUTSIDE (caret-model.ts handles the interior-only rule). The READING is
- *  kept read-only so the IME can't leak into it. Plain expands all; Rich
- *  collapses all; ByParagraph expands the caret paragraph's; ByCharacter expands
- *  the caret ruby's. (Plain text is never hidden; the base is handled separately.) */
+/** Is this leaf hidden (skipped by arrow movement) under the policy? A
+ *  collapsed ruby hides its markup (`delim`) and reading (`rt`); the reading
+ *  stays read-only so the IME can't leak into it. The caret still steps the
+ *  base's INTERIOR, but the base edges coincide with the ruby's outer boundary
+ *  and are NOT stops — typing/IME there lands OUTSIDE (interior-only rule in
+ *  caret-model.ts). */
 export const isHidden = (leaf: Leaf, policy: Appear, activeLine: number, active: number): boolean =>
   (leaf.kind === 'delim' || leaf.kind === 'rt') && rubyCollapsed(leaf, policy, activeLine, active);
 
-/** Is this leaf's ruby COLLAPSED (its markup `|`,`(`,`)` hidden) under the
- *  policy? The ONE per-policy visibility switch — isHidden answers it for the
- *  markup leaves, the caret model for the BASE. (pm/decorations resolves the
- *  same rule into its expanded SET once per pass — the documented perf shape.) */
+/** Is this leaf's ruby COLLAPSED (markup `|`,`(`,`)` hidden) under the policy?
+ *  The ONE per-policy visibility switch: isHidden applies it to markup leaves,
+ *  the caret model to the BASE, pm/decorations to its expanded set once per
+ *  pass. */
 export const rubyCollapsed = (leaf: Leaf, policy: Appear, activeLine: number, active: number): boolean => {
   switch (policy) {
     case 'plain':
@@ -388,11 +349,9 @@ export const rubyCollapsed = (leaf: Leaf, policy: Appear, activeLine: number, ac
   }
 };
 
-/** Snap an offset that fell on hidden markup (`delim`) or a collapsed ruby's
- *  read-only reading (`rt`) — neither hosts a DOM caret, so a selection there
- *  resyncs to offset 0 — onto the last renderable base GLYPH of the same ruby.
- *  Plain-text and base offsets pass through unchanged. Used by the line-move
- *  commit so a geometric hit-test never lands the caret on a non-renderable spot. */
+/** Snap an offset on hidden markup or a collapsed ruby's read-only reading —
+ *  neither hosts a DOM caret, so a selection there resyncs to offset 0 — onto
+ *  the same ruby's last renderable base glyph. Used by the line-move commit. */
 export const snapToGlyph = (leaves: Leaf[], offset: number): number => {
   const leaf = leaves.find((l) => offset >= l.from && offset < l.to);
   if (!leaf || leaf.kind === 'plain' || leaf.kind === 'body' || leaf.ruby < 0) return offset;

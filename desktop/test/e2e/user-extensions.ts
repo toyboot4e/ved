@@ -1,17 +1,14 @@
-// User extensions end to end (docs/extensions.md): a fixture
-// init.ts at the ROOT of an isolated `--config-dir` registers a namespaced
-// command, binds a chord to it, and adds a raw key hook; the driver
-// exercises both paths through real keydowns and checks the generated
-// typing files (root tsconfig.json + .generated/ved.d.ts) appear.
+// User extensions end to end (docs/extensions.md): init.ts at the root of an
+// isolated `--config-dir`, driven through real keydowns; also checks the
+// generated typing files (root tsconfig.json + .generated/ved.d.ts).
 import { mkdir, mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import type { ModelSeams } from './harness.ts';
 import { caretOffset, fail, finish, launchVed, pressMod, setCaret, step } from './harness.ts';
 
-// The fixture uses the API exactly as a user would: `import type` from
-// 'ved' (types-only — stripped with the types), commands.register under the
-// extension's own namespace, keybindings.bind with a lowercase chord spec.
+// Uses the API as a user would: types-only `import type` from 'ved',
+// commands under the extension's namespace, lowercase chord specs.
 const INIT_TS = `import type { VedContext } from 'ved';
 
 export async function activate(ctx: VedContext): Promise<void> {
@@ -77,8 +74,8 @@ const configDir = await mkdtemp(join(tmpdir(), 'ved-ext-e2e-'));
 await mkdir(join(configDir, 'extensions'), { recursive: true });
 await writeFile(join(configDir, 'init.ts'), INIT_TS, 'utf-8');
 
-// A PROJECT extension: a directory with a manifest and a relative import —
-// esbuild bundles the graph in main (docs/extensions.md "How loading works").
+// Project extension with a relative import — esbuild bundles the graph in
+// main (docs/extensions.md "How loading works").
 const projectDir = join(configDir, 'extensions', 'counter');
 await mkdir(join(projectDir, 'src'), { recursive: true });
 await writeFile(
@@ -117,7 +114,7 @@ const editorFontSize = () =>
   });
 
 try {
-  // Extensions load in a startup effect; the first assertions poll for it.
+  // Extensions load in a startup effect; poll until the first command lands.
   let stamped = false;
   for (let i = 0; i < 50 && !stamped; i++) {
     await pressMod(page, '7');
@@ -127,8 +124,7 @@ try {
   if (stamped) step('keybinding Mod+7 ran the namespaced command init.stamp');
   else fail(`Mod+7 never produced the command's edit — got ${JSON.stringify(await text())}`);
 
-  // ctx.settings: init.ts applied a theme and a font size; both are live
-  // (activation runs before the mount, so the first paint carried them).
+  // Activation runs before the mount, so the first paint carries the settings.
   if ((await themeAttr()) === 'dark') step('ctx.settings.apply set the theme from init.ts');
   else fail(`theme not applied — got ${JSON.stringify(await themeAttr())}`);
   const size0 = await editorFontSize();
@@ -143,9 +139,7 @@ try {
   else fail(`Mod+8 hook edit missing — got ${JSON.stringify(await text())}`);
 
   await page.keyboard.press('Alt+7');
-  // Poll instead of one fixed wait: under the parallel pool the edit can land
-  // later than 150ms (observed flake — the earlier Mod+8 edit present, this
-  // one not yet).
+  // Poll: under the parallel pool the edit can land later than 150ms.
   let altEdited = false;
   for (let i = 0; i < 20 && !altEdited; i++) {
     await page.waitForTimeout(100);
@@ -193,9 +187,8 @@ try {
   if (counted) step('project extension bundled (relative import) and ran via its binding');
   else fail(`project extension edit missing — got ${JSON.stringify(await text())}`);
 
-  // Whole-config re-evaluation: rewrite init.ts (new command body, settings
-  // line REMOVED, mod+0 binding REMOVED); the watcher recompiles and the
-  // renderer re-evaluates the whole config from the launch baseline.
+  // Re-evaluation: rewrite init.ts (settings line and mod+0 binding removed);
+  // watch → recompile → whole-config re-eval from the launch baseline.
   const INIT_V2 = INIT_TS.replace("'拡張OK'", "'拡張二'")
     .replace("  ctx.settings.apply({ fontSize: 23, theme: 'dark' });\n", '')
     .replace("  ctx.keybindings.bind('mod+0', 'init.mark');\n", '');
@@ -209,8 +202,8 @@ try {
   if (reloaded) step('editing init.ts re-evaluated the config (watch → recompile → re-eval)');
   else fail(`re-evaluation never took — got ${JSON.stringify(await text())}`);
 
-  // The removed settings line reverts to the launch baseline (default 18px;
-  // the theme reverts to the OS palette, which the driver cannot assume).
+  // Removed settings revert to the launch baseline (default 18px; the theme
+  // reverts to the OS palette, which the driver cannot assume).
   let reverted = false;
   for (let i = 0; i < 40 && !reverted; i++) {
     await page.waitForTimeout(100);
@@ -219,8 +212,7 @@ try {
   if (reverted) step('removed settings reverted to the launch baseline (18px)');
   else fail(`font size never reverted — got ${await editorFontSize()}`);
 
-  // The dropped binding stops firing: the sweep cleared the old decoration,
-  // and re-evaluation rebuilt the table without mod+0.
+  // The re-eval sweep cleared the old decoration and rebuilt the table without mod+0.
   await pressMod(page, '0');
   await page.waitForTimeout(200);
   if (await page.$('.vedx-init-hl')) fail('mod+0 still decorates after its binding was dropped by re-evaluation');
@@ -245,13 +237,11 @@ try {
     step('generated root tsconfig maps the ved specifier into .generated/');
   } else fail('tsconfig.json missing the ved path mapping');
 
-  // The applyDefault'd sidebar survived the re-evaluation (session state:
-  // the reset leaves it, the startup-only apply did not re-run).
+  // applyDefault'd sidebar is session state: the reset leaves it alone.
   if (await page.$('[aria-label="File browser"]')) step('sidebar state survived the re-evaluation');
   else fail('sidebar closed by the re-evaluation');
 
-  // Vim from the config: a third fixture enables vim with a user keymap —
-  // the re-evaluation swaps it in live, and the remapped Q runs 0.
+  // Third fixture: re-evaluation swaps in vim + a user keymap live.
   const INIT_V3 = `import type { VedContext } from 'ved';
 export function activate(ctx: VedContext): void {
   ctx.settings.apply({ vim: true, vimKeymap: { normal: { Q: '0' } } });

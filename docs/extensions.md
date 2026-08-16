@@ -45,7 +45,7 @@ Load order is deterministic: regular extensions name-sorted, then
 `--dev-extension` links, then `init.ts` last — so the user's own keybindings
 and settings win collisions against extension-shipped defaults. An
 `extensions/init.ts` next to a root `init.ts` is refused as shadowed (with
-the root one absent it still loads, so the pre-root layout keeps working).
+the root one absent it still loads, so an extensions/-only layout works).
 Stale generated files inside `extensions/` are removed at launch (marker
 checked — never a user's file).
 

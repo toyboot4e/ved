@@ -34,8 +34,7 @@ export type EditorSession = {
    *  makes it idempotent, so committing twice for one change is a no-op. */
   readonly commitHistory: (committed: EditorState) => void;
   /** Rebuild the document from a history entry (undo/redo). Late-bound via
-   *  createRestore once the view exists — commandCtx captures the session, so
-   *  what used to be a forward closure over `restore` is an explicit field. */
+   *  createRestore once the view exists. */
   restore: (entry: ReturnType<PlainTextHistory['undo']>) => void;
   /** Reconcile the attached extensions with the prop. Late-bound via
    *  createSyncExtensions once the view and the extension context exist. */

@@ -1,8 +1,6 @@
-// Glyph geometry: walking VISIBLE glyphs (skipping ruby readings and, per
-// policy, the shown-markup widgets), pairing each with its model offset, and
-// the consumers built on that pairing — the selection-overlay rects and the
-// drag hit-test caches. Per-caret-move work here must not scale with the
-// document (CLAUDE.md); the `__vedGlyphWalks` seam counts full walks.
+// Pairs each VISIBLE glyph with its model offset — feeds the selection-overlay
+// rects and the drag hit-test caches. Per-caret-move work must not scale with
+// the document; the `__vedGlyphWalks` seam counts full walks.
 import type { EditorView } from 'prosemirror-view';
 import type { VisualSelectionKind } from './extension';
 import { nextCaretOffset } from './pm/caret-model';
@@ -55,10 +53,9 @@ export type GlyphWalker = {
   readonly invalidateGeometry: () => void;
 };
 
-/** BLOCK visual (Vim blockwise): the rectangle between the two selection
- *  ends — their line range × their character-column range, both inclusive —
- *  as one [from, to) segment per line, clipped to each line's end. A line
- *  shorter than the left column contributes nothing. */
+/** BLOCK visual (Vim blockwise): line range × character-column range, both
+ *  inclusive, as one [from, to) segment per line, clipped to the line end; a
+ *  line shorter than the left column contributes nothing. */
 const blockRanges = (text: string, a: number, b: number): { from: number; to: number }[] => {
   const colOf = (off: number): number => off - (off <= 0 ? 0 : text.lastIndexOf('\n', off - 1) + 1);
   const leftCol = Math.min(colOf(a), colOf(b));
@@ -77,15 +74,10 @@ const blockRanges = (text: string, a: number, b: number): { from: number; to: nu
   return ranges;
 };
 
-/** The selection's plain-offset ranges, shaped by the visual-selection kind.
- *  LINEWISE expands to the whole model lines (paragraphs) the selection
- *  spans — the caret is unaffected (it stays at selection.head), and a
- *  collapsed selection still highlights its own line. CHARWISE INCLUSIVE
- *  (Vim visual) includes the CELL at the max end, so both the anchor and
- *  head characters are highlighted (moving backward keeps the original char
- *  under the cursor) — one caret step past `to`. BLOCK replaces the single
- *  [from, to) with one range per line (blockRanges); the other kinds keep
- *  the adjusted single range. */
+/** The selection's plain-offset ranges by visual kind: LINEWISE expands to
+ *  whole model lines (a collapsed selection still highlights its line);
+ *  CHARWISE INCLUSIVE (Vim visual) extends one caret step past `to`; BLOCK
+ *  yields one range per line (`blockRanges`). */
 const selectionRanges = (
   text: string,
   fromIn: number,
@@ -105,12 +97,10 @@ const selectionRanges = (
   return vkind === 'block' ? blockRanges(text, from, to) : from < to ? [{ from, to }] : [];
 };
 
-/** Cap a span's BLOCK extent at one cell (the glyph advance), centered:
- *  the measured rects are glyph EM boxes, and a big-metric font's em box
- *  (Noto Sans CJK: 1.45em) overflows the advance into the leading WHERE
- *  THE NEIGHBOR READING PAINTS — the "base-only" highlight visibly tinted
- *  the readings (ruby-selection-thin.ts). The ink of an upright glyph
- *  lives inside its advance, so the clamp only trims empty em-box bleed. */
+/** Cap a span's BLOCK extent at one cell, centered: measured rects are glyph
+ *  EM boxes, and a big em box (Noto Sans CJK: 1.45em) bleeds into the leading
+ *  and tints the neighbor READING (ruby-selection-thin.ts); upright ink stays
+ *  inside the advance, so the clamp trims only empty bleed. */
 const clampSpanToCell = (
   c: { l: number; t: number; r: number; b: number },
   vertical: boolean,
@@ -126,8 +116,7 @@ const clampSpanToCell = (
   return new DOMRect(c.l, t, c.r - c.l, Math.min(h, cell));
 };
 
-/** Advance the range cursor past every range ending at or before `off` —
- *  glyphs stream in ascending offset order, so the (sorted, disjoint) ranges
+/** Glyphs stream in ascending offset order, so the (sorted, disjoint) ranges
  *  advance with a single cursor. */
 const advanceRangeCursor = (ranges: readonly { from: number; to: number }[], ri: number, off: number): number => {
   let i = ri;
@@ -135,11 +124,10 @@ const advanceRangeCursor = (ranges: readonly { from: number; to: number }[], ri:
   return i;
 };
 
-/** Merge the glyphs inside `ranges` into one clamped span per visual line.
- *  Within-line grouping: the shared DIRECTIONAL half-pitch rule
- *  (pm/line-grouping.ts); backwardTol = one pitch (縦中横 sub-rects merge,
- *  a page wrap starts a line). A fixed few-px symmetric value here split
- *  lines (extra hairline rects) at larger font sizes. */
+/** Merge the glyphs inside `ranges` into one clamped span per visual line;
+ *  grouping = half-pitch rule (pm/line-grouping.ts), backwardTol = one pitch
+ *  (縦中横 sub-rects merge, a page wrap starts a line; a fixed px value
+ *  splits lines at larger font sizes). */
 const mergeSelectedSpans = (
   glyphs: readonly Glyph[],
   ranges: readonly { from: number; to: number }[],
@@ -170,10 +158,8 @@ const mergeSelectedSpans = (
   return out;
 };
 
-/** Per-line offset lists of the leaves VISIBLE in model lines `l0..l1` —
- *  body and plain text always; an rt/delim leaf only where the policy shows
- *  it. The lists mirror `isHidden`, the same visibility rule the decorations
- *  resolve, so the DOM walk and the offset list stay paired. */
+/** Per-line offset lists of the leaves VISIBLE in model lines `l0..l1`,
+ *  mirroring `isHidden` so the DOM walk and the offset list stay paired. */
 const visibleOffsetsByLine = (
   leaves: readonly Leaf[],
   l0: number,
@@ -206,20 +192,14 @@ export const createGlyphWalker = (
   getPolicy: () => Appear,
   getVisualSelection: () => VisualSelectionKind,
 ): GlyphWalker => {
-  // Walk the editor's VISIBLE glyphs (base + plain text, skipping the reading
-  // `<rt>` and the delimiter widgets) in document order, pairing each with its
-  // model offset — per PARAGRAPH via `paraGlyphs`, whose per-line offset lists
-  // keep the DOM-char ↔ offset pairing exact. This is the only mapping that
-  // survives a collapsed ruby's READ-ONLY base, where the browser's hit-test
-  // and `posAtDOM` clamp to the ruby element.
+  // The glyph↔offset pairing is the only mapping that survives a collapsed
+  // ruby's READ-ONLY base, where browser hit-test and `posAtDOM` clamp to the
+  // ruby element.
   const glyphWalkRange = document.createRange();
   const walkGlyphs = (): Glyph[] => {
-    // Test seam: count O(document) glyph walks (one layout read PER GLYPH — the
-    // most expensive operation in the editor). Clicks AND drags must not trigger
-    // one (click-perf asserts this; they hit-test viewport-scoped via
-    // walkGlyphsNear), and the page-gap measure walks per paragraph with a
-    // cached prefix (the suffix re-measure) — only the blank-page drag fallback
-    // still takes the full walk.
+    // `__vedGlyphWalks`: O(document) walks, one layout read per glyph. Clicks
+    // and drags must not trigger one (click-perf asserts); only the blank-page
+    // drag fallback still does.
     const w = globalThis as unknown as { __vedGlyphWalks?: number };
     w.__vedGlyphWalks = (w.__vedGlyphWalks ?? 0) + 1;
     const out: Glyph[] = [];
@@ -230,15 +210,10 @@ export const createGlyphWalker = (
     }
     return out;
   };
-  // Viewport rects of the base glyphs inside the MODEL selection — the overlay
-  // paints the text-selection highlight from these (not the DOM selection, which
-  // PM can't extend across a read-only ruby base). Consecutive glyphs on the SAME
-  // line (their block-axis coord matches) are MERGED into one span: this both
-  // fills the sub-pixel hairline between adjacent glyphs/rubies and spans the gap
-  // a collapsed ruby's hidden markup/reading leaves between two bases. Empty for
-  // a caret. Measures only the paragraphs the selection SPANS (this runs on
-  // every selection change during a drag — the whole-doc walk froze drags on
-  // large docs); a select-all still spans everything, necessarily.
+  // Overlay selection rects (the DOM selection can't extend across a read-only
+  // ruby base). Same-line glyphs merge into one span, filling sub-pixel
+  // hairlines and the hidden markup/reading gap; measures only the SPANNED
+  // paragraphs — a whole-doc walk per drag move freezes large docs.
   const selectedGlyphRects = (): DOMRect[] => {
     const sel = view.state.selection;
     const vkind = getVisualSelection();
@@ -263,14 +238,10 @@ export const createGlyphWalker = (
     );
   };
 
-  // Drag-selection hit-testing (see pm/drag-select.ts), built LAZILY by the
-  // first `offsetAtPoint` call of a gesture — never on a plain in-content
-  // click, which doesn't consume it (the browser/PM place the caret). The
-  // hit-test point is always in the viewport, so the primary path measures
-  // only the paragraphs INTERSECTING the viewport (one element rect per
-  // paragraph to filter, then per-glyph rects for the few that remain) —
-  // O(visible page), not O(document). The full-document walk survives only
-  // as the fallback for a point with no visible text at all (a blank page).
+  // Drag hit-testing (pm/drag-select.ts) resolves LAZILY on the first
+  // `offsetAtPoint` of a gesture — never on a plain in-content click. The
+  // primary path measures only viewport-intersecting paragraphs; the
+  // full-document walk survives only as the blank-page fallback.
   const toDragGlyphs = (items: Glyph[], vertical: boolean): DragGlyph[] =>
     items.map(({ off, rect: r }) => ({
       off,
@@ -279,12 +250,9 @@ export const createGlyphWalker = (
       iLo: vertical ? r.top : r.left,
       iHi: vertical ? r.bottom : r.right,
     }));
-  // Model offsets of ONE model line's glyphs (body + plain chars, in order) —
-  // resolved LAZILY per line and memoized on the leaves (which `docLeaves`
-  // memoizes per doc version). Building the whole document's per-line lists
-  // eagerly was one array push per character — ~700k per keystroke on a large
-  // doc, re-done every doc version — while each caller (the page-gap measure,
-  // the viewport-scoped walks) touches a handful of lines.
+  // Lazy per line, memoized on the leaves (`docLeaves` memoizes per doc
+  // version): eager whole-document lists cost ~700k pushes per keystroke on a
+  // large doc while callers touch a few lines.
   let lineOffsCache: { leaves: Leaf[]; byLine: Map<number, number[]> } | null = null;
   const lineGlyphOffsets = (line: number): number[] => {
     const leaves = docLeaves(serialize(view.state.doc));
@@ -295,15 +263,10 @@ export const createGlyphWalker = (
     lineOffsCache.byLine.set(line, offs);
     return offs;
   };
-  // Measure ONE paragraph's glyphs (text nodes paired with that line's model
-  // offsets) into `out` — the per-paragraph unit the scoped walks below
-  // share. The delimiter WIDGETS (`|`,`(`,`)` — real spans, not model text)
-  // and `rt` text are skipped by default: their characters are not in the
-  // default offset lists, so counting them would shift the DOM-char ↔ offset
-  // pairing. `withShownMarkup` admits an EXPANDED ruby's shown markup — the
-  // inline READING and the delimiter widgets (which only exist expanded) —
-  // for callers whose `offs` include those leaf offsets (the selection
-  // overlay, which must paint them like any other visible glyph).
+  // Delimiter WIDGETS (spans, not model text) and `rt` text are skipped by
+  // default: counting them would shift the DOM-char ↔ offset pairing.
+  // `withShownMarkup` admits an EXPANDED ruby's shown reading and delimiters,
+  // for callers whose `offs` include those leaves (the selection overlay).
   const paraGlyphs = (p: Element, offs: number[], out: Glyph[], withShownMarkup = false): void => {
     const walker = document.createTreeWalker(p, NodeFilter.SHOW_TEXT, {
       acceptNode: (n) => {
@@ -330,14 +293,13 @@ export const createGlyphWalker = (
       }
     }
   };
-  // Glyphs of the paragraphs intersecting the scroller viewport (+ a margin so
-  // a drag can step slightly past an edge). One <p> per model line, in order —
-  // page-gap widgets between them are not `p` elements, so indexes align.
+  // Viewport-intersecting paragraphs + a margin (drags step slightly past an
+  // edge). One <p> per model line, in order — page-gap widgets between them
+  // are not `p` elements, so indexes align.
   const walkGlyphsNear = (): Glyph[] => {
-    // Test seam: count viewport-scoped hit-test walks (one paragraph rect per
-    // paragraph + one rect per visible glyph — tens of ms on a large doc).
-    // Repeated empty-area/gap clicks must HIT the scoped cache, not re-walk
-    // (click-perf asserts this).
+    // `__vedNearWalks` counts viewport-scoped hit-test walks (tens of ms on a
+    // large doc); repeated empty-area/gap clicks must HIT the scoped cache,
+    // not re-walk (click-perf asserts).
     const w = globalThis as unknown as { __vedNearWalks?: number };
     w.__vedNearWalks = (w.__vedNearWalks ?? 0) + 1;
     const box = mount.getBoundingClientRect();
@@ -345,8 +307,8 @@ export const createGlyphWalker = (
     const out: Glyph[] = [];
     const paras = view.dom.querySelectorAll(':scope > p');
     for (let i = 0; i < paras.length; i++) {
-      // Viewport rejection FIRST (one element rect), so the lazy per-line
-      // offsets are resolved only for the paragraphs actually walked.
+      // Viewport rejection first, so lazy per-line offsets resolve only for
+      // walked paragraphs.
       const pr = paras[i]!.getBoundingClientRect();
       if (
         pr.right < box.left - margin ||
@@ -360,17 +322,10 @@ export const createGlyphWalker = (
     }
     return out;
   };
-  // Glyphs of the model lines `l0..l1` (inclusive) — the selection overlay's
-  // scope: exactly the paragraphs the selection spans. Unlike the other
-  // walks, this one includes an EXPANDED ruby's whole SHOWN MARKUP — the
-  // inline reading AND the `|`,`(`,`)` delimiter widgets: there they are
-  // visible body-level glyphs, so a selection covering them must paint them
-  // with the SAME overlay tint as every other glyph (a separate CSS tint
-  // stacked on the bridging overlay rect and painted the delimiters darker).
-  // A collapsed ruby's annotation reading stays excluded — base-only
-  // highlight, by design. The per-line offsets mirror `isHidden`, the same
-  // visibility rule the decorations resolve, so the DOM walk and the offset
-  // list stay paired.
+  // Overlay scope: model lines `l0..l1` inclusive, INCLUDING an expanded
+  // ruby's shown reading/delimiter widgets — a separate CSS tint would stack
+  // on the bridging rect and paint the delimiters darker. A collapsed ruby's
+  // reading stays excluded: base-only highlight, by design.
   const walkGlyphsLines = (l0: number, l1: number): Glyph[] => {
     const text = serialize(view.state.doc);
     const leaves = docLeaves(text);
@@ -391,21 +346,11 @@ export const createGlyphWalker = (
     return out;
   };
   let dragCache: { vertical: boolean; glyphs: DragGlyph[] } | null = null;
-  // The scoped glyphs, cached ACROSS gestures: an empty-area/gap click pays
-  // the viewport walk (a paragraph rect per paragraph + a rect per visible
-  // glyph — tens of ms on a large doc), and clearing this per mouseup made
-  // EVERY such click pay it again. Validity is checked per query:
-  //   - `leaves` identity covers any doc change (docLeaves memoizes per doc
-  //     version, so an edit — composing included — changes the reference);
-  //   - `caretKey` covers the caret-DEPENDENT policies (ByParagraph/
-  //     ByCharacter re-wrap the newly (un)expanded line on every caret move —
-  //     the same gate as every other layout cache); Rich/Plain layouts are
-  //     caret-independent and key as '';
-  //   - a SCROLL re-measures (the cache covers only the OLD viewport, so a
-  //     translated reuse could hit-test against off-screen glyphs);
-  //   - layout shifts with no doc change (resize, mode/policy/view-config,
-  //     fonts, page-gap widgets) come through `invalidateGeometry` — the
-  //     shell calls it from the same signals that re-measure the overlay.
+  // Cached ACROSS gestures: clearing per mouseup would make every
+  // empty-area/gap click re-pay the viewport walk. Validity per query:
+  // `leaves` identity covers doc changes, `caretKey` the caret-DEPENDENT
+  // policies, `scroll` the old viewport; doc-less layout shifts arrive via
+  // `invalidateGeometry`.
   let scopedCache: {
     leaves: Leaf[];
     caretKey: string;
@@ -413,8 +358,8 @@ export const createGlyphWalker = (
     vertical: boolean;
     glyphs: DragGlyph[];
   } | null = null;
-  // Where the current gesture pressed, for resolving the drag ANCHOR lazily on
-  // the first drag move (the press itself must not hit-test).
+  // The drag ANCHOR resolves lazily on the first move; the press itself must
+  // not hit-test.
   let dragStartPt: { x: number; y: number } | null = null;
   const buildGlyphCache = (): { vertical: boolean; glyphs: DragGlyph[] } => {
     const vertical = getComputedStyle(view.dom).writingMode.startsWith('vertical');

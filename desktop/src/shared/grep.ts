@@ -1,7 +1,6 @@
-// Line-grep shared by MAIN (workspace content search over the indexed text
-// files) and the RENDERER (content search over the open buffers). Matching is
-// shared/match.ts's AND-of-substrings (never per-character fuzzy). Pure:
-// strings in, line matches out — the callers attach paths/labels/buffer ids.
+// Line-grep shared by MAIN (workspace content search) and the RENDERER (open
+// buffers). Matching is shared/match.ts's AND-of-substrings. Pure: strings
+// in, line matches out — the callers attach paths/labels/buffer ids.
 import { matchTerms, queryTerms } from './match';
 
 /** One matched line. `col` indexes the UNTRIMMED line (the caret target);

@@ -1,11 +1,8 @@
-// The ONE text matcher behind every picker in the shell — quick-open name
-// search, content grep (shared/grep.ts), the extension quick-pick. The model
-// is a space-separated AND of LITERAL substrings: each whitespace-separated
-// term must appear contiguously (any order, case-insensitive, NFKC-folded so
-// full-width ＡＢＣ matches abc). Deliberately NOT per-character fuzzy —
-// scatter matches (query あいう hitting あXいXう) read as noise, for file
-// names as much as for lines. Results are FILTERED in the caller's order,
-// never re-ranked by score: predictable beats clever.
+// The ONE text matcher behind every shell picker (quick-open names, content
+// grep, extension quick-pick): a space-separated AND of LITERAL substrings —
+// each term contiguous, any order, case-insensitive, NFKC-folded (full-width
+// ＡＢＣ matches abc). Deliberately NOT per-character fuzzy (scatter matches
+// read as noise); results keep the caller's order, never re-ranked by score.
 
 /** A successful match against one text. */
 export type TermsMatch = {

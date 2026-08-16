@@ -1,10 +1,6 @@
-// Keeping the caret (and the reading position) in view. Two jobs:
-// - `useKeepScrollPosition`: writing-mode switches keep the first visible
-//   line (scroll-keep.ts is the pure math; this is its DOM/React bridge).
-// - `revealCaretInScroller`: after every doc change (and policy reflow) the
-//   caret is brought back into view — PM's own scrollIntoView survives
-//   neither the post-commit ruby repair nor the vertical-rl page layouts.
-//   Paged modes snap the caret's page START instead (a page turn).
+// Keeping the caret (and the reading position) in view. useKeepScrollPosition:
+// writing-mode switches keep the first visible line (scroll-keep.ts is the
+// pure math; this is its DOM/React bridge). revealCaretInScroller: see its JSDoc.
 import type { EditorView } from 'prosemirror-view';
 import type React from 'react';
 import { useCallback, useLayoutEffect, useRef } from 'react';
@@ -20,11 +16,9 @@ export const measureGeom = (scroller: HTMLElement): ScrollGeom => {
   const contentCs = content ? getComputedStyle(content) : null;
   const fontSize = (contentCs && Number.parseFloat(contentCs.fontSize)) || 18;
   const linePitch = (contentCs && Number.parseFloat(contentCs.lineHeight)) || fontSize + 2;
-  // columns: band period = page height (the line length) + the multicol gap
-  // (the line-number gutter). columnGap is only meaningful under multiCol —
-  // rows has no multicol: its pitch is the contiguous lines plus
-  // the physical page gap (--page-gap is @property-registered, so the
-  // computed value is an evaluated px length).
+  // columns: band period = page height (line length) + the multicol gap (the
+  // gutter); columnGap is only meaningful under multicol. rows: contiguous
+  // lines + --page-gap (@property-registered, so computed as an evaluated px).
   const colGap = (contentCs && Number.parseFloat(contentCs.columnGap)) || 20;
   const pageGap = Number.parseFloat(cs.getPropertyValue('--page-gap')) || 0;
   const pagesPerRow = Number.parseFloat(cs.getPropertyValue('--pages-per-row')) || 1;
@@ -68,13 +62,10 @@ export const useKeepScrollPosition = (
   return onScroll;
 };
 
-/** The span of the PAGE containing the caret on the PAGED axis, or null
- *  outside the paged modes. Reveal target for revealCaretInScroller. The
- *  paged axis is vertical in VerticalColumns/HorizontalRows and horizontal in
- *  VerticalRows/HorizontalColumns (see pagedAxisIsY); the span comes from
- *  arithmetic bands (columnsPageSpan) or the measured gap widgets — each
- *  widget's rect spans its fattened last line + gap, so its center lies in
- *  the gap blank (rowsPageSpan). */
+/** The span of the PAGE containing the caret on the PAGED axis (see
+ *  pagedAxisIsY), or null outside the paged modes — revealCaretInScroller's
+ *  target. The span comes from arithmetic bands (columnsPageSpan) or the
+ *  measured gap widgets (rowsPageSpan). */
 const caretPageSpan = (
   scroller: HTMLElement,
   view: EditorView,
@@ -92,8 +83,7 @@ const caretPageSpan = (
 
 /** `columns` paging: the band is a real multicol fragment — physically
  *  periodic (colsPagePitch) — so its span is exact arithmetic over the
- *  content box. Bands stack along the inline axis: downward (vertical-rl)
- *  or rightward (horizontal-tb). */
+ *  content box. */
 const columnsPageSpan = (
   scroller: HTMLElement,
   view: EditorView,
@@ -114,12 +104,10 @@ const columnsPageSpan = (
   return { lo: bandStart, hi: bandStart + pageExtent };
 };
 
-/** `rows` paging: the page span between the two measured `.ved-page-gap`
- *  widget centers around the caret (the content edges at the ends) — pages
- *  are arithmetic LINES whose physical positions drift with paragraph
- *  paddings, so the boundaries are read from the widgets already in the DOM.
- *  Pages tile leftward in vertical-rl, downward in horizontal-tb;
- *  order-independent either way. */
+/** `rows` paging: the span between the two measured `.ved-page-gap` widget
+ *  centers around the caret (content edges at the ends) — page positions
+ *  drift with paragraph paddings, so boundaries are read from the widgets
+ *  already in the DOM; each widget's center lies in the gap blank. */
 const rowsPageSpan = (
   view: EditorView,
   vertical: boolean,
@@ -163,7 +151,7 @@ const pageSnapDelta = (
   // A page that doesn't FIT the viewport can never be framed — keep the
   // MINIMAL caret reveal, including its no-op-when-visible rule (the
   // policy-switch invariant "a visible caret never scrolls" depends on it;
-  // best-effort alignment nudged the view even with the caret in sight).
+  // best-effort alignment would nudge the view even with the caret in sight).
   if (page.hi - page.lo > viewHi - viewLo - 2 * cushion) return revealDelta(caretLo, caretHi, viewLo, viewHi, cushion);
   if (page.lo >= viewLo - 1 && page.hi <= viewHi + 1) return 0; // fully visible → stay put
   let d = startAtHi ? page.hi - (viewHi - cushion) : page.lo - (viewLo + cushion);

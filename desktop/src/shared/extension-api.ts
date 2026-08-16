@@ -1,26 +1,20 @@
 /** The `ved` module: the typed surface a user extension imports.
  *
- *  This file is the SINGLE SOURCE of the user-extension API. It is
- *  types-only and self-contained (no imports), because its raw source is
- *  written verbatim to `<configDir>/.generated/ved.d.ts` at startup — that is
- *  how a user extension gets full typing with no package setup (the generated
- *  tsconfig.json maps the `ved` specifier here). The renderer's extension
- *  host (renderer/src/extension-host.ts) implements `VedContext` against
- *  these same types, so the declaration users see cannot drift from the
- *  implementation.
- *
- *  At runtime the `ved` module does not exist: everything below is a type,
- *  imported with `import type` (the generated tsconfig enforces
- *  verbatimModuleSyntax, and the loader strips type-only imports away). Every
- *  capability arrives as the `VedContext` handed to `activate` — bound to the
- *  extension's id, which is how command namespacing is enforced by
- *  construction (docs/extensions.md). */
+ *  The SINGLE SOURCE of the user-extension API. Types-only and self-contained
+ *  (no imports): its raw source is written verbatim to
+ *  `<configDir>/.generated/ved.d.ts` at startup (the generated tsconfig maps
+ *  the `ved` specifier here), and the renderer's extension host implements
+ *  `VedContext` against these same types — declaration and implementation
+ *  cannot drift. At runtime the `ved` module does not exist: everything below
+ *  is imported with `import type` (verbatimModuleSyntax is enforced). Every
+ *  capability arrives as the `VedContext` handed to `activate`, bound to the
+ *  extension's id — command namespacing enforced by construction
+ *  (docs/extensions.md). */
 
 /** Something to undo — a registration, a listener, a UI contribution. Every
- *  registration on `VedContext` returns one AND is tracked by the context,
- *  so a deactivated or reloaded extension is swept automatically; dispose
- *  early only to retract one contribution while staying active. Disposing
- *  twice is a no-op. */
+ *  registration on `VedContext` returns one AND is tracked by the context, so
+ *  a deactivated or reloaded extension is swept automatically; dispose early
+ *  only to retract one contribution while staying active. Idempotent. */
 export type Disposable = {
   /** Undo the registration. Idempotent. */
   readonly dispose: () => void;
@@ -126,8 +120,7 @@ export type EditorHandle = {
    *  offsets; `class` is namespaced by ved (`hl` renders as
    *  `vedx-<extension id>-hl`) — style it with your own CSS, BACKGROUND
    *  PROPERTIES ONLY: a highlight must never change text metrics. Applied on
-   *  the editor's IME-safe schedule; displayed text never diverges from the
-   *  document (highlights are decorations, not text). */
+   *  the editor's IME-safe schedule; highlights are decorations, never text. */
   readonly decorate: (
     ranges: ReadonlyArray<{ readonly from: number; readonly to: number; readonly class: string }>,
   ) => Disposable;
@@ -148,11 +141,10 @@ export type VedContext = {
     readonly id: string;
   };
 
-  /** Why this activation ran. Guard SESSION-STATE work with it — e.g.
-   *  `if (ctx.activation === 'startup') ctx.settings.apply({ sidebarOpen:
-   *  true })`, so a config save doesn't yank a sidebar the user toggled at
-   *  runtime — and skip startup-only notices or expensive rebuilds on
-   *  re-evaluation. */
+  /** Why this activation ran. Guard SESSION-STATE work with it (e.g. apply
+   *  `sidebarOpen` only when `'startup'`, so a config save doesn't yank a
+   *  sidebar the user toggled at runtime), and skip startup-only notices or
+   *  expensive rebuilds on re-evaluation. */
   readonly activation: ActivationReason;
 
   /** Command registration (own namespace) and execution (any namespace). */
@@ -175,19 +167,17 @@ export type VedContext = {
   readonly keybindings: {
     /** Bind a chord to a command id in the editor's single binding table.
      *  `chord` is case-insensitive `mod`/`ctrl`/`alt`/`super`/`shift`
-     *  modifiers + one key (`"mod+K"`, `"ctrl+alt+K"`), at least one
-     *  non-shift modifier. Mod is the platform's primary modifier (Cmd on
-     *  macOS, Ctrl elsewhere), and the platform spelling folds into it —
-     *  so `ctrl` names the REAL Control key only on macOS, and `super`
-     *  (Meta/Win) is a distinct key only off it. Alt caveats: AltGr
-     *  layouts report Ctrl+Alt (an AltGr character misfires only if that
-     *  exact combination is bound), and macOS Option changes the key
-     *  value itself — bind what your layout actually reports. Plain keys
-     *  and multi-stroke sequences are not chords; handle those in
-     *  `addHooks.handleKey`. Later bindings win (extensions load in name
-     *  order, `init.ts` last, so the user's own bindings take
-     *  precedence); disposing restores the previous binding. Throws on a
-     *  malformed chord. */
+     *  modifiers + one key (`"mod+K"`), at least one non-shift modifier.
+     *  `mod` is the platform's primary modifier (Cmd on macOS, Ctrl
+     *  elsewhere) and the platform spelling folds into it: `ctrl` names the
+     *  REAL Control key only on macOS, and `super` (Meta/Win) is a distinct
+     *  key only off it. Alt caveats: AltGr layouts report Ctrl+Alt, and
+     *  macOS Option changes the key value itself — bind what your layout
+     *  actually reports. Plain keys and multi-stroke sequences are not
+     *  chords; handle those in `addHooks.handleKey`. Later bindings win
+     *  (extensions load in name order, `init.ts` last, so the user's own
+     *  bindings take precedence); disposing restores the previous binding.
+     *  Throws on a malformed chord. */
     readonly bind: (chord: string, commandId: string) => Disposable;
   };
 
@@ -313,17 +303,17 @@ export type VedSettings = {
    *  `file.saveAs`, `tab.new`, `tab.close`, `tab.next`, `tab.prev`,
    *  `view.toggleSidebar`, `view.toggleShell`, `view.toggleSettings`,
    *  `search.find`, `search.replace`. A spec is exactly one of `mod` (the
-   *  platform modifier — Cmd on macOS, Ctrl elsewhere) or `ctrl` (Ctrl on
-   *  both), optional `shift`, and one key (`'mod+,'`, `'ctrl+shift+tab'`);
-   *  alt/super chords are not app chords — bind those to editor commands via
+   *  platform modifier) or `ctrl` (Ctrl on both platforms), optional
+   *  `shift`, and one key (`'mod+,'`, `'ctrl+shift+tab'`); alt/super chords
+   *  are not app chords — bind those to editor commands via
    *  `ctx.keybindings.bind`. An override REPLACES the command's default
    *  chord; an unknown command or malformed spec reports a notice and is
    *  skipped. */
   readonly appKeybindings?: Readonly<Record<string, string>>;
   /** Whether the sidebar is shown. SESSION STATE after startup: a
-   *  re-evaluation never resets it (unlike every other field), so apply it
-   *  under an `activation === 'startup'` guard — unguarded, every config
-   *  save would force the configured value over a runtime toggle. */
+   *  re-evaluation never resets it (unlike every other field) — apply it
+   *  under an `activation === 'startup'` guard, or every config save forces
+   *  the configured value over a runtime toggle. */
   readonly sidebarOpen?: boolean;
   /** Which window edge the sidebar docks to. */
   readonly sidebarSide?: 'left' | 'right';

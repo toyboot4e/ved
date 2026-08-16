@@ -33,7 +33,7 @@ export const createJapaneseWordModel = (): WordModel => {
     if (cache?.text === text) return cache.stops;
     const stops: { start: number; end: number }[] = [];
     for (const s of seg.segment(text)) {
-      if (/^\s*$/.test(s.segment)) continue; // whitespace between words
+      if (/^\s*$/.test(s.segment)) continue;
       stops.push({ start: s.index, end: s.index + s.segment.length });
     }
     cache = { text, stops };

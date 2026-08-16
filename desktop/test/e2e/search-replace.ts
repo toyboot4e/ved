@@ -44,7 +44,6 @@ try {
   assert.equal(await docText(page), TEXT, 'highlighting never touches the model');
   step('matches counted, highlighted (incl. inside a ruby reading), first selected');
 
-  // Enter cycles forward, Shift+Enter back; the model selection follows.
   await page.keyboard.press('Enter');
   await page.waitForTimeout(100);
   assert.equal(await counterText(), '2/3', 'Enter advances the active match');
@@ -60,7 +59,6 @@ try {
   assert.equal(await counterText(), '1/3', 'Shift+Enter cycles back to the first match');
   step('Enter / Shift+Enter cycle matches and move the selection');
 
-  // Highlight-all is an option: off leaves only the active match painted.
   await page.click("button[title='Highlight all matches']");
   await page.waitForTimeout(120);
   assert.equal(await count('.vedSearchMatch'), 1, 'highlight-all off: only the active match');
@@ -70,8 +68,6 @@ try {
   assert.equal(await count('.vedSearchMatch'), 3, 'highlight-all back on: every match again');
   step('highlight-all toggles between every match and the active one');
 
-  // Replace the current (first) match; the active index then names the
-  // following match, which gets selected.
   await page.fill('#search-replace-input', 'いぬ');
   await page.click("button[title^='Replace the current match']");
   await page.waitForTimeout(150);
@@ -91,7 +87,6 @@ try {
   assert.equal(await counterText(), '0/0', 'no matches remain');
   step('replace-all rewrites every match in one step');
 
-  // Both replaces are plain-string edits in history: undo pops them one at a time.
   await page.click('#editor-content');
   await page.keyboard.press('Control+z');
   await page.waitForTimeout(150);

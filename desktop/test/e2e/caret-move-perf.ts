@@ -1,16 +1,15 @@
 // Caret-move responsiveness on a large RUBY document. Holding an arrow key must
-// keep up: every move re-runs `buildDecorations`, and the old cost was that it
-// re-derived the WHOLE doc (serialize + a decoration per markup leaf) on EVERY
-// selection change — O(document), ~135ms+ per move on a long ruby doc, so the
-// caret visibly lagged. The bulk "base" decorations are now CACHED, reused while
-// (doc, policy, shown-rubies) holds — which, in a fixed policy, is every caret
-// move.
+// keep up: every move re-runs `buildDecorations`, and re-deriving the WHOLE doc
+// (serialize + a decoration per markup leaf) on every selection change is
+// O(document) — ~135ms+ per move on a long ruby doc, a visibly lagging caret.
+// The bulk "base" decorations are CACHED, reused while (doc, policy,
+// shown-rubies) holds — which, in a fixed policy, is every caret move.
 //
 // We assert the cache directly and deterministically: across many caret moves on
 // a large doc the base set is rebuilt at most a couple of times (the seam
-// `__vedBaseRebuilds` counts O(document) rebuilds). The old regression rebuilt it
-// EVERY move. This replaces an end-to-end latency measurement, which flaked on
-// layout-reflow / RAF-throttling variance under load.
+// `__vedBaseRebuilds` counts O(document) rebuilds) — not via an end-to-end
+// latency measurement, which flakes on layout-reflow / RAF-throttling variance
+// under load.
 //
 // Usage: node test/e2e/caret-move-perf.ts (after bun run build).
 import assert from 'node:assert/strict';

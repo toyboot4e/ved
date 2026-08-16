@@ -37,7 +37,6 @@ try {
   assert.ok(cols.rootW < 700, `VerticalColumns root stays page-fixed: ${cols.rootW} < 700`);
   step('VerticalColumns keeps the page-fixed width in a wide window');
 
-  // VerticalRows fills the window; the first line still starts at the right edge.
   await clickWritingMode(page, 'Vertical Rows');
   await page.waitForTimeout(300);
   const rows = await geom();
@@ -52,7 +51,6 @@ try {
   );
   step('VerticalRows expands to the window width, content at the right edge');
 
-  // Editing still works in the widened viewport.
   await page.click('#editor-content');
   await page.keyboard.insertText('あ');
   await page.waitForTimeout(150);
@@ -71,7 +69,7 @@ try {
 
   // Horizontal keeps a RESTRICTED (page-fixed, centered) width but GROWS in
   // height: its width is the fixed line measure; the scroller fills the pane
-  // height (far taller than the one-page box it used to hug).
+  // height.
   await clickWritingMode(page, 'Horizontal');
   await page.waitForTimeout(300);
   const horiz = await geom();
@@ -83,7 +81,6 @@ try {
   );
   step('Horizontal keeps a restricted width and grows in height');
 
-  // Vertical (continuous) fills the pane WIDTH, like rows.
   await clickWritingMode(page, 'Vertical');
   await page.waitForTimeout(300);
   const vert = await geom();

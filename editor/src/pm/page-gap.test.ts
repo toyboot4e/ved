@@ -5,10 +5,9 @@ import { type LineItem, pageEndsFromLines, pageGapPlacement, visualLineEnds } fr
 // vertical-rl: lines advance leftward (decreasing b), pitch 28
 const line = (b: number, offs: number[]): LineItem[] => offs.map((endOff) => ({ endOff, b }));
 
-/** The ONE-SHOT composition of the two production halves — the suffix≡full
- *  ORACLE these tests compare against. Production never calls it (the editor
- *  runs the halves separately so the visual-line ends can be cached across
- *  measures — page-gap-measure.ts), so it lives here, not in page-gap.ts. */
+/** One-shot composition of the two production halves — the suffix≡full oracle.
+ *  Production runs the halves separately so visual-line ends can be cached
+ *  across measures (page-gap-measure.ts), so this lives here. */
 const pageBoundaryEnds = (
   items: readonly LineItem[],
   linesPerPage: number,
@@ -25,14 +24,12 @@ describe('pageBoundaryEnds', () => {
       ...line(16, [9, 10]),
       ...line(-12, [11]),
     ];
-    // 2 lines per page: after line 1 (end 6) and line 3 (end 10); the boundary
-    // after the LAST line (4) has no successor and is not emitted.
     expect(pageBoundaryEnds(items, 2, 28)).toEqual([6, 10]);
   });
 
   it('emits nothing when the document ends exactly at a page boundary', () => {
     const items = [...line(100, [1, 2]), ...line(72, [3, 4])];
-    expect(pageBoundaryEnds(items, 2, 28)).toEqual([]); // no following line
+    expect(pageBoundaryEnds(items, 2, 28)).toEqual([]);
   });
 
   it('tolerates per-glyph jitter within half a pitch', () => {
@@ -56,8 +53,6 @@ describe('pageBoundaryEnds', () => {
   });
 
   it('skips every pagesPerBand-th boundary (the multicol band break separates those)', () => {
-    // 5 lines, 1 line per page, 2 pages per band: boundaries after pages 1 and
-    // 3 (intra-band) — pages 2 and 4 end their bands, no widget there.
     const items = [...line(100, [1]), ...line(72, [2]), ...line(44, [3]), ...line(16, [4]), ...line(-12, [5])];
     expect(pageBoundaryEnds(items, 1, 28, 2)).toEqual([1, 3]);
   });
@@ -68,8 +63,6 @@ describe('pageBoundaryEnds', () => {
   });
 });
 
-// The two halves pageBoundaryEnds composes — the editor calls them separately
-// so the visual-line ends can be CACHED across measures (suffix re-measure).
 describe('visualLineEnds', () => {
   it('emits the last endOff of each clustered line, including the final line', () => {
     const items = [...line(100, [1, 2, 3]), ...line(72, [4, 5]), ...line(44, [6])];
@@ -86,12 +79,9 @@ describe('visualLineEnds', () => {
   });
 
   it('never splits on a BACKWARD excursion, however large (縦中横 sub-rects)', () => {
-    // A 3+ digit 縦中横 box reports PER-DIGIT sub-rects inside the combined
-    // cell — up to a whole cell BACKWARD (rightward, +b) of the line's slot,
-    // past half a pitch under a big-metric font (Noto Sans CJK at 18px: the
-    // digits of 第101行 measured +3.3/+9.9/+16.5). A real NEXT line only ever
-    // advances FORWARD (decreasing b), so backward excursions are always
-    // within-line artifacts and must never start a line.
+    // 3+ digit 縦中横 per-digit sub-rects reach a whole cell backward — past
+    // half a pitch under a big-metric font (Noto Sans CJK 18px, 第101行:
+    // +3.3/+9.9/+16.5); a real next line only advances forward.
     const items: LineItem[] = [
       { endOff: 1, b: 100 }, // 第 — the line's slot
       { endOff: 2, b: 103.3 }, // 1 (tcy sub-rect)
@@ -104,10 +94,8 @@ describe('visualLineEnds', () => {
   });
 
   it('splits on a large BACKWARD jump (a multicol band wrap)', () => {
-    // In VerticalColumns with several pages per band, the measure crosses band
-    // breaks: the next band's first line jumps BACKWARD by ~a page-row width.
-    // That must still start a line — only backward jumps within one pitch (the
-    // 縦中横 sub-rect bound: at most a cell) are within-line excursions.
+    // Across a band break the next band's first line jumps backward by ~a
+    // page-row width; only backward jumps within one pitch are within-line.
     const items: LineItem[] = [
       { endOff: 1, b: 100 },
       { endOff: 2, b: 72 }, // next line, same band
@@ -118,8 +106,8 @@ describe('visualLineEnds', () => {
   });
 
   it('splits on a FORWARD jump past half a pitch measured from the line slot', () => {
-    // Forward-only, but anchored at the line's most-forward coordinate so a
-    // line-STARTING tcy excursion cannot mis-anchor the line.
+    // Anchored at the line's most-forward coordinate so a line-STARTING tcy
+    // excursion cannot mis-anchor the line.
     const items: LineItem[] = [
       { endOff: 1, b: 103.3 }, // line starts on a tcy sub-rect
       { endOff: 2, b: 100 }, // its own slot, 3.3 forward — same line
@@ -134,10 +122,6 @@ describe('visualLineEnds', () => {
   });
 
   it('groups horizontal-tb items (forward = increasing b) with vertical=false', () => {
-    // Horizontal rows: lines advance DOWNWARD (increasing top). The same
-    // rules mirrored: half-pitch jitter merges, a forward pitch step splits,
-    // a large backward jump (a multicol band wrap, rightward-tiling pages)
-    // still splits.
     const items: LineItem[] = [
       { endOff: 1, b: 100 },
       { endOff: 2, b: 97 }, // -3px jitter (a ruby line's sub-rect) — same line
@@ -161,16 +145,14 @@ describe('pageGapPlacement', () => {
   });
 
   it("at the base's last character: after the ruby, normal flavor", () => {
-    // Page's last glyph ビ (the base's last char): only hidden markup follows,
-    // so the after-ruby spot is visually AT the boundary.
+    // Only hidden markup follows ビ, so the after-ruby spot is visually AT the boundary.
     const g = placed(4);
     expect(g.before).toBeFalsy();
     expect(g.pos).toBeGreaterThan(offsetToPos(doc, 4));
   });
 
   it('strictly inside the base (a straddling ruby): after the ruby, gap-BEFORE', () => {
-    // Page's last glyph ル: the base's tail wraps onto the next page's first
-    // line, so the widget after the ruby must open its gap BEFORE its line.
+    // The base's tail wraps onto the next page's first line.
     const g = placed(3);
     expect(g.before).toBe(true);
     expect(g.pos).toBe(placed(4).pos); // same renderable spot, different flavor
@@ -180,7 +162,7 @@ describe('pageGapPlacement', () => {
 describe('pageEndsFromLines', () => {
   it('emits the end of every Nth line that has a successor', () => {
     expect(pageEndsFromLines([3, 6, 8, 10, 11], 2)).toEqual([6, 10]);
-    expect(pageEndsFromLines([2, 4], 2)).toEqual([]); // no following line
+    expect(pageEndsFromLines([2, 4], 2)).toEqual([]);
   });
 
   it('skips every pagesPerBand-th boundary', () => {

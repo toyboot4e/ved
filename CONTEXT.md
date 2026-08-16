@@ -121,7 +121,7 @@ plain string — conversion between them is lossless, character for character,
 including the markup characters `|`, `(`, `)`, which are never model text:
 `serialize` reconstructs them at the node boundaries. Displayed text and
 model text can never diverge.
-_Avoid_: identity text model (the former name — it dropped the "rich"),
+_Avoid_: identity text model (it drops the "rich"),
 source model, WYSIWYG (it is explicitly not WYSIWYG).
 
 **Appear policy**:

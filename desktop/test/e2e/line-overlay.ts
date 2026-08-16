@@ -1,13 +1,8 @@
-// The per-visual-line overlay (editor/line-numbers.ts): line numbers and the
-// current-line highlight, both measured per VISUAL line. Covers the two bugs
-// fixed alongside it — the highlight must stay on the caret's PAGE (not stretch
-// across every page a paragraph touches), and VerticalColumns must not raise a
-// spurious horizontal scrollbar.
-//
-// VISIBLE window (not the default hidden one): the overlay re-measures in
-// requestAnimationFrame, which hidden Electron windows throttle — the asserts
-// would race an un-updated overlay. See docs/architecture.md (the hidden-window
-// RAF gotcha).
+// Per-visual-line overlay (editor/line-numbers.ts): line numbers and the
+// current-line highlight. The highlight must stay on the caret's page, and
+// VerticalColumns must not raise a spurious horizontal scrollbar.
+// Visible window: the overlay re-measures in rAF, which hidden Electron
+// windows throttle — the asserts would race an un-updated overlay.
 import assert from 'node:assert/strict';
 import { clickWritingMode, fail, finish, launchVed, step } from './harness.ts';
 
@@ -47,25 +42,22 @@ const measure = () =>
   });
 
 try {
-  // --- One paragraph that WRAPS across a page boundary in VerticalColumns. ---
-  // 900 zenkaku; a page holds page-lines × page-line-chars = 20 × 40 = 800, so
-  // the paragraph flows onto page 2 and the caret (kept at the end) lands there.
+  // One paragraph wrapping across a page boundary: 900 zenkaku vs a
+  // 20 × 40 = 800 page, so it flows onto page 2 with the caret at the end.
   await page.click('#editor-content');
   await setText('一二三四五六七八九十'.repeat(90));
   await clickWritingMode(page, 'Vertical Columns');
   await page.waitForTimeout(300);
   const m = await measure();
 
-  // Numbers are per VISUAL line: ~ceil(900 / 40) = 23 columns from ONE
-  // paragraph, counted correctly ACROSS the page boundary. The grouping bug
-  // merged page-2 columns into page 1 and capped the count at one page (20).
+  // ~ceil(900/40) = 23 visual lines from one paragraph; a grouping that merges
+  // page-2 columns into page 1 caps the count at one page (20).
   assert.equal(m.paragraphs, 1, `setup: one paragraph (got ${m.paragraphs})`);
   assert.ok(m.numbers > 20, `numbers count every visual line across pages: want >20, got ${m.numbers}`);
   step('line numbers count visual lines across a page boundary');
 
-  // The highlight is one COLUMN wide (not the whole 1-page-wide paragraph) and
-  // ONE page tall (not the paragraph's multi-page bounding height), and it
-  // contains the caret — i.e. it is on the caret's page.
+  // Highlight: one column wide, one page tall (not the paragraph's multi-page
+  // extent), and containing the caret — i.e. on the caret's page.
   assert.ok(m.highlight, 'highlight is shown');
   const hl = m.highlight!;
   assert.ok(hl.w < m.lineLen * 0.1, `highlight is one column wide: want <${m.lineLen * 0.1}, got ${hl.w}`);
@@ -80,14 +72,12 @@ try {
   );
   step("highlight fills the caret's visual line on the caret's page only");
 
-  // VerticalColumns scrolls vertically only — no spurious horizontal scrollbar.
   assert.equal(m.overflowX, 'hidden', `VerticalColumns clips horizontal overflow (got ${m.overflowX})`);
   assert.ok(m.hBar < 10, `no horizontal scrollbar in VerticalColumns: offsetH-clientH=${m.hBar}`);
   step('VerticalColumns shows no horizontal scrollbar');
 
-  // --- Highlight bounded to ONE wrapped column within a single page. ---------
-  // 50 zenkaku → 2 columns (40 + 10) on one page; the highlight covers one of
-  // them, never the whole 2-column paragraph.
+  // 50 zenkaku → 2 columns (40 + 10) on one page; the highlight covers one,
+  // never the whole 2-column paragraph.
   await setText('一二三四五六七八九十'.repeat(5));
   await page.waitForTimeout(300);
   const m2 = await measure();
@@ -99,14 +89,11 @@ try {
   assert.ok(m2.numbers >= 2, `the wrapped paragraph is numbered per visual line: got ${m2.numbers}`);
   step('highlight is bounded to one wrapped column, not the paragraph');
 
-  // --- Highlight follows the caret via the cheap highlight-only path. --------
-  // A caret move (no edit) reuses the cached line geometry and just repositions
-  // the highlight — it must still land on the new visual line. ArrowLeft moves
-  // one column leftward (vertical-rl), so the highlight's `left` must decrease
-  // by ~one column while it stays one column wide.
+  // Caret move (no edit) takes the cheap highlight-only path over cached line
+  // geometry; ArrowLeft is one column leftward in vertical-rl, so the
+  // highlight's `left` must decrease by ~one column.
   await setText(Array.from({ length: 8 }, (_, i) => `第${i + 1}行`).join('\n'));
   await page.waitForTimeout(250);
-  // Click line 1's start, then step left and compare highlight positions.
   const p1 = await page.evaluate(() => {
     const r = (document.querySelector('#editor-content p') as HTMLElement).getBoundingClientRect();
     return { x: r.right - 9, y: r.top + 9 };
@@ -128,10 +115,9 @@ try {
   );
   step('highlight follows the caret one visual line per move');
 
-  // No PHANTOM line numbers for RUBY content across page boundaries: Chromium
-  // emits a stray zero-height rect on the previous page for a paragraph whose
-  // column is the first on the next page; if the grouping keeps it, it numbers
-  // a phantom extra line near each page boundary (mis-positioned number).
+  // Chromium emits a stray zero-height rect on the previous page for a ruby
+  // paragraph whose column opens the next page; if the grouping keeps it, a
+  // phantom line number appears near each page boundary.
   await setText(Array.from({ length: 44 }, () => '|ルビ(ruby)').join('\n'));
   await page.waitForTimeout(400);
   const counts = await page.evaluate(() => ({
@@ -146,9 +132,8 @@ try {
   );
   step('line numbers: one per ruby line, no phantoms across page boundaries');
 
-  // EMPTY paragraphs (blank lines) get a visual line number too. A blank line
-  // yields only degenerate rects, so the overlay must fall back to the paragraph
-  // box — otherwise blank lines are skipped and every line below is mis-numbered.
+  // A blank line yields only degenerate rects, so the overlay must fall back
+  // to the paragraph box — else every line below is mis-numbered.
   await setText('あいうえお\n\nかきくけこ\n\n\nさしすせそ');
   await page.waitForTimeout(400);
   const blanks = await page.evaluate(() => ({

@@ -1,7 +1,7 @@
 // Regression: NO current-line highlight on an EMPTY document. The line-numbers
 // overlay drew a highlight band over the blank first line (with the placeholder
 // showing), which read as a stray "ghost" cursor — most visible right after
-// Ctrl+A then delete. refreshHighlight now hides it when the doc has no text.
+// Ctrl+A then delete. refreshHighlight hides it when the doc has no text.
 //
 // VISIBLE window: the overlay re-measures via RAF (hidden windows throttle it,
 // so the highlight wouldn't update after the delete).
@@ -36,7 +36,6 @@ try {
   assert.equal(await settle(true), true, 'highlight shows while there is content');
   step('current-line highlight shows with content');
 
-  // Ctrl+A then delete → empty doc. The highlight must disappear (no ghost).
   await pressMod(page, 'a');
   await page.waitForTimeout(80);
   await page.keyboard.press('Backspace');

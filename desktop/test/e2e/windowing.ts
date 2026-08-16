@@ -1,11 +1,9 @@
-// Paragraph windowing (editor windowing.ts + pm/windowing.ts): on a large
-// document, far-from-viewport paragraphs are display:none'd behind
-// extent-exact spacers (sized blocks in block flow; band jumpers + an exact
-// tail in the multicol modes) — and NOTHING observable changes: the text
-// model, the global line numbering, typing at either end, jumps into hidden
-// regions (materialize-before-caret; a jump SPLITS its run rather than pay
-// an O(doc) decoration rebuild), and mode switches (materialize-all) all
-// behave exactly as without windowing.
+// Paragraph windowing (editor windowing.ts + pm/windowing.ts): far paragraphs
+// are display:none'd behind extent-exact spacers (sized blocks in block flow;
+// band jumpers + exact tail in multicol) and NOTHING observable changes —
+// text model, global line numbering, typing at either end, jumps into hidden
+// regions (materialize-before-caret; a jump SPLITS its run rather than pay an
+// O(doc) decoration rebuild), mode switches (materialize-all).
 //
 // Usage: node test/e2e/windowing.ts (after bun run build).
 import assert from 'node:assert/strict';
@@ -36,10 +34,9 @@ const paraHidden = (i: number) =>
     (idx) => document.querySelectorAll('#editor-content > p')[idx]?.classList.contains('vedWindowHidden') ?? false,
     i,
   );
-/** Poll until the window (re-)engages: layout-change preludes materialize
- *  everything and re-window AFTER the full measures settle — in the hidden
- *  harness window the resize observers fire rAF-late, so the empty-set
- *  transient can straddle any single sample. */
+/** Poll until the window (re-)engages: layout-change preludes materialize all
+ *  and re-window after the full measures settle; in the hidden harness window
+ *  resize observers fire rAF-late, so any single sample can hit the transient. */
 const waitForHidden = async (deadlineMs: number): Promise<number> => {
   const until = Date.now() + deadlineMs;
   for (;;) {
@@ -60,29 +57,26 @@ try {
   );
   await page.waitForTimeout(1200); // measures + the first window passes settle
 
-  // --- far paragraphs hide behind spacers (the caret sits at the doc END,
-  // so the hidden run is the doc-start side) ---
+  // Caret sits at the doc end after insertText, so the hidden run is the
+  // doc-start side.
   const hidden0 = await hiddenCount();
   assert.ok(hidden0 > 0, `far paragraphs are hidden (got ${hidden0})`);
   assert.ok((await spacerCount()) > 0, 'a spacer stands in for the hidden run');
   assert.ok(!(await paraHidden(0)), 'paragraph 0 stays materialized (overlay origin probe)');
   step(`windowing engaged: ${hidden0}/${LINES} paragraphs hidden`);
 
-  // --- the GLOBAL numbering survives: the tail is materialized (caret at
-  // the end), so the highest rendered label equals the total line count the
-  // page-gap measure maintains over the WHOLE document ---
+  // Tail is materialized (caret at end), so the highest rendered label must
+  // equal the whole-document line count the page-gap measure maintains.
   const total = await totalGapLines();
   const labels = await visibleLabels();
   assert.ok(total >= LINES, `page-gap line ends cover the whole doc (${total})`);
   assert.equal(Math.max(...labels), total, 'the last visible number carries the GLOBAL line index');
   step('line numbers stay global over hidden runs');
 
-  // --- typing at the doc end lands ---
   await page.keyboard.type('追記');
   await page.waitForTimeout(300);
   assert.ok((await text()).endsWith('追記'), 'typing at the doc end lands');
 
-  // --- a jump into the hidden region materializes in the same flush ---
   assert.ok(await paraHidden(1), 'paragraph 1 is hidden before the jump');
   await setCaret(0);
   await page.waitForTimeout(80);
@@ -92,8 +86,6 @@ try {
   assert.ok((await text()).startsWith('冒'), 'typing after the jump lands at the doc start');
   step('materialize-before-caret: jump + type into a hidden region');
 
-  // --- scrolling re-windows: bring the viewport to the doc start; the far
-  // END should hide, the start stay visible ---
   await page.evaluate(() => {
     document.querySelector('#editor-content')!.parentElement!.scrollLeft = 0;
   });

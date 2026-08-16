@@ -1,63 +1,33 @@
-// Per-visual-line overlay — line numbers AND the current-line highlight, both
-// measured per VISUAL line (a wrapped column/row), not per logical <p>. A CSS
-// counter or a node decoration can only address the <p> (a logical line); a
-// wrapped paragraph needs one number — and a highlight bounded to one column —
-// per visual line, which only measurement can give. Decoupled from the
-// paragraphs so the overrun fix and the numbering stay independent (the ruby
-// overrun is fixed separately by an inline-block base; no clip is applied — it
-// only paints-clips, hiding content).
-//
-// For each paragraph, Range.getClientRects() yields one rect per visual line
-// (Chromium emits several around a ruby; we group them). We group by the
-// BLOCK-axis coordinate — a column in vertical-rl, a row in horizontal — number
-// each group in reading order, and highlight the group the caret sits in.
-// Positions are stored relative to the overlay's OWN box, which is an
-// absolutely-positioned child of the scroller and therefore scrolls WITH the
-// content — so the line-relative offsets are scroll-invariant and we recompute
-// only on layout change, never on scroll.
-//
-// Re-measuring every paragraph (a getClientRects + getComputedStyle each) is
-// O(document) and must NOT run per event — neither on a caret move NOR on an
-// edit — or a large doc stalls for ~100ms (the highlight "lags", and queued
-// keypresses then apply in a burst that looks like the caret jumping several
-// lines). Three paths:
-//   - a FULL measure, rAF-scheduled on layout changes no edit explains
-//     (mode/policy/resize/font/view-config);
-//   - an EDIT measure (`scheduleEdit`): the per-paragraph line geometry is
-//     CACHED, the caller names the clean paragraph runs at both ends (node
-//     identity — pm/model.ts changedParagraphSpan), and only the dirty
-//     paragraphs re-measure. The clean prefix cannot move (layout flows
-//     forward; a paragraph-0 probe guards the overlay origin), and the clean
-//     suffix is reused when its FIRST paragraph's probe — its first reading-
-//     flow rect — sits exactly where the cache put it (typing that changes no
-//     line count). A moved suffix re-measures whole: block flow is
-//     cumulative, so a shift never re-converges. The `__vedLineMeasures` seam
-//     counts paragraphs measured per pass (edit-perf.ts pins the bound);
-//   - a SYNCHRONOUS highlight-only pass (`refreshCaret`) on a selection-only
-//     change that reuses the cached line geometry — re-pick the caret's line
-//     (O(lines) of plain math, no layout reads per paragraph) and, only if
-//     the line actually changed, move the highlight. Synchronous so the
-//     highlight lands in the same frame as the caret.
+// Per-visual-line overlay (numbers + current-line highlight): a wrapped
+// paragraph needs one number per VISUAL line, which only measurement gives
+// (CSS counters/node decorations only address the <p>). Geometry is stored
+// relative to the overlay's own box, so it is scroll-invariant and recomputes
+// only on layout change. Re-measuring every paragraph is O(document) (~100ms
+// stalls), so three paths: a FULL rAF-scheduled measure for layout changes no
+// edit explains; an EDIT measure (`scheduleEdit`) re-measuring only between
+// the identity-clean runs (pm/model.ts changedParagraphSpan) — the clean
+// suffix is reused only when its FIRST paragraph's probe sits exactly where
+// the cache put it (block flow is cumulative; a shifted suffix never
+// re-converges and re-measures whole; `__vedLineMeasures` counts paragraphs,
+// edit-perf.ts pins the bound); and a SYNCHRONOUS highlight-only pass
+// (`refreshCaret`) on selection-only changes.
 
 import styles from './editor.module.scss';
 import { firstFlowRect, makeLineGrouper, readCell, readingFlowRects, readPitch } from './pm/line-grouping';
 
 export type LineNumbers = {
   schedule: (full?: boolean) => void;
-  /** Schedule the EDIT measure: `cleanStart`/`cleanEnd` paragraphs at the
-   *  document's start/end are untouched by the edit (identity-clean —
-   *  changedParagraphSpan); only the rest re-measure. Coalesced by MIN with
-   *  any pending edit; a pending full measure wins. */
+  /** Schedule the EDIT measure: `cleanStart`/`cleanEnd` paragraphs at each end
+   *  are identity-clean; only the rest re-measure. Coalesced by MIN with any
+   *  pending edit; a pending full measure wins. */
   scheduleEdit: (cleanStart: number, cleanEnd: number) => void;
   /** Whether a measure pass is scheduled and not yet run. */
   pending: () => boolean;
-  /** The content element's offset size recorded by the LAST measure pass —
-   *  lets the shell's resize observer absorb growth a pass already saw. */
+  /** Content offset size at the last measure pass — lets the shell's resize
+   *  observer absorb growth a pass already saw. */
   measuredContentSize: () => { w: number; h: number } | null;
-  /** Reposition the caret highlight NOW, synchronously, from the cached line
-   *  geometry — for selection-only changes, where waiting for the next
-   *  animation frame adds a visible frame of lag between the caret and its
-   *  highlight. A same-line caret move skips the DOM writes entirely. */
+  /** Reposition the caret highlight synchronously from cached geometry —
+   *  waiting for the next frame lags it behind the caret. */
   refreshCaret: () => void;
   destroy: () => void;
 };
@@ -65,14 +35,9 @@ export type LineNumbers = {
 /** Viewport-space rect of a caret, as `view.coordsAtPos` returns it. */
 export type CaretRect = { top: number; bottom: number; left: number; right: number };
 
-// A visual line's geometry, in overlay-relative px (scroll-invariant).
-// `left/top/right/bottom` bound its CHARACTERS (used to place the number,
-// hit-test the caret, and anchor the highlight at the line's start corner);
-// `bandLen` is the full LINE length along the inline axis
-// — ONE page's `--line-length` (the paragraph's `inline-size`) — so the
-// highlight fills the line to the page cap, not just to the last glyph. It is
-// the per-page length, NOT the paragraph's bounding extent: a paragraph can
-// span several pages, but each visual line lives on exactly one page.
+// Overlay-relative px; the rect bounds the line's CHARACTERS. `bandLen` is
+// ONE page's `--line-length` (not the paragraph's bounding extent), so the
+// highlight fills to the page cap.
 type VisualLine = {
   left: number;
   top: number;
@@ -81,35 +46,27 @@ type VisualLine = {
   bandLen: number;
 };
 
-/** Create the overlay inside `scroller` and render, for each visual line of
- *  `content` (the contenteditable), a centered number plus — for the line
- *  holding the caret (`getCaret`) — a highlight. Returns a debounced
+/** Create the overlay inside `scroller`: a centered number per visual line of
+ *  `content`, plus a highlight on the caret's line. Returns a debounced
  *  `schedule()` to call on any layout or selection change, and `destroy()`. */
 export const mountLineNumbers = (
   scroller: HTMLElement,
   content: HTMLElement,
   getCaret: () => CaretRect | null,
   getSelectionRects: () => DOMRect[],
-  /** While true (an IME composition is running), the highlight HOLDS its
-   *  painted geometry as long as the picked line stays in the same column:
-   *  the composing line's measured block-start breathes per keystroke (its
-   *  first glyph is the preedit's tail char, hopping across the wrap as raw
-   *  romaji converts to kana), and repainting each breath made the band
-   *  visibly pulse. A different column still repaints — crossing a boundary
-   *  moves the highlight exactly once. */
+  /** While composing, the highlight HOLDS its painted geometry while the
+   *  picked line stays in the same column: the composing line's block-start
+   *  breathes per keystroke, and repainting each breath pulses the band. */
   isSteady?: () => boolean,
-  /** Line count for a WINDOWING-HIDDEN paragraph never measured while
-   *  visible (the windowing extent cache ÷ pitch); the overlay prefers its
-   *  own last measured count (`lastCounts`). Hidden paragraphs keep their
-   *  place in the GLOBAL numbering — labels, folios, and page math must not
-   *  shift when a far paragraph loses its boxes. */
+  /** Line count for a WINDOWING-HIDDEN paragraph never measured while visible
+   *  (windowing extent cache ÷ pitch); the overlay prefers its own last
+   *  measured count. Hidden paragraphs must keep their place in the GLOBAL
+   *  numbering, or labels, folios, and page math shift. */
   hiddenFallback?: (p: Element) => number | null,
 ): LineNumbers => {
   const overlay = document.createElement('div');
   overlay.className = 'vedLineNumbers';
   overlay.setAttribute('aria-hidden', 'true');
-  // The highlight sits behind the numbers (first child) but, like them, inside
-  // the scroll-invariant overlay box.
   const highlight = document.createElement('div');
   highlight.className = 'vedCurrentLine';
   highlight.style.display = 'none';
@@ -117,27 +74,24 @@ export const mountLineNumbers = (
   scroller.appendChild(overlay);
 
   const pool: HTMLElement[] = [];
-  const pagePool: HTMLElement[] = []; // page-number chips (paged modes)
-  const sepPool: HTMLElement[] = []; // page-boundary separators (paged modes)
-  const selPool: HTMLElement[] = []; // custom text-selection rects (base only)
+  const pagePool: HTMLElement[] = [];
+  const sepPool: HTMLElement[] = [];
+  const selPool: HTMLElement[] = [];
   const range = document.createRange();
   let raf = 0;
   let pendingFull = false;
   let pendingEdit: { cleanStart: number; cleanEnd: number } | null = null;
-  let lines: VisualLine[] = []; // cached geometry from the last measure pass (VISIBLE lines)
+  let lines: VisualLine[] = [];
   let globalIdx: number[] = []; // each visible line's GLOBAL index (hidden counts included)
-  // Per-paragraph geometry from the last measure pass (full or edit): the DOM
-  // element, its visual lines, and a movement PROBE — the paragraph's first
-  // reading-flow rect, overlay-relative. The edit pass reuses an entry when
-  // the element is the same node and (at the reuse boundaries) the probe
-  // still matches, so an unchanged paragraph is never rect-walked again.
+  // The edit pass reuses an entry when the element identity and, at the reuse
+  // boundaries, the probe still match.
   let paraCache: ParaLines[] = [];
   let measuredSize: { w: number; h: number } | null = null;
-  let vertical = false; // cached from the last measure (mode changes re-measure)
-  let lastHit: VisualLine | null = null; // the line the highlight last painted
-  // The caret's block-axis center at that paint (the composing hold below
-  // compares against it — a pick that flips while the caret itself barely
-  // moved is band-boundary jitter, not a line change).
+  // A mode change re-measures before any selection change can observe this stale.
+  let vertical = false;
+  let lastHit: VisualLine | null = null;
+  // Caret block-axis center at the last paint — the composing hold uses it to
+  // tell band-boundary jitter from a real line change.
   let lastCaretMid: number | null = null;
   let steadyTol = 14; // half the line pitch, cached by the full measure
 
@@ -146,39 +100,26 @@ export const mountLineNumbers = (
   const readEnv = (): MeasureEnv => {
     const cs = getComputedStyle(content);
     const vert = cs.writingMode.startsWith('vertical');
-    // A block-axis jump bigger than this — but against the reading direction —
-    // is a multicol PAGE WRAP (pages stack, so the next page's first column
-    // jumps back across the whole page), not a ruby annotation's small shift.
-    // One cell can't hold a jump this large; a page is always ≥ a few cells.
+    // A block-axis jump bigger than this against the reading direction is a
+    // multicol PAGE WRAP, not a ruby's small shift (a page ≥ a few cells).
     const colJump = readCell(cs) * 2.5;
-    // Within-line jitter tolerance: HALF the line pitch (the same bound
-    // pm/page-gap.ts visualLineEnds uses). Rects of ONE line can disagree on
-    // their block coordinate by up to ~half the em-box difference between an
-    // upright CJK run and a sideways (rotated Latin) run — Noto Sans CJK's
-    // 1.45em vertical em box puts that at ~3-4px at 18px, PAST a fixed few-px
-    // tolerance at fractional device scale (a 163dpi desktop runs at ~1.7),
-    // which split "100％" into two phantom lines and shifted every number,
-    // separator, and folio after it. Adjacent REAL lines are ≥ one pitch
-    // apart and the jitter is bounded by ~0.5em < pitch/2 (the line-space
-    // ratio floor is 0.5), so half a pitch separates the two cleanly for
-    // every font.
+    // Within-line jitter tolerance: HALF the pitch (shared with pm/page-gap.ts
+    // visualLineEnds), never a px literal — upright-CJK vs sideways-Latin rects
+    // jitter ~0.5em within a line while real lines sit ≥ one pitch apart.
     const groupTol = readPitch(cs) / 2;
-    // The line band length (= `--line-length`) is identical for every paragraph
-    // (`inline-size` is pinned to it), so read it ONCE, not per paragraph.
+    // `--line-length` is identical for every paragraph — read it ONCE.
     const firstP = content.querySelector('p');
     const bandLen = firstP ? Number.parseFloat(getComputedStyle(firstP).inlineSize) || 0 : 0;
     return { cs, vert, colJump, groupTol, bandLen };
   };
 
-  // Last measured VISIBLE line count per paragraph element — the count a
-  // windowing-hidden paragraph contributes to the global numbering (its
-  // boxes are gone, but its lines still exist between page 1 and here).
+  // Last measured line count per paragraph — what a windowing-hidden
+  // paragraph contributes to the global numbering.
   const lastCounts = new WeakMap<Element, number>();
 
-  /** Measure ONE paragraph into a cache entry (rect walk + probe). A
-   *  windowing-hidden paragraph has NO box at all (display:none) — it keeps
-   *  its last measured count (or the windowing fallback) instead of
-   *  geometry; a genuinely empty VISIBLE paragraph still has its box. */
+  /** Measure ONE paragraph (rect walk + probe). A windowing-hidden paragraph
+   *  has NO box (display:none) — it keeps its last measured count (or the
+   *  windowing fallback); a genuinely empty VISIBLE paragraph still has its box. */
   const measurePara = (p: HTMLElement, env: MeasureEnv, o: DOMRect): ParaLines => {
     const box = p.getBoundingClientRect();
     if (box.width === 0 && box.height === 0) {
@@ -200,17 +141,13 @@ export const mountLineNumbers = (
     return r ? { x: r.left - o.left, y: r.top - o.top } : null;
   };
 
-  /** The shared tail of both passes: flatten the per-paragraph cache, read the
-   *  remaining inputs, then place every mark (reads strictly before writes).
-   *  `win` is the edit pass's dirty visual-line window (null = place all);
-   *  the page marks always place whole — they are per PAGE (a fraction of the
-   *  line count), and a line-count change moves every later folio anyway. */
+  /** Shared tail of both passes: flatten the cache, read the remaining inputs,
+   *  then place every mark (reads strictly before writes). `win` is the edit
+   *  pass's dirty visual-line window (null = place all); page marks always
+   *  place whole — a line-count change moves every later folio anyway. */
   const finish = (env: MeasureEnv, o: DOMRect, win: { from: number; to: number } | null = null): void => {
     vertical = env.vert;
     steadyTol = env.groupTol;
-    // Flatten the VISIBLE lines (geometry) alongside each line's GLOBAL
-    // index — windowing-hidden paragraphs contribute their counts to the
-    // numbering but no geometry, so labels/folios past them stay true.
     lines = [];
     globalIdx = [];
     let g = 0;
@@ -237,7 +174,6 @@ export const mountLineNumbers = (
     refreshSelection(o);
   };
 
-  /** The content's paragraph elements, in document order. */
   const contentParas = (): HTMLElement[] => {
     const ps: HTMLElement[] = [];
     for (const p of Array.from(content.children)) {
@@ -246,9 +182,7 @@ export const mountLineNumbers = (
     return ps;
   };
 
-  // FULL measure: re-collect every paragraph's visual lines and re-place the
-  // numbers. O(doc) — reserved for layout changes no edit explains
-  // (mode/policy/resize/font/view-config).
+  // FULL measure: O(doc) — only for layout changes no edit explains.
   const measure = (): void => {
     const env = readEnv();
     overlay.style.fontSize = env.cs.fontSize; // numbers scale with the body
@@ -259,11 +193,8 @@ export const mountLineNumbers = (
     finish(env, o);
   };
 
-  // EDIT measure: re-measure the dirty paragraphs; reuse the clean prefix
-  // (guarded by a paragraph-0 origin probe) and — when its first paragraph's
-  // probe still matches — the clean suffix. O(changed paragraphs) for typing
-  // that moves no line; O(suffix) when lines shifted (the same shape as the
-  // page-gap suffix cache).
+  // EDIT measure: re-measure the dirty paragraphs; reuse the clean prefix and
+  // — when its first paragraph's probe still matches — the clean suffix.
   const measureEdit = (edit: { cleanStart: number; cleanEnd: number }): void => {
     const ps = contentParas();
     const old = paraCache;
@@ -271,8 +202,8 @@ export const mountLineNumbers = (
     const cleanEnd = Math.max(0, Math.min(edit.cleanEnd, old.length - cleanStart, ps.length - cleanStart));
     const env = readEnv();
     const o = overlay.getBoundingClientRect();
-    // Origin guard: if the first clean paragraph moved relative to the
-    // overlay, the overlay box itself shifted — nothing cached is trustworthy.
+    // If paragraph 0 moved relative to the overlay, the overlay box itself
+    // shifted — nothing cached is trustworthy.
     if (cleanStart > 0 && (old[0]!.el !== ps[0] || !probesEq(old[0]!.probe, probeOf(ps[0]!, o)))) {
       measure();
       return;
@@ -281,8 +212,8 @@ export const mountLineNumbers = (
     const cachedOrFresh = (c: ParaLines | undefined, p: HTMLElement, reusable: boolean): ParaLines => {
       if (reusable && c && c.el === p) return c;
       const entry = measurePara(p, env, o);
-      // The seam counts REAL rect walks: a windowing-hidden paragraph costs
-      // one zero-box read, and a window flip visits hundreds of them.
+      // Count only REAL rect walks: a windowing-hidden paragraph costs one
+      // zero-box read, and a window flip visits hundreds.
       if (entry.hiddenCount === undefined) measured++;
       return entry;
     };
@@ -291,9 +222,8 @@ export const mountLineNumbers = (
     const prefixFresh = measured; // a re-measured "clean" prefix entry may have moved
     const dirtyTo = ps.length - 1 - cleanEnd;
     for (let i = cleanStart; i <= dirtyTo; i++) next.push(cachedOrFresh(undefined, ps[i]!, false));
-    // Suffix: reusable only while its FIRST paragraph sits exactly where the
-    // cache put it — block flow is cumulative, so a shifted suffix never
-    // re-converges and re-measures whole.
+    // Suffix reusable only while its FIRST paragraph's probe matches (see the
+    // module header); a shifted suffix re-measures whole.
     const suffixOff = old.length - ps.length; // old index = new index + suffixOff
     const head = old[dirtyTo + 1 + suffixOff];
     const suffixOk =
@@ -304,13 +234,11 @@ export const mountLineNumbers = (
     finish(env, o, placementWindow(old, next, prefixFresh, cleanStart, dirtyTo, suffixOk, cleanEnd));
   };
 
-  // Move the highlight to the caret's visual line, reusing the cached `lines`.
   const refreshHighlight = (o: DOMRect): void => {
-    // No highlight on an EMPTY document: the band over the blank first line (with
-    // the placeholder showing) reads as a stray "ghost" cursor — most visible
-    // right after Ctrl+A then delete. An empty document is exactly one <p>
-    // holding a <br> — check THAT, not `content.textContent`, which builds the
-    // whole document string on every caret move.
+    // No highlight on an EMPTY document — the band over the placeholder reads
+    // as a ghost cursor. An empty document is exactly one <p> holding a <br>;
+    // check THAT, not `content.textContent`, which builds the whole document
+    // string on every caret move.
     if (content.childElementCount === 1 && !content.firstElementChild?.textContent) {
       highlight.style.display = 'none';
       lastHit = null;
@@ -318,7 +246,6 @@ export const mountLineNumbers = (
       return;
     }
     const caret = getCaret();
-    // Caret rect → overlay-relative, the same space as the cached lines.
     const rel = caret && {
       left: caret.left - o.left,
       top: caret.top - o.top,
@@ -327,11 +254,8 @@ export const mountLineNumbers = (
     };
     const hit = rel && pickLine(lines, rel, vertical);
     const caretMid = rel ? (vertical ? (rel.left + rel.right) / 2 : (rel.top + rel.bottom) / 2) : null;
-    // Same visual line as the last paint (the cached objects are stable between
-    // full measures, so identity suffices) → the styles are already right.
+    // Cached line objects are stable between measures, so identity suffices.
     if (hit === lastHit) return;
-    // Steady hold (see the isSteady param): while composing, keep the painted
-    // geometry unless the line really changed (holdsSteady).
     if (hit && lastHit && isSteady?.() && holdsSteady(hit, lastHit, caretMid, lastCaretMid, vertical, steadyTol))
       return;
     lastHit = hit;
@@ -339,12 +263,10 @@ export const mountLineNumbers = (
     paintHighlight(highlight, hit, vertical);
   };
 
-  // Custom TEXT-SELECTION highlight, rendered BASE-ONLY from the MODEL selection.
-  // The native `::selection` fills the whole line box (it would cover the ruby
-  // reading in the leading) AND it can't even span a collapsed ruby's read-only
-  // base — so it is hidden (ruby.css) and the editor hands us the viewport rects of
-  // the SELECTED base glyphs (`getSelectionRects`). We just place them, made
-  // overlay-relative (scroll-invariant, like the numbers).
+  // Custom TEXT-SELECTION highlight, base-only from the MODEL selection: the
+  // native `::selection` fills the whole line box (covering the ruby reading)
+  // and can't span a collapsed ruby's read-only base, so it is hidden
+  // (ruby.css) and the editor hands us the selected base glyphs' rects.
   const refreshSelection = (o: DOMRect): void => {
     let n = 0;
     for (const r of getSelectionRects()) {
@@ -359,19 +281,16 @@ export const mountLineNumbers = (
     for (const el of selPool.slice(n)) el.style.display = 'none';
   };
 
-  // HIGHLIGHT-ONLY: a selection change didn't move any line, so skip the O(doc)
-  // re-measure and just re-pick + reposition the highlight from cached geometry.
-  // (`vertical` is cached from the last full measure — a mode change re-measures
-  // before any selection change can observe a stale value.)
+  // HIGHLIGHT-ONLY: a selection change moved no line — skip the O(doc)
+  // re-measure and re-pick the highlight from cached geometry.
   const highlightOnly = (): void => {
     const o = overlay.getBoundingClientRect();
     refreshHighlight(o);
     refreshSelection(o);
   };
 
-  // rAF for frame alignment, with a timeout fallback: rAF does NOT fire in
-  // hidden/throttled windows (the e2e harness runs hidden), where the numbers
-  // must still land. Whichever fires first runs; both are cleared.
+  // rAF with a timeout fallback: rAF does NOT fire in hidden/throttled
+  // windows (the e2e harness runs hidden). Whichever fires first runs.
   let timer: ReturnType<typeof setTimeout> | 0 = 0;
   const run = (): void => {
     cancelAnimationFrame(raf);
@@ -417,7 +336,6 @@ export const mountLineNumbers = (
   };
 };
 
-/** The measured style inputs one pass shares across its paragraphs. */
 type MeasureEnv = {
   readonly cs: CSSStyleDeclaration;
   readonly vert: boolean;
@@ -427,27 +345,25 @@ type MeasureEnv = {
 };
 
 /** A paragraph's movement probe: its first reading-flow rect's start corner,
- *  overlay-relative (scroll-invariant, like every cached coordinate). */
+ *  overlay-relative. */
 type Probe = { x: number; y: number };
 
-/** One paragraph's cached measure. */
 type ParaLines = {
   el: Element;
   probe: Probe | null;
   lines: VisualLine[];
   /** Windowing-hidden: the lines this paragraph contributes to the GLOBAL
-   *  numbering without geometry (labels/folios past it must not shift). */
+   *  numbering without geometry. */
   hiddenCount?: number;
 };
 
 /** Probe equality within a 1px slack (identical layouts reproduce identical
- *  rects; a real shift is at least a line pitch). Two invisible paragraphs
- *  (null probes) count as unmoved. */
+ *  rects; a real shift is at least a line pitch). Null probes count as
+ *  unmoved only against each other. */
 const probesEq = (a: Probe | null, b: Probe | null): boolean =>
   a === null || b === null ? a === b : Math.abs(a.x - b.x) <= 1 && Math.abs(a.y - b.y) <= 1;
 
-/** An EMPTY paragraph's probe rect: its own box (the same fallback the
- *  measure uses for its single visual line). */
+/** An EMPTY paragraph's probe rect: its own box. */
 const paraBoxRect = (p: Element): DOMRect | null => {
   const b = p.getBoundingClientRect();
   return b.width > 0 && b.height > 0 ? b : null;
@@ -461,14 +377,12 @@ const bumpMeasureSeam = (paras: number): void => {
 };
 
 /** The visual-line window an edit pass must RE-PLACE (placeNumbers): a
- *  paragraph entry reused by identity keeps its VisualLine objects, so its
- *  numbers' transforms are already right — and its LABELS are right exactly
- *  when the line count before it is unchanged. The prefix is reused by
- *  construction (a freshly measured "clean" prefix entry disables the window
- *  — its geometry may have moved); the window closes after the dirty region
- *  when the suffix was reused verbatim AND the dirty region's visual-line
- *  count is unchanged (labels beyond it cannot shift). Otherwise it runs to
- *  the end. `null` = place everything. */
+ *  reused paragraph entry keeps its VisualLine objects, so its transforms are
+ *  right — and its LABELS are right exactly when the line count before it is
+ *  unchanged. A freshly measured "clean" prefix entry disables the window;
+ *  the window closes after the dirty region only when the suffix was reused
+ *  verbatim AND the dirty region's line count is unchanged. `null` = place
+ *  everything. */
 const placementWindow = (
   old: readonly ParaLines[],
   next: readonly ParaLines[],
@@ -482,9 +396,8 @@ const placementWindow = (
   let from = 0;
   for (let i = 0; i < cleanStart; i++) from += next[i]!.lines.length;
   if (!suffixOk) return { from, to: Number.POSITIVE_INFINITY };
-  // The window closes only when the dirty region's VISIBLE line count (the
-  // suffix's pool indexes) AND its TOTAL line count (hidden included — the
-  // suffix's labels) are both unchanged.
+  // Both the VISIBLE count (the suffix's pool indexes) and the TOTAL count
+  // (hidden included — the suffix's labels) must be unchanged.
   let newDirty = 0;
   let newDirtyTotal = 0;
   for (let i = cleanStart; i <= dirtyTo; i++) {
@@ -501,11 +414,10 @@ const placementWindow = (
   return { from, to: closed ? from + newDirty : Number.POSITIVE_INFINITY };
 };
 
-/** The measured band lattice of the current layout, shared by both placement
- *  passes. In the multicol modes fragmentation IS physically periodic — bands
- *  repeat every `bandPeriod` (columnWidth + columnGap) from `bandStart0` along
- *  the INLINE axis (downward in vertical-rl, rightward in horizontal-tb); in
- *  the other modes `bandStart0` is the single inline-start anchor. */
+/** The measured band lattice. In the multicol modes fragmentation is
+ *  physically periodic — bands repeat every `bandPeriod` (columnWidth +
+ *  columnGap) from `bandStart0` along the INLINE axis; in the other modes
+ *  `bandStart0` is the single inline-start anchor. */
 type BandGrid = {
   readonly vertical: boolean;
   readonly multiCol: boolean;
@@ -513,8 +425,8 @@ type BandGrid = {
   readonly bandStart0: number;
 };
 
-/** The line's band inline-start (top in vertical-rl, left in horizontal-tb):
- *  its measured coordinate snapped to the exact band period. */
+/** The line's band inline-start: its measured coordinate snapped to the
+ *  exact band period. */
 const bandStartAt = (grid: BandGrid, ln: VisualLine): number => {
   const at = grid.vertical ? ln.top : ln.left;
   return grid.multiCol && grid.bandPeriod > 0
@@ -522,10 +434,8 @@ const bandStartAt = (grid: BandGrid, ln: VisualLine): number => {
     : grid.bandStart0;
 };
 
-/** Read the band lattice off the live computed style: physically periodic in
- *  the multicol modes (columnWidth + columnGap along the inline axis),
- *  anchored at the first lines' measured inline start otherwise. Reads only —
- *  the placement writes come after every measured input. */
+/** Read the band lattice off the live computed style (reads only — the
+ *  placement writes come after every measured input). */
 const readBandGrid = (
   cs: CSSStyleDeclaration,
   vertical: boolean,
@@ -544,15 +454,12 @@ const centerX = (ln: VisualLine): number => (ln.left + ln.right) / 2;
 const centerBlock = (ln: VisualLine, vertical: boolean): number =>
   vertical ? (ln.left + ln.right) / 2 : (ln.top + ln.bottom) / 2;
 
-/** The composing steady hold (refreshHighlight): a pick in the same COLUMN as
- *  the last paint — half a pitch, the shared same-line bound — keeps the
- *  painted geometry. So does a pick that flipped while the CARET itself
- *  barely moved (the same bound): band-boundary jitter, not a line change —
- *  an all-ruby column outgrows the plain pitch (line-height is a minimum), so
- *  the preedit tail's rect hops across the fat column's edge per keystroke
- *  and the picked band alternated one pitch back and forth per composed
- *  character (mozc/ruby-hl-compose.ts). A real wrap moves the caret a full
- *  pitch and repaints once. */
+/** The composing steady hold: a pick in the same COLUMN as the last paint
+ *  (within half a pitch) keeps the painted geometry, as does a pick that
+ *  flipped while the CARET barely moved — band-boundary jitter: an all-ruby
+ *  column outgrows the plain pitch (line-height is a minimum), so the picked
+ *  band alternates per composed character (mozc/ruby-hl-compose.ts). A real
+ *  wrap moves the caret a full pitch and repaints once. */
 const holdsSteady = (
   hit: VisualLine,
   lastHit: VisualLine,
@@ -565,11 +472,9 @@ const holdsSteady = (
   return caretMid !== null && lastCaretMid !== null && Math.abs(caretMid - lastCaretMid) <= tol;
 };
 
-/** Paint the highlight over `hit` — anchored at the line's start corner (its
- *  top-left character; for a column that is the page's content top, so the
- *  band fills the current page only), the INLINE axis extended to the full
- *  line length (`bandLen`), the block axis to the line's own width — or hide
- *  it when no line holds the caret. */
+/** Paint the highlight over `hit`: anchored at the line's start corner, the
+ *  inline axis extended to `bandLen` (the band fills the current page only),
+ *  the block axis to the line's own width. */
 const paintHighlight = (highlight: HTMLElement, hit: VisualLine | null, vertical: boolean): void => {
   if (!hit) {
     highlight.style.display = 'none';
@@ -581,22 +486,14 @@ const paintHighlight = (highlight: HTMLElement, hit: VisualLine | null, vertical
   highlight.style.blockSize = `${vertical ? hit.bandLen : hit.bottom - hit.top}px`;
 };
 
-/** Place one number per visual line — at its measured column center in
- *  vertical modes (above the column, on the band's gutter line) or left of
- *  the row (measured) in horizontal. Coords are already overlay-relative.
- *
- *  MEASURED, PER-LINE placement. Every mark derives from ITS OWN line's
- *  measured (rt-excluded) rects — never from index arithmetic extrapolated
- *  across the document. A pure slot grid (anchor + k·pitch) was tried and
- *  DETACHED at scale: `line-height` is a MINIMUM, not a cap, so a ruby line
- *  whose reading doesn't fit the leading (low --line-space-ratio, a heavy
- *  webfont) is REALLY taller than the computed lineHeight — band capacity
- *  deviates from the arithmetic and the numbers drifted whole bands away by
- *  line ~1700 (they "disappeared"). Measured centers are exact by
- *  construction: the rects exclude `rt`, so ruby text cannot lean a number,
- *  and an empty paragraph's box center coincides with a glyph column's.
- *  Only the BAND top is quantized (`bandTopAt`), which keeps the numbers on
- *  the gutter line. */
+/** Place one number per visual line, at its measured column center (vertical)
+ *  or left of the row (horizontal). Every mark derives from ITS OWN line's
+ *  measured (rt-excluded) rects, never from index arithmetic extrapolated
+ *  across the document: `line-height` is a MINIMUM, not a cap, so a ruby line
+ *  whose reading doesn't fit the leading is REALLY taller than the computed
+ *  lineHeight, and a pure slot grid (anchor + k·pitch) drifts whole bands
+ *  away by line ~1700. Only the BAND start is quantized (`bandStartAt`),
+ *  keeping the numbers on the gutter line. */
 const placeNumbers = (
   overlay: HTMLElement,
   pool: HTMLElement[],
@@ -604,20 +501,16 @@ const placeNumbers = (
   globalIdx: readonly number[],
   grid: BandGrid,
   /** The visual lines whose placement can have changed — the edit pass
-   *  narrows this to the dirty window (`placementWindow`): a reused line
-   *  keeps both its geometry (same VisualLine object) and its label (the
-   *  window exists only when the line count around it is unchanged), so
-   *  visiting it is pure waste — the visit itself (a style read + string
-   *  format per line) was ~20ms/keystroke at 3000 paragraphs. `null` places
-   *  everything. */
+   *  narrows this to the dirty window (`placementWindow`); a reused line
+   *  keeps both its geometry and its label, and visiting it anyway costs
+   *  ~20ms/keystroke at 3000 paragraphs. `null` places everything. */
   win: { from: number; to: number } | null,
 ): void => {
   const from = win ? Math.max(0, win.from) : 0;
   const to = win ? Math.min(lines.length, win.to) : lines.length;
   for (let i = from; i < to; i++)
     placeOneNumber(pool[i] ?? makeNumber(overlay, pool), lines[i]!, globalIdx[i] ?? i, grid);
-  // Pool entries past the lines exist only when the count shrank — a windowed
-  // pass that doesn't reach the tail cannot have changed the count.
+  // A windowed pass that doesn't reach the tail cannot have shrunk the count.
   if (to >= lines.length) {
     for (let i = lines.length; i < pool.length; i++) {
       const el = pool[i]!;
@@ -857,8 +750,8 @@ const linesOfParagraph = (
   for (const r of rects) {
     // Skip DEGENERATE rects (zero width OR height) — not just 0×0. Chromium
     // emits a stray zero-HEIGHT rect on the previous page for a paragraph whose
-    // column is the first on the next page; with the old `&&` it survived and
-    // its leftward block coord grouped as a phantom extra visual line (a
+    // column is the first on the next page; under an `&&` test it survives and
+    // its leftward block coord groups as a phantom extra visual line (a
     // mis-numbered line near the page boundary).
     if (r.width === 0 || r.height === 0) continue;
     const left = r.left - o.left;
@@ -900,7 +793,7 @@ const pickLine = (lines: VisualLine[], caret: CaretRect, vertical: boolean): Vis
   // The caret's block-axis CENTER, not its edge: consecutive line boxes
   // OVERLAP (the line-height exceeds the row pitch by the leading), so a caret
   // sitting at the top of row N+1 also falls inside row N's band. Its center
-  // is unambiguously in its own row — using the edge picked the FIRST band
+  // is unambiguously in its own row — using the edge picks the FIRST band
   // (the previous row), leaving the highlight one line behind in wrapped
   // paragraphs (most visible in horizontal writing).
   const cb = vertical ? (caret.left + caret.right) / 2 : (caret.top + caret.bottom) / 2; // caret block center

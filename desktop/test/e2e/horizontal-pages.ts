@@ -1,20 +1,8 @@
-// The horizontal paged modes — HorizontalRows (arithmetic pages stack
-// DOWNWARD, vertical scroll) and HorizontalColumns (multicol pages tile
-// RIGHTWARD, horizontal scroll) — end to end, one launch:
-//
-//   1. The toolbar is orientation × paging (2 + 3 buttons, six modes).
-//   2. HorizontalRows: .rowsMode WITHOUT .vertMode, horizontal-tb text, the
-//      .ved-page-gap widgets fatten each page's last row (identity text model
-//      untouched), the overlay's separators are HORIZONTAL hairlines centered
-//      in the measured blanks, folios sit bottom-center per page, and an edit
-//      at the doc end page-snaps the vertical scroll.
-//   3. HorizontalColumns: .multiColMode WITHOUT .vertMode, pages are real
-//      multicol bands tiling rightward (measured), no gap widgets at band
-//      breaks, folios per page, and the band-separator lattice rides the
-//      scroller.
-//
-// VISIBLE window: the caret reveal after an edit defers via
-// requestAnimationFrame, which hidden Electron windows throttle.
+// The horizontal paged modes, end to end in one launch: HorizontalRows
+// (arithmetic pages stack downward, gap widgets + overlay separators) and
+// HorizontalColumns (real multicol bands tile rightward, scroller lattice),
+// plus folios, page-snap reveals, pagesPerRow, and band-crossing line moves.
+// VISIBLE window: the caret reveal defers via rAF (see harness.ts).
 // Usage: node test/e2e/horizontal-pages.ts  (after a build)
 import assert from 'node:assert/strict';
 import {
@@ -46,8 +34,7 @@ const dedupeSorted = (values: number[], tolerance: number): number[] => {
 };
 
 /** Visual lines of the horizontal-tb content: per-glyph rects clustered by
- *  their TOP (block axis), plus empty paragraphs by their own box — the same
- *  half-pitch rule the overlay uses, reading order = downward. */
+ *  TOP with the overlay's half-pitch rule; empty paragraphs by their box. */
 const measureLines = () =>
   page.evaluate(() => {
     const content = document.getElementById('editor-content')!;
@@ -55,8 +42,6 @@ const measureLines = () =>
     const linePitch = Number.parseFloat(cs.lineHeight);
     const lines: { top: number; bottom: number; left: number; right: number }[] = [];
     let cur: (typeof lines)[number] | null = null;
-    // Fold one glyph rect into the current visual line — a TOP step past half
-    // a pitch starts a new line, anything closer widens the current one.
     const addGlyphRect = (r: DOMRect): void => {
       if (!cur || Math.abs(r.top - cur.top) > linePitch / 2) {
         cur = { top: r.top, bottom: r.bottom, left: r.left, right: r.right };
@@ -67,8 +52,7 @@ const measureLines = () =>
         cur.right = Math.max(cur.right, r.right);
       }
     };
-    // Every rendered glyph's rect, in DOM (= reading) order; zero-sized rects
-    // (collapsed markup) are skipped.
+    // Zero-sized rects (collapsed markup) are skipped.
     const walkGlyphs = (): void => {
       const range = document.createRange();
       const walker = document.createTreeWalker(content, NodeFilter.SHOW_TEXT);
@@ -90,7 +74,7 @@ const measureLines = () =>
         lines.push({ top: r.top, bottom: r.bottom, left: r.left, right: r.right });
       }
     }
-    lines.sort((a, z) => a.top - z.top); // reading order: downward
+    lines.sort((a, z) => a.top - z.top);
     const seps = [...document.querySelectorAll('.vedPageSeparator')]
       .filter((el) => (el as HTMLElement).style.display !== 'none')
       .map((el) => {
@@ -128,7 +112,6 @@ const measureLines = () =>
   });
 
 try {
-  // The 2 + 3 toolbar: orientation and paging button groups.
   const buttons = await page.evaluate(() => ({
     writing: [...document.querySelectorAll('fieldset[aria-label="Writing mode"] button')].map((b) =>
       b.getAttribute('aria-label'),
@@ -141,15 +124,13 @@ try {
   assert.deepEqual(buttons.paging, ['Continuous', 'Columns', 'Rows'], 'paging group: 3 buttons');
   step('toolbar is orientation × paging (5 buttons, 6 modes)');
 
-  // Small pages via the settings popover: 12字 × 6行.
   await setViewConfig(page, { pageLineChars: '12', pageLines: '6' });
   await page.waitForTimeout(150);
   await page.click('#editor-content');
   await page.waitForTimeout(150);
-  // 52 visual lines (the rows-separator mixed doc, lengthened so the pages
-  // overflow the e2e window on both paged axes): p0 wraps to 2, p1 short, p2
-  // EMPTY, p3 wraps to 3, then 45 one-liners. Page boundaries (6 lines per
-  // page) fall after visual lines 6 (mid-p3!), 12, 18, … — 9 pages.
+  // 52 visual lines, overflowing the e2e window on both paged axes: p0 wraps
+  // to 2, p1 short, p2 EMPTY, p3 wraps to 3, then 45 one-liners. Page
+  // boundaries (6 lines/page) fall after visual lines 6 (mid-p3!), 12, 18, ….
   const paras = [
     'あいうえおかきくけこさし'.repeat(2),
     'たちつてと',
@@ -164,7 +145,6 @@ try {
   const modelText = paras.join('\n');
   await setDoc(page, modelText);
 
-  // ---- HorizontalRows ----
   await clickWritingMode(page, 'Horizontal Rows');
   await page.waitForTimeout(500); // widgets + overlay land on a measured pass
 
@@ -177,9 +157,6 @@ try {
   assert.equal(rows.widgets, BOUNDARIES.length, 'one gap widget per page boundary');
   step('HorizontalRows: horizontal-tb rowsMode, gap widgets at every boundary, identity text intact');
 
-  // The physical gap: pages 1|2 and 2|3 are separated by more than a plain
-  // line step (pitch + --page-gap), and the separators are HORIZONTAL
-  // hairlines centered in the measured blanks.
   const gapAt = (i: number) => rows.lines[i + 1]!.top - rows.lines[i]!.top;
   const plainStep = rows.lines[1]!.top - rows.lines[0]!.top;
   for (const b of BOUNDARIES) {
@@ -211,7 +188,6 @@ try {
   );
   step('folios sit bottom-center, one per page');
 
-  // Vertical scroll axis with a page snap on an end-of-document edit.
   assert.ok(rows.scroll.scrollH > rows.scroll.height, 'HorizontalRows overflows vertically');
   await setCaret(page, (await docText(page)).length);
   await page.keyboard.insertText('ん');
@@ -224,7 +200,6 @@ try {
   assert.equal(afterEdit.scroll.left, 0, 'the horizontal axis stays put');
   step('edits reveal by snapping the page start on the vertical axis');
 
-  // ---- HorizontalColumns ----
   await clickWritingMode(page, 'Horizontal Columns');
   await page.waitForTimeout(500);
 
@@ -235,8 +210,7 @@ try {
   assert.equal(cols.widgets, 0, 'band breaks fragment physically — no gap widgets at pagesPerRow=1');
   step('HorizontalColumns: horizontal-tb multiColMode, no widgets');
 
-  // Pages tile RIGHTWARD: with 6 lines per band the visual lines fill 5
-  // bands whose lefts step by one band pitch; rows within a band share x.
+  // Pages tile rightward: band lefts step by one band pitch.
   const lefts = dedupeSorted(
     cols.lines.map((l) => l.left).sort((a, z) => a - z),
     5,
@@ -260,8 +234,8 @@ try {
   );
   step('band separators on the scroller; folios advance with the bands');
 
-  // The horizontal scroll axis: an edit at the end reveals the last page by
-  // snapping its LEFT edge (reading enters a page from the left).
+  // An edit at the end snaps the last page's LEFT edge (reading enters a
+  // page from the left).
   await setCaret(page, (await docText(page)).length);
   await page.keyboard.insertText('ん');
   await page.waitForTimeout(400);
@@ -273,9 +247,9 @@ try {
     step('window fits all bands — horizontal snap not exercised (no overflow)');
   }
 
-  // pagesPerRow in HorizontalColumns: pages STACK within each band (the
-  // VerticalColumns page grid transposed) — intra-band boundaries get gap
-  // widgets, band breaks stay physical.
+  // pagesPerRow: pages stack within each band (the VerticalColumns grid
+  // transposed) — intra-band boundaries get gap widgets, band breaks stay
+  // physical.
   await setViewConfig(page, { pagesPerRow: '2' });
   await page.waitForTimeout(600);
   const grid = await measureLines();
@@ -292,14 +266,11 @@ try {
   await setViewConfig(page, { pagesPerRow: '1' });
   await page.waitForTimeout(300);
 
-  // Caret line moves ACROSS the band break. Paragraph p3 straddles it: its
-  // 36 chars wrap to visual lines 5–7 at 12字, and the 6-line page boundary
-  // falls after visual line 6 — p3's middle wrapped line closes band 1, its
-  // last opens band 2. ArrowDown must step exactly one visual line (+12 model
-  // chars, column kept), and the crossing press must land PHYSICALLY in the
-  // next band: one band pitch rightward, back at the band top. ArrowUp
-  // re-crosses. Points are content-relative (rect + scroll) so a caret-reveal
-  // scroll between presses can't skew them.
+  // Line moves ACROSS the band break: p3 straddles it (36 chars wrap to
+  // visual lines 5–7 at 12字, boundary after line 6). ArrowDown must step
+  // exactly one visual line (+12 model chars) and the crossing press must
+  // land one band pitch rightward, back at the band top. Points are
+  // content-relative (rect + scroll) so a caret-reveal scroll can't skew them.
   const caretPoint = () =>
     page.evaluate(() => {
       const r = (window as unknown as ModelSeams).__vedCaretRect();
@@ -339,7 +310,6 @@ try {
   );
   step('ArrowUp crosses back');
 
-  // Round-trip sanity: orientation switches keep the paging axis.
   await page.click('button[aria-label="Vertical"]');
   await page.waitForTimeout(300);
   const vcols = await page.evaluate(() => document.getElementById('editor-content')!.className);

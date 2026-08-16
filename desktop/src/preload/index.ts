@@ -1,15 +1,12 @@
 import { contextBridge, ipcRenderer } from 'electron';
 import { IpcChannel, type Unsubscribe, type VedApi } from '../shared/ipc';
 
-// Main → renderer event subscription with an unsubscriber (shell streams).
-const on = <Args extends unknown[]>(channel: string, cb: (...args: Args) => void): Unsubscribe => {
+const on =<Args extends unknown[]>(channel: string, cb: (...args: Args) => void): Unsubscribe => {
   const listener = (_event: Electron.IpcRendererEvent, ...args: unknown[]): void => cb(...(args as Args));
   ipcRenderer.on(channel, listener);
   return () => ipcRenderer.off(channel, listener);
 };
 
-// The ved API: contract in src/shared/ipc.ts, handlers in
-// src/main/file-service.ts and close-guard.ts.
 const ved: VedApi = {
   platform: process.platform,
   cliFiles: () => ipcRenderer.invoke(IpcChannel.CliFiles),
@@ -39,9 +36,8 @@ const ved: VedApi = {
   imeCaretRect: (rect) => ipcRenderer.send(IpcChannel.ImeCaretRect, rect),
 };
 
-// Expose via `contextBridge` when context isolation is enabled, otherwise
-// just add to the DOM global. `window.ved` is the renderer's ONLY bridge —
-// no raw ipcRenderer or Node globals cross the boundary.
+// `window.ved` is the renderer's ONLY bridge — no raw ipcRenderer or Node
+// globals cross the boundary.
 if (process.contextIsolated) {
   try {
     contextBridge.exposeInMainWorld('ved', ved);

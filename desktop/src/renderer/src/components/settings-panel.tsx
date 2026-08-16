@@ -9,8 +9,8 @@ import { InvisiblesControls } from './invisibles-controls';
 import panelStyles from './settings-panel.module.scss';
 import { ViewConfigControls } from './view-config-controls';
 
-// The settings gear + its popover (settings-panel.ts store): the runtime
-// configuration controls moved off the toolbar row. Non-modal — Esc (the
+// The settings gear + its popover (settings-panel.ts store): hosts the
+// runtime configuration controls. Non-modal — Esc (the
 // global dispatcher), an outside click, the gear, or the `view.toggleSettings`
 // chord close it. The gear's tooltip renders the EFFECTIVE chord, so an
 // `appKeybindings` rebind from init.ts shows itself.

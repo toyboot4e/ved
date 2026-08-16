@@ -33,7 +33,7 @@ describe('rankFiles', () => {
   });
 
   it('matches contiguous substrings (never scatter) and ANDs terms', () => {
-    // 'dp' is not a substring of either label — the old fuzzy scatter is gone
+    // 'dp' is not a substring of either label — a scatter match must not hit
     expect(rankFiles(files('sub/deep.txt', 'alpha.txt'), 'dp', false).items).toEqual([]);
     const { items } = rankFiles(files('sub/deep.txt', 'alpha.txt'), 'deep', false);
     expect(items.map((i) => i.label)).toEqual(['sub/deep.txt']);

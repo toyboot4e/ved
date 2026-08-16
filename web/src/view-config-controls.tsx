@@ -2,9 +2,7 @@ import { type WritingMode, writingPaging } from '@ved/editor';
 import React from 'react';
 import { VIEW_CONFIG_BOUNDS, VIEW_CONFIG_DEFAULTS, type ViewConfig } from './view-config';
 
-// Debug view-config controls, mirroring the desktop toolbar's field set
-// (desktop/src/renderer/src/components/view-config-controls.tsx). Raw values
-// commit live on every change; clamping happens at CSS generation
+// Raw values commit live on every change; clamping happens at CSS generation
 // (view-config.ts) so typing through the bounds stays smooth.
 
 type NumberFieldSpec = {
@@ -48,9 +46,9 @@ type QueryLocalFonts = () => Promise<readonly LocalFontData[]>;
 /**
  * The installed font families via `queryLocalFonts`, deduplicated and
  * locale-sorted. Unlike Electron, a plain browser gates the API behind a user
- * gesture + permission prompt, so this runs from the picker's pointerdown, not
- * on mount. Empty when the API is missing or denied — the picker then degrades
- * to {@link GENERIC_FONT_FAMILIES} only.
+ * gesture + permission prompt, so this runs from the picker's pointerdown,
+ * not on mount. Empty when missing or denied — the picker then degrades to
+ * {@link GENERIC_FONT_FAMILIES} only.
  */
 const localFontFamilies = async (): Promise<readonly string[]> => {
   const query = (window as { queryLocalFonts?: QueryLocalFonts }).queryLocalFonts;
@@ -86,9 +84,8 @@ export const ViewConfigControls = ({ writingMode, config, setConfig }: ViewConfi
   return (
     <>
       {numberFields.map(({ field, label, title, step }) => {
-        // 頁/段 only means something under VerticalColumns (app.tsx pins it to 1
-        // elsewhere; a VerticalRows page GRID is a Chromium impossibility).
-        // Gray it out so it doesn't present as broken.
+        // 頁/段 only means something under VerticalColumns (a VerticalRows
+        // page grid is a Chromium impossibility); gray it out elsewhere.
         const inert = field === 'pagesPerRow' && writingPaging(writingMode) !== 'columns';
         return (
           <label key={field} title={inert ? `${title} — inert in this mode` : title}>

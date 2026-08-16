@@ -1,17 +1,8 @@
-// The API-reference site (`just doc` / `just doc-open`) for ved's typed
-// surfaces, built on @ox-content/vite-plugin's config-driven SSG.
-//
-//   vite build --config vite.docs.config.ts   # docs/api/**/*.md + out/api-docs/
-//   vite       --config vite.docs.config.ts   # dev server: serves the site and
-//                                             # re-extracts when a source changes
-//
-// One module per public seam: `ved` (the user-extension API — the same source
-// that is written verbatim to `<configDir>/extensions/ved.d.ts`, so the
-// reference cannot drift from what an extension author imports), `editor`
-// (@ved/editor's exports entry, the seam @ved/vim builds on), `vim` (@ved/vim's
-// exports entry), and `ipc` (the main/preload/renderer contract). Extraction is
-// ox-content's OXC pipeline (no TypeScript compiler API — it keeps working
-// across tsc major versions).
+// The API-reference site (`just doc`), one module per public seam. `ved` is
+// the same source written verbatim to `<configDir>/extensions/ved.d.ts`, so
+// the reference cannot drift from what an extension author imports.
+// Extraction is ox-content's OXC pipeline (no TypeScript compiler API — it
+// keeps working across tsc major versions).
 
 import { existsSync, readdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { dirname, join, relative } from 'node:path';
@@ -23,10 +14,9 @@ import { defineConfig, type Plugin } from 'vite';
 const REPO_ROOT = dirname(fileURLToPath(import.meta.url));
 const API_DIR = join(REPO_ROOT, 'docs/api');
 
-// `pkg` is the entry's workspace package directory — the segment the
-// generator's source links drop (see the patch plugin below). Each entry
-// file's leading JSDoc block is the module's description (the root index
-// quotes it).
+// `pkg` is the workspace package segment the generator's source links drop
+// (restored by the patch plugin). Each entry file's leading JSDoc block is
+// the module's description (the root index quotes it).
 const MODULES = [
   { name: 'ved', entry: 'desktop/src/shared/extension-api.ts', pkg: 'desktop' },
   { name: 'editor', entry: 'editor/src/index.ts', pkg: 'editor' },
@@ -34,12 +24,10 @@ const MODULES = [
   { name: 'ipc', entry: 'desktop/src/shared/ipc.ts', pkg: 'desktop' },
 ] as const;
 
-// The OXC extraction follows every re-export, including non-TS ones it cannot
-// parse (@ved/editor re-exports its stylesheet — extraction throws on the
-// scss). Such an entry is documented through a SHADOW copy with those lines
-// dropped; the styles export just goes undocumented. The shadow is written at
-// config-load time (strictly before any build hook runs) and left in place —
-// the dev server re-extracts from it on every source change.
+// OXC extraction follows every re-export and throws on non-TS ones
+// (@ved/editor re-exports its scss), so such an entry is documented through a
+// shadow copy with those lines dropped, written at config-load time (strictly
+// before any build hook) and left in place for the dev server's re-extraction.
 const shadowOf = (entry: string): string | null => {
   const source = readFileSync(join(REPO_ROOT, entry), 'utf8');
   const kept = source.split('\n').filter((line) => !/from\s+'[^']+\.(scss|css)'/.test(line));
@@ -51,9 +39,8 @@ const shadowOf = (entry: string): string | null => {
 const shadows = new Map<string, string>();
 const entryPoints: { path: string; name: string }[] = [];
 
-// The generation-time side effects, gated below on the vite command —
-// `vite preview` loads this config too, and must serve the existing build
-// untouched (no shadow refresh, no gate, above all no rm of its own outDir).
+// Gated below on the vite command: `vite preview` loads this config too and
+// must serve the existing build untouched (above all no rm of its own outDir).
 const prepare = (): void => {
   for (const m of MODULES) {
     const shadow = shadowOf(m.entry);
@@ -61,34 +48,30 @@ const prepare = (): void => {
     entryPoints.push({ path: shadow ?? m.entry, name: m.name });
   }
   // The plugin swallows extraction diagnostics (a broken JSDoc block would
-  // just vanish from the reference); gate on them here, where a failure still
-  // fails the whole vite invocation.
+  // silently vanish from the reference); gate here so a failure fails the build.
   for (const m of extractDocsFromEntryPoints(entryPoints, { root: REPO_ROOT })) {
     for (const d of m.diagnostics) {
       throw new Error(`${d.code} ${d.entrypoint} ${d.exportName}: ${d.message}`);
     }
   }
   // The plugin only ever adds pages; drop the previous trees so removed
-  // symbols don't linger as stale pages.
+  // symbols don't linger.
   rmSync(API_DIR, { recursive: true, force: true });
   rmSync(join(REPO_ROOT, 'out/api-docs'), { recursive: true, force: true });
 };
 
 // Patch three ox-content@2.76 rendering quirks in the generated Markdown:
-//   - source links relativize the file path to the nearest package, dropping
-//     the monorepo segment (`blob/main/src/…` for a file under `desktop/`) —
-//     every page belongs to one module, so its links get that module's
-//     package dir back (the root index links no sources);
-//   - a shadowed module's source link points at `.api-docs-entry.ts`;
-//   - a negative numeric literal type prints as `literal` (`1 | -1` in the
-//     source renders `1 | literal`).
+// source links relativize to the nearest package, dropping the monorepo
+// segment (restored from the owning module's pkg dir; the root index links no
+// sources); a shadowed module's source link points at `.api-docs-entry.ts`;
+// a negative numeric literal type prints as `literal` (`1 | -1` → `1 | literal`).
 const patchPage = (path: string): void => {
   const owner = MODULES.find((m) => relative(API_DIR, path).startsWith(`${m.name}/`));
   const content = readFileSync(path, 'utf8');
   let out = owner ? content.replaceAll('/blob/main/src/', `/blob/main/${owner.pkg}/src/`) : content;
   out = out.replaceAll('/.api-docs-entry.ts', '/index.ts').replaceAll('1 | literal', '1 | -1');
   // Only write on change: the dev watcher re-patches on every docs/api write,
-  // and an unconditional write would re-trigger it forever.
+  // and an unconditional write would re-trigger forever.
   if (out !== content) writeFileSync(path, out);
 };
 const patchTree = (dir: string): void => {
@@ -99,14 +82,13 @@ const patchTree = (dir: string): void => {
 };
 const patchDocs = (): Plugin => ({
   name: 'ved:api-docs-patch',
-  // `sequential` makes this buildStart wait for the plugin's own (parallel)
-  // buildStart, which generates the pages.
+  // `sequential` makes this wait for the plugin's own (parallel) buildStart,
+  // which generates the pages.
   buildStart: { sequential: true, order: 'post', handler: () => patchTree(API_DIR) },
   configureServer(server) {
     // ox-content builds the search index only into the static build
     // (closeBundle); in dev, /search-index.json would fall through to the
-    // html fallback and search reports the index unavailable. Serve it here,
-    // rebuilt lazily after every docs change.
+    // html fallback. Serve it here, rebuilt lazily after every docs change.
     let searchIndex: string | null = null;
     server.middlewares.use('/search-index.json', (_req, res, next) => {
       (async () => {
@@ -117,8 +99,8 @@ const patchDocs = (): Plugin => ({
     });
     server.watcher.on('all', (event, file) => {
       if (event !== 'add' && event !== 'change') return;
-      // A shadowed entry changed: refresh its shadow (the write re-triggers
-      // the plugin's own extraction watcher, which reads the shadow).
+      // A shadowed entry changed: refresh the shadow (the write re-triggers
+      // the plugin's extraction watcher, which reads it).
       if (shadows.has(relative(REPO_ROOT, file))) shadowOf(relative(REPO_ROOT, file));
       if (file.startsWith(API_DIR) && file.endsWith('.md')) {
         patchPage(file);
@@ -153,11 +135,10 @@ export default defineConfig(({ isPreview }) => {
           githubUrl: 'https://github.com/toyboot4e/ved',
           pathStrategy: 'typedoc',
           sortEntryPoints: false, // keep the MODULES order: ved first
-          // Root-absolute clean routes. The default `.md` links break on pages
-          // named index.md: the SSG rewrite maps every `X.md` to `X/index.html`,
-          // so a module link `./ved/index.md` becomes `./ved/index/index.html` —
-          // a page that does not exist in the build (and in dev poisons the base
-          // URL for every relative link on the module page).
+          // The default `.md` links break on pages named index.md: the SSG
+          // rewrite maps `X.md` to `X/index.html`, so `./ved/index.md` becomes
+          // the nonexistent `./ved/index/index.html` (and in dev poisons the
+          // module page's base URL).
           linkStyle: 'clean',
           basePath: '/',
         },

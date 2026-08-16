@@ -1,8 +1,6 @@
-// Quick open (Ctrl+P, editor UI plan Phase 3): add a workspace root, open the
-// palette, and confirm the index honors .gitignore, filters as you type
-// (AND of substrings — shared/match.ts), opens the selected file in a tab,
-// and closes on Esc.
-// Usage: node test/e2e/quick-open.ts  (after a build; window stays hidden)
+// Quick open (Ctrl+P): the index honors .gitignore, filters as you type
+// (AND of substrings — shared/match.ts), opens the selection in a tab,
+// closes on Esc.
 import assert from 'node:assert/strict';
 import { mkdir, writeFile } from 'node:fs/promises';
 import { join } from 'node:path';
@@ -25,15 +23,15 @@ await writeFile(join(tmp, 'ws', 'node_modules', 'pkg.txt'), 'PKG', 'utf-8');
 await writeFile(join(tmp, 'ws', '.gitignore'), 'ignored.txt\nnode_modules/\n', 'utf-8');
 // A binary-extension file (not gitignored) — the "text only" toggle hides it.
 await writeFile(join(tmp, 'ws', 'photo.png'), Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x00, 0x01, 0x02]));
-// An extension the denylist does NOT know, with binary content and a lying
-// text twin: the toggle must decide by CONTENT (main's sniff), not the name.
+// An extension the denylist does NOT know, plus a text twin: the toggle must
+// decide by CONTENT (main's sniff), not the name.
 await writeFile(join(tmp, 'ws', 'notes.rec'), Buffer.from([0x43, 0x44, 0x00, 0x01, 0x02]));
 await writeFile(join(tmp, 'ws', 'poem.rec'), 'ことばの列\n', 'utf-8');
 // Content-search (内容) target: the match sits on line 2, column 4 —
 // global plain offset 4 (line 1 + \n) + 4 = 8.
 await writeFile(join(tmp, 'ws', 'grep.txt'), '一行目\n二行目 みつけた\n三行目\n', 'utf-8');
-// 60 more files: the empty-query view must list the WHOLE index (the old
-// 50-row cap read as "files are missing"), in sorted label order.
+// 60 more files: the empty-query view must list the WHOLE index (a row cap
+// would read as "files are missing").
 await mkdir(join(tmp, 'ws', 'many'), { recursive: true });
 for (let i = 0; i < 60; i++)
   await writeFile(join(tmp, 'ws', 'many', `f${String(i).padStart(2, '0')}.txt`), `${i}`, 'utf-8');
@@ -54,8 +52,6 @@ try {
   await page.waitForSelector('[role=treeitem] >> text=alpha.txt');
   step('workspace root added');
 
-  // Ctrl+P opens the palette; the index lists tracked files and drops the
-  // gitignored ones (a file and a whole directory).
   await pressMod(page, 'p');
   await page.waitForSelector('[aria-label="Quick open"]');
   await page.waitForFunction(() => document.querySelectorAll('[role=option]').length >= 3);
@@ -68,13 +64,12 @@ try {
   assert.ok(!texts.some((t) => t.includes('node_modules')), 'a gitignored directory is excluded');
   step('Ctrl+P lists the workspace files, honoring .gitignore');
 
-  // The empty query shows the ENTIRE index (65 files here — past the old
-  // 50-row cap), sorted by label so it reads as a browsable listing.
+  // The empty query shows the ENTIRE index (65 files here), sorted by
+  // label so it reads as a browsable listing.
   assert.ok(texts.length >= 65, `all files listed, got ${texts.length}`);
   assert.deepEqual(texts, [...texts].sort(), 'the empty-query list is sorted by label');
   step('the empty query lists every indexed file, sorted');
 
-  // Typing filters; the preview pane shows the selected file's content.
   await page.fill('#quick-open-input', 'alpha');
   await page.waitForFunction(() => {
     const opts = document.querySelectorAll('[role=option]');
@@ -84,7 +79,6 @@ try {
   assert.equal(await previewText(), 'ALPHA');
   step('the preview pane shows the selected file');
 
-  // Enter opens the top match in a new tab; the palette closes.
   await page.keyboard.press('Enter');
   await page.waitForFunction(() => document.querySelectorAll('[role=tab]').length === 2);
   assert.equal(await editorText(), 'ALPHA');
@@ -107,7 +101,6 @@ try {
   assert.equal(await editorText(), 'DEEP');
   step('terms AND in any order; scatter queries match nothing');
 
-  // The "text only" toggle hides binary-extension files (photo.png).
   await pressMod(page, 'p');
   await page.waitForSelector('[aria-label="Quick open"]');
   await page.waitForFunction(() => document.querySelectorAll('[role=option]').length >= 3);
@@ -124,7 +117,6 @@ try {
     filtered.some((t) => t.includes('alpha.txt')),
     'text files remain',
   );
-  // Content decides unknown extensions: the binary .rec goes, the text .rec stays
   assert.ok(!filtered.some((t) => t.includes('notes.rec')), 'binary content hidden despite an unknown extension');
   assert.ok(
     filtered.some((t) => t.includes('poem.rec')),
@@ -136,7 +128,6 @@ try {
   await page.waitForFunction(() => document.querySelector('[aria-label="Quick open"]') === null);
   step('the text-only toggle hides binary files by content, not name');
 
-  // Esc closes the palette without opening anything.
   await pressMod(page, 'p');
   await page.waitForSelector('[aria-label="Quick open"]');
   await page.keyboard.press('Escape');

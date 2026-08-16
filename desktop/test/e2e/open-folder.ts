@@ -24,24 +24,19 @@ await mkdir(join(tmp, 'proj2'), { recursive: true });
 const tabCount = () => page.$$eval('[role=tab]', (els) => els.length);
 
 try {
-  // Sidebar hidden, one tab to start.
   assert.equal(await page.$('[aria-label="File browser"]'), null);
   const startTabs = await tabCount();
   await page.click('#editor-content');
 
-  // Ctrl+Shift+O → root added, sidebar shown, no new buffer.
   await pressMod(page, 'o', { shift: true });
   await page.waitForSelector('[aria-label="File browser"]');
   await page.waitForSelector('[role=treeitem] >> text=proj');
   assert.equal(await tabCount(), startTabs, 'a folder does not open a buffer');
   step('Ctrl+Shift+O adds the folder as a root and opens the sidebar');
 
-  // Its tree lists the folder's contents.
   await page.waitForSelector('[role=treeitem] >> text=a.txt');
   step('the added root lists its files');
 
-  // Ctrl+O resolving to a directory takes the same route (stub seam; on macOS
-  // the unified picker reaches this branch for real).
   await pressMod(page, 'o');
   await page.waitForSelector('[role=treeitem] >> text=proj2');
   assert.equal(await tabCount(), startTabs, 'a folder does not open a buffer');

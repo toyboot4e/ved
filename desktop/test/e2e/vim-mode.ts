@@ -1,11 +1,6 @@
-// Vim mode end-to-end: the toolbar toggle attaches the @ved/vim extension
-// through the editor's extension seam. Assert the whole loop — toggle → mode
-// chip → block caret + content class → normal-mode motions respect the ruby
-// caret stops (a collapsed ruby jumps as a unit) → normal mode never types
-// (keydown swallow AND the handleTextInput belt) → dd/x edit the exact plain
-// string → i/Escape flip modes → u undoes → toggling off restores ordinary
-// editing with no vim residue.
-// Usage: node test/e2e/vim-mode.ts  (after a build; window stays hidden)
+// Vim mode end-to-end via the editor's extension seam: toggle, mode chip,
+// block caret, ruby-aware motions, normal mode never typing (keydown swallow
+// AND the handleTextInput belt), edits/undo, clean detach.
 import assert from 'node:assert/strict';
 import { caretOffset, clickWritingMode, docText, fail, finish, launchVed, setCaret, setDoc, step } from './harness.ts';
 
@@ -26,11 +21,9 @@ const vimClasses = () =>
       blockCaretBox: document.querySelector('.vedBlockCaretBox') !== null,
     };
   });
-// The FIRST toggle goes through a real mouse click (the toolbar loop is part
-// of what this driver pins); the rest dispatch the DOM click directly — in
-// some shell layout states (expanded view-config row + the centered vim
-// cluster) the tab-bar container wins the hit-test above the button and a
-// real click can't land. A shell papercut, not a vim one.
+// First toggle is a real mouse click (the toolbar is under test); later ones
+// dispatch the DOM click — the tab-bar container can win the hit-test above
+// the button in some shell layout states.
 let toggledOnce = false;
 const toggleVim = async () => {
   if (toggledOnce) {
@@ -49,10 +42,9 @@ const press = async (keys: string, settleMs = 60) => {
 };
 
 try {
-  // User keymap smoke seam: window.__vedVimKeymap is read on the FIRST Vim
-  // toggle (the extension builds lazily) — set it before any toggle. Q is
-  // unbound in the defaults and unused by this driver; no other test types a
-  // 'j' in insert mode, so the jj imap cannot misfire.
+  // window.__vedVimKeymap is read on the FIRST toggle (the extension builds
+  // lazily) — set it before any toggle. Q is unbound in the defaults; no other
+  // test types 'j' in insert mode, so the jj imap can't misfire.
   await page.evaluate(() => {
     (window as unknown as { __vedVimKeymap: unknown }).__vedVimKeymap = {
       normal: { Q: '0' },
@@ -64,7 +56,6 @@ try {
   assert.equal(await docText(page), TEXT, 'document set');
   assert.equal(await modeChip(), null, 'no mode chip while Vim is off');
 
-  // --- Toggle on: chip, content class, block caret ---
   await toggleVim();
   await setCaret(page, 0);
   assert.equal(await modeChip(), 'NORMAL', 'chip shows NORMAL after enabling');
@@ -73,20 +64,17 @@ try {
   assert.ok(cls.blockCaret, 'block caret decoration renders over the character under the caret');
   step('toggle on: NORMAL chip, vedVimNormal class, block caret');
 
-  // --- Normal mode never types (& is unbound — z is the zt/zz/zb prefix,
-  // q records macros) ---
+  // & is unbound in the defaults (z prefixes zt/zz/zb, q records macros).
   await press('&');
   await page.keyboard.insertText('な'); // bypasses keydown → the handleTextInput belt
   await page.waitForTimeout(80);
   assert.equal(await docText(page), TEXT, 'neither an unbound key nor raw insertText types in normal mode');
   step('normal mode blocks typing (keydown swallow + text-input belt)');
 
-  // --- Motions: hjkl are SPATIAL (each = its arrow key). The doc is
-  // VerticalColumns, where the character axis is UP/DOWN — so j (down) walks
-  // the characters forward and k (up) back; h/l move between columns. j/k use
-  // the editor's synchronous char mover; h/l column moves are RAF-deferred
-  // (unreliable in the hidden harness), so column geometry is left to the
-  // arrow-key suites. j jumps the collapsed ruby as one caret stop. ---
+  // hjkl are SPATIAL (each = its arrow key): in VerticalColumns the character
+  // axis is up/down, so j/k walk characters via the synchronous char mover;
+  // h/l column moves are RAF-deferred (unreliable in the hidden harness), so
+  // column geometry is left to the arrow-key suites.
   await setCaret(page, 0);
   await press('j');
   assert.equal(await caretOffset(page), 1, 'j (down) steps one character forward');
@@ -97,17 +85,15 @@ try {
   await press('k');
   assert.equal(await caretOffset(page), 2, 'k (up) jumps back over the ruby');
   await press('$');
-  // ON the last character (字 at 8), never past it: normal mode's cursor
-  // stops at the line's last character like Vim's — the past-end column
-  // exists only in insert mode (the adapter's clampLineEnd).
+  // ON the last character (字 at 8), never past it: the past-end column exists
+  // only in insert mode (the adapter's clampLineEnd).
   assert.equal(await caretOffset(page), 8, '$ rests ON the line’s last character');
   await press('0');
   assert.equal(await caretOffset(page), 0, '0 returns to the line start');
   step('jk walk characters (spatial: down/up in vertical), respecting ruby stops');
 
-  // h/l are the LINE axis in vertical = a LOGICAL PARAGRAPH walk (actual
-  // paragraphs at the same column, geometry-free/synchronous). TEXT paragraphs
-  // start at offsets 0, 10, 16.
+  // h/l = the line axis in vertical: a logical paragraph walk at the same
+  // column (geometry-free, synchronous). Paragraph starts: 0, 10, 16.
   await setCaret(page, 0);
   await press('h');
   assert.equal(await caretOffset(page), 10, 'h steps to the next paragraph (same column)');
@@ -117,7 +103,6 @@ try {
   assert.equal(await caretOffset(page), 10, 'l steps back to the previous paragraph');
   step('vertical h/l = logical paragraph walk (between 行)');
 
-  // --- x deletes one caret step (the ruby as a unit from its boundary) ---
   await setCaret(page, 1);
   await press('x');
   assert.equal(await docText(page), `こ${TEXT.slice(2)}`, 'x deletes the character under the caret');
@@ -125,7 +110,6 @@ try {
   assert.equal(await docText(page), TEXT, 'u undoes the x');
   step('x edits the exact plain string; u undoes');
 
-  // --- dd cuts a whole line ---
   await setCaret(page, TEXT.indexOf('二'));
   await press('dd');
   assert.equal(await docText(page), 'こん|漢(かん)字\n三行目', 'dd removes the middle line');
@@ -133,7 +117,6 @@ try {
   assert.equal(await docText(page), TEXT, 'u restores the line');
   step('dd cuts the line; u restores it');
 
-  // --- The caret is a block EVERYWHERE: widget form where no char is under ---
   await setCaret(page, 9); // end of line 1 — nothing under the caret
   {
     const cls = await vimClasses();
@@ -142,11 +125,10 @@ try {
   }
   await setCaret(page, 2); // ruby boundary — the cursor sits ON the next glyph
   {
-    // Vim's cursor covers the character AFTER the caret: at a collapsed
-    // ruby's leading boundary that is the ruby's first BASE character behind
-    // the hidden markup (pm/decorations.ts tints it; the empty box would sit
-    // at the seam, one glyph behind the cursor's true home — at a line-end
-    // seam a whole LINE behind it).
+    // Vim's cursor covers the char AFTER the caret: at a collapsed ruby's
+    // leading boundary that's the first BASE char behind the hidden markup
+    // (pm/decorations.ts tints it); an empty box would sit at the seam,
+    // behind the cursor's true home (at a line-end seam a whole LINE behind).
     const cls = await vimClasses();
     assert.ok(cls.blockCaret, 'the block tints the ruby’s first base character');
     assert.ok(!cls.blockCaretBox, 'no empty box at a tintable boundary');
@@ -155,8 +137,8 @@ try {
   }
   step('block caret renders at every position (widget at EOL, next base at a ruby boundary)');
 
-  // --- …including the SEAM between two adjacent rubies (no text-node home;
-  // the bar-caret's hardest spot — the block covers the NEXT ruby's base) ---
+  // The seam between two adjacent rubies has no text-node home (the
+  // bar-caret's hardest spot) — the block covers the NEXT ruby's base.
   await toggleVim(); // off: setDoc types, which normal mode blocks
   await setDoc(page, '|語(ご)|句(く)');
   await toggleVim();
@@ -172,7 +154,6 @@ try {
   await toggleVim();
   step('block caret owns the two-ruby seam (on the next base character)');
 
-  // --- V selects the whole line; d cuts it linewise ---
   await setCaret(page, TEXT.indexOf('二'));
   await press('V');
   await press('d');
@@ -181,7 +162,6 @@ try {
   assert.equal(await docText(page), TEXT, 'u restores it');
   step('V (linewise visual) + d cuts whole lines');
 
-  // --- s substitutes: delete + insert mode; r replaces one char ---
   await setCaret(page, 0);
   await press('s');
   assert.equal(await modeChip(), 'INSERT', 's enters insert');
@@ -197,9 +177,8 @@ try {
   await press('u');
   step('s substitutes into insert; r replaces in place');
 
-  // --- Ctrl+F/B page-scroll OUTRANK the app's search/sidebar bindings in
-  // normal mode: the editor consumes them (preventDefault + stopPropagation),
-  // so the search bar never opens. ---
+  // In normal mode the editor consumes Ctrl+F/B page-scroll (preventDefault +
+  // stopPropagation), outranking the app's search/sidebar bindings.
   const searchOpen = () => page.evaluate(() => document.getElementById('search-input') !== null);
   await setCaret(page, 0);
   await page.keyboard.press('Control+f');
@@ -211,15 +190,14 @@ try {
   await page.keyboard.press('Control+f');
   await page.waitForTimeout(120);
   assert.ok(await searchOpen(), 'Ctrl+F opens search in insert mode (the app binding still applies)');
-  await page.keyboard.press('Escape'); // close the search bar
+  await page.keyboard.press('Escape');
   await page.waitForTimeout(80);
   await page.click('#editor-content');
-  await page.keyboard.press('Escape'); // back to normal
+  await page.keyboard.press('Escape');
   await page.waitForTimeout(60);
   assert.equal(await modeChip(), 'NORMAL', 'restored to normal mode');
   step('Ctrl+F page-scroll outranks search in normal mode; insert mode keeps it');
 
-  // --- i enters insert (chip, bar caret), typing works, Escape returns ---
   await setCaret(page, 0);
   await press('i');
   assert.equal(await modeChip(), 'INSERT', 'chip shows INSERT');
@@ -301,8 +279,8 @@ try {
   // --- dot-repeat of EDITOR-inserted text: insertText bypasses keydown (an
   // IME commit does the same), so the recording must capture the literal
   // data, not keys — and a newline typed with Enter must replay too.
-  // Regression: key-based recording left IME text invisible and `.` replayed
-  // a STALE earlier change (typically a lone space). ---
+  // Key-based recording would miss the IME text and `.` would replay a
+  // STALE earlier change (typically a lone space). ---
   await toggleVim();
   await setDoc(page, 'first');
   await toggleVim();
@@ -523,8 +501,8 @@ try {
   // v charwise is INCLUSIVE of both ends: moving BACKWARD keeps the character
   // under the original cursor selected. Measure the highlight's inline extent
   // (Horizontal so the selection runs along X): v alone = 1 cell, v then a
-  // backward step = 2 cells (the original char stays in). Without the fix the
-  // original char drops out and it stays 1 cell.
+  // backward step = 2 cells (the original char stays in). An exclusive
+  // selection would drop the original char and stay at 1 cell.
   const selWidth = () =>
     page.evaluate(() => {
       const rs = [...document.querySelectorAll('.vedSelectionRect')].filter(

@@ -1,18 +1,12 @@
 // The shell keymap (editor UI plan "One keymap registry, IME-safe"): every
 // app-level chord lives in ONE declarative table, keyed by command id, and is
-// dispatched from the single window keydown listener app.tsx installs. Scopes:
-//
-// - global — the table below; file/tab/view/search/quick-open chords work
-//   wherever the focus is.
-// - overlay — while the quick-open palette is open its input owns the
-//   keyboard; `handleQuickOpenKey` swallows every table hit so app chords
-//   can't leak to the shell. Because the swallow is "any table hit", a new
-//   binding is overlay-safe by construction — no per-family enumeration.
-// - editor — caret movement &c. stays inside the editor core (it needs the
-//   view); a key an editor EXTENSION consumed never bubbles here at all.
-//
-// Command ids are plan-style names (`file.save`, `view.quickOpen`, …) — the
-// future command palette's catalog and the config file's keybinding keys.
+// dispatched from the single window keydown listener app.tsx installs.
+// Scopes: global (the table below), overlay (an open palette input owns the
+// keyboard; `handleQuickOpenKey` swallows ANY table hit, so a new binding is
+// overlay-safe by construction), editor (caret movement stays in the editor
+// core; a key an editor EXTENSION consumed never bubbles here at all).
+// Command ids are plan-style names (`file.save`, …) — the future command
+// palette's catalog and the config file's keybinding keys.
 import type { ChordEvent } from '@ved/editor';
 import { type AppKeymapOverrides, useAppKeymapStore } from './app-keymap';
 import { settleExtensionPicker, useExtensionPickerStore } from './extension-ui';
@@ -28,13 +22,11 @@ import { useWorkspaceStore } from './workspace';
  *  a native `KeyboardEvent` satisfies it) — the editor core's `ChordEvent`. */
 export type { ChordEvent } from '@ved/editor';
 
-/**
- * One chord. `mod: 'mod'` is the platform modifier — Cmd on macOS, Ctrl
- * elsewhere. `mod: 'ctrl'` is the escape hatch for chords that are Ctrl on
- * BOTH platforms and must leave Cmd unpressed (Ctrl+Tab cycling: Cmd+Tab is
- * the macOS application switcher). `shift` defaults to false and is matched
- * exactly; an Alt chord never matches.
- */
+/** One chord. `mod: 'mod'` is the platform modifier — Cmd on macOS, Ctrl
+ *  elsewhere. `mod: 'ctrl'` is the escape hatch for chords that are Ctrl on
+ *  BOTH platforms and must leave Cmd unpressed (Ctrl+Tab cycling: Cmd+Tab is
+ *  the macOS application switcher). `shift` defaults to false and is matched
+ *  exactly; an Alt chord never matches. */
 export type Chord = {
   /** Compared against `event.key`, case-insensitively. */
   readonly key: string;
@@ -68,11 +60,10 @@ export type AppCommand =
   | 'search.find'
   | 'search.replace';
 
-// The chord table. Notes carried over from the per-family matchers:
-// - Ctrl+R normally reloads an Electron window — main drops the default menu
-//   so the chord reaches us (src/main/index.ts).
-// - Ctrl+Shift+P (the future command palette) is deliberately unclaimed.
-// - Tab cycling uses `mod: 'ctrl'` (Ctrl on both platforms, never Cmd).
+// Ctrl+R normally reloads an Electron window — main drops the default menu so
+// the chord reaches us (src/main/index.ts). Ctrl+Shift+P (the future command
+// palette) is deliberately unclaimed. Tab cycling uses `mod: 'ctrl'` (Ctrl on
+// both platforms, never Cmd).
 export const APP_KEYMAP: readonly { readonly command: AppCommand; readonly chord: Chord }[] = [
   { command: 'quickOpen.files', chord: { key: 'p', mod: 'mod' } },
   { command: 'file.open', chord: { key: 'o', mod: 'mod' } },
@@ -98,10 +89,9 @@ export const isAppCommand = (id: string): id is AppCommand => APP_KEYMAP.some((b
 export const appChordFor = (command: AppCommand, overrides: AppKeymapOverrides): Chord =>
   overrides[command] ?? APP_KEYMAP.find((binding) => binding.command === command)!.chord;
 
-/** The command whose chord `event` presses, or `null` when the event is not
- *  ours (the default chords are disjoint; an override that collides with a
- *  default fires the first table entry). `overrides` defaults to the live
- *  app-keymap store — pass it explicitly in unit tests. */
+/** The command whose chord `event` presses, or `null` (an override that
+ *  collides with a default fires the first table entry). `overrides`
+ *  defaults to the live app-keymap store — pass it explicitly in unit tests. */
 export const matchAppCommand = (
   event: ChordEvent,
   isDarwin: boolean,
@@ -169,15 +159,12 @@ const runAppCommand = (command: AppCommand, handlers: AppCommandHandlers): void 
   }
 };
 
-/**
- * Overlay scope: while the quick-open palette is open its input owns the
- * keyboard, so the global dispatcher defers to this. Returns `true` when the
- * palette is open — the caller then stops. Esc closes the palette (covering
- * the tick before the input focuses; never mid-IME, where Esc cancels the
- * composition); any table chord is swallowed so it can't leak to the shell,
- * while editing chords and printable keys fall through to the overlay input
- * untouched.
- */
+/** Overlay scope: while the quick-open palette is open its input owns the
+ *  keyboard; returns `true` when open — the caller then stops. Esc closes
+ *  (covering the tick before the input focuses; never mid-IME, where Esc
+ *  cancels the composition); any table chord is swallowed so it can't leak
+ *  to the shell, while editing chords and printable keys fall through to
+ *  the overlay input untouched. */
 export const handleQuickOpenKey = (event: KeyboardEvent, isDarwin: boolean): boolean => {
   if (!useQuickOpenStore.getState().open) return false;
   if (event.key === 'Escape' && !isComposingEvent(event)) {
@@ -203,16 +190,12 @@ export const handleExtensionPickerKey = (event: KeyboardEvent, isDarwin: boolean
   return true;
 };
 
-/**
- * Global scope: the window keydown dispatcher, installed once by app.tsx.
- *
- * A key an editor EXTENSION consumed (Vim owns Ctrl+F/B as page scrolling in
- * normal mode) never reaches this listener: the editor stopPropagation()s it
- * (editor.tsx handleKeyDown). We must NOT additionally guard on
- * `event.defaultPrevented` here — ProseMirror preventDefaults keys it handles
- * WITHOUT stopping propagation (Escape among them), and this listener's
- * Escape-closes-search must still run.
- */
+/** Global scope: the window keydown dispatcher, installed once by app.tsx.
+ *  A key an editor EXTENSION consumed never reaches this listener — the
+ *  editor stopPropagation()s it. Do NOT also guard on
+ *  `event.defaultPrevented`: ProseMirror preventDefaults keys it handles
+ *  WITHOUT stopping propagation (Escape among them), and this listener's
+ *  Escape-closes-search must still run. */
 export const handleAppKeydown = (event: KeyboardEvent, isDarwin: boolean, handlers: AppCommandHandlers): void => {
   if (handleExtensionPickerKey(event, isDarwin)) return;
   if (handleQuickOpenKey(event, isDarwin)) return;
@@ -222,8 +205,7 @@ export const handleAppKeydown = (event: KeyboardEvent, isDarwin: boolean, handle
     runAppCommand(command, handlers);
     return;
   }
-  // Esc closes an open settings popover or search bar from anywhere (their
-  // inner inputs don't consume Esc; closing refocuses the editor). The
+  // Esc closes an open settings popover or search bar from anywhere; the
   // popover — visually on top — goes first. Never mid-IME — Esc there
   // cancels the composition.
   if (event.key === 'Escape' && !isComposingEvent(event)) {

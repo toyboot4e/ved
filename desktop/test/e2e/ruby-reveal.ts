@@ -1,19 +1,15 @@
-// Switching the ruby display (Plain ↔ Rich) reflows heavily-rubied text;
-// the caret must stay visible — scrolled to the nearest edge when the
-// reflow pushed it out (editor.tsx useRevealCaretOnPolicyChange).
-// Usage: node test/e2e/ruby-reveal.ts  (after a build; window stays hidden)
+// Plain ↔ Rich reflows heavily-rubied text; the caret must stay visible —
+// scrolled to the nearest edge (editor.tsx useRevealCaretOnPolicyChange).
 import assert from 'node:assert/strict';
 import { caretToStart, fail, finish, launchVed, pressMod, step } from './harness.ts';
 
 const ved = await launchVed();
 const { page } = ved;
 
-/** The caret's visibility within the scroller viewport. Prefers the DOM range
- *  rect (what the user's native caret follows), but a collapsed range at a node
- *  boundary (e.g. offset 0 before a leading ruby) yields a degenerate {0,0,0,0}
- *  rect — there, fall back to the MODEL rect (coordsAtPos via __vedCaretRect),
- *  which is reliable at boundaries (the old element fallback grabbed the whole
- *  huge paragraph and read as out-of-view). */
+/** Caret visibility within the scroller. Prefers the DOM range rect (what the
+ *  native caret follows); a collapsed range at a node boundary yields {0,0,0,0} —
+ *  fall back to __vedCaretRect (an element fallback would grab the whole
+ *  paragraph and read as out-of-view). */
 const caretInView = () =>
   page.evaluate(() => {
     const sel = getSelection();
@@ -38,8 +34,7 @@ const caretInView = () =>
   });
 
 try {
-  // Rich mode, heavily-rubied text: each unit is 2 glyphs collapsed but 8
-  // characters of syntax when expanded — a 4x reflow between Plain and Rich.
+  // Each unit: 2 glyphs collapsed, 8 chars of syntax expanded — a 4x reflow.
   await page.click('#editor-content');
   await pressMod(page, '4'); // Rich
   await caretToStart(page);
@@ -47,20 +42,15 @@ try {
   await page.keyboard.insertText('|漢(かん)字'.repeat(420));
   await page.waitForTimeout(600);
 
-  // The editor reveals the caret after a doc change (editor.tsx
-  // revealCaretInScroller), so even a single-burst insert leaves the caret in
-  // view — no manual scroll needed.
+  // revealCaretInScroller runs after every doc change — no manual scroll needed.
   await page.waitForTimeout(150);
   let c = await caretInView();
   assert.ok(c?.visible, 'caret visible at the end of the text');
   const richScrollTop = c.scrollTop;
   step('caret at the end of long rubied text, in view (Rich)');
 
-  // Plain: the text grows substantially; without the reveal the viewport would
-  // keep its offset and the caret could leave the view. The exact scroll
-  // delta varies with the markup font-size (see ruby.module.scss), so the
-  // tight assertion is "caret still visible" — the scroll change is an
-  // implementation detail.
+  // The exact scroll delta varies with the markup font-size (ruby.module.scss),
+  // so assert only "caret still visible".
   await pressMod(page, '1');
   await page.waitForTimeout(200);
   c = await caretInView();
@@ -68,15 +58,13 @@ try {
   assert.ok(c.scrollTop >= richScrollTop, `viewport did not jump backward (${c.scrollTop} >= ${richScrollTop})`);
   step('Plain reflow keeps the caret in view');
 
-  // And back: the text shrinks to a quarter
   await pressMod(page, '4');
   await page.waitForTimeout(200);
   c = await caretInView();
   assert.ok(c?.visible, 'caret visible after switching back to Rich');
   step('Rich reflow keeps the caret in view');
 
-  // A visible caret must NOT cause scrolling on a switch: park the caret at
-  // the document start, scroll there, then toggle the display
+  // A visible caret must NOT cause scrolling on a switch.
   await caretToStart(page);
   await page.waitForTimeout(150);
   await page.evaluate(() => {

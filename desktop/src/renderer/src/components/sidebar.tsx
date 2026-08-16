@@ -1,21 +1,11 @@
-// File-browser sidebar (editor UI plan, Phase 2): one lazy tree per workspace
-// root, dockable to either window edge, drag-resizable at its inner edge. A
-// directory reads one level on expand (`readDir`); collapsing unmounts the
-// listing, so re-expanding re-reads — the tree stays fresh without a watcher.
-// Clicking a file hands the PATH up; the shell reads it CONTENT-SNIFFED
-// (fs-io.ts), refusing non-text files via the app-level notice.
-//
-// A header toggle switches the pane between the root trees (ファイル) and the
-// OPEN BUFFERS (開いているファイル — same labels as quick open's modes): a
-// flat list mirroring the tab strip, with the tab bar's dirty/close semantics.
-//
-// Right-click opens a context menu on any tree row: rename (inline input) and
-// delete (native confirm in main; recursive for directories, and the dialog
-// says so), plus add-folder anywhere. Mutations bump an
-// epoch that re-reads every MOUNTED listing (the lazy tree stays lazy);
-// failures surface through the app notice. Open buffers are NOT synced to a
-// rename/delete — they keep their plain string and old path (save recreates
-// it); reconciling buffers rides the Phase-2b watcher.
+// File-browser sidebar (editor UI plan, Phase 2). A directory reads one level
+// on expand (`readDir`); collapsing unmounts the listing, so re-expanding
+// re-reads — fresh without a watcher. Clicking a file hands the PATH up; the
+// shell reads it CONTENT-SNIFFED (fs-io.ts), refusing non-text via the app
+// notice. Rename/delete (native confirm in main; recursive for directories)
+// bump an epoch that re-reads every MOUNTED listing. Open buffers are NOT
+// synced to a rename/delete — they keep their plain string and old path (save
+// recreates it); reconciling buffers rides the Phase-2b watcher.
 import { clsx } from 'clsx';
 import type React from 'react';
 import { useEffect, useState } from 'react';
@@ -56,9 +46,9 @@ const FileTypeIcon = ({ name }: { readonly name: string }): React.JSX.Element =>
   return <FileGenericIcon className={styles.typeIcon} />;
 };
 
-/** Tree plumbing threaded to every row (one object, not six props). `epoch`
- * bumps after a rename/delete: mounted listings re-read (effects key on the
- * VALUE, so the object's per-render identity is harmless). */
+/** Tree plumbing threaded to every row. `epoch` bumps after a rename/delete:
+ * mounted listings re-read (effects key on the VALUE, so the object's
+ * per-render identity is harmless). */
 type TreeOps = {
   readonly onOpenFile: SidebarProps['onOpenFile'];
   readonly onEntryMenu: (entry: DirEntry, event: React.MouseEvent<HTMLButtonElement>) => void;
@@ -84,8 +74,8 @@ const RenameInput = ({
       value={value}
       aria-label='Rename entry'
       spellCheck={false}
-      // Focus + select on mount (not autoFocus: the guard keeps later render
-      // passes from re-selecting while the user edits)
+      // Not autoFocus: the guard keeps later render passes from re-selecting
+      // while the user edits
       ref={(el) => {
         if (el && document.activeElement !== el) {
           el.focus();
@@ -242,9 +232,6 @@ const RootSection = ({
   );
 };
 
-// The open-buffers list: one row per tab, in tab order. Clicking a row
-// activates its tab; the ✕ (hover-revealed, like a root's) closes it through
-// the shell's dirty-discard guard.
 const BufferList = ({
   activeDirty,
   onCloseBuffer,
@@ -365,7 +352,6 @@ export const Sidebar = ({ onOpenFile, activeDirty, onCloseBuffer }: SidebarProps
                 const entry = menu.entry;
                 return [
                   { label: '名前を変更', onSelect: () => setRenamingPath(entry.path) },
-                  // Directories delete RECURSIVELY — the confirm dialog warns
                   { label: '削除', onSelect: () => void handleDelete(entry.path) },
                 ];
               })()
@@ -373,9 +359,8 @@ export const Sidebar = ({ onOpenFile, activeDirty, onCloseBuffer }: SidebarProps
           { label: 'フォルダを追加', onSelect: () => void handleAddFolder() },
         ];
 
-  // Drag the inner edge to resize: pointer capture keeps the moves coming
-  // even when the pointer leaves the 5px handle; the width derives from the
-  // pointer's window position per docked side (clamped by the store).
+  // Pointer capture keeps the moves coming beyond the 5px handle; the width
+  // derives from the pointer's window position per docked side (store-clamped).
   const handleResizeStart = (event: React.PointerEvent<HTMLDivElement>): void => {
     event.preventDefault();
     const handle = event.currentTarget;
@@ -467,7 +452,6 @@ export const Sidebar = ({ onOpenFile, activeDirty, onCloseBuffer }: SidebarProps
         )}
       </div>
       {menu !== null && <ContextMenu x={menu.x} y={menu.y} items={menuItems} onClose={() => setMenu(null)} />}
-      {/* ARIA window-splitter: focusable separator, arrow-key operable */}
       {/* biome-ignore lint/a11y/useSemanticElements: an <hr> cannot be the interactive window-splitter widget */}
       <div
         className={styles.resizeHandle}

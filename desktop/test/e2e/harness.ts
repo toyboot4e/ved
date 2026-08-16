@@ -1,13 +1,12 @@
 // Shared harness for the e2e tests (run with: node test/e2e/<test>.ts).
-// Launches the built app against a per-run temp dir, with native dialogs
-// stubbed via the VED_SMOKE_* env seams and the window hidden — layout,
-// input, and IPC all work without a window ever appearing.
+// Launches the built app against a per-run temp dir, native dialogs stubbed
+// via the VED_SMOKE_* env seams, window hidden — layout/input/IPC all work
+// without a window appearing.
 import { spawn } from 'node:child_process';
 import { mkdtemp, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-// The electron package exports the path of the platform's binary
-// (dist/electron on Linux, dist/Electron.app/… on macOS).
+// The electron package's default export is the platform binary's path.
 import electronPath from 'electron';
 import { _electron, type ElectronApplication, type Page } from 'playwright';
 
@@ -28,13 +27,11 @@ export type LaunchOptions = {
   readonly args?: (tmp: string) => readonly string[];
 };
 
-/** A VISIBLE window normally appears on the user's desktop. When Xvfb is
- *  available, map it on a private virtual display instead: rAF throttles only
- *  in HIDDEN windows, so the RAF-deferred suites need a mapped window — not
- *  the user's screen. One server per driver process, picked a free display
- *  via `-displayfd`, killed on process exit. Skipped when the IME is attached
- *  (the mozc suite composes on the real display) or under VED_SMOKE_NO_XVFB=1;
- *  returns null to fall back to the real display (no Xvfb binary &c.). */
+/** Maps VISIBLE windows on a private Xvfb display instead of the user's
+ *  desktop: rAF throttles only in HIDDEN windows, so RAF-deferred suites need
+ *  a mapped window. One server per driver process, killed on process exit.
+ *  Skipped when the IME is attached (mozc composes on the real display) or
+ *  under VED_SMOKE_NO_XVFB=1; null falls back to the real display. */
 let xvfb: Promise<string | null> | undefined;
 const xvfbDisplay = (): Promise<string | null> => {
   xvfb ??= new Promise((resolve) => {
@@ -42,7 +39,7 @@ const xvfbDisplay = (): Promise<string | null> => {
       resolve(null);
       return;
     }
-    // -displayfd 3: Xvfb picks a free display number and writes it to fd 3.
+    // -displayfd 3: Xvfb picks a free display number, writes it to fd 3.
     const server = spawn(
       'Xvfb',
       ['-displayfd', '3', '-screen', '0', '1920x1600x24', '-dpi', '96', '-nolisten', 'tcp'],
@@ -69,8 +66,8 @@ export const launchVed = async ({ env, args }: LaunchOptions = {}): Promise<VedA
   const tmp = await mkdtemp(join(tmpdir(), 'ved-e2e-'));
   const merged: Record<string, string> = {
     ...(process.env as Record<string, string>),
-    // Detach the system IME (fcitx5/mozc): it intercepts synthetic key
-    // events and garbles typed text non-deterministically.
+    // Detach the system IME (fcitx5/mozc): it intercepts synthetic keys and
+    // garbles typed text non-deterministically.
     GTK_IM_MODULE: '',
     QT_IM_MODULE: '',
     XMODIFIERS: '',
@@ -94,24 +91,20 @@ export const launchVed = async ({ env, args }: LaunchOptions = {}): Promise<VedA
   const app = await _electron.launch({
     executablePath: electronPath as unknown as string,
     // Run WITH the Chromium sandbox (Playwright injects --no-sandbox by
-    // default). Real launches (`just dev`, the packaged app) are sandboxed,
-    // and an Electron whose sandbox setup crashes (e.g. the raw nix store
-    // binary without its CHROME_DEVEL_SANDBOX wrapper) dies with a silent
-    // SIGILL that an unsandboxed suite can never see.
+    // default): real launches are sandboxed, and a broken sandbox setup (raw
+    // nix store binary sans CHROME_DEVEL_SANDBOX wrapper) dies with a silent
+    // SIGILL an unsandboxed suite can never see.
     chromiumSandbox: true,
-    // Isolated config dir FIRST: a driver must never load the user's real
-    // ~/.config/ved (a real init.ts would skew every default the suites
-    // assert) nor write generated files into it. A driver's own
-    // `--config-dir=` fixture comes later and wins (last occurrence,
-    // config-dir.ts).
+    // Isolated config dir first: the user's real ~/.config/ved (a real
+    // init.ts) would skew every default the suites assert. A driver's own
+    // `--config-dir=` comes later and wins (last occurrence, config-dir.ts).
     args: [`${root}out/main/index.js`, `--config-dir=${join(tmp, 'config')}`, ...(args?.(tmp) ?? [])],
     env: merged,
   });
   const page = await app.firstWindow();
   if (onXvfb) {
-    // No WM on the virtual display, so nothing sizes the window and the
-    // default is too small for the paged-layout suites — set a desktop-sized
-    // window explicitly (on the real display the user's WM does this).
+    // No WM on the virtual display sizes the window, and the default is too
+    // small for the paged-layout suites.
     await app.evaluate(({ BrowserWindow }) => {
       BrowserWindow.getAllWindows()[0]?.setBounds({ x: 0, y: 0, width: 1200, height: 1240 });
     });
@@ -122,8 +115,8 @@ export const launchVed = async ({ env, args }: LaunchOptions = {}): Promise<VedA
     page,
     tmp,
     close: async () => {
-      // A failure can leave the buffer dirty, and a stubbed close guard
-      // would then block every close — drop the guard before closing.
+      // A failure can leave the buffer dirty; the close guard would then
+      // block the close — drop it first.
       try {
         await page.evaluate(() => window.ved.setDirty(false));
       } catch {
@@ -134,8 +127,6 @@ export const launchVed = async ({ env, args }: LaunchOptions = {}): Promise<VedA
     },
   };
 };
-
-// --- step reporting (process.exitCode carries the verdict) ---
 
 export const step = (msg: string): void => console.log(`✓ ${msg}`);
 
@@ -152,12 +143,10 @@ export const finish = (name: string): void => {
   }
 };
 
-// --- common page actions ---
-
 /**
  * Dispatches a mod chord (Cmd on macOS, Ctrl elsewhere) as a synthetic
- * keydown: on macOS a real Cmd+Z press is consumed by the default
- * application menu (Edit > Undo accelerator) and never reaches the page.
+ * keydown: a real macOS Cmd+Z is consumed by the application menu's Undo
+ * accelerator and never reaches the page.
  */
 export const pressMod = async (page: Page, key: string, { shift = false } = {}): Promise<void> => {
   await page.evaluate(
@@ -180,8 +169,8 @@ export const pressMod = async (page: Page, key: string, { shift = false } = {}):
 };
 
 /**
- * Dispatches Ctrl+Tab (optionally with Shift) as a synthetic keydown. Tab
- * cycling always uses Ctrl, never Cmd — Cmd+Tab is the macOS app switcher.
+ * Dispatches Ctrl+Tab (optionally Shift) as a synthetic keydown. Tab cycling
+ * always uses Ctrl — Cmd+Tab is the macOS app switcher.
  */
 export const pressCtrlTab = async (page: Page, { shift = false } = {}): Promise<void> => {
   await page.evaluate((s) => {
@@ -195,20 +184,14 @@ export const pressCtrlTab = async (page: Page, { shift = false } = {}): Promise<
 };
 
 /**
- * Collapses the selection to the document start, programmatically: visual
- * Home/End can land inside a ruby annotation box (known caret papercut,
- * see docs/architecture.md).
+ * Collapses the selection to the document start via the model seam (visual
+ * Home/End can land inside a ruby annotation box). Not a DOM TreeWalker
+ * collapse: with a leading ruby the first TEXT node is the rubyBase content,
+ * so a text-node collapse lands INSIDE the ruby.
  */
 export const caretToStart = async (page: Page): Promise<void> => {
-  // Document start = model offset 0. Use the model seam, not a DOM TreeWalker:
-  // when the first paragraph begins with a ruby, the first TEXT node is the
-  // rubyBase content (offset 1, INSIDE the base), so a text-node collapse lands
-  // the caret inside the ruby rather than before it.
-  //
-  // First let any PENDING selectionchange settle: a click right before this lands
-  // its DOM selection a tick LATER, which would otherwise override the model caret
-  // we set here (the click → caret-at-the-click-point race). Setting the model
-  // selection also writes the DOM selection, so after this both agree on offset 0.
+  // Let any pending selectionchange settle first: a just-made click lands its
+  // DOM selection a tick later and would override the model caret set here.
   await page.waitForTimeout(60);
   await page.evaluate(() => (window as unknown as { __vedSetCaret: (o: number) => void }).__vedSetCaret(0));
   await page.waitForTimeout(20);
@@ -225,12 +208,9 @@ export const emptyDocument = async (page: Page): Promise<void> => {
   await page.waitForTimeout(250);
 };
 
-/** Selects a writing mode via the toolbar's TWO button groups — orientation
- *  ('Horizontal' | 'Vertical') and paging ('Continuous' | 'Columns' |
- *  'Rows'); buttons are icon-only, the aria-label carries the name (see
- *  toolbar.tsx). Mode names split on the space; a bare orientation means
- *  continuous paging. Both axes are always clicked, so the resulting mode
- *  never depends on the paging the app happened to be in. */
+/** Selects a writing mode via the toolbar's two button groups (orientation +
+ *  paging; icon-only buttons, aria-label carries the name). Both axes are
+ *  always clicked, so the result never depends on the current paging. */
 export const clickWritingMode = async (
   page: Page,
   label: 'Horizontal' | 'Vertical' | 'Horizontal Columns' | 'Horizontal Rows' | 'Vertical Columns' | 'Vertical Rows',
@@ -241,8 +221,8 @@ export const clickWritingMode = async (
   await page.waitForTimeout(150);
 };
 
-/** The settings popover (toolbar gear / Mod+,) — the view-config and
- *  invisibles controls live inside it (components/settings-panel.tsx). */
+/** The settings popover (toolbar gear / Mod+,) — holds the view-config and
+ *  invisibles controls (components/settings-panel.tsx). */
 const SETTINGS_DIALOG = '[role="dialog"][aria-label="設定"]';
 
 /** Open the settings popover via the toolbar gear (no-op when already open). */
@@ -260,15 +240,13 @@ export const closeSettings = async (page: Page): Promise<void> => {
   await page.waitForSelector(SETTINGS_DIALOG, { state: 'detached' });
 };
 
-/** Set view-config fields through the settings popover (open → fill each
- *  `#view-config-<field>` input → close). Values are input strings. */
+/** Sets view-config fields through the settings popover's
+ *  `#view-config-<field>` inputs. */
 export const setViewConfig = async (page: Page, fields: Record<string, string>): Promise<void> => {
   await openSettings(page);
   for (const [field, value] of Object.entries(fields)) await page.fill(`#view-config-${field}`, value);
   await closeSettings(page);
 };
-
-// --- model seams (window.__ved*, exposed by editor.tsx) ---
 
 /** A rect as the seams report it (viewport CSS pixels). */
 export type Rect = { top: number; bottom: number; left: number; right: number };
@@ -293,11 +271,9 @@ export const docText = (page: Page): Promise<string> =>
 export const caretOffset = (page: Page): Promise<number> =>
   page.evaluate(() => (window as unknown as ModelSeams).__vedCaret());
 
-/** Press a LINE-MOVE key and wait for its commit: `moveCaretByLine` lands on
- *  a requestAnimationFrame, so poll the model caret until it changes (the
- *  generous cap covers a throttled frame). Returns the caret's new model
- *  offset — unchanged means the move never landed (a document edge, or the
- *  bug under test). */
+/** Presses a line-move key and polls the model caret until it changes:
+ *  `moveCaretByLine` lands on a requestAnimationFrame (the generous cap
+ *  covers a throttled frame). Unchanged return = the move never landed. */
 export const pressLineMove = async (page: Page, key: string): Promise<number> => {
   const before = await caretOffset(page);
   await page.keyboard.press(key);

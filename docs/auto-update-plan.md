@@ -1,6 +1,6 @@
 # Plan: auto-update
 
-Status: **not started** (2026-07). Blocked on nothing for phases 0–3; phase 4
+Status: **not started**. Blocked on nothing for phases 0–3; phase 4
 (macOS) has an external prerequisite (Apple Developer Program membership).
 
 Goal: on startup the packaged app checks for a newer release; if the user

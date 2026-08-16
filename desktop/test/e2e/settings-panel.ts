@@ -87,7 +87,6 @@ export function activate(ctx: VedContext): void {
     await page.keyboard.press('Escape');
     await page.waitForSelector(DIALOG, { state: 'detached' });
 
-    // An override REPLACES the default chord.
     await pressMod(page, ',');
     await page.waitForTimeout(250);
     assert.equal(await page.$(DIALOG), null, 'Mod+, no longer opens the panel');

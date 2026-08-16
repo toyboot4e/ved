@@ -1,15 +1,10 @@
-// REAL mozc: the IME candidate window must stay by the composition's LINE
-// when the preedit wraps across a VerticalColumns page boundary. The system
-// IME places the candidate window from the caret rect Chromium reports, and
-// Blink re-seats the DOM caret to the preedit's END on every update — for a
-// wrapped preedit that is the TOP of the NEXT page, so the candidate list
-// jumped a whole page up out of the reading flow ("the candidates go up").
-// editor/src/ime-caret-pin.ts pins the DOM caret to the last preedit
-// position still on the composition's starting line; this suite guards both
-// the pin and that mozc survives composing/converting/committing through it.
-//
-// Linux + fcitx5 + mozc + xdotool only; SKIPS elsewhere. STEALS X focus while
-// it runs — don't type. Run: node test/e2e/mozc/candidate-window-pos.ts
+// REAL mozc: when the preedit wraps across a VerticalColumns page boundary the
+// candidate window must stay by the composition's LINE. The IME positions from
+// the Chromium-reported caret rect, and Blink re-seats the DOM caret to the
+// preedit's END on every update — the top of the NEXT page for a wrapped
+// preedit. ime-caret-pin.ts pins the DOM caret to the last preedit position
+// still on the starting line; this guards the pin through compose/convert/commit.
+// Steals X focus (see ./harness.ts). Run: node test/e2e/mozc/candidate-window-pos.ts
 import assert from 'node:assert/strict';
 import type { ModelSeams } from '../harness.ts';
 import { fail, finish, pressMod, setViewConfig, step } from '../harness.ts';
@@ -77,8 +72,7 @@ const onSameLine = (
 ): boolean => Math.abs(mid(a) - mid(b)) <= PITCH / 2 && Math.abs(a.top - b.top) <= LINE_LEN;
 
 try {
-  // --- Page-boundary wrap: composition starts on page 1's LAST line. ---
-  const text = `${'あ'.repeat(20).repeat(9)}${'い'.repeat(17)}`; // one paragraph, 197 chars
+  const text = `${'あ'.repeat(20).repeat(9)}${'い'.repeat(17)}`; // ends on page 1's LAST line
   await page.evaluate(() => getSelection()!.selectAllChildren(document.getElementById('editor-content')!));
   await page.keyboard.press('Backspace');
   await page.waitForTimeout(80);
@@ -119,8 +113,7 @@ try {
   );
   step('candidate window opened by the composition line');
 
-  // The composition itself is unharmed: revert the conversion to the
-  // hiragana preedit (deterministic — a candidate choice is not) and commit.
+  // Escape reverts to the hiragana preedit — deterministic (a candidate choice is not).
   await m.escape();
   const got = await m.commit();
   assert.equal(got, `${text}ねこだいすき`, 'commit: the composed word lands in place');
@@ -128,7 +121,7 @@ try {
   assert.equal(caretOff, text.length + 6, 'commit: the caret lands after the committed word');
   step('mozc composed, converted, and committed through the pinned caret');
 
-  // --- Control: a composition that never wraps keeps native behavior. ---
+  // Control: a composition that never wraps keeps native behavior.
   await page.evaluate((o) => (window as unknown as ModelSeams).__vedSetSelection(o, o), 100); // line 6 start
   await page.waitForTimeout(250);
   await m.escape();
@@ -144,15 +137,12 @@ try {
   );
   step('control: a non-wrapping composition converts and commits natively');
 
-  // ================= 頁段2: one LONG paragraph (real-prose shape) ==========
-  // A single paragraph spanning several pages: every intra-band boundary is a
-  // page-gap widget inside the paragraph, and a composing keystroke that
-  // shifts one re-dispatches the widget set MID-composition. Deferred to a
-  // rAF that dispatch painted a stale-widget frame (the page border visibly
-  // flashed) and, landing after the `input`-event caret repairs, orphaned the
-  // DOM caret — the candidate window then lost its anchor entirely. The
-  // page-gap measure now runs composing edits in the SAME flush
-  // (page-gap-measure.ts): border stable per frame, caret repairs run last.
+  // 頁段2, one LONG paragraph spanning pages: intra-band boundaries are page-gap
+  // widgets inside it, and a composing keystroke that shifts one re-dispatches
+  // the widget set MID-composition. A rAF-deferred dispatch painted stale-widget
+  // frames (the border flashed) and, landing after the `input`-event caret
+  // repairs, orphaned the DOM caret — page-gap-measure.ts runs composing edits
+  // in the SAME flush: border stable per frame, caret repairs last.
   await setViewConfig(page, { pageLines: '20', pagesPerRow: '2' });
   await page.waitForTimeout(250);
   const PAGE_CHARS = 20 * 20; // one page of text
@@ -441,7 +431,7 @@ try {
     await m.escape();
     const uGot = await m.type('nekodaisuki').then(() => m.commit());
     assert.equal(uGot, `${uDoc.slice(0, uSeam)}ねこだいすき${uDoc.slice(uSeam)}`, 'undo case: committed in place');
-    await pressMod(page, 'z'); // undo
+    await pressMod(page, 'z');
     await page.waitForTimeout(400);
     assert.equal(
       await page.evaluate(() => (window as unknown as ModelSeams).__vedText()),

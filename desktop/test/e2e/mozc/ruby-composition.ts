@@ -1,15 +1,12 @@
-// REAL mozc composition near a ruby (Rich policy — markup hidden). Regression
-// for the long-standing scramble: composing next to the OLD `display:none` ruby
-// markup gave e.g. "|ルビ(ruby)" + IME "あいうえお" → "|あルいうえおビ(ruby)", and a
-// caret at a ruby boundary threw the IME box to the viewport corner.
+// REAL mozc composition near a ruby (Rich policy — markup hidden).
 //
-// The markup-out-of-DOM redesign (architecture.md "verified dead ends") fixes BOTH at the root: a ruby holds
-// editable base/reading text and the delimiters are never DOM text, so an IME
-// always composes into real, full-size text with a real caret rect — there is no
-// zero-sized markup beside the caret to scramble it. Verified against the real
-// IME, which CDP's `Input.imeSetComposition` could NOT reproduce (it scrambles
-// differently). The cases (with the boundary/atom spec) live in
-// ruby-composition.cases.ts; this file is the generic runner.
+// A ruby holds editable base/reading text and the delimiters are never DOM
+// text (architecture.md "verified dead ends"), so an IME always composes into
+// real, full-size text with a real caret rect — there is no zero-sized markup
+// beside the caret to scramble it. Verified against the real IME, which CDP's
+// `Input.imeSetComposition` cannot reproduce (it scrambles differently). The
+// cases (with the boundary/atom spec) live in ruby-composition.cases.ts; this
+// file is the generic runner.
 //
 // Linux + fcitx5 + mozc + xdotool only; SKIPS elsewhere. STEALS X focus while it
 // runs — don't type. Run: `node test/e2e/mozc/ruby-composition.ts`.

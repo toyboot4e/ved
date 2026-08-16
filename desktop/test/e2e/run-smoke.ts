@@ -1,5 +1,5 @@
 // Runs EVERY e2e driver in test/e2e/*.ts so new tests are picked up automatically
-// — no hand-maintained list (the old `&&` chain drifted out of date). Helpers and
+// — no hand-maintained list. Helpers and
 // the on-demand exploratory fuzz are skipped; the mozc suite lives in a subdir and
 // is run separately (`smoke:mozc`). Each driver is a standalone node script that
 // launches the BUILT app, so build first (`just smoke` / `bun run build`).
@@ -7,7 +7,7 @@
 // Drivers run CONCURRENTLY in a pool (each has its own Electron, temp profile,
 // and — when visible — Xvfb display; the perf suites assert counter seams, not
 // timing, so load doesn't flake them). Output is buffered per driver and printed
-// on completion. VED_SMOKE_JOBS overrides the pool size; 1 = the old serial run.
+// on completion. VED_SMOKE_JOBS overrides the pool size; 1 = serial.
 //
 // Usage: node test/e2e/run-smoke.ts
 import { spawn } from 'node:child_process';

@@ -1,4 +1,4 @@
-// Theme toggle icons: sun (light), moon (dark), half-disc (system = follow OS).
+// Theme toggle icons: sun (light), moon (dark).
 // Same conventions as WritingModeIcons — a 24×24 viewBox, `currentColor` so the
 // glyph inherits the button's themed color.
 import type React from 'react';

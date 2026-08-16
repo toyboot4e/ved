@@ -6,8 +6,8 @@
 // firing a fresh docChanged transaction afterwards — so the IME word never entered
 // history. The first undo then jumped PAST it to the last non-IME entry, discarding
 // the IME word AND any trailing edits in a single step (e.g. "abcあいうえお" → ""),
-// and redo could not bring it back. Fixed by committing the composed text to
-// history in onCompositionEnd once PM settles.
+// and redo could not bring it back. onCompositionEnd commits the composed text
+// to history once PM settles.
 //
 // Linux + fcitx5 + mozc + xdotool only; SKIPS elsewhere. STEALS X focus while it
 // runs — don't type. Run: `node test/e2e/mozc/undo-composition.ts`.
@@ -26,7 +26,7 @@ const { page } = m;
 const txt = () => page.evaluate(() => (window as unknown as { __vedText(): string }).__vedText());
 // Undo/redo are plain (non-IME) keys, so drive them with REAL key chords. Redo is
 // Shift+Ctrl+Z, whose key is the UPPERCASE 'Z' — the handler must match either
-// case (regression: it once matched only 'z', so real-key redo silently failed).
+// case (a lowercase-only match makes real-key redo silently fail).
 const chord = async (...keys: string[]) => {
   for (const k of keys) await page.keyboard.down(k);
   for (const k of [...keys].reverse()) await page.keyboard.up(k);

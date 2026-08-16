@@ -1,9 +1,8 @@
-// Geometry for mouse DRAG-SELECTION over rubies. The native selection (and
+// Drag-selection geometry over rubies: the native selection (and
 // `posAtCoords`/`caretRangeFromPoint`/`posAtDOM`) can't address a position inside
-// a collapsed ruby's READ-ONLY base (`contenteditable=false`, the atom-ruby
-// IME-safety rule), so a drag must be driven from a GEOMETRIC hit-test against the
-// base glyphs' own rects. These two pure helpers are the testable core; the DOM
-// walk that measures the rects lives in editor.tsx.
+// a collapsed ruby's read-only base (atom-ruby IME-safety rule), so drags are
+// driven by a geometric hit-test against the base glyphs' rects. Pure testable
+// core; the DOM walk that measures the rects lives in editor.tsx.
 
 /** One measured glyph: its model offset and viewport bounds, already resolved to
  *  block (the line/column axis) and inline (along the line) coordinates. */

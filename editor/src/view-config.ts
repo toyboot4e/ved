@@ -1,9 +1,7 @@
 /** View config (CONTEXT.md): the user-adjustable rendering values, delivered
- *  to the editor exclusively as CSS custom properties on the app root. This
- *  pure module is the CONTRACT between a shell and the editor's stylesheet —
- *  the type, bounds, clamp, and property mapping live here, next to the CSS
- *  that consumes them; each shell keeps only its own state layer (the desktop
- *  Zustand store, the web preview's plain state). */
+ *  to the editor exclusively as CSS custom properties on the app root. The
+ *  CONTRACT between a shell and the editor's stylesheet — type, bounds, clamp,
+ *  and property mapping live here; each shell keeps only its own state layer. */
 
 import type React from 'react';
 
@@ -17,26 +15,23 @@ export type ViewConfig = {
   readonly pageLineChars: number;
   /** Lines per page (`--page-lines`). */
   readonly pageLines: number;
-  /** HEAD margin: space between the page border and the page's TEXT, in cells
-   *  (`--page-gap-top-cells`; on the next page's side of the border along
-   *  each mode's paged axis). */
+  /** HEAD margin: cells between the page border and the page's TEXT
+   *  (`--page-gap-top-cells`; on the next page's side of the border). */
   readonly pageGapTopCells: number;
-  /** TAIL margin: space between the page's FOLIO (page number) and the next
-   *  border, in cells (`--page-gap-bottom-cells`). The VerticalColumns band
-   *  gap is a 1-cell folio strip + 上 + 下, floored at the line-number gutter;
-   *  the other paged modes have no folio in the gap, so theirs is 上 + 下. */
+  /** TAIL margin: cells between the page's FOLIO and the next border
+   *  (`--page-gap-bottom-cells`). The VerticalColumns band gap is a 1-cell
+   *  folio strip + 上 + 下, floored at the line-number gutter; the other paged
+   *  modes have no folio in the gap, so theirs is 上 + 下. */
   readonly pageGapBottomCells: number;
-  /** Pages per multicol band — the columns pagings only (`--pages-per-row`;
-   *  pinned to 1 in the other modes). Side by side in VerticalColumns,
-   *  stacked in HorizontalColumns. */
+  /** Pages per multicol band, columns pagings only (`--pages-per-row`; pinned
+   *  to 1 elsewhere). Side by side in VerticalColumns, stacked in HorizontalColumns. */
   readonly pagesPerRow: number;
   /** Editor content font family (`--font-family`); '' inherits the shell's stack. */
   readonly fontFamily: string;
 };
 
-/** What a fresh install renders with: 40×20 fullwidth cells per page (the
- *  80-ASCII-column line cap), 0.55 line space (above the 0.5 ruby-clearing
- *  spec), the shell's font stack. */
+/** Fresh-install rendering: 40×20 fullwidth cells per page (the 80-ASCII-column
+ *  line cap), 0.55 line space (above the 0.5 ruby-clearing spec), the shell's font stack. */
 export const VIEW_CONFIG_DEFAULTS: ViewConfig = {
   fontSize: 18,
   lineSpaceRatio: 0.55,
@@ -68,13 +63,11 @@ const CSS_FONT_KEYWORDS = new Set([
   ...['ui-serif', 'ui-sans-serif', 'ui-monospace', 'ui-rounded'],
 ]);
 
-/**
- * A single family name as a CSS `font-family` value. Real family names are
- * quoted — unquoted, a name like "Font Awesome 7 Free" is invalid CSS (the
- * digit token) and the declaration silently drops. Generic keywords must NOT
- * be quoted (quoting turns them into literal family names), and a value with
- * a comma or quote is a hand-authored stack passed through as-is.
- */
+/** A single family name as a CSS `font-family` value. Real names are quoted —
+ *  unquoted, "Font Awesome 7 Free" is invalid CSS (digit token) and the
+ *  declaration silently drops. Generic keywords must NOT be quoted (quoting
+ *  makes them literal names); a value with a comma or quote is a hand-authored
+ *  stack passed through as-is. */
 const cssFontFamily = (raw: string): string => {
   const value = raw.trim();
   if (CSS_FONT_KEYWORDS.has(value) || /[,"']/.test(value)) return value;
@@ -101,12 +94,9 @@ export const clampViewConfig = (config: ViewConfig): ViewConfig => ({
   fontFamily: config.fontFamily,
 });
 
-/**
- * The custom-property overrides for the app root. Clamps here, not in the
- * store, so a half-typed out-of-range number in the debug UI never renders a
- * broken layout but also never fights the typing (the input keeps the raw
- * value; e.g. the "3" on the way to "36").
- */
+/** The custom-property overrides for the app root. Clamps here, not in the
+ *  store, so a half-typed out-of-range number never renders broken layout yet
+ *  never fights the typing (the input keeps the raw value). */
 export const viewConfigToCss = (config: ViewConfig): React.CSSProperties => {
   const clamped = clampViewConfig(config);
   const style: Record<string, string> = {

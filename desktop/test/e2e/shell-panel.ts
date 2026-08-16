@@ -35,7 +35,6 @@ try {
   await pressMod(page, 'o');
   await page.waitForFunction(() => document.querySelectorAll('[role=tab]').length === 2);
 
-  // Ctrl+` spawns the first shell; the prompt arrives from a real PTY
   await pressMod(page, '`');
   await page.waitForSelector('[aria-label="Shell panel"]');
   await page.waitForFunction(
@@ -90,18 +89,15 @@ try {
   await clickTheme(); // back to the launch palette
   step('the terminal follows the app theme');
 
-  // A second shell tab
   await page.click('[aria-label="New shell"]');
   await page.waitForFunction(() => document.querySelectorAll('[aria-label="Shell panel"] [role=tab]').length === 2);
   step('the + button adds a second shell tab');
 
-  // Close it via its ✕ → back to one
   await page.click('[aria-label="Close shell 2"]');
   await page.waitForFunction(() => document.querySelectorAll('[aria-label="Shell panel"] [role=tab]').length === 1);
   assert.equal(await shellTabCount(), 1);
   step('closing a shell tab removes it');
 
-  // Ctrl+` toggles the panel closed (shell kept) and open again
   await pressMod(page, '`');
   await page.waitForSelector('[aria-label="Shell panel"]', { state: 'hidden' });
   await pressMod(page, '`');

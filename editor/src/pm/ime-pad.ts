@@ -1,14 +1,10 @@
-// The composition CELL PAD (vertical writing). mozc's preedit shows the raw
-// romaji letter (a HALFWIDTH glyph, half a cell) until the next key converts
-// it to kana, so the preedit's inline extent toggles ±half a cell on nearly
-// every keystroke. When the composition spans a line wrap — worst at a page
-// boundary — that toggle flips the wrap point back and forth per key and the
-// following text (2-cell rubies especially) visibly jitters across the
-// boundary. A zero-block-size widget right AFTER the composition pads its
-// extent up to the next whole cell, so the wrap state only moves FORWARD as
-// real kana land. View-only, like every widget: the model text never changes.
-// The driver (ime-cell-pad.ts) measures and dispatches; this plugin only
-// stores the one decoration.
+// Composition cell pad (vertical writing). mozc's preedit shows raw halfwidth
+// romaji until the next key converts it to kana, so the preedit's inline extent
+// toggles ±half a cell per keystroke; across a line wrap that flips the wrap
+// point per key and the following text jitters. A zero-block-size widget after
+// the composition pads its extent to the next whole cell so the wrap only moves
+// forward. View-only; the driver (ime-cell-pad.ts) measures and dispatches,
+// this plugin only stores the one decoration.
 import type { EditorState, Transaction } from 'prosemirror-state';
 import { Plugin, PluginKey } from 'prosemirror-state';
 import { Decoration, DecorationSet } from 'prosemirror-view';
@@ -24,8 +20,8 @@ export const imePadTr = (state: EditorState, pad: ImePad | null): Transaction =>
 const padWidget = (px: number) => (): HTMLElement => {
   const el = document.createElement('span');
   el.className = 'ved-ime-pad';
-  // Read-only like every ved widget, and placed AFTER its position (side 1):
-  // a contenteditable=false PREVIOUS sibling kills the IM context.
+  // Placed after its position (side 1): a contenteditable=false previous
+  // sibling kills the IM context.
   el.setAttribute('contenteditable', 'false');
   el.style.inlineSize = `${px}px`;
   return el;

@@ -1,22 +1,13 @@
-// The ProseMirror document model for ved's identity rich text model: the rich
-// document encodes exactly the plain text — conversion between them is
-// lossless.
-//
-// The document is plaintext: `serialize` reproduces the source string character
-// for character (markup included). A ruby is an inline NODE, but — unlike the
-// earlier design — its MARKUP (`|`, `(`, `)`) is NOT editable text inside the
-// node. The node holds two editable child nodes: `rubyBase` (the base) and
-// `rubyReading` (the reading); `serialize` RECONSTRUCTS `|base(reading)`. So the
-// hidden delimiters never exist as zero-sized DOM text — which is what broke the
-// IME (no caret position among zero-size spans, IME box at the viewport corner).
-// The Rich policy renders just the base + a read-only <rt>; the caret and IME live in
-// normal full-size text.
+// The identity rich text model: `serialize` reproduces the source string
+// character for character. A ruby is an inline node with editable `rubyBase` +
+// `rubyReading` children; its markup (`|`,`(`,`)`) is never node text —
+// `serialize` reconstructs it. Zero-sized DOM text for the delimiters would
+// break the IME (no caret position among zero-size spans, IME box at the
+// viewport corner).
 import { type Node as PMNode, type ResolvedPos, Schema, type Slice } from 'prosemirror-model';
 import { parse, RUBY_PAIRS } from '../parse';
 
-// The canonical delimiters — the default the ruby node's attrs fall back to when
-// one is created without them (e.g. a DOM-parsed ruby). The data-driven variants
-// live on each node's attrs; the tables are in parse.ts.
+// Fallbacks for rubies created without attrs (e.g. DOM-parsed); variant tables in parse.ts.
 const [DEFAULT_OPEN, DEFAULT_CLOSE] = RUBY_PAIRS[0]!;
 const DEFAULT_FRONT = '|';
 
@@ -30,7 +21,7 @@ export const schema = new Schema({
       parseDOM: [{ tag: 'p' }],
     },
     text: { group: 'inline' },
-    // The ruby's two editable regions. They live ONLY inside a ruby node.
+    // The ruby's two editable regions; they live only inside a ruby node.
     rubyBase: {
       content: 'text*',
       inline: true,
@@ -43,18 +34,14 @@ export const schema = new Schema({
       toDOM: () => ['rt', 0],
       parseDOM: [{ tag: 'rt' }],
     },
-    // Ruby: an inline node whose content is [rubyBase, rubyReading]. The default
-    // rendering is <ruby class=rubyWrap><span.rubyBase>base</span><rt>reading
-    // </rt></ruby> — both children editable; no custom node view needed. The
-    // markup is shown (in the expanded policies) as read-only widget
-    // decorations, never editable DOM text (pm/decorations + pm/ruby.css).
+    // Expanded policies show the markup as read-only widget decorations, never
+    // editable DOM text (pm/decorations + pm/ruby.css).
     ruby: {
       group: 'inline',
       inline: true,
       content: 'rubyBase rubyReading',
       // The literal delimiters this ruby was written with, so `serialize` is
-      // lossless across the data-driven variants (`|漢(かん)` vs `｜漢《かん》`).
-      // They are the reconstructed markup, never divergent display state.
+      // lossless across variants (`|漢(かん)` vs `｜漢《かん》`).
       attrs: {
         front: { default: DEFAULT_FRONT },
         open: { default: DEFAULT_OPEN },
@@ -70,8 +57,7 @@ export const schema = new Schema({
 const rubyBaseText = (ruby: PMNode): string => ruby.child(0).textContent;
 const rubyReadingText = (ruby: PMNode): string => ruby.child(1).textContent;
 
-/** Reconstruct a ruby node's literal markup, using its OWN delimiters
- *  (`|base(reading)` or `｜base《reading》`) so serialization is lossless. */
+/** Reconstruct a ruby node's literal markup from its own delimiters, losslessly. */
 const rubyMarkup = (ruby: PMNode): string =>
   ruby.attrs.front + rubyBaseText(ruby) + ruby.attrs.open + rubyReadingText(ruby) + ruby.attrs.close;
 
@@ -85,9 +71,8 @@ const rubyNode = (base: string, reading: string, delims: RubyDelims): PMNode =>
     schema.node('rubyReading', null, reading ? [schema.text(reading)] : []),
   ]);
 
-/** The canonical inline content for one plain line: plain runs as text nodes,
- *  each parsed ruby span as a ruby node holding its base + reading. Shared by
- *  `docFromText` and the structure-repair reconcile (pm/structure.ts). */
+/** The canonical inline content for one plain line: text runs + ruby nodes.
+ *  Shared by `docFromText` and the structure-repair reconcile (pm/structure.ts). */
 export const inlineNodesFor = (line: string): PMNode[] => {
   const inline: PMNode[] = [];
   let cursor = 0;
@@ -106,16 +91,12 @@ export const inlineNodesFor = (line: string): PMNode[] => {
   return inline;
 };
 
-// Paragraph nodes KNOWN to be the canonical projection of their text
-// (`inlineNodesFor`). Nodes are immutable, so the verdict never goes stale, and
-// an edit shares every untouched paragraph node — structure repair
-// (pm/structure.ts) skips marked paragraphs, so its per-edit cost is O(changed
-// paragraphs), not O(document). Marked at construction (`paragraphFor`) and by
-// repair after a verification.
+// Paragraphs known-canonical (content === inlineNodesFor of their text). Nodes
+// are immutable so the verdict never goes stale; structure repair skips marked
+// paragraphs, keeping per-edit cost O(changed paragraphs).
 const canonicalParas = new WeakSet<PMNode>();
 
-/** Is `para` known-canonical (its content equals `inlineNodesFor` of its own
- *  text)? A false answer only means "not verified yet". */
+/** Is `para` known-canonical? A false answer only means "not verified yet". */
 export const isCanonicalParagraph = (para: PMNode): boolean => canonicalParas.has(para);
 
 /** Record that `para`'s content was verified equal to its canonical form. */
@@ -123,9 +104,8 @@ export const markCanonicalParagraph = (para: PMNode): void => {
   canonicalParas.add(para);
 };
 
-/** Build one paragraph node as the canonical projection of `line` — and mark
- *  it so structure repair never re-verifies it. Every paragraph builder
- *  (docFromText, the plain-edit rebuilds) goes through this. */
+/** Build one paragraph node as the canonical projection of `line`, pre-marked
+ *  so structure repair never re-verifies it. Every paragraph builder goes through this. */
 export const paragraphFor = (line: string): PMNode => {
   const para = schema.node('paragraph', null, inlineNodesFor(line));
   canonicalParas.add(para);
@@ -140,18 +120,15 @@ export const docFromText = (text: string): PMNode =>
     text.split('\n').map((line) => paragraphFor(line)),
   );
 
-// PM nodes are IMMUTABLE, so node identity is a perfect cache key: an edit
-// produces a new doc that SHARES every untouched paragraph node. Caching
-// per-paragraph derivations in WeakMaps makes the per-event cost O(changed
-// paragraph), not O(document) — the whole-doc rebuild stalled caret moves and
-// clicks on large docs (see the docIndex/paraMaps consumers below).
+// PM nodes are immutable, so node identity is a perfect cache key: an edit
+// shares every untouched paragraph node, making WeakMap-cached per-paragraph
+// derivations O(changed paragraph) per event — whole-doc rebuilds stalled
+// caret moves and clicks on large docs.
 const paraTextCache = new WeakMap<PMNode, string>();
 
-/** The plain text of one paragraph. Lossless: a ruby contributes its
- *  RECONSTRUCTED markup `|base(reading)`, every other child its text content.
- *  This is the per-line analogue of `serialize`; structure repair uses it
- *  because a ruby's `textContent` is now `base+reading` (NOT the markup).
- *  Cached by node identity (immutable). */
+/** The plain text of one paragraph: a ruby contributes its reconstructed
+ *  markup (its `textContent` is `base+reading`, NOT the markup). Cached by
+ *  node identity. */
 export const paragraphText = (para: PMNode): string => {
   const hit = paraTextCache.get(para);
   if (hit !== undefined) return hit;
@@ -165,10 +142,9 @@ export const paragraphText = (para: PMNode): string => {
 
 const serializeCache = new WeakMap<PMNode, string>();
 
-/** The plain document string. Lossless: paragraphs join with `\n`.
- *  Memoized by doc identity — repeat calls on the same doc version return the
- *  SAME string instance (callers key their own caches on it), and an edit pays
- *  only the changed paragraph plus the join. */
+/** The plain document string (paragraphs joined with `\n`). Memoized by doc
+ *  identity — repeat calls return the SAME string instance (callers key their
+ *  own caches on it). */
 export const serialize = (doc: PMNode): string => {
   const hit = serializeCache.get(doc);
   if (hit !== undefined) return hit;
@@ -181,15 +157,11 @@ export const serialize = (doc: PMNode): string => {
   return text;
 };
 
-/** The exact plain text for a COPIED slice (the PM clipboardTextSerializer). The ruby
- *  markup `|`,`(`,`)` is never DOM text — it's reconstructed by `serialize` — so
- *  PM's default copy (node text content) would drop it. This rebuilds it for the
- *  selection, so copying a ruby (or a range spanning one) yields the literal
- *  delimiters. A ruby that the selection CUT INTO (a partial base/reading) emits
- *  only its selected text, NOT half-markup like `|漢(`. */
+/** The exact plain text for a copied slice (the PM clipboardTextSerializer):
+ *  PM's default copy would drop the reconstructed ruby markup. A ruby the
+ *  selection CUT INTO emits only its selected text, not half-markup like `|漢(`. */
 export const serializeSlice = (slice: Slice): string => {
   const frag = slice.content;
-  // Block-level (multi-paragraph) selection: one exact plain line per paragraph.
   if (frag.childCount > 0 && frag.firstChild?.type.name === 'paragraph') {
     const lines: string[] = [];
     frag.forEach((para) => {
@@ -197,8 +169,8 @@ export const serializeSlice = (slice: Slice): string => {
     });
     return lines.join('\n');
   }
-  // Inline (within one paragraph): a ruby is "whole" only when the slice did not
-  // open into it — the open depth touches just the FIRST and LAST child.
+  // A ruby is "whole" only when the slice did not open into it — the open
+  // depth touches just the first and last child.
   let line = '';
   const last = frag.childCount - 1;
   frag.forEach((node, _offset, i) => {
@@ -209,59 +181,42 @@ export const serializeSlice = (slice: Slice): string => {
   return line;
 };
 
-/** When a collapsed ruby's markup is applied, its base EDGES write OUTSIDE the ruby
- *  (the new spec). The caret model already keeps arrow movement on the boundary,
- *  but the browser's affinity renders the DOM caret at the base START *inside* the
- *  ruby, so PM syncs the model there and a keystroke would land inside. Given the
- *  caret's resolved position `$h`, return the position just BEFORE the ruby (caret
- *  at the base start) or just AFTER it (base end) so the insertion lands outside —
- *  or `null` for an interior caret (write inside) or a non-ruby-base position. The
- *  caller applies this only when the ruby is COLLAPSED (Rich; in expanded policies
- *  the edges are editable, so it must NOT redirect). */
+/** Redirect a typed insertion at a collapsed ruby's base EDGE to just outside
+ *  the ruby (browser affinity syncs the model caret inside at the base start);
+ *  `null` for an interior caret or a non-ruby-base position. Apply only when
+ *  COLLAPSED — expanded policies make the edges editable, so no redirect. */
 export const rubyEdgeOutsidePos = ($h: ResolvedPos): number | null => {
   const d = $h.depth;
   if ($h.parent.type.name !== 'rubyBase' || $h.node(d - 1)?.type.name !== 'ruby') return null;
-  if ($h.parentOffset === 0) return $h.before(d - 1); // base START → before the ruby
-  if ($h.parentOffset === $h.parent.content.size) return $h.after(d - 1); // base END → after
-  return null; // interior — write inside
+  if ($h.parentOffset === 0) return $h.before(d - 1);
+  if ($h.parentOffset === $h.parent.content.size) return $h.after(d - 1);
+  return null;
 };
 
-/** Where a CLICK that resolved INSIDE a collapsed ruby should put the caret. Unlike
- *  `rubyEdgeOutsidePos` (typed text, base edges only), a click can land deeper:
- *   - the rubyBase INTERIOR (between chars) is a real, editable caret spot → stay
- *     (`null`);
- *   - a rubyBase EDGE → before/after the ruby;
- *   - the READING (`rubyReading`) → after the ruby (it is read-only in Rich);
- *   - the RUBY NODE level — where a click resolves when the base is read-only (a
- *     LEADING/adjacent atom ruby), since the DOM caret can't enter the base — →
- *     before the ruby if the click is at/before the base, else after it.
- *  Returns `null` when the position is not inside a ruby (or is an editable base
- *  interior). The caller applies this only when COLLAPSED (Rich). */
+/** Caret target for a CLICK inside a collapsed ruby: base interior → stay
+ *  (`null`, editable); base edge → before/after the ruby; reading → after
+ *  (read-only in Rich); ruby-node level (read-only atom base, DOM caret can't
+ *  enter) → the boundary on the side the click fell past. `null` outside a
+ *  ruby. Apply only when COLLAPSED (Rich). */
 export const rubyClickOutsidePos = ($h: ResolvedPos): number | null => {
   const d = $h.depth;
   const name = $h.parent.type.name;
   if (name === 'rubyBase') {
-    if ($h.parentOffset > 0 && $h.parentOffset < $h.parent.content.size) return null; // editable interior
+    if ($h.parentOffset > 0 && $h.parentOffset < $h.parent.content.size) return null;
     return $h.parentOffset === 0 ? $h.before(d - 1) : $h.after(d - 1);
   }
-  if (name === 'rubyReading') return $h.after(d - 1); // the reading → after the ruby
+  if (name === 'rubyReading') return $h.after(d - 1);
   if (name === 'ruby') {
-    // The atom base is read-only, so the click landed at the ruby's content level;
-    // pick the boundary on the side of the base the click fell past.
     return $h.parentOffset >= $h.parent.child(0).nodeSize ? $h.after(d) : $h.before(d);
   }
   return null;
 };
 
-/** Where a PASTE (or any BULK text insert) with a collapsed caret inside a
- *  COLLAPSED ruby should land: OUTSIDE the ruby — before it at the base start,
- *  after it anywhere else. Unlike a single typed character (which legitimately
- *  edits the base interior, char by char), bulk text spliced into the base
- *  breaks the markup the user cannot even see in Rich: pasted `|…(…)` inside a
- *  base tears the host ruby open into raw `|`/`(` debris. Returns `null` when
- *  the caret is not inside a ruby. The caller applies this only when the ruby
- *  is COLLAPSED (Rich) — in the expanded policies the markup is visible text
- *  and pasting into it is an ordinary, visible edit. */
+/** Redirect a PASTE (any bulk insert) inside a collapsed ruby to outside it:
+ *  unlike char-by-char typing, pasted `|…(…)` spliced into the base tears the
+ *  host ruby into raw `|`/`(` debris the user can't see in Rich. `null` when
+ *  not inside a ruby. Apply only when COLLAPSED — expanded markup is visible
+ *  text and pasting into it is an ordinary edit. */
 export const rubyPasteOutsidePos = ($h: ResolvedPos): number | null => {
   const edge = rubyClickOutsidePos($h);
   if (edge != null) return edge;
@@ -271,35 +226,21 @@ export const rubyPasteOutsidePos = ($h: ResolvedPos): number | null => {
   return null;
 };
 
-// ---------------------------------------------------------------------------
-// Plain-offset ↔ PM-position mapping.
-//
-// The plain string includes the reconstructed delimiters `|`,`(`,`)`, which are
-// NOT nodes in the tree — so a single DFS walk threads the plain offset and the
-// PM position together, "spending" one offset on each delimiter at the node
-// boundary where it belongs:
-//   - `|` when ENTERING a ruby (before-ruby → ruby content),
-//   - `(` when LEAVING the base (rubyBase end),
-//   - `)` when LEAVING the reading (rubyReading end).
-// `posToOff[pmPos]` is dense (every position); `offToPos[offset]` records the
-// FIRST position at each offset (so an interior offset lands inside the editable
-// region, a boundary offset on the element edge). This whole-doc walk now backs
-// only the batch `buildPosMap` (one call per doc version, in buildBase); the
-// per-event converters below decompose the same walk PER PARAGRAPH, cached by
-// node identity — model.test asserts the two stay equivalent.
-// ---------------------------------------------------------------------------
+// Plain-offset ↔ PM-position mapping: the delimiters `|`,`(`,`)` are not tree
+// nodes, so one DFS walk threads offset and position together, spending one
+// offset on each delimiter at the boundary it belongs to (`|` entering the
+// ruby, `(` leaving the base, `)` leaving the reading). The whole-doc walk
+// backs only the batch `buildPosMap`; the per-event converters decompose the
+// same walk per paragraph, cached by node identity — model.test asserts equivalence.
 
 type Maps = { offToPos: number[]; posToOff: (number | undefined)[] };
 
-// The shared caret-landing walk state + discipline (ONE implementation; the
-// whole-doc and per-paragraph drivers below both assemble from it):
-// `markBoth` is a caret-LANDING position (a text char, a delimiter boundary, or
-// the edge just before/after a ruby): it sets BOTH maps. Because offToPos keeps
-// the first position per offset and the inner regions are walked AFTER the
-// wrapper edge, an interior offset prefers the INNERMOST editable region.
-// `markPos` is an intermediate wrapper position (ruby content edge, between the
-// two regions): it records only posToOff, so `offsetToPos` never lands the caret
-// on a wrapper boundary where editing/IME has no real text to attach to.
+// Walk discipline: `markBoth` = a caret-landing position, sets both maps —
+// offToPos keeps the FIRST position per offset and inner regions are walked
+// after the wrapper edge, so an interior offset prefers the innermost editable
+// region. `markPos` = an intermediate wrapper position, posToOff only, so
+// `offsetToPos` never lands the caret on a wrapper boundary with no real text
+// for editing/IME to attach to.
 type WalkState = { off: number; pos: number; offToPos: number[]; posToOff: (number | undefined)[] };
 
 const markBoth = (st: WalkState): void => {
@@ -309,7 +250,6 @@ const markBoth = (st: WalkState): void => {
 const markPos = (st: WalkState): void => {
   st.posToOff[st.pos] = st.off;
 };
-// Walk a run of characters: each spends one offset and one position.
 const walkChars = (st: WalkState, s: string): void => {
   for (let i = 0; i < s.length; i++) {
     markBoth(st);
@@ -317,27 +257,26 @@ const walkChars = (st: WalkState, s: string): void => {
     st.pos += 1;
   }
 };
-/** Walk one paragraph's children (and its content-end landing) — the ruby
- *  offset/position accounting, written ONCE. */
+/** Walk one paragraph's children — the ruby offset/position accounting, written once. */
 const walkParagraphChildren = (st: WalkState, para: PMNode): void => {
   para.forEach((child) => {
     if (child.type.name === 'ruby') {
-      markBoth(st); // the front boundary (before the ruby node — logically outside)
-      st.off += child.attrs.front.length; // spend the front marker (`|` / `｜`)
+      markBoth(st); // front boundary, before the ruby node
+      st.off += child.attrs.front.length;
       st.pos += 1; // into the ruby content
-      markPos(st); // ruby content start (wrapper edge)
+      markPos(st); // wrapper edge
       st.pos += 1; // into rubyBase content
       walkChars(st, rubyBaseText(child));
       markBoth(st); // after the base = the open-delimiter boundary
-      st.off += child.attrs.open.length; // spend the opening delimiter (`(` / `《`)
+      st.off += child.attrs.open.length;
       st.pos += 1; // out of rubyBase
-      markPos(st); // between rubyBase and rubyReading (wrapper edge)
+      markPos(st); // wrapper edge between the two regions
       st.pos += 1; // into rubyReading content
       walkChars(st, rubyReadingText(child));
       markBoth(st); // after the reading = the close-delimiter boundary
       st.pos += 1; // out of rubyReading
-      markPos(st); // ruby content end (wrapper edge, still before the close delimiter)
-      st.off += child.attrs.close.length; // spend the closing delimiter (`)` / `》`)
+      markPos(st); // wrapper edge, still before the close delimiter
+      st.off += child.attrs.close.length;
       st.pos += 1; // out of the ruby node
     } else {
       walkChars(st, child.textContent);
@@ -350,42 +289,33 @@ const buildMaps = (doc: PMNode): Maps => {
   const st: WalkState = { off: 0, pos: 0, offToPos: [], posToOff: [] };
   doc.forEach((para, paraOff) => {
     if (paraOff > 0) {
-      // The newline between paragraphs sits at the previous paragraph's end pos.
+      // The joining newline sits at the previous paragraph's end pos.
       st.off += 1;
     }
-    st.pos += 1; // into the paragraph content (offset 0 maps HERE, not the doc edge)
+    st.pos += 1; // into the paragraph content (offset 0 maps here, not the doc edge)
     walkParagraphChildren(st, para);
     st.pos += 1; // out of the paragraph
   });
-  // The final position (doc end) carries the final offset.
   st.posToOff[st.pos] = st.off;
   if (st.offToPos[st.off] === undefined) st.offToPos[st.off] = Math.min(st.pos, doc.content.size);
   return { offToPos: st.offToPos, posToOff: st.posToOff };
 };
 
-// ---------------------------------------------------------------------------
-// Per-paragraph decomposition of the offset↔position maps. The whole-doc
-// `buildMaps` walk was O(document) PER CALL — and posToOffset/offsetToPos run
-// several times per caret move — so large docs paid an O(N) tree walk on every
-// click and arrow key. A conversion only needs (a) the summed plain length of
-// the paragraphs BEFORE the target (the doc-level index below, O(#paragraphs)
-// once per doc version from cached per-paragraph lengths) and (b) the one
-// containing paragraph's LOCAL map (cached by node identity, so it survives
-// every edit that doesn't touch that paragraph).
-//
-// Local coordinates: position 0 = BEFORE the paragraph node (content starts at
-// local 1); offset 0 = the paragraph's first character. The local walk applies
-// the same markBoth/markPos discipline as `buildMaps`, so the assembled global
-// answers are identical (model.test asserts equivalence via buildPosMap).
-// ---------------------------------------------------------------------------
+// Per-paragraph decomposition: posToOffset/offsetToPos run several times per
+// caret move, so the O(document) `buildMaps` walk would cost O(N) per click
+// and arrow key. A conversion needs only the doc-level prefix index (once per
+// doc version) plus the containing paragraph's local map (cached by node
+// identity, surviving every edit elsewhere).
 
 const paraMapsCache = new WeakMap<PMNode, Maps>();
 
 const paraMaps = (para: PMNode): Maps => {
   const hit = paraMapsCache.get(para);
   if (hit) return hit;
-  // Local coordinates: position 0 = BEFORE the paragraph node (content starts
-  // at local 1); offset 0 = the paragraph's first character.
+  // Local coordinates: position 0 = before the paragraph node (content starts
+  // at local 1); offset 0 = the paragraph's first character. Same walk
+  // discipline as buildMaps, so assembled global answers are identical
+  // (model.test asserts equivalence via buildPosMap).
   const st: WalkState = { off: 0, pos: 1, offToPos: [], posToOff: [] };
   walkParagraphChildren(st, para);
   const maps = { offToPos: st.offToPos, posToOff: st.posToOff };
@@ -394,8 +324,7 @@ const paraMaps = (para: PMNode): Maps => {
 };
 
 /** Doc-level paragraph index: position and cumulative plain offset of each
- *  paragraph. O(#paragraphs) once per doc version (lengths come from the
- *  per-paragraph text cache). */
+ *  paragraph. O(#paragraphs) once per doc version. */
 export type DocIndex = { paras: PMNode[]; paraPos: number[]; prefixOff: number[]; total: number };
 
 const docIndexCache = new WeakMap<PMNode, DocIndex>();
@@ -459,7 +388,7 @@ export const posToOffset = (doc: PMNode, pos: number): number => {
   const { paras, paraPos, prefixOff } = docIndex(doc);
   // The containing paragraph: the last one STARTING BEFORE pos. A position ON a
   // paragraph boundary (pos === paraPos[i], an unmarked spot) belongs to the
-  // PREVIOUS paragraph's clamp-down, matching the old whole-doc scan.
+  // PREVIOUS paragraph's clamp-down, matching the whole-doc `buildMaps` walk.
   const i = lastAtOrBelow(paraPos, pos - 1);
   if (i < 0) return 0; // at/before the doc start
   const { posToOff } = paraMaps(paras[i]!);

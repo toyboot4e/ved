@@ -1,21 +1,13 @@
-// REAL mozc composition at a Vertical Rows page boundary: the page GAP must
-// follow the re-wrap WHILE composing. A paragraph spanning pages 1–2 re-wraps
-// as the preedit grows at line 20; with the re-measure skipped until
-// compositionend, the stale gap widget drifts mid-line and page 2's first
-// line jams against page 1's last (「the next line comes next to the current
-// line」). The fix re-measures during composition; a boundary trapped inside
-// the composition TEXT NODE (where a widget cannot render — PM's composition
-// protection drops it) is rendered at the node's end as a gap-BEFORE widget,
-// so the space still opens between the right lines.
+// REAL mozc composing across a Vertical Rows page boundary: the page GAP must
+// follow the re-wrap WHILE composing (a stale gap widget jams page 2's first
+// line against page 1's last). A boundary trapped inside the composition TEXT
+// NODE (PM's composition protection drops widgets there) renders at the
+// node's end as a gap-BEFORE widget. Asserted geometrically before, DURING,
+// and after; the composition must survive the mid-composition pageGapTr
+// dispatches.
 //
-// Asserted geometrically: the block-axis separation between the two glyphs
-// straddling the page boundary must be gap-sized (vs pitch at a plain wrap),
-// before, DURING, and after the composition. The composition itself must
-// survive the mid-composition pageGapTr dispatches: keep typing after a
-// re-measure, then commit, and require the exact text.
-//
-// Linux + fcitx5 + mozc + xdotool only; SKIPS elsewhere. STEALS X focus while
-// it runs — don't type. Run: node test/e2e/mozc/gap-compose.ts
+// Linux-only (fcitx5 + mozc + xdotool; SKIPS elsewhere — see ./harness.ts);
+// steals X focus. Run: node test/e2e/mozc/gap-compose.ts
 import assert from 'node:assert/strict';
 import { clickWritingMode, fail, finish, setCaret, setDoc, setViewConfig, step } from '../harness.ts';
 import { mozcAvailable, openMozc } from './harness.ts';
@@ -28,19 +20,16 @@ if (!mozcAvailable()) {
 
 const LINES_PER_PAGE = 20;
 const CHARS_PER_LINE = 40; // measured: this config wraps 40 kana per line
-// ONE paragraph spanning both pages: line 20 (page 1 last) and line 21
-// (page 2 first) are the same paragraph, so the preedit re-wraps across the
-// boundary.
+// One paragraph spans both pages (lines 20 and 21), so the preedit re-wraps
+// across the boundary.
 const PARA = 'あいうえおかきくけこさしすせそたちつてとなにぬねのはひふへほまみむめもやゆよわをん'.repeat(20);
 
 const m = await openMozc();
 const { page } = m;
 
-/** The block-axis separation between the columns of the characters at plain
- *  offsets `i-1` and `i` — pitch at an ordinary wrap, pitch + gap at a page
- *  boundary, ~0 within a line. Identity model: the concatenated DOM text IS
- *  the plain text (kana only, no ruby here), so a plain offset addresses its
- *  glyph directly. Scroll/window-independent: both glyphs sit at the caret. */
+/** Block-axis separation between the glyphs at plain offsets `i-1` and `i` —
+ *  pitch at an ordinary wrap, pitch + gap at a page boundary. Kana-only doc:
+ *  the concatenated DOM text IS the plain text, so offsets address glyphs. */
 const separationAt = (i: number) =>
   page.evaluate((boundary) => {
     const pm = document.querySelector('.ProseMirror') as HTMLElement;
@@ -101,10 +90,9 @@ try {
   assert.ok(!gapish(beforeCtl), `no gap at the plain 19/20 wrap (sep ${beforeCtl.sep})`);
   step(`settled: boundary sep ${before.sep.toFixed(1)}px vs plain wrap ${beforeCtl.sep.toFixed(1)}px`);
 
-  // Compose in two chunks with a measurement between them: the mid-composition
-  // re-measure (a pageGapTr dispatch) must not break the live composition.
-  // The boundary offset is POSITIONAL (20 lines x 20 chars) — the preedit
-  // re-wraps the text but the boundary stays at the same offset.
+  // The mid-composition re-measure (a pageGapTr dispatch) must not break the
+  // live composition; the boundary offset is positional, so it survives the
+  // re-wrap.
   await m.type('neko');
   await page.waitForTimeout(300); // let the debounced re-measure land
   const during = await separationAt(PAGE_BOUNDARY);

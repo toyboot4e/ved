@@ -50,7 +50,6 @@ try {
   await page.waitForTimeout(80);
   assert.equal(await caret(), 82, 'precondition: caret moved to the middle');
 
-  // Delete one character, then undo.
   await page.keyboard.press('Backspace');
   await page.waitForTimeout(150);
   const afterDel = await caret();

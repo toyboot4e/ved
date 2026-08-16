@@ -1,21 +1,15 @@
-// Paragraph windowing for the block-flow modes: paragraphs far from the
-// viewport are display:none'd (their layout objects are destroyed — the whole
-// point: Blink's per-keystroke Editor::SyncSelection walk and layout passes
-// scale with RETAINED layout objects, and only shrinking the laid-out tree
-// cuts them) while one SPACER block per hidden run reproduces the run's exact
-// extent, so scroll geometry, page arithmetic, and every visible position are
-// unchanged. View-only, page-gap style: the editor measures and decides
-// (windowing.ts), this plugin only stores the decoration set — a node
-// decoration (`vedWindowHidden`) per hidden paragraph plus one widget spacer
-// per run. The model never knows.
+// Paragraph windowing: far paragraphs are display:none'd — Blink's
+// per-keystroke Editor::SyncSelection walk and layout passes scale with
+// RETAINED layout objects — while one SPACER per hidden run reproduces the
+// run's exact extent, so scroll geometry, page arithmetic, and every visible
+// position are unchanged. View-only: the editor measures and decides
+// (windowing.ts); this plugin only stores the decoration set.
 //
-// The spacer has two forms, one mechanism (a widget decoration at the run's
-// start): in BLOCK FLOW one block sized to the run's exact extent; in the
-// MULTICOL modes fragmentation cannot be trusted to slice a block like the
-// text it replaced (probe-verified wrong), so the spacer is N zero-height
-// `break-after: column` JUMPERS — each deterministically consumes one column
-// band, no slicing arithmetic — plus one exact-height TAIL that re-seats the
-// following content inside its band. Block flow is the 0-jumper case.
+// The spacer: in BLOCK FLOW one block sized to the run's extent; in MULTICOL
+// fragmentation cannot be trusted to slice a block like the text it replaced
+// (probe-verified wrong), so it is N zero-height `break-after: column`
+// JUMPERS — each deterministically consumes one column band — plus one
+// exact-height TAIL. Block flow is the 0-jumper case.
 
 import type { Node as PMNode } from 'prosemirror-model';
 import type { EditorState, Transaction } from 'prosemirror-state';
@@ -34,12 +28,11 @@ export type HiddenRun = {
   readonly toPara: number;
   readonly extent: number;
   readonly jumpers?: number;
-  /** The run's TRUE total flow extent in px — measured from real rects when
-   *  the run formed and composed through membership changes (windowing.ts).
-   *  Stored on the spacer element (data-flow-extent) so re-derivations never
-   *  re-SUM per-member extents: per-band slack accumulated over hundreds of
-   *  members once drifted a spec a whole band short, and the wrong placement
-   *  then self-confirmed (every live rect agreed with it). */
+  /** The run's TRUE total flow extent in px — measured from real rects and
+   *  composed through membership changes (windowing.ts); stored on the spacer
+   *  (data-flow-extent) so re-derivations never re-SUM per-member extents:
+   *  accumulated per-band slack once drifted a spec a whole band short, and
+   *  the wrong placement self-confirmed. */
   readonly flowExtent?: number;
 };
 
@@ -56,8 +49,7 @@ const spacerDOM = (extent: number, jumpers: number, flowExtent: number) => (): H
   }
   const tail = document.createElement('div');
   tail.className = 'ved-window-tail';
-  // Logical size: width in vertical-rl, height in horizontal-tb — one rule
-  // serves both orientations, like the page-gap widget.
+  // Logical size — one rule serves both orientations, like the page-gap widget.
   tail.style.blockSize = `${extent}px`;
   el.appendChild(tail);
   return el;
@@ -68,17 +60,14 @@ const spacerDOM = (extent: number, jumpers: number, flowExtent: number) => (): H
 export const windowingTr = (state: EditorState, runs: readonly HiddenRun[]): Transaction =>
   state.tr.setMeta(windowingKey, runs);
 
-/** Decorations for the hidden runs against `doc`: ONE spacer widget per
- *  run — and nothing per paragraph. Hiding is a DIRECT class on the <p>
- *  elements (windowing.ts): a per-paragraph node decoration here put
- *  O(hidden paragraphs) entries in the set, and ProseMirror's per-child
- *  decoration iteration then cost ~100ms/key at 5000 paragraphs. The
- *  elements are safe class carriers — a hidden paragraph's node never
- *  changes while hidden (edits materialize first), so PM never recreates
- *  its element; the windowing pass re-asserts the classes anyway. */
+/** Decorations for the hidden runs: ONE spacer widget per run, nothing per
+ *  paragraph — hiding is a DIRECT class on the <p> elements (windowing.ts);
+ *  per-paragraph node decorations cost ~100ms/key at 5000 paragraphs in PM's
+ *  per-child decoration iteration. The elements are safe class carriers: a
+ *  hidden paragraph's node never changes while hidden (edits materialize
+ *  first), so PM never recreates its element. */
 const buildWindowDecos = (doc: PMNode, runs: readonly HiddenRun[]): Decoration[] => {
   const decos: Decoration[] = [];
-  // Child offsets: paragraph i spans [pos, pos + nodeSize) at the doc level.
   const paraPos: number[] = [];
   doc.forEach((_node, offset) => {
     paraPos.push(offset);

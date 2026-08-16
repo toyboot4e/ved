@@ -12,10 +12,8 @@ import { useEffect, useMemo, useState } from 'react';
 import { type ViewConfig, viewConfigFromPersisted, viewConfigToCss } from './view-config';
 import { ViewConfigControls } from './view-config-controls';
 
-// A throwaway preview: one in-memory buffer plus controls for both axes
-// (writing mode + appear policy) and the debug view config (font size, 字/行,
-// gaps, 頁/段, font). Not for real use — no files, no tabs, no IPC.
-// State survives a reload via localStorage so a mis-reload doesn't lose text.
+// Throwaway preview: one in-memory buffer, no files/tabs/IPC. State survives
+// a reload via localStorage so a mis-reload doesn't lose text.
 
 const STORAGE_KEY = 'ved.web.preview';
 
@@ -61,8 +59,7 @@ const loadPersisted = (): Persisted => {
     return {
       text: typeof parsed.text === 'string' ? parsed.text : fallback.text,
       writingMode: parsed.writingMode ?? fallback.writingMode,
-      // Validated: AppearPolicy became string-valued; a stale numeric from an
-      // older localStorage entry falls back (a one-time reset of a debug knob).
+      // A stale numeric appearPolicy in old localStorage falls back.
       appearPolicy: (Object.values(AppearPolicy) as unknown[]).includes(parsed.appearPolicy)
         ? (parsed.appearPolicy as AppearPolicy)
         : fallback.appearPolicy,
@@ -79,15 +76,13 @@ export const App = (): React.JSX.Element => {
   const [writingMode, setWritingMode] = useState(initial.writingMode);
   const [appearPolicy, setAppearPolicy] = useState(initial.appearPolicy);
   const [viewConfig, setViewConfig] = useState(initial.viewConfig);
-  // One history instance for the buffer's lifetime, seeded from the loaded text.
   const history = useMemo(() => new PlainTextHistory(initial.text), [initial.text]);
 
-  // Persist text + the control axes on every change (text restored on a mis-reload).
   useEffect(() => {
     try {
       localStorage.setItem(STORAGE_KEY, JSON.stringify({ text, writingMode, appearPolicy, viewConfig }));
     } catch {
-      // Storage unavailable (private mode / quota) — the preview still works.
+      // Storage unavailable (private mode / quota).
     }
   }, [text, writingMode, appearPolicy, viewConfig]);
 
@@ -117,13 +112,10 @@ export const App = (): React.JSX.Element => {
         <ViewConfigControls writingMode={writingMode} config={viewConfig} setConfig={setViewConfig} />
       </div>
       <div className='stage'>
-        {/* vertMode on the root transposes the page geometry (CSS custom props);
-            the view config overrides the geometry custom props inline.
-            pagesPerRow only means something in the columns modes —
-            pin it to 1 elsewhere so the root/page widths stay one page.
-            rowsMode/fillMode widen the root to the window: VerticalRows and
-            HorizontalColumns scroll along the horizontal axis, so a wide
-            window shows more lines/pages (Vertical likewise via fillMode). */}
+        {/* vertMode transposes the page geometry custom props. pagesPerRow only
+            means something in the columns modes — pin it to 1 elsewhere so the
+            root/page widths stay one page. rowsMode/fillMode widen the root to
+            the window: those modes scroll along the horizontal axis. */}
         <div
           className={clsx(
             styles.root,

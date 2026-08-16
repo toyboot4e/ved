@@ -10,7 +10,7 @@ import type { Appear } from './pm/leaves';
 import { posToOffset, rubyEdgeOutsidePos } from './pm/model';
 import type { EditorSession } from './session';
 
-/** Single-line insertText. New spec: in Rich a ruby's base EDGE writes
+/** Single-line insertText. In Rich a ruby's base EDGE writes
  *  OUTSIDE the ruby. The caret rests at the boundary, but the browser's
  *  affinity can drop the DOM caret (and thus PM's synced model selection) at
  *  the base START inside the ruby — so redirect the insert to before/after
@@ -52,7 +52,7 @@ export const createBeforeInputHandler =
       // Multi-line insertText (some IMEs, programmatic input): a bulk
       // insert, handled like a paste — exact, outside a
       // collapsed ruby (`tr.insertText` would inline the \n, and a
-      // structural replaceSelection left phantom markup; plainInsertTr).
+      // structural replaceSelection leaves phantom markup; plainInsertTr).
       v.dispatch(plainInsertTr(v.state, ie.data, policyClassRef.current).scrollIntoView());
     } else {
       insertSingleLine(v, ie.data, policyClassRef.current);

@@ -42,7 +42,6 @@ try {
   await page.waitForSelector(treeItem('a.txt'));
   step('setup: a root with two files');
 
-  // Right-click a file: the three-item menu; Esc closes it
   await page.click(treeItem('a.txt'), { button: 'right' });
   await page.waitForSelector('[role=menu]');
   for (const label of ['名前を変更', '削除', 'フォルダを追加']) assert.ok(await page.$(menuItem(label)), label);
@@ -50,7 +49,6 @@ try {
   await page.waitForFunction(() => document.querySelector('[role=menu]') === null);
   step('right-click on a file opens the menu; Esc closes it');
 
-  // Rename a.txt → renamed.txt: inline input, Enter commits, disk follows
   await page.click(treeItem('a.txt'), { button: 'right' });
   await page.click(menuItem('名前を変更'));
   await page.waitForSelector('[aria-label="Rename entry"]');
@@ -62,7 +60,6 @@ try {
   assert.ok(!(await exists(join(tmp, 'ws', 'a.txt'))));
   step('rename commits to the tree and the disk');
 
-  // A collision is refused with a notice; the input stays for a retry
   await page.click(treeItem('b.txt'), { button: 'right' });
   await page.click(menuItem('名前を変更'));
   await page.waitForSelector('[aria-label="Rename entry"]');
@@ -76,7 +73,6 @@ try {
   assert.ok(await exists(join(tmp, 'ws', 'b.txt')));
   step('a rename collision is refused with a notice');
 
-  // A DIRECTORY renames too
   await page.click(treeItem('sub'), { button: 'right' });
   await page.waitForSelector('[role=menu]');
   await page.click(menuItem('名前を変更'));
@@ -108,7 +104,6 @@ try {
   assert.ok(!(await exists(join(tmp, 'ws', 'chapters'))));
   step('a directory deletes recursively from the menu');
 
-  // Right-click the pane background: add-folder only, and it works
   await page.click('[aria-label="File browser"]', { button: 'right', position: { x: 60, y: 300 } });
   await page.waitForSelector('[role=menu]');
   assert.equal(await page.$(menuItem('名前を変更')), null);

@@ -3,24 +3,21 @@
  *  backend-neutral — plain strings and plain offsets, never ProseMirror
  *  values — so an extension survives an editor-backend swap and cannot break
  *  the identity rich text model: every edit routes through the editor's exact
- *  plain-string paths (plainInsertTr), every selection through the
- *  boundary-aware offset map.
+ *  plain-string paths (plainInsertTr).
  *
- *  IME safety is enforced BY THE SEAM, not trusted to extensions: key/text
- *  hooks are never called for composing input (`isComposing` / keyCode 229),
- *  every mutating context method refuses while a composition is live, and
- *  attach/detach is deferred to the composition's end. An extension that wants
- *  to react to composed text does so at `onCompositionEnd` — a legal edit
- *  time. */
+ *  IME safety is enforced BY THE SEAM: key/text hooks are never called for
+ *  composing input, every mutating context method refuses while a composition
+ *  is live, and attach/detach defers to the composition's end. React to
+ *  composed text at `onCompositionEnd` — a legal edit time. */
 
 import type { ChordEvent, EditorCommand, EditorCommandId } from './commands';
 
-/** The caret's rendered shape. `block` covers the character under the caret
- *  (a modal editor's normal mode); positions with no visible character under
- *  them (paragraph end, hidden markup) fall back to the bar. */
+/** The caret's rendered shape. `block` covers the character under the caret;
+ *  positions with no visible character (paragraph end, hidden markup) fall
+ *  back to the bar. */
 export type CaretShape = 'bar' | 'block';
 
-/** A selection in plain offsets. `head` is the moving end. */
+/** A selection in plain offsets. */
 export type EditorSelectionOffsets = {
   /** The fixed end. */
   readonly anchor: number;
@@ -28,13 +25,11 @@ export type EditorSelectionOffsets = {
   readonly head: number;
 };
 
-/** One view-only highlight an extension contributes: a PLAIN-offset range
- *  plus a CSS class (already namespaced by the caller — the desktop host
- *  prefixes `vedx-<extension id>-`). Background-only styling by contract:
- *  no metric may change, so every cached measurement stands (the same rule
- *  as the search highlights). */
+/** One view-only highlight an extension contributes: a plain-offset range
+ *  plus an already-namespaced CSS class. Background-only styling by contract:
+ *  no metric may change, so every cached measurement stands. */
 export type ExtensionDecorationRange = {
-  /** Start of the range, a plain offset (half-open `[from, to)`). */
+  /** Start of the half-open range `[from, to)`, a plain offset. */
   readonly from: number;
   /** End of the range (exclusive). */
   readonly to: number;
@@ -47,12 +42,10 @@ export type ExtensionDecorationRange = {
 export type VisualDirection = 'up' | 'down' | 'left' | 'right';
 
 /** How an extension's visual selection renders. `'none'` = the plain model
- *  range; `'char'` = INCLUSIVE of both end cells (Vim charwise visual — the
- *  anchor character stays selected when the head moves before it); `'line'` =
- *  the whole model lines the selection spans; `'block'` = the RECTANGLE
- *  between the two ends — their line range × their character-column range,
- *  both inclusive, each line's segment clipped to its end (Vim blockwise
- *  visual on ved's one-character-per-cell grid). */
+ *  range; `'char'` = INCLUSIVE of both end cells (Vim charwise visual);
+ *  `'line'` = the whole model lines the selection spans; `'block'` = the
+ *  RECTANGLE between the two ends — line range × character-column range,
+ *  both inclusive, each line's segment clipped to its end (Vim blockwise). */
 export type VisualSelectionKind = 'none' | 'char' | 'line' | 'block';
 
 /** The capabilities handed to an extension at attach time. */
@@ -65,46 +58,34 @@ export type EditorExtensionContext = {
    *  markup snap to the nearest renderable glyph). `head` defaults to
    *  `anchor` — a collapsed caret. Refused during IME composition. */
   readonly setSelection: (anchor: number, head?: number) => void;
-  /** Replace `[from, to)` with `text` — the plain string changes exactly
-   *  there (the plainInsertTr rule: canonical rebuild, repair, one history
-   *  entry). The caret lands after the inserted text. Refused (false) during
-   *  IME composition or on an invalid range. */
+  /** Replace `[from, to)` with `text` — the plain string changes exactly there
+   *  (the plainInsertTr rule); the caret lands after the inserted text.
+   *  Refused (false) during IME composition or on an invalid range. */
   readonly replaceRange: (from: number, to: number, text: string) => boolean;
   /** Move the caret one model character or one VISUAL line — the same movers
-   *  the arrow keys use, so LOGICAL 'line'/'char' is rotated to the physical
-   *  axis per writing mode (in vertical-rl a 'line' step is the next/previous
-   *  COLUMN), and ruby caret stops and the goal column apply. `dir` −1 is
-   *  backward (previous character / previous line). A modal extension maps
-   *  its movement keys here and stays axis-agnostic. */
+   *  the arrow keys use: logical 'line'/'char' rotates to the physical axis
+   *  per writing mode (in vertical-rl a 'line' step is a COLUMN); ruby caret
+   *  stops and the goal column apply. `dir` −1 is backward. */
   readonly moveCaret: (axis: 'char' | 'line', dir: 1 | -1, extend?: boolean) => void;
   /** Move the caret one step in a SPATIAL direction — what the matching arrow
-   *  key does. The writing mode decides the axis: in vertical-rl, 'left'/'right'
-   *  step along the LINE axis and 'up'/'down' walk the characters (in
-   *  horizontal, the reverse). The line-axis step is a LOGICAL PARAGRAPH walk
-   *  (a ved line is a paragraph — actual paragraphs at the same column, not
-   *  wrapped display columns/rows), so a modal editor walks the screen by
-   *  mapping its keys here and stays axis-agnostic. Pass `visualLine` for the
-   *  DISPLAY line/column move instead (the adjacent wrapped column/row — Vim's
-   *  `g`-prefixed motions). */
+   *  key does; the writing mode decides the axis. The line-axis step walks
+   *  LOGICAL PARAGRAPHS (a ved line is a paragraph); pass `visualLine` for
+   *  the DISPLAY line/column move instead (Vim's `g`-prefixed motions). */
   readonly moveCaretVisual: (direction: VisualDirection, extend?: boolean, visualLine?: boolean) => void;
-  /** Scroll one viewport (`half` = half of one) along the reading direction
-   *  — forward is DOWN in the vertically-scrolling modes and LEFT in the
-   *  horizontally-scrolling vertical modes — and bring the caret along to
-   *  the nearest legal position in the new viewport (a modal editor's
-   *  Ctrl+F/B page motion). Refused during IME composition. */
+  /** Scroll one viewport (`half` = half of one) along the reading direction —
+   *  forward is DOWN in the vertically-scrolling modes, LEFT in the
+   *  horizontally-scrolling vertical modes — bringing the caret to the nearest
+   *  legal position (Ctrl+F/B). Refused during IME composition. */
   readonly scrollPage: (dir: 1 | -1, half?: boolean) => void;
-  /** Scroll `n` LINE PITCHES along the reading direction (positive =
-   *  forward), without moving the caret (a modal editor's Ctrl+E/Ctrl+Y).
-   *  Refused during IME composition. */
+  /** Scroll `n` LINE PITCHES along the reading direction (positive = forward)
+   *  without moving the caret (Ctrl+E/Ctrl+Y). Refused during IME composition. */
   readonly scrollLines: (n: number) => void;
-  /** Scroll so the caret's line sits at the viewport's reading START,
-   *  center, or reading END, without moving the caret (a modal editor's
-   *  zt/zz/zb). Refused during IME composition. */
+  /** Scroll the caret's line to the viewport's reading start/center/end
+   *  without moving the caret (zt/zz/zb). Refused during IME composition. */
   readonly revealCaretAt: (at: 'start' | 'center' | 'end') => void;
-  /** The model-offset range currently VISIBLE in the viewport, hit-tested at
-   *  the viewport's corners and center (approximate around page gaps and
-   *  blank space). Null when nothing hit (detached/headless). Pure query —
-   *  the seam behind a modal editor's H/M/L. */
+  /** The model-offset range VISIBLE in the viewport, hit-tested at its corners
+   *  and center (approximate around page gaps); null when nothing hit. Pure
+   *  query. */
   readonly visibleRange: () => { readonly from: number; readonly to: number } | null;
   /** The next legal caret stop from `offset` (pure query — the editor's
    *  character-movement rule: collapsed ruby markup and readings are skipped,
@@ -112,10 +93,8 @@ export type EditorExtensionContext = {
    *  edge. */
   readonly caretStop: (offset: number, dir: 1 | -1) => number;
   /** `offset` if it is a legal caret stop, else the nearest legal stop in
-   *  direction `dir`. Snaps an offset that fell INSIDE non-navigable markup
-   *  (a collapsed ruby's `|`/reading/`)`) out to a real caret position, so a
-   *  motion computed over the raw plain text (e.g. a word jump) can't strand
-   *  the caret inside a ruby. */
+   *  direction `dir` — so a motion computed over the raw plain text (e.g. a
+   *  word jump) can't strand the caret inside a collapsed ruby's markup. */
   readonly snapCaret: (offset: number, dir: 1 | -1) => number;
   /** Delete one caret step at the caret (the Backspace/Delete rule: a
    *  collapsed ruby deletes as a unit), or the selection if non-empty. */
@@ -125,24 +104,21 @@ export type EditorExtensionContext = {
   /** Register a command under a NAMESPACED id (`vim.…`). Returns the
    *  unregister function. Registering an existing id replaces it. */
   readonly registerCommand: (id: EditorCommandId, command: EditorCommand) => () => void;
-  /** Render the caret as a bar (default) or a block over the character under
-   *  it. */
+  /** Render the caret as a bar (default) or a block. */
   readonly setCaretShape: (shape: CaretShape) => void;
   /** Toggle a class on the editor's content element (survives writing-mode /
    *  policy class swaps). For extension-specific CSS. */
   readonly setContentClass: (cls: string, on: boolean) => void;
-  /** REPLACE the view-only highlight set registered under `key` (callers use
-   *  one key each — the desktop host keys by extension id); an empty array
-   *  clears it. Ranges are plain offsets, mapped and folded into the editor's
-   *  cached decoration layers exactly like the search highlights, so an idle
-   *  set costs caret moves nothing. IME-safe by construction: mid-composition
-   *  the ref updates but nothing dispatches — the composition's own commit
-   *  transaction picks the new set up. */
+  /** REPLACE the view-only highlight set registered under `key` (one key per
+   *  caller; empty array clears). Ranges fold into the editor's cached
+   *  decoration layers like the search highlights, so an idle set costs caret
+   *  moves nothing. IME-safe: mid-composition the ref updates but nothing
+   *  dispatches — the composition's own commit transaction picks it up. */
   readonly setDecorations: (key: string, ranges: readonly ExtensionDecorationRange[]) => void;
-  /** How the current selection RENDERS (a modal editor's visual modes) — see
-   *  `VisualSelectionKind`. `'char'` keeps the anchor character selected as
-   *  the head moves before it; `'line'` highlights whole paragraphs while the
-   *  caret stays put. `'none'` (default) is the plain model range. */
+  /** How the current selection RENDERS — see `VisualSelectionKind`. `'char'`
+   *  keeps the anchor character selected as the head moves before it;
+   *  `'line'` highlights whole paragraphs while the caret stays put.
+   *  `'none'` (default) is the plain model range. */
   readonly setVisualSelection: (kind: VisualSelectionKind) => void;
   /** End the current undo batch: the next edit starts a fresh history entry
    *  regardless of the debounce window. */
@@ -174,8 +150,7 @@ export type EditorExtensionHooks = {
 };
 
 /** An editor extension: attached while listed in the editor's `extensions`
- *  prop, detached when removed (or on unmount). `id` must be unique and
- *  namespaces the extension's commands. */
+ *  prop, detached when removed (or on unmount). */
 export type EditorExtension = {
   /** Unique id; namespaces the extension's commands. */
   readonly id: string;

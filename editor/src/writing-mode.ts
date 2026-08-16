@@ -1,14 +1,10 @@
 /** The writing-mode vocabulary, in its own leaf module so view modules
  *  (scroll-reveal.ts, editor.tsx) can share the runtime enum without cycles. */
 
-/** A writing mode is a COMBINATION of two orthogonal axes:
- *    - orientation: horizontal (horizontal-tb) or vertical (vertical-rl);
- *    - paging: continuous (one unbroken flow), columns (CSS-multicol pages,
- *      tiling along the inline axis), or rows (arithmetic pages in one
- *      continuous flow, separated by page-gap widgets).
- *  The enum keeps one member per combination — the value the shell stores and
- *  the editor branches on — and the helpers (`writingOrientation`,
- *  `writingPaging`, `writingModeFor`) decompose/compose it. */
+/** A writing mode combines two orthogonal axes — orientation (horizontal-tb or
+ *  vertical-rl) and paging (continuous flow, CSS-multicol columns, or arithmetic
+ *  rows split by page-gap widgets). One member per combination; the helpers
+ *  decompose/compose. */
 export enum WritingMode {
   /** Horizontal (horizontal-tb), one continuous flow with vertical scroll. */
   Horizontal,
@@ -53,16 +49,13 @@ export const writingPaging = (mode: WritingMode): WritingPaging => {
 /** Whether the mode's orientation is vertical (vertical-rl). */
 export const isVerticalMode = (mode: WritingMode): boolean => writingOrientation(mode) === 'vertical';
 
-/** Whether the mode's MAJOR scroll axis is vertical (`scrollTop`):
- *  Horizontal, VerticalColumns (bands stack downward), HorizontalRows (pages
- *  stack downward). The others scroll horizontally — leftward-growing
- *  (negative `scrollLeft`) in the vertical orientation, rightward in
- *  HorizontalColumns. */
+/** Whether the mode's major scroll axis is vertical (`scrollTop`): Horizontal,
+ *  VerticalColumns, HorizontalRows. The others scroll horizontally — negative
+ *  `scrollLeft` (leftward-growing) in the vertical orientation. */
 export const scrollsVertically = (mode: WritingMode): boolean =>
   isVerticalMode(mode) ? writingPaging(mode) === 'columns' : writingPaging(mode) !== 'columns';
 
-/** The mode for an (orientation, paging) combination — the composition the
- *  shell's two button groups drive. */
+/** The mode for an (orientation, paging) combination. */
 export const writingModeFor = (orientation: WritingOrientation, paging: WritingPaging): WritingMode => {
   if (orientation === 'vertical') {
     if (paging === 'columns') return WritingMode.VerticalColumns;

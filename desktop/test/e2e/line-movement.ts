@@ -1,22 +1,12 @@
-// Line movement keeps the column (the inline-axis position) across SEVERAL
-// moves — including through a SHORT line. In vertical-rl, ArrowLeft = line
-// forward (next column, leftward); the position down the column (the y coord)
-// is the "column" that must be preserved.
-//
-// Bug: each move re-reads the CURRENT caret position as the goal, so stepping
-// through a short line (where the caret lands at the short line's end) drags
-// the column up — by the time you reach the next long line the column is lost.
-// A real editor remembers the ORIGINAL goal column across consecutive moves.
-//
-// Usage: node test/e2e/line-movement.ts (after `bun run build`).
+// Line movement keeps the column (the inline-axis position, y in vertical-rl)
+// across consecutive moves — the mover must remember the ORIGINAL goal column
+// through a short line, not re-read the current caret position each move.
 import assert from 'node:assert/strict';
 import type { ModelSeams } from './harness.ts';
 import { fail, finish, launchVed, step } from './harness.ts';
 
-// VISIBLE window (not the default hidden one): moveCaretByLine defers via
-// requestAnimationFrame, and hidden Electron windows throttle RAF so the moves
-// silently no-op — the test would falsely "pass". See docs/architecture.md
-// (the hidden-window RAF gotcha).
+// Visible window: moveCaretByLine defers via requestAnimationFrame, and hidden
+// Electron windows throttle rAF so the moves silently no-op — a false pass.
 const ved = await launchVed({ env: () => ({ VED_SMOKE_CLOSE_RESPONSE: 'discard', VED_SMOKE_HIDDEN: '' }) });
 const { page } = ved;
 
@@ -31,12 +21,10 @@ const setDoc = async (lines: string[]) => {
   await page.waitForTimeout(200);
 };
 
-// Read the caret through the MODEL seams (__vedCaret = plain doc offset,
-// __vedCaretRect = PM coordsAtPos), NOT the raw DOM selection: with the newline
-// invisibles marker on (the default), a paragraph-end caret's DOM selection sits
-// at the ELEMENT level (after the widget) — focusOffset is then a child index,
-// not a text offset, and the collapsed range rect is degenerate. The model
-// offset and PM rect are exact either way.
+// Read the caret via the model seams (__vedCaret / __vedCaretRect), never the
+// raw DOM selection: with the newline invisibles widget a paragraph-end
+// selection is element-level — focusOffset is a child index and the collapsed
+// range rect is degenerate.
 const caretY = () => page.evaluate(() => (window as unknown as ModelSeams).__vedCaretRect()?.top ?? Number.NaN);
 const caretDocOff = () => page.evaluate(() => (window as unknown as ModelSeams).__vedCaret());
 // The {line, column} of a plain doc offset, given the fixture's lines.
@@ -51,11 +39,10 @@ const lineCol = (docOff: number, lines: string[]): { line: number; col: number }
 };
 
 try {
-  // Long / short / long. Distinct chars so the offset is meaningful.
+  // Long / short / long; distinct chars so the offset is meaningful.
   const DOC1 = ['あいうえおかきくけこさし', 'ん', 'たちつてとなにぬねのはひ'];
   await setDoc(DOC1);
 
-  // Click DEEP into the first line's column (≈ char 9 down), recording the goal.
   const p1 = await page.evaluate(() => {
     const p = document.querySelectorAll('#editor-content p')[0] as HTMLElement;
     const r = p.getBoundingClientRect();
@@ -67,7 +54,6 @@ try {
   const goal = lineCol(await caretDocOff(), DOC1);
   assert.ok(goal.line === 0 && goal.col >= 7, `setup: caret should be deep in line 1 (got ${JSON.stringify(goal)})`);
 
-  // Move forward by line TWICE: line 1 → short line 2 → line 3.
   await page.keyboard.press('ArrowLeft');
   await page.waitForTimeout(200);
   await page.keyboard.press('ArrowLeft');
@@ -77,7 +63,6 @@ try {
   assert.equal(after.line, 2, `after two ArrowLefts the caret should be on line 3 (got line index ${after.line})`);
 
   const afterY = await caretY();
-  // The column must be preserved through the short line: same y, same offset.
   assert.ok(
     Math.abs(afterY - goalY) < 18,
     `column (y) must survive the short line: goal ${Math.round(goalY)}, got ${Math.round(afterY)}`,
@@ -88,10 +73,8 @@ try {
   );
   step('line movement keeps the column across a short line');
 
-  // --- RAPID presses: each must advance exactly one line, column kept. -----
-  // The mover runs in requestAnimationFrame and commits via an async PM
-  // dispatch; pressing fast can let a later rAF read a stale selection and
-  // skip/jump lines or drop the column.
+  // Rapid presses: the mover runs in rAF and commits via an async PM dispatch,
+  // so a later rAF can read a stale selection and skip lines or drop the column.
   const DOC2 = Array.from({ length: 12 }, () => 'あいうえおかきくけこさし');
   await setDoc(DOC2);
   const r1 = await page.evaluate(() => {
@@ -125,11 +108,9 @@ try {
   );
   step('rapid line moves advance one line each and keep the column');
 
-  // --- Across a PAGE-ROW boundary (VerticalColumns 2D layout). ------------
-  // Shrink the page so lines 1..5 are page-row 1 and 6.. are page-row 2 (below,
-  // at a different screen y). Moving forward across that boundary must still
-  // land on the next line at the same column — not jump (the mover hit-tests at
-  // the caret's ABSOLUTE y, which is wrong once the next page-row is elsewhere).
+  // Page-row boundary (VerticalColumns 2D layout): lines 1..5 on page-row 1,
+  // 6.. on page-row 2 at a different screen y — the mover must not hit-test at
+  // the caret's absolute y, which is wrong once the next page-row is elsewhere.
   const DOC3 = Array.from({ length: 12 }, () => 'あいうえおかきくけこさし');
   await setDoc(DOC3);
   await page.evaluate(() => {

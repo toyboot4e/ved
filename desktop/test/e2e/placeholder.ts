@@ -27,7 +27,6 @@ try {
     step(`placeholder renders at the text start in ${mode}`);
   }
 
-  // Typing hides the placeholder; clearing brings it back
   await page.click('#editor-content');
   await page.keyboard.insertText('あ');
   await page.waitForTimeout(150);

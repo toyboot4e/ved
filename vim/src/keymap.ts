@@ -1,26 +1,24 @@
 /** User keymap: config → compiled per-map-mode tries, and the walk the reducer
  *  runs over them (the mapping FRONT LAYER — consulted before the built-in
- *  dispatch; see vimKeydown). The config is deliberately JSON-serializable:
- *  this type IS the future config-file schema (docs/architecture.md "Extensions"). */
+ *  dispatch; see vimKeydown). */
 
 import { keyToken, parseKeys, type VimKey } from './keys';
 
 /** One RHS: a key sequence in Vim notation, or a NAMED ACTION. Plain string =
  *  noremap (the DEFAULT — fed keys go to the built-ins only); `remap: true`
  *  lets the RHS re-enter user mappings (guarded by the adapter's fed-key
- *  budget). `{action}` binds a named primitive directly (model.ts action
- *  tables; ids validated at compile when the caller provides them) — normal
- *  and visual modes only, and NOT dot-repeatable (it runs outside the key
- *  recording, like Vim's `<Plug>` targets without repeat.vim). */
+ *  budget). `{action}` binds a named primitive (model.ts action tables; ids
+ *  validated at compile when the caller provides them) — normal and visual
+ *  modes only, and NOT dot-repeatable (it runs outside the key recording). */
 export type VimKeymapRhs = string | { readonly rhs: string; readonly remap?: boolean } | { readonly action: string };
 
 /** Vim's nmap / xmap / omap / imap. */
 export type VimMapMode = 'normal' | 'visual' | 'operatorPending' | 'insert';
 
 /** A user keymap: per-map-mode tables of LHS (Vim key notation) → RHS.
- *  JSON-serializable by design — this type IS the future config-file schema.
- *  Compile with `compileKeymap` to validate, or pass to
- *  `createVimExtension({keymap})` (which throws on errors). */
+ *  JSON-serializable by design — this type IS the future config-file schema
+ *  (docs/architecture.md "Extensions"). Compile with `compileKeymap` to
+ *  validate, or pass to `createVimExtension({keymap})` (which throws). */
 export type VimKeymapConfig = {
   /** Substituted for `<Leader>` in both LHS and RHS. Default `'\'`. */
   readonly leader?: string;

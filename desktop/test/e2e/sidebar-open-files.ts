@@ -41,7 +41,6 @@ const dirtyRowNames = () =>
 const tabCount = () => page.$$eval('[role=tab]', (els) => els.length);
 
 try {
-  // Open the sidebar, add the root, open both files from the tree
   await page.click('#editor-content');
   await pressMod(page, 'b');
   await page.waitForSelector('[aria-label="File browser"]');
@@ -52,7 +51,6 @@ try {
   await page.waitForFunction(() => document.querySelectorAll('[role=tab]').length === 3);
   step('setup: a root and two files open in tabs');
 
-  // Switch to the open-files view: the tree goes, one row per tab in order
   await page.click('[aria-label="Open files view"]');
   await page.waitForSelector(bufferList);
   assert.equal(await page.$('[role=treeitem]'), null);
@@ -60,11 +58,9 @@ try {
   assert.equal(await activeRowName(), 'b.txt');
   step('the toggle shows the open buffers, active row marked');
 
-  // The Add-folder button belongs to the files view only
   assert.equal(await page.$('[aria-label="Add folder"]'), null);
   step('the add-folder button hides in the open-files view');
 
-  // Clicking a row activates its tab
   await page.click(`${bufferList} >> text=a.txt`);
   await page.waitForFunction(() => document.getElementById('editor-content')?.textContent?.includes('AAA') ?? false);
   assert.equal(await activeRowName(), 'a.txt');
@@ -87,7 +83,6 @@ try {
   assert.deepEqual(await rowNames(), ['無題', 'b.txt']);
   step('the row close button closes the buffer');
 
-  // Back to the files view: the tree returns
   await page.click('[aria-label="Files view"]');
   await page.waitForSelector('[role=treeitem] >> text=a.txt');
   assert.equal(await page.$(bufferList), null);

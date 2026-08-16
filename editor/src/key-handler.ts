@@ -199,7 +199,6 @@ export const createKeyHandler = (deps: KeyHandlerDeps): ((v: EditorView, event: 
       return true;
     }
     const mod = IS_MAC ? event.metaKey : event.ctrlKey;
-    // Take over plain Backspace/Delete (see deleteChar).
     if (plainKey(v, event, mod, 'Backspace', 'Delete')) {
       event.preventDefault();
       deleteChar(v, event.key === 'Delete', policyClassRef.current);

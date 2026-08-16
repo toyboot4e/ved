@@ -1,9 +1,7 @@
-// Ruby-dense documents in VerticalColumns: a band must hold the FULL
-// --page-lines lines. A band-starting ruby line's READING overhangs the
-// line-over side (every other line's reading lands in its neighbor's
-// leading), and without the rt allowance the multicol balancer counted that
-// overhang and packed N−1 lines per band — pages and bands diverged.
-// Also: the text block (and folios) stay centered in the visible frame.
+// Ruby-dense VerticalColumns: a band must hold the FULL --page-lines lines.
+// A band-starting ruby line's reading overhangs the line-over side; without
+// the rt allowance the multicol balancer counted that overhang and packed
+// N−1 lines per band. Also: text block and folios stay frame-centered.
 // Usage: node test/e2e/ruby-pages.ts  (after a build; window stays hidden)
 import assert from 'node:assert/strict';
 import { closeSettings, fail, finish, launchVed, openSettings, setViewConfig, step } from './harness.ts';
@@ -16,7 +14,6 @@ try {
   await page.waitForTimeout(150);
   await page.evaluate(() => getSelection()!.selectAllChildren(document.getElementById('editor-content')!));
   await page.keyboard.press('Backspace');
-  // Rich (default policy): collapsed rubies, readings beside every base.
   await page.keyboard.insertText('|漢字(かんじ)の|振仮名(ふりがな)は|文章(ぶんしょう)に|多(おお)い。'.repeat(8));
   await page.waitForTimeout(600); // default mode is already VerticalColumns
 
@@ -24,7 +21,7 @@ try {
     const content = document.getElementById('editor-content')!;
     const cs = getComputedStyle(content);
     const pitch = Number.parseFloat(cs.lineHeight);
-    // Count base-glyph lines in the FIRST band (skip rt) by clustering.
+    // Base-glyph lines in the first band (skip rt), clustered by half pitch.
     const range = document.createRange();
     const walker = document.createTreeWalker(content, NodeFilter.SHOW_TEXT, {
       acceptNode: (n) => (n.parentElement?.closest('rt') ? NodeFilter.FILTER_REJECT : NodeFilter.FILTER_ACCEPT),
@@ -66,20 +63,16 @@ try {
   assert.equal(m.band1Lines, 5, `a ruby band holds the full page (${m.band1Lines} of 5 lines)`);
   step('ruby-dense band holds all --page-lines lines (rt allowance)');
 
-  // FIXED LINE PITCH at full page size: a 20-line band must hold 20 SEPARATE
-  // ruby paragraphs. Chromium grows any line box whose annotation doesn't fit
-  // the leading — only a paragraph-FIRST line, so the wrapped single-paragraph
-  // fixture above can't see it — and the rt's negative block margins
-  // (ruby.css) are what cancel that growth. The margin is sized to the rt
-  // FONT's vertical-metric ratio; under Noto Sans CJK (1.45, the default
-  // resolver's pick) the old −0.1em left every ruby paragraph 1.16px over
-  // pitch: ~23px accumulated across a 20-line band, past the rt allowance,
-  // and the band packed only 19 lines (18px cell, 0.55 lead — the defaults).
+  // FIXED LINE PITCH: a 20-line band must hold 20 SEPARATE ruby paragraphs.
+  // Chromium grows a paragraph-FIRST line box whose annotation doesn't fit
+  // the leading (wrapped lines are immune, so the fixture above can't see
+  // it); the rt's negative block margins (ruby.css) cancel that growth and
+  // must be sized to the rt FONT's vertical-metric ratio — under Noto Sans
+  // CJK (1.45) a flat −0.1em leaves each paragraph 1.16px over pitch, ~23px
+  // per 20-line band, and the band packs only 19 lines.
   await setViewConfig(page, { pageLineChars: '40', pageLines: '20' });
-  // PIN the font: the growth needs a big-metric rt font, and the async
-  // default-font resolution (main.tsx) races the fixture — the session may
-  // still be on the shell stack when we type. Skip the phase gracefully on a
-  // machine without Noto.
+  // Pin the font: the async default-font resolution (main.tsx) races the
+  // fixture. Skip gracefully on a machine without Noto.
   await openSettings(page);
   const havNoto = await page.evaluate(() => {
     const sel = document.querySelector('select[id*="fontFamily"]') as HTMLSelectElement | null;
@@ -101,10 +94,9 @@ try {
       if (i < 24) await page.keyboard.press('Enter');
     }
     await page.waitForTimeout(600);
-    // Count GLYPH columns, not paragraph boxes: a paragraph pushed across the
-    // band break still OPENS its box in band 1 (an empty prefix — its
-    // bounding rect straddles both bands), so rect-top counting reports N
-    // even when only N−1 text columns render in the band.
+    // Count GLYPH columns, not paragraph boxes: a paragraph pushed across
+    // the band break still opens its (empty-prefix) box in band 1, so
+    // rect-top counting reports N when only N−1 text columns render.
     const band1Slots = () =>
       page.evaluate(() => {
         const content = document.getElementById('editor-content')!;
@@ -125,8 +117,7 @@ try {
           }
         }
         const bandTop = Math.min(...glyphs.map((g) => g.top));
-        // Band 1's glyphs span the full 720px line length; band 2 starts a
-        // band-gap later (~780). 750 separates them safely.
+        // Band 1 spans the 720px line length; band 2 starts ~780 — 750 splits.
         const lefts = glyphs.filter((g) => g.top < bandTop + 750).map((g) => g.left);
         const slots: number[] = [];
         for (const l of lefts.sort((a, z) => z - a)) {
@@ -140,11 +131,11 @@ try {
 
     // ORPHAN control: a MULTI-COLUMN paragraph whose first line lands on a
     // band's LAST slot must fragment there (one column in this band, the rest
-    // in the next) — the UA default `orphans: 2` instead pushed the whole
+    // in the next) — the UA default `orphans: 2` would instead push the whole
     // paragraph to the next band, leaving the page one line short and
-    // drifting every folio after it (found with a document of 50-ruby
-    // paragraphs). The fixture places 19 columns (6 three-column paragraphs
-    // + 1 one-column), then a three-column paragraph at slot 20.
+    // drifting every folio after it. The fixture places 19 columns (6
+    // three-column paragraphs + 1 one-column), then a three-column paragraph
+    // at slot 20.
     await page.evaluate(() => getSelection()!.selectAllChildren(document.getElementById('editor-content')!));
     await page.keyboard.press('Backspace');
     await page.waitForTimeout(80);

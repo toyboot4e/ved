@@ -6,7 +6,7 @@ import { app, clipboard } from 'electron';
  *  quitting ved empties it unless a clipboard manager is running. On quit,
  *  hand the current clipboard text to a detached `xclip`/`wl-copy`, which
  *  stays behind serving the selection. Copy itself is untouched (zero added
- *  latency); no helper binary means the plain pre-fix behavior.
+ *  latency); with no helper binary the clipboard simply empties on quit.
  *
  *  Caveat: the hand-off re-owns whatever text is on the clipboard, even when
  *  the last copy came from another app — same text, but other flavors (e.g.
@@ -33,7 +33,7 @@ export const installClipboardPersist = (): void => {
       detached: true,
       stdio: ['pipe', 'ignore', 'ignore'],
     });
-    child.on('error', () => {}); // no sh — the plain pre-fix behavior
+    child.on('error', () => {}); // no sh — the clipboard just empties on quit
     child.stdin?.on('error', () => {}); // helper exited before reading (not installed &c.)
     child.stdin?.end(text);
     child.unref();

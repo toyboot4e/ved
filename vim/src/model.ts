@@ -1,106 +1,28 @@
 /** The Vim MODEL: a pure reducer over (state, key, document view) → (state,
  *  effects). No editor, no DOM, no @ved/editor import — the view/adapter
  *  (extension.ts) owns all editor access, so this whole file unit-tests as
- *  plain functions and the modal semantics stay legible in one place.
+ *  plain functions.
  *
  *  The document view is ved's identity model: the plain text, the selection as
  *  plain offsets, and `caretStop` — the editor's own character-step rule
  *  (injected, so ruby caret stops apply without this module knowing rubies
  *  exist). Offsets index the plain string, markup characters included.
  *
- *  MOVEMENT IS SPATIAL. Bare h/j/k/l are the ARROW KEYS — h=left, j=down,
- *  k=up, l=right — emitted as `moveVisual` effects; the EDITOR resolves each
- *  screen direction to the right axis per writing mode. So in VERTICAL writing
- *  (tategaki) h/l walk the LINE axis (between 行) and j/k the characters up/down
- *  the column, while in HORIZONTAL writing h/l walk the characters and j/k the
- *  line axis. The line-axis move is a LOGICAL PARAGRAPH walk in both modes (a
- *  ved line IS a paragraph — actual paragraphs at the same column, not wrapped
- *  display columns/rows), decided by the editor (moveCaretVisual). As OPERATOR
- *  TARGETS h/l stay pure character motions (`dh`/`dl` = one caret step); a
- *  spatial line step cannot be expressed as an offset, so `dj`/`dk` are not
- *  bound.
+ *  MOVEMENT IS SPATIAL. Bare h/j/k/l are the ARROW KEYS, emitted as
+ *  `moveVisual` effects; the EDITOR resolves each screen direction to the
+ *  right axis per writing mode, so in vertical writing h/l walk the LINE axis
+ *  and j/k the characters. The line-axis move is a LOGICAL PARAGRAPH walk (a
+ *  ved line IS a paragraph, not a wrapped display row). As OPERATOR TARGETS
+ *  h/l stay pure character motions; a spatial line step cannot be expressed
+ *  as an offset, so `dj`/`dk` are not bound.
  *
- *  Scope and deliberate deviations from Vim:
- *    - modes: normal / insert / visual (character-wise 'v' AND line-wise 'V');
- *    - counts; motions h j k l (spatial) g+hjkl (display-line walk) w b e W B E
- *      (ruby-aware: a word target snaps out of a collapsed ruby's markup; word
- *      granularity is a pluggable WordModel via doc.words — default CLASS_WORDS
- *      is char-class runs, the JP option segments kana/kanji)
- *      0 ^ $ gg G (KEEP the column; count gg/G = goto line) f F t T ; , % { };
- *      f/F/t/T also take a Ctrl-chord shortcut (config.ts FIND_CHORDS: Ctrl+j
- *      → 、, Ctrl+l → 。);
- *    - % and the bracket text objects use config.ts BRACKET_PAIRS (Japanese
- *      「」（）【】… included);
- *    - operators d c y (dd cc yy, charwise/linewise motions) with TEXT OBJECTS
- *      i/a + w W ( ) [ ] { } < > b B " ' ` p; x X s S r D C Y (y$) J o O i a
- *      I A p P (normal + visual p) ~ Ctrl+A/Ctrl+X (increment/decrement)
- *      u Ctrl+r. J inserts a joining space per config.ts joinNeedsSpace (a
- *      space for Latin, NONE between 全角); gJ removes only the newline; both
- *      work over a visual selection (all kinds — the spanned lines join);
- *    - charwise visual `v` is INCLUSIVE of both ends — the anchor cell stays
- *      selected as the head moves before it; linewise visual `V` KEEPS the
- *      cursor (a collapsed selection at the caret) and highlights the whole
- *      paragraph. Both shape the render via setVisualSelection; operators still
- *      take whole lines for V (visualRange). `r{char}` overwrites every
- *      selected character (newlines survive); the searches (`/` `?` `n` `N`
- *      `*` `#`) stay live in visual mode and EXTEND the selection;
- *    - BLOCK visual `Ctrl+V`: the rectangle between anchor and head (lines ×
- *      character columns, both inclusive — ved's cell grid, a deviation from
- *      Vim's screen columns). d/x/c/s/y take the per-line segments (blockwise
- *      register; `p`/`P` re-insert them as a column, padding short lines);
- *      `I`/`A` insert on the TOP line (A after the right edge, padding a short
- *      top line; after `$`, at every line's end) and Escape repeats the typed
- *      text on the remaining lines — IME-committed text included, via the
- *      same vimRecordText channel as dot-repeat. Block changes are not
- *      dot-repeatable (like all visual changes, v1). `o` jumps to the
- *      diagonal corner, `O` to the other corner on the SAME line (columns
- *      swap, lines stay; outside block, `O` = `o`). `gv` reselects the
- *      selection the last visual mode ended with (kind + $-flag; from inside
- *      visual it SWAPS with the live selection);
- *    - search: / ? n N * # (literal, case-sensitive; command line built in
- *      state — the shell renders it). NOT incremental, and NOT IME-aware (the
- *      pattern captures raw keydowns; a composed IME pattern is out of scope);
- *    - the caret may rest AT a line end (Vim's virtualedit=onemore) — ved's
- *      caret is a boundary, not a cell;
- *    - REPLACE mode (`R`): typing overtypes, clamped at the line end (past
- *      it R appends); the ADAPTER owns the overwrite (typed text via the
- *      beforeinput hook; an IME commit by consuming the displaced characters
- *      at compositionend — the composition itself is never disturbed).
- *      Backspace restores the overwritten text within the session
- *      (replaceStack) and only moves left below it; Enter inserts; the whole
- *      session dot-repeats as an overtype;
- *    - dot-repeat `.`: the record() wrapper keeps the last change as
- *      `lastChange` — normal-mode KEYS plus the insert phase's literal TEXT
- *      (VimChangeItem). Insert text is recorded as TEXT because keystrokes
- *      cannot represent it: live typed and IME-committed text reaches the
- *      recording through vimRecordText (the adapter calls it from the
- *      editor's text-input/composition hooks — composing keydowns are 229
- *      and never reach the reducer). `.` emits a `repeat` effect and the
- *      ADAPTER replays it — keys re-dispatched, text inserted as-is (the
- *      reducer can't step a mutating doc within one call). `N.` replays N
- *      times. Not recorded: motions, undo/redo, visual-mode changes;
- *    - macros: `q{reg}`…`q` records TYPED keys (fed/replayed keys excluded —
- *      a replay re-expands through mappings), `@{reg}` replays via the same
- *      feedKeys loop as mappings, `@@` repeats, counts multiply. `.` after a
- *      macro repeats the last change WITHIN it, like Vim;
- *    - registers: the unnamed one receives every yank/delete; `"a`–`"z` name
- *      one for the next yank/delete/paste (`"A`–`"Z` append). The macro
- *      registers are a SEPARATE space (deviation from Vim). Marks: `m{a-z}`
- *      + `` ` ``/`'` jumps (operators compose: ``d`a``, `d'a` linewise) —
- *      plain offsets, adjusted over the reducer's own edits, best-effort
- *      (clamped) across editor-side insert sessions. `gi` re-enters insert
- *      at the last session's end; `gp`/`gP` paste with the cursor after.
- *      NO ex commands (`:`) yet;
- *    - USER MAPPINGS (keymap.ts; docs/architecture.md "Extensions"): a front layer in
- *      vimKeydown walks per-map-mode tries (nmap/xmap/omap/imap) BEFORE this
- *      dispatch; a match feeds its RHS keys back through the adapter
- *      (noremap by default), a dead-ended walk replays what it swallowed.
- *      Inactive during the command line and char arguments. The INSERT walk
- *      types its prefix LIVE and deletes it on a match (`jj` → Esc; IME/
- *      click-safe — see insertMappingKey);
- *    - BUILT-IN SEQUENCES (`gg`, `g`+hjkl, the text objects) are entries in
- *      per-context tries walked by the same discipline (builtinLayerKey) —
- *      always active, so fed and replayed keys resolve them identically.
+ *  Deliberate deviations from Vim (mechanism details at each definition):
+ *  the caret may rest AT a line end (virtualedit=onemore — ved's caret is a
+ *  boundary, not a cell); block-visual columns are CHARACTER columns, not
+ *  screen columns; the macro registers are a separate space from the named
+ *  ones; search is literal, case-sensitive, non-incremental, and not
+ *  IME-aware; H/M/L use model lines; no ex commands (`:`) yet. Visual-mode
+ *  changes are not dot-repeatable (v1).
  *
  *  All configurable, data-driven behavior (bracket pairs, find-chord targets,
  *  join spacing) lives in ONE place — config.ts; user KEY mappings ride the
@@ -125,8 +47,6 @@ import {
   walkTrie,
 } from './keymap';
 import { isPlainKey, keyToken, type VimKey } from './keys';
-// Pure text geometry (lines, words, brackets, text objects, search) lives in
-// text.ts — everything (text, offset) → offset/range with no VimState.
 import {
   atColumn,
   BIG_WORDS,
@@ -260,7 +180,7 @@ type Operator = 'd' | 'c' | 'y' | 'lower' | 'upper' | 'toggle' | 'indent' | 'ded
 type FindOp = 'f' | 'F' | 't' | 'T';
 
 /** The key that, doubled after its operator, takes whole lines (`dd`, `guu`,
- *  `>>`…) — the operators no longer share their pending key. */
+ *  `>>`…). */
 const OPERATOR_LINE_KEY: Readonly<Record<Operator, string>> = {
   d: 'd',
   c: 'c',
@@ -384,10 +304,6 @@ export type VimStep = {
   readonly handled: boolean;
 };
 
-// ---------------------------------------------------------------------------
-// Search
-// ---------------------------------------------------------------------------
-
 /** Ctrl+A / Ctrl+X: add `delta` to the number at the caret, caret to its last
  *  digit (Vim). */
 const incrementNumber = (state: VimState, doc: VimDocView, delta: number): VimStep => {
@@ -406,8 +322,7 @@ const incrementNumber = (state: VimState, doc: VimDocView, delta: number): VimSt
 };
 
 /** Move the caret to a search result (or swallow if none), recording it for
- *  `n`/`N`. In visual mode the move EXTENDS the selection (the anchor
- *  stays), like any other motion there. */
+ *  `n`/`N`. In visual mode the move EXTENDS the selection, like any motion. */
 const runSearch = (state: VimState, pattern: string, forward: boolean, doc: VimDocView): VimStep => {
   const next = { ...state, commandLine: null, lastSearch: { pattern, forward } };
   const off = searchNext(doc.text, doc.head, pattern, forward);
@@ -432,16 +347,10 @@ const commandLineKey = (state: VimState, key: VimKey, doc: VimDocView): VimStep 
   return swallow(state);
 };
 
-// ---------------------------------------------------------------------------
-// Motions
-// ---------------------------------------------------------------------------
-
 /** A charwise/linewise motion target. `inclusive` = the operator range takes
  *  the character AT the target too (`e`, `f`, `t`). */
 type Motion = { readonly target: number; readonly inclusive: boolean; readonly linewise: boolean };
 
-/** What a motion's resolver reads: the caret origin `from` and the resolved
- *  count. */
 type MotionEnv = {
   readonly doc: VimDocView;
   readonly from: number;
@@ -449,17 +358,12 @@ type MotionEnv = {
   readonly hasCount: boolean;
 };
 
-/** A motion DEFINITION: its static range flags, a human description, and a pure
- *  resolver from origin → target offset (`null` = no target, e.g. `%` off a
- *  bracket). `inclusive` = the operator range takes the char AT the target too
- *  (`e`, `f`, `t`); `linewise` = whole lines (`gg`, `G`).
- *
+/** A motion DEFINITION: range flags, a description, and a pure resolver from
+ *  origin → target offset (`null` = no target, e.g. `%` off a bracket).
  *  `blockEol` is the motion's effect on a `$`-block's to-every-line-end flag
- *  (Vim's curswant): `'set'` turns it on (`$`), `'keep'` preserves it (the
- *  line jumps gg/G — Vim keeps curswant there), `'reset'` drops it (every
- *  column-absolute motion). REQUIRED, so adding a motion without deciding
- *  its block behavior is a compile error — the field is what guarantees the
- *  classification stays exhaustive. */
+ *  (Vim's curswant): `'set'` (`$`), `'keep'` (gg/G — Vim keeps curswant),
+ *  `'reset'` (column-absolute motions). REQUIRED so adding a motion without
+ *  deciding its block behavior is a compile error. */
 type MotionDef = {
   readonly inclusive: boolean;
   readonly linewise: boolean;
@@ -499,16 +403,15 @@ const stepInLine = (doc: VimDocView, from: number, count: number, dir: 1 | -1): 
   return o;
 };
 
-/** Walk `count` word boundaries with the pluggable word model, then SNAP each
- *  target to a legal caret stop in the walk direction — a boundary landing
- *  inside a collapsed ruby's markup skips out to the ruby's edge rather than
- *  stranding the caret (it used to get stuck at a ruby). The word GRANULARITY
- *  is pluggable (`doc.words` — default CLASS_WORDS, or the Japanese segmenter);
- *  `big` forces WORD (whitespace-delimited). */
+/** Walk `count` word boundaries with the pluggable word model (`doc.words`,
+ *  default CLASS_WORDS; `big` forces WORD), then SNAP each target to a legal
+ *  caret stop in the walk direction — a boundary landing inside a collapsed
+ *  ruby's markup skips out to the ruby's edge rather than stranding the
+ *  caret. */
 const wordStep = (doc: VimDocView, from: number, count: number, edge: keyof WordModel, big: boolean): number => {
   const words = big ? BIG_WORDS : (doc.words ?? CLASS_WORDS);
-  // A custom model may predate `endBack` (optional on the public type) —
-  // the default class walk stands in for ge/gE there.
+  // `endBack` is optional on the public type — the default class walk stands
+  // in for ge/gE when the model lacks it.
   const step = words[edge] ?? CLASS_WORDS[edge];
   const dir = edge === 'prev' || edge === 'endBack' ? -1 : 1;
   let o = from;
@@ -523,10 +426,9 @@ const repeatStep = (from: number, count: number, step: (o: number) => number): n
   return o;
 };
 
-/** H/M/L: the first non-blank of a MODEL line within the visible range —
- *  the top line (+count−1 down), the middle one, or the bottom (−count+1
- *  up). ved's deviation: model lines, not wrapped display rows. Null with
- *  no viewport (headless) — the motion fails gracefully. */
+/** H/M/L: the first non-blank of a MODEL line (ved's deviation: not wrapped
+ *  display rows) within the visible range. Null with no viewport (headless) —
+ *  the motion fails gracefully. */
 const screenLine = (doc: VimDocView, which: 'top' | 'middle' | 'bottom', count: number): number | null => {
   const vis = doc.visibleRange?.();
   if (!vis) return null;
@@ -549,10 +451,9 @@ const screenLine = (doc: VimDocView, which: 'top' | 'middle' | 'bottom', count: 
   return firstNonBlank(doc.text, starts[idx] as number);
 };
 
-/** Every motion DEFINITION, keyed by its stable id — the resolver switches on
- *  the id, never the key, so a remapped key can't break it (MOTION_BINDINGS
- *  maps keys → ids). The record's keys ARE `MotionId`, so adding a motion is a
- *  single edit here; `bindings.ts` reads this table for the reference doc. */
+/** Every motion DEFINITION, keyed by its stable id — resolvers key on the id,
+ *  never the key, so a remapped key can't break them (MOTION_BINDINGS maps
+ *  keys → ids); `bindings.ts` reads this table for the reference doc. */
 export const MOTIONS = {
   charLeft: {
     inclusive: false,
@@ -775,8 +676,7 @@ export const MOTIONS = {
  *  the id set and the resolvers can never diverge. */
 export type MotionId = keyof typeof MOTIONS;
 
-/** Default key → motion binding: the remappable layer over MOTIONS. `gg`
- *  arrives as the pseudo-key 'gg' from the g-sequence layer. */
+/** Default key → motion binding: the remappable layer over MOTIONS. */
 export const MOTION_BINDINGS: Readonly<Record<string, MotionId>> = {
   h: 'charLeft',
   l: 'charRight',
@@ -801,8 +701,7 @@ export const MOTION_BINDINGS: Readonly<Record<string, MotionId>> = {
   H: 'screenTop',
   M: 'screenMiddle',
   L: 'screenBottom',
-  // Pseudo-keys from the g-sequence layer (like `gg`): the walk matches the
-  // two keys and re-enters commandKey with the joined name.
+  // gg/ge/gE/g_ arrive as pseudo-keys from the g-sequence layer.
   gg: 'gotoFirst',
   G: 'gotoLast',
   ge: 'wordEndBack',
@@ -821,8 +720,6 @@ const motionTarget = (m: string, count: number, hasCount: boolean, doc: VimDocVi
   return target == null ? null : { target, inclusive: def.inclusive, linewise: def.linewise };
 };
 
-/** The N-th occurrence of `ch` to the RIGHT of `from`, before the line end
- *  `le`; null when the line runs out. */
 const findCharForward = (text: string, from: number, le: number, ch: string, count: number): number | null => {
   let i = from;
   for (let n = 0; n < count; n++) {
@@ -832,8 +729,6 @@ const findCharForward = (text: string, from: number, le: number, ch: string, cou
   return i;
 };
 
-/** The N-th occurrence of `ch` to the LEFT of `from`, at or after the line
- *  start `ls`; null when the line runs out. */
 const findCharBackward = (text: string, from: number, ls: number, ch: string, count: number): number | null => {
   let i = from;
   for (let n = 0; n < count; n++) {
@@ -857,10 +752,6 @@ const findTarget = (text: string, from: number, op: FindOp, ch: string, count: n
   return { target: op === 'T' ? i + 1 : i, inclusive: false, linewise: false };
 };
 
-// ---------------------------------------------------------------------------
-// Operators
-// ---------------------------------------------------------------------------
-
 /** The plain-offset range an operator consumes for a motion from `from`. */
 const operatorRange = (motion: Motion, doc: VimDocView, from: number): VimRange => {
   if (motion.linewise) {
@@ -881,10 +772,6 @@ const operatorRange = (motion: Motion, doc: VimDocView, from: number): VimRange 
  *  one, so the lines vanish rather than leaving an empty one. */
 const linewiseDelete = (text: string, from: number, to: number): { from: number; to: number } =>
   to < text.length ? { from, to: to + 1 } : { from: Math.max(0, from - 1), to };
-
-// ---------------------------------------------------------------------------
-// The reducer
-// ---------------------------------------------------------------------------
 
 const unhandled = (state: VimState): VimStep => ({ state, effects: [], handled: false });
 const swallow = (state: VimState): VimStep => ({ state, effects: [], handled: true });
@@ -910,11 +797,11 @@ const appendItem = (items: readonly VimChangeItem[], item: VimChangeItem): reado
   return [...items, item];
 };
 
-/** Remove the trailing `n` characters of recorded TEXT — the live-typed
- *  prefix of a matched insert mapping, which the match deletes from the
- *  document. Stops early if the tail isn't text (an interrupted walk left
- *  the prefix partly unrecorded) — stripping what exists keeps the replay
- *  closest to the net change. */
+/** Remove the trailing `n` characters of recorded TEXT — a matched insert
+ *  mapping's live-typed prefix, which the match deletes from the document.
+ *  Stops early if the tail isn't text (an interrupted walk left the prefix
+ *  partly unrecorded) — stripping what exists keeps the replay closest to
+ *  the net change. */
 const stripRecordedText = (items: readonly VimChangeItem[], n: number): readonly VimChangeItem[] => {
   const out = [...items];
   let left = n;
@@ -937,19 +824,6 @@ const stripRecordedText = (items: readonly VimChangeItem[], n: number): readonly
  *  by the adapter's feed loop on replay. */
 const INSERT_EDIT_KEYS: ReadonlySet<string> = new Set(['Enter', 'Backspace', 'Delete']);
 
-/** Maintain the dot-repeat recording around a raw dispatch (model.ts owns
- *  this, not the command handlers): begin recording when a fresh command
- *  starts from a resting normal state, append every subsequent key, and — when
- *  the sequence returns to rest — keep it as `lastChange` if it modified the
- *  document (a replace effect, or text/edit keys in insert mode).
- *
- *  INSERT-MODE PRINTABLES become TEXT items, not keys: a FED printable
- *  appends here (the feed loop inserts it programmatically — no input event
- *  follows), while a LIVE one appends nothing — its literal text arrives via
- *  vimRecordText from the editor's beforeinput/composition hooks, the only
- *  faithful source (IME-composed input has no keydowns the reducer ever
- *  sees). Enter/Backspace/Delete stay KEY items — they arrive as keydowns on
- *  every path — and count as edits. Visual mode is not recorded (v1). */
 /** Append fed text to a pending block insert (live text arrives via
  *  vimRecordText instead; the feed loop inserts fed keys programmatically, so
  *  no input event follows). */
@@ -990,6 +864,14 @@ const settleRecording = (step: VimStep, rec: NonNullable<VimState['recording']>)
   return { ...step, state: { ...step.state, recording: rec } };
 };
 
+/** Maintain the dot-repeat recording around a raw dispatch (model.ts owns
+ *  this, not the command handlers). INSERT-MODE PRINTABLES become TEXT items,
+ *  not keys: a FED printable appends here (the feed loop inserts it
+ *  programmatically — no input event follows), while a LIVE one appends
+ *  nothing — its literal text arrives via vimRecordText, the only faithful
+ *  source (IME-composed input has no keydowns the reducer ever sees).
+ *  Enter/Backspace/Delete stay KEY items — they arrive as keydowns on every
+ *  path — and count as edits. */
 const record = (incoming: VimState, key: VimKey, raw: VimStep, fed: boolean): VimStep => {
   const inInsert = (incoming.mode === 'insert' || incoming.mode === 'replace') && !raw.handled;
   const insertText = inInsert && isPlainKey(key);
@@ -1009,15 +891,14 @@ const record = (incoming: VimState, key: VimKey, raw: VimStep, fed: boolean): Vi
   return settleRecording(step, rec);
 };
 
-/** Append literal insert-phase text to the live dot-repeat recording. The
- *  adapter calls this from the editor's text-input and composition-end hooks
- *  — the only faithful sources for LIVE typed and IME-committed text
- *  (composing keydowns are 229-guarded and never reach vimKeydown). No-op
- *  outside insert mode or without a live recording. */
+/** Append literal insert-phase text to the live dot-repeat recording. Called
+ *  by the adapter from the editor's text-input and composition-end hooks —
+ *  the only faithful sources for LIVE typed and IME-committed text (composing
+ *  keydowns are 229-guarded and never reach vimKeydown). */
 export const vimRecordText = (state: VimState, text: string): VimState => {
   if (text.length === 0 || (state.mode !== 'insert' && state.mode !== 'replace')) return state;
-  // A pending block insert accumulates the same text — its Escape-time
-  // repeat is what makes block I/A work with IME-committed text.
+  // A pending block insert accumulates the same text — its Escape-time repeat
+  // is what makes block I/A work with IME-committed text.
   const bi = state.blockInsert;
   const st = bi?.valid ? { ...state, blockInsert: { ...bi, text: bi.text + text } } : state;
   if (st.recording === null) return st;
@@ -1027,9 +908,8 @@ export const vimRecordText = (state: VimState, text: string): VimState => {
   };
 };
 
-/** Text ARRIVED in replace mode — the adapter performed the overwrite
- *  (typed, fed, or IME-committed) and reports what it displaced. Stacks the
- *  overwritten characters for Backspace restore and records the text for
+/** Text ARRIVED in replace mode — the adapter performed the overwrite and
+ *  reports what it displaced: stack it for Backspace restore, record for
  *  dot-repeat. */
 export const vimReplaceText = (state: VimState, inserted: string, overwritten: string): VimState => {
   if (state.mode !== 'replace' || inserted.length === 0) return state;
@@ -1057,21 +937,18 @@ export type VimKeydownOpts = {
 
 /** The public entry, as LAYERS over the core dispatch:
  *
- *  1. USER MAPPINGS (when `opts.keymap` is set; skipped for `noremap`/
- *     `replay` keys): user LHS win over built-ins — that is what remapping
- *     means — and an unmatched walk replays its swallowed keys via a noremap
- *     `feedKeys`. User walk steps BYPASS record(): the expansion records
+ *  1. USER MAPPINGS (skipped for `noremap`/`replay` keys): user LHS win over
+ *     built-ins; an unmatched walk replays its swallowed keys via a noremap
+ *     `feedKeys`. User walk steps BYPASS record() — the expansion records
  *     instead, so `.` repeats post-expansion keys.
- *  2. BUILT-IN SEQUENCES (`gg`, `g`+hjkl, text objects `iw`/`a(`…): the same
- *     trie walk, ALWAYS active — replayed and fed keys resolve them
- *     identically. Their steps RECORD (the walked keys are part of the
- *     change; a replay re-walks them).
+ *  2. BUILT-IN SEQUENCES (`gg`, text objects…): the same trie walk, ALWAYS
+ *     active, so fed and replayed keys resolve them identically. Their steps
+ *     RECORD (a replay re-walks them).
  *  3. The core dispatch (single keys, counts, operators, arguments). */
 export const vimKeydown = (state: VimState, key: VimKey, doc: VimDocView, opts?: VimKeydownOpts): VimStep => {
   const step = keydownLayers(state, key, doc, opts);
-  // Macro capture: REAL keys only (fed/replayed keys re-derive from these on
-  // replay), and never the q that starts or stops the recording — capture
-  // requires a recording live on BOTH sides of the step.
+  // Macro capture: REAL keys only, and never the q that starts or stops the
+  // recording — capture requires a recording live on BOTH sides of the step.
   if (!opts?.replay && !opts?.fed && state.macroRecording && step.state.macroRecording) {
     const mr = step.state.macroRecording;
     return { ...step, state: { ...step.state, macroRecording: { ...mr, keys: [...mr.keys, key] } } };
@@ -1079,10 +956,9 @@ export const vimKeydown = (state: VimState, key: VimKey, doc: VimDocView, opts?:
   return step;
 };
 
-/** `gv`'s memory: when a key ENDS visual mode — an operator, Escape, a
- *  toggle-off, block I/A — remember the selection it had (the doc view still
- *  shows it; effects have not applied yet). One choke point instead of one
- *  per exiting action. */
+/** `gv`'s memory: when a key ENDS visual mode, remember the selection it had
+ *  (the doc view still shows it; effects have not applied yet). One choke
+ *  point instead of one per exiting action. */
 const rememberVisualExit = (incoming: VimState, doc: VimDocView, step: VimStep): VimStep =>
   incoming.mode === 'visual' && step.state.mode !== 'visual'
     ? {
@@ -1099,10 +975,10 @@ const rememberVisualExit = (incoming: VimState, doc: VimDocView, step: VimStep):
       }
     : step;
 
-/** Keep the stored plain offsets (marks, `gi`'s last-insert point) valid
- *  over the step's OWN replace effects — applied in effect order, since each
- *  effect speaks post-previous offsets. Editor-side insert-session edits are
- *  not visible here; those leave the offsets best-effort (clamped on use). */
+/** Keep the stored plain offsets (marks, `gi`'s last-insert point) valid over
+ *  the step's OWN replace effects, applied in effect order. Editor-side
+ *  insert-session edits are not visible here; those leave the offsets
+ *  best-effort (clamped on use). */
 const adjustStoredOffsets = (step: VimStep): VimStep => {
   const replaces = step.effects.filter((e) => e.kind === 'replace');
   if (replaces.length === 0) return step;
@@ -1149,27 +1025,24 @@ const keydownLayersInner = (state: VimState, key: VimKey, doc: VimDocView, opts?
 const isLoneModifier = (key: VimKey): boolean =>
   key.key === 'Control' || key.key === 'Shift' || key.key === 'Alt' || key.key === 'Meta';
 
-/** The map-mode CONTEXT of a normal/visual key (insert mode has its own
- *  walk): a pending operator outranks the mode. */
+/** The map-mode CONTEXT of a normal/visual key: a pending operator outranks
+ *  the mode. */
 const mapModeOf = (state: VimState): 'normal' | 'visual' | 'operatorPending' =>
   state.operator ? 'operatorPending' : state.mode === 'visual' ? 'visual' : 'normal';
 
-/** The action env from the pending state: the resolved count and whether one
- *  was actually typed. */
 const actionEnv = (state: VimState): VimActionEnv => ({ count: state.count ?? 1, hasCount: state.count !== null });
 
-/** What the mapping layer decided for one key: consume it with a full step,
- *  or PASS it to the built-in dispatch (optionally with walk state advanced —
- *  the insert walk lets prefix keys type live). Null = pass unchanged. */
+/** Consume the key with a full step, or PASS it to the built-in dispatch
+ *  (optionally with walk state advanced). Null = pass unchanged. */
 type MappingResult =
   | { readonly kind: 'step'; readonly step: VimStep }
   | { readonly kind: 'pass'; readonly state: VimState }
   | null;
 
 /** The mapping front layer for one key. Inactive wherever the next key is an
- *  ARGUMENT (`f`/`r` char, text-object key, a built-in `g` prefix, the search
- *  command line) — those semantics must not be shadowed mid-sequence. Insert
- *  mode has its own walk (insertMappingKey). */
+ *  ARGUMENT (`f`/`r` char, a builtin walk, the search command line) — those
+ *  semantics must not be shadowed mid-sequence. Insert mode has its own walk
+ *  (insertMappingKey). */
 const mappingLayerKey = (
   state: VimState,
   key: VimKey,
@@ -1184,7 +1057,7 @@ const mappingLayerKey = (
   if (state.mapPending && state.mapPending.layer !== 'user') return null; // a builtin walk owns the keys
   const pending = state.mapPending?.keys ?? [];
   if (pending.length > 0 && key.key === 'Escape') {
-    // Cancel the walk, discarding the swallowed keys (as Vim does).
+    // Cancel the walk, discarding the swallowed keys (Vim's behavior).
     return { kind: 'step', step: { state: { ...state, mapPending: null }, effects: [], handled: true } };
   }
   const mode: VimMapMode = mapModeOf(state);
@@ -1199,9 +1072,8 @@ const mappingLayerKey = (
   if (walk.kind === 'match') {
     return { kind: 'step', step: runBinding(state, walk.binding, mode, doc, customActions) };
   }
-  // Miss. A fresh key that starts no LHS is simply not ours; a dead-ended
-  // walk replays everything it swallowed through the built-ins, as if typed
-  // (how `gg` still works when the user maps only `gw`).
+  // Miss: a dead-ended walk replays everything it swallowed through the
+  // built-ins, as if typed (how `gg` still works when the user maps only `gw`).
   if (pending.length === 0) return null;
   return {
     kind: 'step',
@@ -1213,11 +1085,10 @@ const mappingLayerKey = (
   };
 };
 
-/** Execute a matched user binding: a key RHS becomes a `feedKeys` effect
- *  (the adapter loops it); an `{action}` RHS runs the named primitive
- *  directly with the pending count. Action bindings are NOT dot-repeatable —
- *  they execute outside the key recording (Vim's `<Plug>` without
- *  repeat.vim has the same limit). */
+/** Execute a matched user binding: a key RHS becomes a `feedKeys` effect; an
+ *  `{action}` RHS runs the named primitive directly. Action bindings are NOT
+ *  dot-repeatable — they execute outside the key recording (Vim's `<Plug>`
+ *  without repeat.vim has the same limit). */
 const runBinding = (
   state: VimState,
   binding: KeymapBinding,
@@ -1242,22 +1113,14 @@ const runBinding = (
   return action(clearPending(base), env, doc);
 };
 
-/** The INSERT-mode walk (`jj` → `<Esc>`). Unlike the normal walk it never
- *  swallows text: prefix keys PASS and type live, and a match DELETES the
- *  typed prefix before feeding the RHS. So an interrupting IME composition,
- *  click, or abort loses nothing — the prefix is ordinary document text (the
- *  adapter merely resets the walk at compositionstart, observation-only).
- *  A liveness check (the prefix must still sit before the caret) invalidates
- *  the match after any caret move. Prefix keys RECORD as typed text; a match
- *  strips them from the recording, so `.` replays only the net expansion. */
 /** Drop an in-progress walk, PASSING the key on to the dispatch (any typed
  *  prefix stays); null when no walk was live — the key is simply not ours. */
 const abortWalk = (state: VimState, pending: readonly VimKey[]): MappingResult =>
   pending.length ? { kind: 'pass', state: { ...state, mapPending: null } } : null;
 
 /** The step for a MATCHED insert mapping: delete the live-typed prefix from
- *  the document, strip it from the dot-repeat recording (the prefix chars
- *  recorded so far net to nothing), and feed the RHS. */
+ *  the document, strip it from the dot-repeat recording (so `.` replays only
+ *  the net expansion), and feed the RHS. */
 const insertMappingMatch = (
   state: VimState,
   base: readonly VimKey[],
@@ -1279,6 +1142,12 @@ const insertMappingMatch = (
   };
 };
 
+/** The INSERT-mode walk (`jj` → `<Esc>`). Unlike the normal walk it never
+ *  swallows text: prefix keys PASS and type live, and a match DELETES the
+ *  typed prefix before feeding the RHS — so an interrupting IME composition,
+ *  click, or abort loses nothing (the adapter merely resets the walk at
+ *  compositionstart, observation-only). A liveness check (the prefix must
+ *  still sit before the caret) invalidates the match after any caret move. */
 const insertMappingKey = (
   state: VimState,
   key: VimKey,
@@ -1301,23 +1170,13 @@ const insertMappingKey = (
       return { kind: 'pass', state: { ...state, mapPending: { layer: 'user', keys: [...base, key] } } };
     }
     if (walk.kind === 'match' && walk.binding.kind === 'keys') {
-      // (compile rejects {action} RHS in insert mode, so `keys` is the only
-      // reachable binding kind here.)
+      // compile rejects {action} RHS in insert mode, so `keys` is the only
+      // reachable binding kind here.
       return { kind: 'step', step: insertMappingMatch(state, base, walk.binding, doc) };
     }
   }
   return abortWalk(state, pending);
 };
-
-// ---------------------------------------------------------------------------
-// Built-in sequences (K2 — the same trie walk as user maps)
-//
-// Every multi-key BUILT-IN — `gg`, `g`+hjkl, the text objects `iw`/`a(`… —
-// is an entry in a per-context trie walked by builtinLayerKey, replacing the
-// old gPending/textObjectPending flags. The context mirrors the map modes:
-// operator pending / visual / normal (so `i` is a text-object prefix only
-// where Vim's omap/xmap would bind it, and plain insert elsewhere).
-// ---------------------------------------------------------------------------
 
 type BuiltinTrie = Trie<VimAction>;
 
@@ -1325,8 +1184,8 @@ type BuiltinTrie = Trie<VimAction>;
 const builtinTrie = (entries: Readonly<Record<string, VimAction>>): BuiltinTrie =>
   buildTrie(Object.entries(entries).map(([seq, action]) => [[...seq], action] as const));
 
-/** `g` + h/j/k/l = the DISPLAY (visual) line/column walk — the wrapped
- *  column/row, as opposed to bare hjkl's logical paragraph walk. */
+/** `g` + h/j/k/l = the DISPLAY (wrapped) line/column walk, as opposed to bare
+ *  hjkl's logical paragraph walk. */
 const displayWalk =
   (direction: VimVisualDirection): VimAction =>
   (state, env, _doc) => ({
@@ -1335,9 +1194,8 @@ const displayWalk =
     handled: true,
   });
 
-/** zt/zz/zb: scroll the caret's line to the viewport's reading start /
- *  center / end (the caret itself stays put — Vim's z variants without a
- *  column move). */
+/** zt/zz/zb: scroll the caret's line to the viewport's reading start/center/
+ *  end, caret put (Vim's z variants without a column move). */
 const zScroll =
   (at: 'start' | 'center' | 'end'): VimAction =>
   (state) => ({
@@ -1361,28 +1219,23 @@ export const G_SEQUENCES: Readonly<Record<string, VimAction>> = {
   gj: displayWalk('down'),
   gk: displayWalk('up'),
   gl: displayWalk('right'),
-  // gJ: join without inserting a space (removes only the newline; the next
-  // line's leading whitespace survives). In visual mode it joins the
-  // selected lines, like J there.
+  // gJ: join removing only the newline (no space; leading whitespace kept).
   gJ: (state, env, doc) =>
     state.mode === 'visual'
       ? visualJoin(clearPending(state), doc, true)
       : joinLines(clearPending(state), doc, env.count, true),
-  // Case operators: gu{motion}/gU{motion}/g~{motion}, doubled for lines,
-  // direct in visual mode. (Called lazily — caseOperatorKey is declared
-  // with the other operator machinery below.)
+  // Wrapped lazily — caseOperatorKey is declared below.
   gu: (state, env, doc) => caseOperatorKey('lower')(state, env, doc),
   gU: (state, env, doc) => caseOperatorKey('upper')(state, env, doc),
   'g~': (state, env, doc) => caseOperatorKey('toggle')(state, env, doc),
-  // gi re-enters insert where the last session ended; gp/gP paste with the
-  // cursor AFTER the pasted text.
   gi: (state, env, doc) => NORMAL_ACTIONS['insert.atLastInsert'](clearPending(state), env, doc),
+  // gp/gP paste with the cursor AFTER the pasted text.
   gp: (state, env, doc) => paste(clearPending(state), doc, env.count, true, true),
   gP: (state, env, doc) => paste(clearPending(state), doc, env.count, false, true),
   // gv: reselect the last visual selection (kind and $-flag included). From
-  // INSIDE visual mode it swaps with the live selection, so gv gv toggles
-  // between the two — Vim's rule. Offsets clamp to the current text (they
-  // are not edit-adjusted; see lastVisual).
+  // INSIDE visual mode it swaps with the live selection (gv gv toggles —
+  // Vim's rule). Offsets clamp to the current text (not edit-adjusted; see
+  // lastVisual).
   gv: (state, _env, doc) => {
     const lv = state.lastVisual;
     if (!lv || state.operator) return swallow(clearPending(state));
@@ -1415,17 +1268,20 @@ const textObjectSequences = (): Record<string, VimAction> => {
   return out;
 };
 
+/** Per-context tries for the multi-key built-ins — the contexts mirror the
+ *  map modes, so `i` is a text-object prefix only where Vim's omap/xmap would
+ *  bind it, and plain insert elsewhere. */
 const BUILTIN_TRIES: Readonly<Record<'normal' | 'visual' | 'operatorPending', BuiltinTrie>> = {
   normal: builtinTrie({ ...G_SEQUENCES, ...Z_SEQUENCES }),
   visual: builtinTrie({ ...G_SEQUENCES, ...Z_SEQUENCES, ...textObjectSequences() }),
   operatorPending: builtinTrie({ ...G_SEQUENCES, ...textObjectSequences() }),
 };
 
-/** The built-in sequence walk for one key (layer 2 of vimKeydown). Same
- *  discipline as the user layer, with the built-ins' own semantics: a dead
- *  end SWALLOWS and clears pendings (the old `gx`-types-nothing behavior),
- *  Escape and chords cancel the walk but still reach the dispatch, and named
- *  keys normalize first (`g`+Enter = `gj`, as the old g-prefix behaved). */
+/** The built-in sequence walk (layer 2 of vimKeydown). Same discipline as the
+ *  user layer, with the built-ins' own semantics: a dead end SWALLOWS and
+ *  clears pendings (so `gx` types nothing), Escape and chords cancel the walk
+ *  but still reach the dispatch, and named keys normalize first
+ *  (`g`+Enter = `gj`). */
 const builtinLayerKey = (state: VimState, key: VimKey, doc: VimDocView): MappingResult => {
   if (state.mode === 'insert' || state.commandLine || state.charPending) return null;
   if (state.mapPending && state.mapPending.layer !== 'builtin') return null;
@@ -1457,14 +1313,12 @@ const builtinLayerKey = (state: VimState, key: VimKey, doc: VimDocView): Mapping
 };
 
 /** A Ctrl chord outside insert mode. While a char argument is pending it may
- *  be its shortcut (FIND_CHORDS — e.g. Ctrl+j → 、, Ctrl+l → 。); anything
- *  else cancels. Otherwise Ctrl chords resolve through the SAME
- *  bindings→actions tables as plain keys, keyed by their chord token (keys.ts
- *  keyToken: `C-r`) — so redo, increment, and the page scrolls are named
- *  actions, remappable and bindable as `{action}` RHS like everything else.
- *  CONSUMED when bound so Vim outranks the app bindings on the same chords
- *  (Ctrl+F search, Ctrl+B sidebar) while normal mode is on; insert mode never
- *  reaches here, so the app keeps them there. */
+ *  be its shortcut (FIND_CHORDS); anything else cancels. Otherwise Ctrl
+ *  chords resolve through the SAME bindings→actions tables as plain keys,
+ *  keyed by their chord token (keys.ts keyToken: `C-r`) — remappable and
+ *  bindable as `{action}` RHS like everything else. CONSUMED when bound, so
+ *  Vim outranks the app bindings on the same chords while normal mode is on;
+ *  insert mode never reaches here, so the app keeps them there. */
 const ctrlChordKey = (state: VimState, key: VimKey, doc: VimDocView): VimStep => {
   if (state.charPending) {
     const target = FIND_CHORDS[key.key];
@@ -1489,12 +1343,11 @@ const countDigitKey = (state: VimState, k: string): VimStep | null => {
 };
 
 const dispatch = (state: VimState, key: VimKey, doc: VimDocView): VimStep => {
-  // The search command line owns every key while open (before mode/meta gates
-  // — a `/`-pattern may contain any character).
+  // The command line owns every key while open (before mode/meta gates — a
+  // `/`-pattern may contain any character).
   if (state.commandLine) return commandLineKey(state, key, doc);
-  // A LONE modifier keydown (the browser fires it before the real key — e.g.
-  // Control before Ctrl+l) must not disturb pending state: ignore it, keeping
-  // any charPending/count/operator intact for the chord that follows.
+  // A LONE modifier keydown (the browser fires it before the chord's real
+  // key) must not disturb pending charPending/count/operator state.
   if (isLoneModifier(key)) return unhandled(state);
   if (key.meta || key.alt) return unhandled(state);
   if (state.mode === 'insert' || state.mode === 'replace') return insertKey(state, key, doc);
@@ -1511,18 +1364,15 @@ const dispatch = (state: VimState, key: VimKey, doc: VimDocView): VimStep => {
   if (k.length !== 1) return unhandled(state);
   const counted = countDigitKey(state, k);
   if (counted) return counted;
-  // Multi-key built-ins (g-sequences, text objects) were consumed by
-  // builtinLayerKey before this point.
   return commandKey(state, k, doc);
 };
 
 /** Insert AND replace mode: only Escape is ours (back to normal, caret one
  *  step left like Vim, its own undo unit; a pending BLOCK insert repeats its
- *  text on the block's other lines first). Everything else — including
- *  chords — is the editor's normal editing, though a pending block insert
- *  tracks the keys that break its repeat (Enter/Delete) or shorten it
- *  (Backspace), and replace mode owns Backspace (restore) and stacks its
- *  typed newlines. */
+ *  text on the block's other lines first). Everything else — chords included
+ *  — is the editor's normal editing, though a pending block insert tracks the
+ *  keys that break/shorten its repeat, and replace mode owns Backspace
+ *  (restore) and stacks its typed newlines. */
 const insertKey = (state: VimState, key: VimKey, doc: VimDocView): VimStep => {
   if (key.key === 'Escape' && !key.ctrl) {
     const flushed = flushBlockInsert(state, doc);
@@ -1541,8 +1391,8 @@ const insertKey = (state: VimState, key: VimKey, doc: VimDocView): VimStep => {
   }
   const chordless = !key.ctrl && !key.meta && !key.alt;
   if (state.mode === 'replace' && chordless && key.key === 'Backspace') {
-    // Within this replace session Backspace RESTORES the overwritten char;
-    // below the session it only moves left (Vim's R rule).
+    // Backspace RESTORES the overwritten char; below the session it only
+    // moves left (Vim's R rule).
     const stack = state.replaceStack;
     if (stack.length === 0) {
       const back = Math.max(lineStart(doc.text, doc.head), doc.head - 1);
@@ -1563,7 +1413,7 @@ const insertKey = (state: VimState, key: VimKey, doc: VimDocView): VimStep => {
     };
   }
   if (state.mode === 'replace' && chordless && key.key === 'Enter') {
-    // R + Enter INSERTS the newline (replaces nothing, Vim); stack it so a
+    // R + Enter INSERTS the newline (replaces nothing, Vim); stack it so
     // Backspace can delete it again.
     return unhandled({ ...state, replaceStack: [...state.replaceStack, null] });
   }
@@ -1573,8 +1423,8 @@ const insertKey = (state: VimState, key: VimKey, doc: VimDocView): VimStep => {
       return unhandled({ ...state, blockInsert: { ...bi, valid: false } });
     }
     if (key.key === 'Backspace') {
-      // Deleting within the typed text shortens the repeat; deleting past
-      // its start makes the repeat unpredictable — abort it.
+      // Deleting within the typed text shortens the repeat; deleting past its
+      // start makes the repeat unpredictable — abort it.
       const next = bi.text.length > 0 ? { ...bi, text: bi.text.slice(0, -1) } : { ...bi, valid: false };
       return unhandled({ ...state, blockInsert: next });
     }
@@ -1600,9 +1450,8 @@ const replaceCharStep = (state: VimState, ch: string, doc: VimDocView): VimStep 
   };
 };
 
-/** `@{char}`: replay a macro — feed its TYPED keys back (through mappings —
- *  that is what typing them would do), count times. `@@` = the last replayed
- *  one. */
+/** `@{char}`: replay a macro — feed its TYPED keys back through mappings,
+ *  count times. `@@` = the last replayed one. */
 const macroPlayStep = (state: VimState, ch: string, count: number): VimStep => {
   const cleared = clearPending(state);
   const reg = ch === '@' ? state.lastMacro : ch;
@@ -1651,7 +1500,6 @@ const resolveCharKey = (state: VimState, ch: string, doc: VimDocView): VimStep =
   const count = state.count ?? 1;
   if (pending === 'r') return replaceCharStep(state, ch, doc);
   if (pending === 'q') {
-    // Start recording into the register (any single character names one).
     return { state: { ...clearPending(state), macroRecording: { reg: ch, keys: [] } }, effects: [], handled: true };
   }
   if (pending === '@') return macroPlayStep(state, ch, count);
@@ -1679,10 +1527,9 @@ const motionStep = (state: VimState, motion: Motion, doc: VimDocView): VimStep =
   return { state, effects: [{ kind: 'select', anchor, head: motion.target }], handled: true };
 };
 
-/** Operator pending: this key is the operator's target (a motion, the
- *  doubled operator = whole lines, or a find prefix; text objects were
- *  consumed by the builtin sequence layer). Anything else cancels the
- *  operator. */
+/** Operator pending: this key is the operator's target — a motion, the
+ *  doubled operator (whole lines), or a find prefix; text objects were
+ *  consumed by the builtin layer. Anything else cancels the operator. */
 const operatorTargetKey = (
   state: VimState,
   op: Operator,
@@ -1716,9 +1563,8 @@ const commandKey = (state: VimState, k: string, doc: VimDocView): VimStep => {
   return normalKey(cleared, k, count, hasCount, doc);
 };
 
-/** A completed text object (`iw`, `a(`, `ip`… — matched by the builtin
- *  sequence layer): compute its range and either apply the pending operator
- *  or (in visual mode) set the selection. */
+/** A completed text object: apply the pending operator over its range, or (in
+ *  visual mode) select it. */
 const textObjectStep = (state: VimState, kind: 'i' | 'a', objKey: string, doc: VimDocView): VimStep => {
   const op = state.operator;
   const cleared = clearPending(state);
@@ -1741,7 +1587,6 @@ const textObjectStep = (state: VimState, kind: 'i' | 'a', objKey: string, doc: V
   };
 };
 
-/** The opposite direction of each find op, for `,`. */
 const REVERSE_FIND: Readonly<Record<FindOp, FindOp>> = { f: 'F', F: 'f', t: 'T', T: 't' };
 
 /** `;`/`,` — repeat the last find (`,` reversed). Returns null without one. */
@@ -1769,16 +1614,6 @@ const visualRange = (state: VimState, doc: VimDocView): VimRange => {
   return { from: a, to: Math.max(doc.caretStop(b, 1), b), linewise: false };
 };
 
-// ---------------------------------------------------------------------------
-// Block visual (Ctrl+V): the rectangle between the anchor and head — their
-// line range × their column range, both INCLUSIVE, columns as CHARACTER
-// offsets within the line (ved's grid renders one character per cell in both
-// writing modes, so character columns ARE the visual rectangle; deviation
-// from Vim's screen columns). Offsets index the raw plain text, markup
-// included — a block that cuts through a collapsed ruby's markup edits the
-// exact plain string, the identity model's contract.
-// ---------------------------------------------------------------------------
-
 /** One line of a block: its bounds and the block's segment on it, clipped to
  *  the line end (EMPTY — from === to — on a line shorter than the left
  *  column). */
@@ -1792,6 +1627,12 @@ type BlockGeom = {
   readonly topIndex: number;
 };
 
+/** The Ctrl+V rectangle: anchor/head line range × column range, both
+ *  INCLUSIVE, columns as CHARACTER offsets within the line (ved's grid
+ *  renders one character per cell in both writing modes, so character columns
+ *  ARE the visual rectangle — a deviation from Vim's screen columns). A block
+ *  cutting through a collapsed ruby's markup edits the exact plain string,
+ *  the identity model's contract. */
 const blockGeometry = (text: string, anchor: number, head: number, eol: boolean): BlockGeom => {
   const aCol = anchor - lineStart(text, anchor);
   const hCol = head - lineStart(text, head);
@@ -1973,7 +1814,7 @@ const flushBlockInsert = (state: VimState, doc: VimDocView): { state: VimState; 
 };
 
 // ---------------------------------------------------------------------------
-// Named actions + built-in bindings (K1 — bindings as data)
+// Named actions + built-in bindings (bindings as data)
 //
 // Every COMMAND key resolves through a bindings table (key → action id) into
 // the actions table (id → pure function), so what a key DOES is separated

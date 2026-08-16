@@ -2,7 +2,7 @@
 // of rubies must step the HEAD one visual line and KEEP the anchor — it used to
 // jump the head to the paragraph END. Native `modify('extend',…,'line')` slides
 // the focus over a ruby's read-only base (contenteditable=false) all the way to the
-// line/paragraph end; editor.tsx now probes with a plain `move` from the head and
+// line/paragraph end; editor.tsx probes with a plain `move` from the head and
 // re-applies the anchor, so extend lands exactly where a plain line move would.
 import assert from 'node:assert/strict';
 import { clickWritingMode, fail, finish, launchVed, step } from './harness.ts';

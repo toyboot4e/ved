@@ -1,15 +1,8 @@
-// Node view for the ruby node. Rendering is the schema default —
-// <ruby class="rubyWrap"><span class="rubyBase">base</span><rt>reading</rt></ruby>,
-// both children editable PM content — so this view exists ONLY to fix the caret
-// AFFINITY at the base's content start.
-//
-// PM's default `setSelection` places a caret with `domFromPos(pos, pos ? -1 : 1)`
-// — side -1 (look BACKWARD) for any non-zero in-node offset. At the base's content
-// start that lands the native DOM caret on the END of the text PRECEDING the ruby
-// (`あ|`), OUTSIDE the base — so an IME composes before the ruby even though the
-// caret is logically INSIDE it (the `rubyActive` highlight is on). We verified the
-// browser keeps the caret inside the base if put there explicitly, so this view
-// re-homes the DOM selection into the base/reading text nodes itself.
+// Rendering is the schema default; this view exists only to fix caret affinity at
+// the base's content start: PM's default `setSelection` uses side -1 for non-zero
+// offsets, landing the DOM caret on the text preceding the ruby — an IME then
+// composes before the ruby though the caret is logically inside. Re-homing the DOM
+// selection into the base/reading text nodes keeps it inside.
 import type { Node as PMNode } from 'prosemirror-model';
 
 export class RubyView {
@@ -19,7 +12,6 @@ export class RubyView {
 
   constructor(node: PMNode) {
     this.baseLen = node.child(0).textContent.length;
-    // contentDOM === dom: PM renders the children (rubyBase span + rt) inside.
     this.dom = document.createElement('ruby');
     this.dom.className = 'rubyWrap';
     this.contentDOM = this.dom;
@@ -31,33 +23,29 @@ export class RubyView {
     return true;
   }
 
-  /** The DOM (node, offset) for a node-LOCAL content offset. The ruby content is
-   *  [rubyBase, rubyReading]: rubyBase occupies local [0, baseLen+2] with its text at
-   *  1..baseLen+1; rubyReading follows. We map onto the actual text nodes so the caret
-   *  sits INSIDE the base (or reading), not on a collapsible element boundary. */
+  /** The DOM (node, offset) for a node-local content offset. rubyBase occupies
+   *  local [0, baseLen+2] with its text at 1..baseLen+1; rubyReading follows.
+   *  Mapped onto the actual text nodes so the caret sits inside the base (or
+   *  reading), not on a collapsible element boundary. */
   private domPos(local: number): [Node, number] {
-    // local 0 is the ruby's content START — which is where PM (forward side) sends
-    // the "BEFORE the ruby" caret (model offset just before the node) when the ruby
-    // leads its paragraph or follows another ruby. That position is logically
-    // OUTSIDE the ruby, so put the caret BEFORE the <ruby> element in its parent —
-    // otherwise an IME composes INTO the base at the doc start / between adjacent
-    // rubies (the reported corner cases).
+    // local 0 is where PM sends the "before the ruby" caret when the ruby leads its
+    // paragraph or follows another ruby — logically outside, so place the caret
+    // before the <ruby> element or an IME composes into the base.
     if (local <= 0) {
       const parent = this.dom.parentNode;
       if (parent) return [parent, Math.max(0, Array.prototype.indexOf.call(parent.childNodes, this.dom))];
       return [this.dom, 0];
     }
-    // By CLASS, not first/lastChild: in the expanded policies the delimiter
-    // WIDGETS (`|`, `(` — pm/decorations.ts) render inside the <ruby> around
-    // the children, so positional lookups would land the caret in a delimiter.
+    // By class, not first/lastChild: expanded policies render delimiter widgets
+    // inside the <ruby> (pm/decorations.ts), so positional lookups land in a delimiter.
     const baseSpan = this.dom.querySelector(':scope > .rubyBase') as HTMLElement | null;
     const rt = this.dom.querySelector(':scope > rt') as HTMLElement | null;
     if (local <= this.baseLen + 1) {
       const text = baseSpan?.firstChild;
       if (text && text.nodeType === Node.TEXT_NODE) return [text, Math.max(0, Math.min(local - 1, this.baseLen))];
-      return [baseSpan ?? this.dom, 0]; // empty base
+      return [baseSpan ?? this.dom, 0];
     }
-    const rtLocal = local - (this.baseLen + 2) - 1; // into rubyReading content
+    const rtLocal = local - (this.baseLen + 2) - 1;
     const text = rt?.firstChild;
     if (text && text.nodeType === Node.TEXT_NODE) {
       return [text, Math.max(0, Math.min(rtLocal, text.textContent?.length ?? 0))];

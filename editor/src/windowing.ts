@@ -1,28 +1,22 @@
 // The windowing measure/decide side (pm/windowing.ts is the plugin + pure
-// math): keep the paragraphs near the viewport (and the caret, and paragraph
-// 0) rendered, display:none the rest behind extent-exact spacers — a sized
-// block in the block-flow modes; whole-band jumpers + an exact tail in the
-// multicol modes (pm/windowing.ts has the why). Decided per scroll/edit from
-// ONE read phase in FLOW coordinates (a rect per visible paragraph, a rect
-// per spacer), dispatched only when the hidden set or a spacer spec changes.
+// math): paragraphs near the viewport, the caret, and paragraph 0 stay
+// rendered; the rest go display:none behind extent-exact spacers — a sized
+// block in block flow, whole-band jumpers + an exact tail in multicol
+// (pm/windowing.ts has the why). Decided per scroll/edit from ONE read phase
+// in FLOW coordinates, dispatched only when the hidden set or a spacer spec
+// changes.
 //
-// Discipline (the page-gap precedent):
-//   - never dispatch while composing — a window change redraws around the
-//     preedit; the compositionend schedule reconciles;
-//   - every EDIT's changed paragraphs and the caret's paragraph are
-//     materialized IN THE SAME FLUSH (chainMaterialize, chained into
-//     dispatchTransaction like repair) — so the page-gap measure and the
-//     overlay's edit pass never walk a hidden paragraph, and the caret
-//     always has a DOM home before anything measures or reveals it;
-//   - any layout change that can resize paragraphs (mode, policy, view
-//     config, fonts) MATERIALIZES EVERYTHING first (materializeAll) — full
-//     measures run against a fully rendered document, then the next pass
-//     re-windows. One honest slow frame per discrete user action.
+// Discipline (the page-gap precedent): never dispatch while composing (the
+// compositionend schedule reconciles); an edit's changed paragraphs and the
+// caret's paragraph materialize IN THE SAME FLUSH (chainMaterialize, chained
+// into dispatchTransaction like repair) so nothing measures or reveals a
+// hidden paragraph; any layout change that can resize paragraphs (mode,
+// policy, view config, fonts) runs materializeAll FIRST — full measures need
+// a fully rendered document.
 //
-// Extents are measured per paragraph (one getBoundingClientRect — in block
-// flow a paragraph's box IS its extent), cached by ELEMENT under a layout
-// key; a paragraph without a valid cached extent is simply kept visible this
-// pass and measured for the next — cold regions converge in two passes.
+// Extents are per-paragraph, cached by ELEMENT under a layout key; a
+// paragraph without a valid cached extent stays visible this pass and is
+// measured for the next.
 
 import type { Node as PMNode } from 'prosemirror-model';
 import type { EditorState } from 'prosemirror-state';
@@ -32,30 +26,25 @@ import { patchDecorationWindow, setWindowedNodes } from './pm/decorations';
 import { changedParagraphSpan } from './pm/model';
 import { type HiddenRun, runsFromWanted, windowingTr } from './pm/windowing';
 
-/** Windowing engages past EITHER bound — many paragraphs OR a large total
- *  text. Counting paragraphs alone let a few hundred LONG paragraphs (the
- *  novel-prose shape: each wraps to dozens of visual lines) sail under the
- *  threshold with the whole Blink wall intact: 120 × 850-char paragraphs
- *  measured 394ms/key unwindowed vs 34ms for the same text split small.
- *  Below both bounds the retained layout tree is small enough that Blink's
- *  per-key walks don't hurt, and small documents never pay the machinery. */
+/** Windowing engages past EITHER bound — paragraph count alone let a few
+ *  hundred LONG novel-prose paragraphs keep the whole Blink wall (120 ×
+ *  850-char paragraphs: 394ms/key unwindowed vs 34ms split small); below
+ *  both bounds small documents never pay the machinery. */
 export const WINDOW_MIN_PARAS = 300;
 export const WINDOW_MIN_SIZE = 20_000;
 /** Paragraphs within this many of the caret (either selection end) stay
  *  materialized — line moves measure adjacent columns. */
 const CARET_PAD = 2;
-/** An edit that needs more than this many HIDDEN paragraphs materializes
- *  everything (a replaceAll-scale rebuild) instead of splitting runs
- *  precisely — the count of actually-hidden members, never the dirty span's
- *  raw size (a large paste's span is mostly new, visible paragraphs). */
+/** An edit needing more than this many actually-HIDDEN paragraphs
+ *  materializes everything instead of splitting runs — never the dirty
+ *  span's raw size (a large paste's span is mostly new, visible paragraphs). */
 const LARGE_EDIT_PARAS = 64;
 /** Re-run the scroll-driven pass only after the viewport moved this fraction
- *  of itself — the margin is a whole viewport, so a quarter keeps well ahead
- *  of the reader without a pass per scroll frame. */
+ *  of itself — the margin is a whole viewport, so a quarter stays ahead. */
 const SCROLL_HYSTERESIS = 0.25;
 
-/** The paragraph runs untouched at the document's ends by a window change —
- *  the overlay's scheduleEdit vocabulary (changedParagraphSpan's shape). */
+/** Paragraph runs untouched at the document's ends by a window change
+ *  (changedParagraphSpan's shape — the overlay's scheduleEdit vocabulary). */
 export type WindowShift = { cleanStart: number; cleanEnd: number };
 
 export type Windowing = {
@@ -64,17 +53,15 @@ export type Windowing = {
   /** Materialize EVERYTHING synchronously (layout-change prelude), then
    *  re-window after the full measures settle. */
   readonly materializeAll: () => void;
-  /** dispatchTransaction's chain step: if the caret/selection or the edit's
-   *  changed span touches a hidden paragraph, return a state with those
-   *  paragraphs materialized (their runs split; applied in the same
-   *  updateState) plus the changed span for the scoped re-measures;
-   *  null = nothing to do. */
+  /** dispatchTransaction's chain step: materializes hidden paragraphs touched
+   *  by the selection or the edit's changed span (runs split, applied in the
+   *  same updateState); null = nothing to do. */
   readonly chainMaterialize: (
     next: EditorState,
     oldDoc: PMNode | null,
   ) => { state: EditorState; shift: WindowShift } | null;
-  /** The overlay's cold fallback for a paragraph hidden before it was ever
-   *  measured: line count from the cached extent / the line pitch. */
+  /** Overlay's cold fallback for a paragraph hidden before it was measured:
+   *  cached extent / line pitch. */
   readonly hiddenLineFallback: (p: Element) => number | null;
   /** Called after every doc-changing dispatch: multicol spacer specs are
    *  position-dependent and re-derive; block-flow needs nothing. */
@@ -84,22 +71,20 @@ export type Windowing = {
 
 type ExtentEntry = { key: string; extent: number };
 
-/** The paragraph indexes hidden in the LIVE DOM — the classes windowing
- *  applies are the membership's source of truth (elements track node
- *  identity, so edits above a run never shift it). */
+/** Hidden paragraph indexes from the LIVE DOM — the applied classes are the
+ *  membership's source of truth (elements track node identity, so edits
+ *  above a run never shift it). */
 const hiddenParasFromDOM = (paras: NodeListOf<HTMLElement>): Set<number> => {
   const out = new Set<number>();
   for (let i = 0; i < paras.length; i++) if (paras[i]!.classList.contains('vedWindowHidden')) out.add(i);
   return out;
 };
 
-/** Flow geometry shared by both mode families. FLOW POSITION is the px
- *  distance travelled along the reading's block progression from the
- *  content start: in block flow that is the plain block offset (one
- *  unbounded band); in a MULTICOL mode the flow wraps into column bands —
- *  flowPos = bandIndex × bandCap + the within-band offset, all measured
- *  from CONTENT edges (border-box edges include the container padding and
- *  skew every tail by it). */
+/** Flow geometry shared by both mode families. FLOW POSITION = px along the
+ *  reading's block progression from the content start; in multicol the flow
+ *  wraps into bands (flowPos = bandIndex × bandCap + within-band offset),
+ *  all from CONTENT edges — border-box edges include the container padding
+ *  and skew every tail by it. */
 type FlowEnv = {
   key: string;
   vertical: boolean;
@@ -110,26 +95,24 @@ type FlowEnv = {
   period: number;
   /** Flow px one band holds; Infinity in block flow. */
   bandCap: number;
-  /** The within-band origin: content-box right edge (vertical-rl flows
-   *  leftward) or content-box top (horizontal-tb flows downward). */
+  /** Within-band origin: content-box right edge (vertical-rl flows leftward)
+   *  or content-box top. */
   contentStart: number;
   /** The OUTER window (viewport ± one viewport, flow px): a VISIBLE
    *  paragraph hides only when fully outside it. */
   flowLo: number;
   flowHi: number;
-  /** The INNER window (viewport ± three quarters of a viewport): a HIDDEN
-   *  paragraph materializes only when it reaches it. The dead zone between
-   *  the two absorbs the drift between live-measured and cached-extent
-   *  spans, which otherwise flapped ~20 boundary paragraphs per keystroke
-   *  (each flap re-dispatches the window and re-measures the overlay
-   *  tail). */
+  /** The INNER window (viewport ± ¾ viewport): a HIDDEN paragraph
+   *  materializes only when it reaches it. The dead zone absorbs
+   *  live-vs-cached span drift, which otherwise flapped ~20 boundary
+   *  paragraphs per keystroke (each flap re-dispatches and re-measures). */
   flowLoIn: number;
   flowHiIn: number;
 };
 
 /** The band a rect lies in: FLOOR against the container's content-box
- *  origin — a lattice anchor. Anchoring on a paragraph's own line rect and
- *  rounding mis-bands any rect past mid-band (a whole-bandCap cursor jump). */
+ *  origin — anchoring on a paragraph's own rect and rounding mis-bands any
+ *  rect past mid-band (a whole-bandCap cursor jump). */
 const bandOfRect = (r: DOMRect, env: FlowEnv): number =>
   env.multiCol ? Math.floor(((env.vertical ? r.top : r.left) - env.band0) / env.period) : 0;
 
@@ -144,8 +127,8 @@ const flowHits = (lo: number, hi: number, env: FlowEnv): boolean => hi >= env.fl
 
 const flowHitsInner = (lo: number, hi: number, env: FlowEnv): boolean => hi >= env.flowLoIn && lo <= env.flowHiIn;
 
-/** The first positioned client rect of an element (a multicol spacer's
- *  leading fragment; zero-height jumpers still carry a position). */
+/** First positioned client rect (a multicol spacer's leading fragment;
+ *  zero-height jumpers still carry a position). */
 const firstRect = (el: Element): DOMRect | null => {
   for (const r of el.getClientRects()) return r;
   const b = el.getBoundingClientRect();
@@ -153,10 +136,10 @@ const firstRect = (el: Element): DOMRect | null => {
 };
 
 /** The read phase, one document-order walk in FLOW coordinates: visible
- *  paragraphs re-sync the flow cursor from their own rect (and refresh the
- *  extent cache); a hidden run re-syncs at its SPACER's rect and bridges its
- *  members with cached extents. `cursorBefore[i]` is each paragraph's flow
- *  start — the multicol spacer spec (jumpers + tail) derives from it. */
+ *  paragraphs re-sync the flow cursor from their own rect; a hidden run
+ *  re-syncs at its SPACER's rect and bridges members with cached extents.
+ *  `cursorBefore[i]` = each paragraph's flow start (multicol spacer specs
+ *  derive from it). */
 const readSpans = (
   content: HTMLElement,
   paras: NodeListOf<HTMLElement>,
@@ -178,7 +161,7 @@ const readSpans = (
       inRun = false;
       const r = firstRect(el);
       const ext = measureExtent(el, paras[i + 1] ?? null, spacers[spacerIdx] ?? null, r, extents, env);
-      if (r) cursor = flowOf(r, env); // re-sync on every visible rect
+      if (r) cursor = flowOf(r, env);
       cursorBefore[i] = cursor;
       intersects[i] = ext === null || !r ? true : flowHits(cursor, cursor + ext, env);
       intersectsIn[i] = ext === null || !r ? true : flowHitsInner(cursor, cursor + ext, env);
@@ -190,7 +173,7 @@ const readSpans = (
       inRun = true;
       const sp = spacers[spacerIdx++];
       const r = sp ? firstRect(sp) : null;
-      if (r) cursor = flowOf(r, env); // re-sync at the run's live spacer
+      if (r) cursor = flowOf(r, env);
     }
     cursorBefore[i] = cursor;
     const entry = extents.get(el);
@@ -204,11 +187,10 @@ const readSpans = (
 };
 
 /** A visible paragraph's flow extent, cached under the layout key. In block
- *  flow the paragraph's own box IS its extent (no fragmentation). In a
- *  multicol mode the box lies about fragmented paragraphs, so the extent is
- *  the FLOW DELTA to the next flow item — the next paragraph's rect, or the
- *  following spacer's when the neighbor is hidden; the document's last
- *  paragraph has no delta and simply stays visible (null). */
+ *  flow the paragraph's own box IS its extent; a multicol box lies about
+ *  fragmented paragraphs, so the extent is the FLOW DELTA to the next flow
+ *  item (the next paragraph, or its run's spacer when hidden) — the last
+ *  paragraph has no delta and stays visible (null). */
 const measureExtent = (
   el: HTMLElement,
   next: HTMLElement | null,
@@ -223,8 +205,6 @@ const measureExtent = (
     ext = env.vertical ? b.width : b.height;
     if (!(ext > 0)) ext = null;
   } else if (own) {
-    // The next flow item after this paragraph: a hidden neighbor renders as
-    // the run's spacer, a visible one as itself.
     const nextEl = next && next.classList.contains('vedWindowHidden') ? nextSpacer : next;
     const nr = nextEl ? firstRect(nextEl) : null;
     if (nr) {
@@ -245,7 +225,7 @@ export const createWindowing = (
   mount: HTMLElement,
   /** A window change flips which paragraphs have geometry — the editor
    *  scopes the overlay re-measure to the changed span and drops the
-   *  hit-test cache, exactly like the page-gap onLayoutShift. */
+   *  hit-test cache (the page-gap onLayoutShift pattern). */
   onWindowChange: (shift: WindowShift) => void,
 ): Windowing => {
   const extents = new WeakMap<Element, ExtentEntry>();
@@ -254,20 +234,17 @@ export const createWindowing = (
   let rewindowTimer: ReturnType<typeof setTimeout> | 0 = 0;
   let lastPassScroll: number | null = null;
   let lastPitch = 0;
-  // The live spacer elements (refreshed per dispatch; PM may recreate widget
-  // DOM between dispatches — a disconnected entry re-queries lazily).
+  // PM may recreate widget DOM between dispatches — a disconnected entry
+  // re-queries lazily.
   let spacerEls: HTMLElement[] = [];
-  // Whether the LAST windowing dispatch left anything hidden — only our own
-  // dispatches change membership (the set otherwise rides the mapping), so
-  // this boolean lets the per-dispatch chain check bail without deriving the
-  // hidden set from the decorations (an O(paragraphs) scan per keystroke).
+  // Only our own dispatches change membership, so this boolean lets the
+  // per-dispatch chain check bail without an O(paragraphs) decoration scan.
   let hasHidden = false;
 
   /** The layout inputs a cached extent is valid under. The first paragraph's
    *  inline-size stands in for the line length (`--line-length` pins every
-   *  paragraph to it) — a page-geometry config change then invalidates every
-   *  extent by key, and the next pass simply keeps everything visible and
-   *  re-learns. */
+   *  paragraph to it) — a page-geometry change invalidates by key and the
+   *  next pass re-learns. */
   const layoutKey = (cs: CSSStyleDeclaration, firstPara: Element | undefined): string =>
     `${cs.writingMode}|${cs.lineHeight}|${cs.fontSize}|${cs.fontFamily}|${
       firstPara ? getComputedStyle(firstPara).inlineSize : ''
@@ -286,33 +263,29 @@ export const createWindowing = (
 
   const dispatchRuns = (runs: readonly HiddenRun[], shift: WindowShift | null, flipped: readonly number[]): void => {
     hasHidden = runs.length > 0;
-    // DECORATION WINDOWING: hidden paragraphs carry no per-paragraph
-    // decorations (pm/decorations.ts). Install the new node set FIRST (the
-    // patch's builders consult it), then re-derive the flipped paragraphs'
-    // cached decorations, so this dispatch's updateState pulls sets that
-    // agree with the new visibility.
+    // Hidden paragraphs carry no per-paragraph decorations (pm/decorations.ts):
+    // install the node set FIRST (the patch's builders consult it), then
+    // re-derive the flipped paragraphs' sets so this updateState agrees with
+    // the new visibility.
     const doc = view.state.doc;
     installWindowedNodes(doc, runs);
     patchDecorationWindow(doc, flipped);
-    // Test seam: windowing dispatches per scenario — steady-state typing
-    // must not re-dispatch the window (edit-perf pins the overlay fallout).
+    // Test seam: steady-state typing must not re-dispatch the window
+    // (edit-perf pins the overlay fallout).
     const w = globalThis as unknown as { __vedWindowDispatches?: number };
     w.__vedWindowDispatches = (w.__vedWindowDispatches ?? 0) + 1;
     view.dispatch(windowingTr(view.state, runs));
-    // AFTER updateState: ProseMirror's outer-deco patching rewrites the
-    // elements' attributes during the update and wipes foreign classes
+    // AFTER updateState: PM's outer-deco patching wipes foreign classes
     // applied before it.
     applyHiddenClasses(runs);
-    // Cache the live spacer elements for onScroll's blank-visible check —
-    // a per-scroll-event ':scope > *' query would be O(paragraphs).
+    // Cached for onScroll — a per-scroll ':scope > *' query is O(paragraphs).
     spacerEls = runs.length ? [...view.dom.querySelectorAll<HTMLElement>(':scope > .ved-window-spacer')] : [];
     if (shift !== null) onWindowChange(shift);
   };
 
-  /** The pass's environment reads: the layout key, the flow geometry, and
-   *  the viewport expanded by one viewport of margin — converted to FLOW px
-   *  (whole bands in the multicol modes). Returns null when the geometry is
-   *  unreadable (no rendered paragraph 0 yet). */
+  /** Per-pass reads: layout key, flow geometry, viewport ± one viewport in
+   *  FLOW px (whole bands in multicol). Null when the geometry is unreadable
+   *  (no rendered paragraph 0 yet). */
   const readPassEnv = (firstPara: HTMLElement | undefined): FlowEnv | null => {
     const cs = getComputedStyle(view.dom);
     const vertical = cs.writingMode.startsWith('vertical');
@@ -325,8 +298,8 @@ export const createWindowing = (
     const contentStart = vertical ? contentBox.right - border : contentBox.top + border;
     if (!firstPara) return null;
     const box = mount.getBoundingClientRect();
-    // The scroll axis: the band axis in the multicol modes (bands tile along
-    // it), the block axis otherwise.
+    // Scroll axis: the band axis in multicol (bands tile along it), the
+    // block axis otherwise.
     const scrollY = multiCol ? vertical : !vertical;
     const margin = scrollY ? mount.clientHeight : mount.clientWidth;
     const winLo = (scrollY ? box.top : box.left) - margin;
@@ -335,9 +308,8 @@ export const createWindowing = (
       key: layoutKey(cs, firstPara),
       vertical,
       multiCol,
-      // The band lattice anchors at the container's CONTENT-BOX origin
-      // (bands tile from it) — never a paragraph rect, whose within-band
-      // offset varies.
+      // The band lattice anchors at the container's CONTENT-BOX origin —
+      // never a paragraph rect, whose within-band offset varies.
       band0: multiCol
         ? vertical
           ? contentBox.top + (Number.parseFloat(cs.paddingTop) || 0) + (Number.parseFloat(cs.borderTopWidth) || 0)
@@ -356,7 +328,6 @@ export const createWindowing = (
       flowHiIn: 0,
     };
     if (multiCol && (!(env.period > 0) || !(env.bandCap > 0))) return null;
-    // An axis window → flow px (whole bands in the multicol modes).
     const toFlow = (lo: number, hi: number): [number, number] => {
       if (multiCol) {
         const bandLo = Math.floor((lo - env.band0) / env.period);
@@ -367,11 +338,10 @@ export const createWindowing = (
       return vertical ? [contentStart - hi, contentStart - lo] : [lo - contentStart, hi - contentStart];
     };
     [env.flowLo, env.flowHi] = toFlow(winLo, winHi);
-    // The INNER (materialize) window keeps a ¾-viewport lookahead: a fast
-    // scroll must meet materialized text, not a spacer popping in a frame
-    // late (the fast-scroll flicker). The ¼-viewport dead zone to the OUTER
-    // (hide) window stays — it absorbs live-vs-cached span drift, and the
-    // steady-state live set is bounded by the OUTER window either way.
+    // The INNER (materialize) window keeps a ¾-viewport lookahead so a fast
+    // scroll meets materialized text, not a spacer popping in a frame late;
+    // the ¼-viewport dead zone to the OUTER window absorbs live-vs-cached
+    // span drift.
     [env.flowLoIn, env.flowHiIn] = toFlow(winLo + margin * 0.25, winHi - margin * 0.25);
     return env;
   };
@@ -392,8 +362,7 @@ export const createWindowing = (
   };
 
   /** One window pass: read geometry, decide the hidden set, dispatch on
-   *  change. Never while composing (deferred to the compositionend
-   *  schedule); skipped while the DOM is mid-update. */
+   *  change. Never while composing; skipped while the DOM is mid-update. */
   const pass = (): void => {
     cancelAnimationFrame(raf);
     clearTimeout(timer);

@@ -53,7 +53,6 @@ try {
   assert.notEqual(selected, '', 'default is not inherit on a host with a preferred font');
   step(`default font resolves to an installed CJK face (${selected})`);
 
-  // Toggling 日本語 on filters the enumerated list down to JP-capable families.
   const all = await familyOptions();
   await page.click('#view-config-font-jp-only');
   const filtered = await settledOptions();
@@ -66,7 +65,6 @@ try {
   assert.ok(filtered.includes(expectedDefault), 'the resolved default survives the JP filter');
   step(`日本語 toggle filters to JP-capable fonts (${filtered.length} of ${all.length})`);
 
-  // A selected family hidden by the filter still displays as itself.
   const latinOnly = all.find((family) => !filtered.includes(family));
   assert.ok(latinOnly !== undefined, 'host has a Latin-only font to test with');
   await page.click('#view-config-font-jp-only'); // off — full list back

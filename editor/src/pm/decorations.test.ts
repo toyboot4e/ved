@@ -147,7 +147,7 @@ describe('advanceDecorationCaches ≡ cold rebuild', () => {
 
 describe('expanded-set patch (ByParagraph/ByCharacter caret moves)', () => {
   // Offsets spread across lines and onto/off rubies — each crossing changes
-  // the expanded set, which used to rebuild EVERY ruby's decorations.
+  // the expanded set.
   const OFFSETS = [0, 3, 14, 21, 27, 33];
 
   for (const policy of ['paragraph', 'char'] as const) {

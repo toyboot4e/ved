@@ -1,14 +1,7 @@
-// Quick-open overlay (Ctrl+P): a modal fuzzy picker in one of two MODES —
-// workspace files or the open buffers — switched by the two buttons in the
-// input row (or opened directly in a mode via openPalette). Pure UI over the
-// quick-open store: the file index is fetched from main when the overlay
-// mounts (mount == open) and the buffer pool is snapshotted from the buffers
-// store; ranking runs in the store. Choosing a row opens the file through the
-// same content-sniffed path as a sidebar click (`onOpenFile`, which refuses
-// non-text files with the app notice) or, in buffers mode, activates that tab
-// (a `setActive` dispatch). A preview of the selected entry fills the right
-// pane (read on demand, cached per path). The overlay input OWNS focus while
-// open; closing hands focus back to the editor (closeQuickOpen).
+// Quick-open overlay (Ctrl+P): pure UI over the quick-open store. Mount ==
+// open: the file index is fetched from main and the buffer pool snapshotted;
+// ranking runs in the store. The overlay input OWNS focus while open; closing
+// hands focus back to the editor (closeQuickOpen).
 import { clsx } from 'clsx';
 import type React from 'react';
 import { useEffect, useRef, useState } from 'react';
@@ -39,8 +32,7 @@ export type QuickOpenProps = {
   readonly getActiveText: () => string;
 };
 
-/** How much of a file to show in the preview pane (plain slice — a preview,
- *  not the editor). */
+/** Preview pane cap (a plain slice — a preview, not the editor). */
 const PREVIEW_MAX_CHARS = 20000;
 
 type Preview =
@@ -148,7 +140,6 @@ const PreviewPane = ({ item }: { readonly item: QuickOpenItem | null }): React.J
   );
 };
 
-// The four palette views (mode × name/content search), one button each.
 const VIEWS: readonly {
   readonly mode: QuickOpenMode;
   readonly contentSearch: boolean;
@@ -202,9 +193,8 @@ export const QuickOpen = ({
   const listRef = useRef<HTMLDivElement>(null);
   const bodyRef = useRef<HTMLDivElement>(null);
 
-  // Mount == open: snapshot the buffer pool (the tab strip) and the workspace
-  // roots, fetch the index, focus the input. `getState()` reads, not
-  // subscriptions — a mid-open tab or root change must not reshuffle the list.
+  // `getState()` reads, not subscriptions — a mid-open tab or root change
+  // must not reshuffle the list.
   // biome-ignore lint/correctness/useExhaustiveDependencies: mount == open; getActiveText is a stable app callback
   useEffect(() => {
     let stale = false;
@@ -215,7 +205,6 @@ export const QuickOpen = ({
         id: b.id,
         path: b.path,
         label: b.path ?? '無題',
-        // The active buffer's committed text lags typing — take the live one
         text: b.id === activeId ? getActiveText() : b.text,
       })),
     );
@@ -227,8 +216,7 @@ export const QuickOpen = ({
     };
   }, []);
 
-  // Files content search: debounce, then grep in main; a stale reply (the
-  // query moved on) is dropped by sequence.
+  // Debounced grep in main; a stale reply (the query moved on) drops by sequence.
   const grepSeq = useRef(0);
   useEffect(() => {
     if (!(contentSearch && mode === 'files')) return;
@@ -243,7 +231,6 @@ export const QuickOpen = ({
     return () => clearTimeout(timer);
   }, [contentSearch, mode, query]);
 
-  // Keep the selected row in view as the selection moves.
   // biome-ignore lint/correctness/useExhaustiveDependencies: scroll on selection change
   useEffect(() => {
     listRef.current?.querySelector('[aria-selected="true"]')?.scrollIntoView({ block: 'nearest' });
@@ -282,9 +269,8 @@ export const QuickOpen = ({
     }
   };
 
-  // Drag the list/preview divider: pointer capture keeps the moves coming
-  // beyond the 7px strip; the width is a % of the body (store-clamped), so it
-  // holds across window resizes. Mirrors the sidebar's resize handle.
+  // Pointer capture keeps the moves coming beyond the 7px strip; the width is
+  // a % of the body (store-clamped), so it holds across window resizes.
   const handleSplitStart = (event: React.PointerEvent<HTMLDivElement>): void => {
     event.preventDefault();
     const handle = event.currentTarget;
@@ -308,7 +294,6 @@ export const QuickOpen = ({
   const selectedItem = items[selected] ?? null;
 
   return (
-    // Backdrop click closes; the panel stops the click from bubbling to it.
     <div
       className={styles.overlay}
       role='dialog'
@@ -392,7 +377,6 @@ export const QuickOpen = ({
                     {item.detail === null ? (
                       <Label label={item.label} matched={item.matched} />
                     ) : (
-                      // A content-search row: where (muted) + the matched line
                       <>
                         <span className={styles.rowPath}>
                           {item.label}:{item.line}
@@ -406,7 +390,6 @@ export const QuickOpen = ({
               </>
             )}
           </div>
-          {/* ARIA window-splitter between the list and the preview */}
           {/* biome-ignore lint/a11y/useSemanticElements: an <hr> cannot be the interactive window-splitter widget */}
           <div
             className={styles.splitHandle}

@@ -1,6 +1,5 @@
-/** IPC contract shared by the main, preload, and renderer processes.
- *  Channel names and payload types are defined once here so the three
- *  processes cannot drift apart. */
+/** IPC contract shared by the main, preload, and renderer processes —
+ *  defined once so the three cannot drift apart. */
 
 /** IPC channel names (handlers: `src/main/file-service.ts`, `close-guard.ts`). */
 export const IpcChannel = {
@@ -32,17 +31,17 @@ export const IpcChannel = {
 } as const;
 
 /** The live composing caret rect, in the renderer's viewport CSS px — what
- * the system IME positions its candidate window by. Streamed to main while an
- * IME composition is active (null = composition ended); consumed by the fcitx
- * window guard (`src/main/ime-window-guard.ts`). */
+ * the system IME positions its candidate window by. Streamed to main while a
+ * composition is active (null = ended); consumed by the fcitx window guard
+ * (`src/main/ime-window-guard.ts`). */
 export type ImeCaretRect = {
-  /** Caret rect left edge, viewport CSS px. */
+  /** Left edge, viewport CSS px. */
   readonly left: number;
-  /** Caret rect top edge. */
+  /** Top edge. */
   readonly top: number;
-  /** Caret rect right edge. */
+  /** Right edge. */
   readonly right: number;
-  /** Caret rect bottom edge. */
+  /** Bottom edge. */
   readonly bottom: number;
 };
 
@@ -70,10 +69,9 @@ export type CliFile = {
   readonly text: string;
 };
 
-/** A target picked via the open dialog; `null` means canceled. The dialog
- * allows picking a FILE or a DIRECTORY: a file carries its `read` (a binary
- * refusal via content sniff — see {@link ReadFileResult} — so the shell tells
- * the user instead of opening it); a directory is added as a workspace root. */
+/** A target picked via the open dialog; `null` means canceled. A file
+ * carries its `read` (binary refusal via content sniff, {@link ReadFileResult});
+ * a directory is added as a workspace root. */
 export type OpenFileResult =
   | { readonly kind: 'file'; readonly path: string; readonly read: ReadFileResult }
   | { readonly kind: 'directory'; readonly path: string }
@@ -94,10 +92,9 @@ export type DirEntry = {
   readonly kind: 'dir' | 'file';
 };
 
-/** A file in the Ctrl+P quick-open index. `path` is absolute (used to open
- * the buffer); `label` is what the user sees and fuzzy-matches against — the
- * path relative to its root, prefixed with the root's base name when several
- * roots are open, so the same relative path under two roots stays distinct. */
+/** A file in the Ctrl+P quick-open index. `label` (what the user sees and
+ * fuzzy-matches against) is root-relative, prefixed with the root's base name
+ * when several roots are open so identical relative paths stay distinct. */
 export type WorkspaceFile = {
   /** Absolute path — what opening the pick reads. */
   readonly path: string;
@@ -105,25 +102,24 @@ export type WorkspaceFile = {
   readonly label: string;
   /** Decided in main while indexing, by LAYERS: extension denylist → size
    * cap → content sniff (NUL head check) — the same truth the open path
-   * uses, so the palette's text-only toggle is no longer a label guess. */
+   * uses, so the palette's text-only toggle never guesses from the label. */
   readonly isText: boolean;
 };
 
-/** One content-search hit (quick open's 内容 mode): a line of a workspace
- * file the fuzzy query matched. `line` is 1-based (a ved line IS a paragraph,
- * so it maps straight onto CursorState.para); `col` indexes the UNTRIMMED
- * line (the caret target), while `text`/`matched` may be a window trimmed
- * around the match for display. */
+/** One content-search hit (quick open's 内容 mode). `line` is 1-based (a ved
+ * line IS a paragraph — maps straight onto CursorState.para); `col` indexes
+ * the UNTRIMMED line, while `text`/`matched` may be a display window trimmed
+ * around the match. */
 export type GrepMatch = {
   /** Absolute path of the matched file. */
   readonly path: string;
   /** The file's quick-open label (`WorkspaceFile.label`). */
   readonly label: string;
-  /** 1-based line number — maps straight onto `CursorState.para`. */
+  /** 1-based line number. */
   readonly line: number;
   /** 0-based column in the UNTRIMMED line: the caret target. */
   readonly col: number;
-  /** The line for display — possibly a window trimmed around the match. */
+  /** The line for display. */
   readonly text: string;
   /** Indices into `text` of the matched characters (highlighting). */
   readonly matched: readonly number[];

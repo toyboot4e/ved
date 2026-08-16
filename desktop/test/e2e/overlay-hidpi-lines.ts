@@ -3,11 +3,11 @@
 // e.g. 163dpi/96 ≈ 1.7). A visual line mixing an upright CJK run with a
 // sideways (rotated Latin) run — `100％` — yields client rects whose block-axis
 // edges disagree by ~3-4px (half the em-box difference; more under a big-metric
-// font like Noto Sans CJK). At scale 1 that jitter happened to sit inside the
-// overlay's old fixed 3px tolerance; at fractional scale it lands past it, and
-// the grouping split such lines into TWO phantom visual lines — shifting every
+// font like Noto Sans CJK). At scale 1 that jitter happens to sit inside a
+// fixed 3px tolerance; at fractional scale it lands past it, and such a
+// grouping splits these lines into TWO phantom visual lines — shifting every
 // number, page separator, and folio after them (folio 2 painted on band 1).
-// The tolerance is now half the line pitch (the pm/page-gap.ts bound), which
+// The tolerance is half the line pitch (the pm/page-gap.ts bound), which
 // separates within-line jitter (≤ ~0.5em) from a real line step (≥ 1 pitch)
 // for every font. Regression: found with Noto Sans CJK JP + examples/glyph.txt
 // on a 163dpi X11 desktop; reproduces font-independently at the forced scale.

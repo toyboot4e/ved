@@ -153,11 +153,11 @@ try {
     for (let s = 0; s < STEPS && !firstFail; s++) {
       // Occasionally insert REAL IME text at the caret (mozc mode): either plain
       // kana, or a RUBY built piecewise — type `|`, IME-compose the body, type `(`,
-      // IME-compose the reading, type `)`. Building a ruby is the historical
-      // scramble scenario (the IME composing right next to the markup). Either way
-      // the oracle checks the expected string lands as ONE contiguous block whose
-      // removal yields the pre-insert text — no scramble into the markup, no loss
-      // (the historical `|あルいうえおビ(ruby)` bug).
+      // IME-compose the reading, type `)`. Building a ruby is the prime scramble
+      // scenario (the IME composing right next to the markup). Either way the
+      // oracle checks the expected string lands as ONE contiguous block whose
+      // removal yields the pre-insert text — no scramble into the markup (e.g.
+      // `|あルいうえおビ(ruby)`), no loss.
       if (useMozc && ri(4) === 0) {
         const t0 = await text();
         const compose = async (inp: (typeof IME)[number]) => {

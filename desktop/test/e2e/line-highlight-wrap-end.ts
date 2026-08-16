@@ -1,7 +1,7 @@
 // A caret at a mid-paragraph SOFT-WRAP seam is one model position on two
 // lines: coordsAtPos (side 1) reports the NEXT line's start while the native
-// bar paints at the previous line's end — the current-line highlight then sat
-// one line off the visible cursor. editor.tsx's overlay anchor follows the
+// bar paints at the previous line's end — the current-line highlight would
+// otherwise sit one line off the visible cursor. editor.tsx's overlay anchor follows the
 // caret's real paint (the DOM selection rect) when the seam's two sides
 // disagree; this pins highlight-column == native-bar-column at the seam.
 //

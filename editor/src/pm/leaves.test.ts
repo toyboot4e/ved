@@ -1,9 +1,6 @@
-// docLeaves/lineStarts splice around each edit (changedLineSpan) instead of
-// re-parsing the whole document per keystroke. The invariant is EQUIVALENCE:
-// the incrementally maintained result must exactly equal a from-scratch build
-// after any edit — pinned here property-style over random ruby documents and
-// random edit sequences (deterministic seed), plus the edge shapes that have
-// dedicated splice paths (doc start/end, Enter, deletions, empty lines).
+// docLeaves/lineStarts splice around each edit (changedLineSpan); the
+// invariant is EQUIVALENCE with a from-scratch build after any edit — pinned
+// property-style over seeded random edits plus the dedicated splice shapes.
 import { describe, expect, it } from 'vitest';
 import { buildDocLeaves, changedLineSpan, docLeaves, lineStarts } from './leaves';
 
@@ -55,9 +52,8 @@ describe('changedLineSpan', () => {
   });
 
   it('a divergence at index 0 starts the changed span at 0 — even when the new text begins with \\n', () => {
-    // lastIndexOf('\n', -1) clamps to 0 and would match the brand-new '\n',
-    // reading it as a pre-existing line boundary (fromOff 1). "" → Enter then
-    // Backspace at offset 1 dead-ended on this (pbt-edit seed 7).
+    // lastIndexOf('\n', -1) clamps to 0 and would read the brand-new '\n' as
+    // a pre-existing line boundary (pbt-edit seed 7).
     expect(changedLineSpan('', '\n').fromOff).toBe(0);
     expect(changedLineSpan('あ', '\nあ').fromOff).toBe(0);
   });

@@ -24,8 +24,8 @@ const snap = () =>
   page.evaluate(() => {
     const root = document.getElementById('editor-content');
     // Text comes from the MODEL (serialize), never the DOM: the markup `|`,`(`,`)`
-    // is not DOM text in the new model — it lives only in serialize(). __vedText
-    // is the identity plain-text seam (editor.tsx).
+    // is not DOM text — it lives only in serialize(). __vedText is the identity
+    // plain-text seam (editor.tsx).
     const text = (window as unknown as { __vedText?: () => string }).__vedText?.() ?? '';
     const rubies = [...root.querySelectorAll('ruby.rubyWrap')];
     // A ruby is collapsed (Rich) unless decorations marked it `rubyExpanded`
@@ -35,13 +35,11 @@ const snap = () =>
   });
 
 try {
-  // Initial document renders with one collapsed ruby
   let s = await snap();
   assert.equal(s.text, '|ルビ(ruby)');
   assert.equal(s.collapsed, 1);
   step('initial render');
 
-  // Type ruby syntax at the paragraph start → a second ruby element appears.
   await page.click('#editor-content');
   await pressMod(page, '4'); // Rich
   await caretToStart(page);
@@ -58,14 +56,14 @@ try {
   assert.equal(s.rubies, 2);
   step('typed syntax converts to a ruby element');
 
-  // Plain: same text, all rubies expanded
+  // Plain
   await pressMod(page, '1');
   s = await snap();
   assert.equal(s.text, '|試(し)あ|ルビ(ruby)');
   assert.equal(s.collapsed, 0);
   step('Plain expands without changing text');
 
-  // Rich again: collapsed
+  // Rich again
   await pressMod(page, '4');
   s = await snap();
   assert.equal(s.collapsed, 2);
@@ -86,7 +84,6 @@ try {
   assert.equal(await caret(), 5);
   step('vertical arrow navigation steps past a single-char ruby base to the text after it');
 
-  // Undo restores the initial document
   await pressMod(page, 'z');
   await pressMod(page, 'z');
   await pressMod(page, 'z');
@@ -118,7 +115,6 @@ try {
   assert.equal(await page.title(), 'open.txt — ved');
   step('Ctrl+O opens the fixture into the editor');
 
-  // Edit, then save back to the same path
   await page.click('#editor-content');
   // Let the click's selection settle BEFORE placing the caret — its
   // selectionchange lands a tick later and would otherwise override the
@@ -133,7 +129,6 @@ try {
   assert.equal(await readFile(openPath, 'utf-8'), 'あ|空(そら)は青い');
   step('Ctrl+S saves the edited buffer to its path');
 
-  // Save-as routes through the (stubbed) dialog and adopts the new path
   await pressMod(page, 'S', { shift: true });
   await page.waitForTimeout(300);
   assert.equal(await readFile(saveAsPath, 'utf-8'), 'あ|空(そら)は青い');

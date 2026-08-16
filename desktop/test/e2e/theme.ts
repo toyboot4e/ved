@@ -48,7 +48,6 @@ try {
   const ctrl0 = await controlColors();
   step(`launches in the OS palette (${t0})`);
 
-  // Toggle → the other palette.
   await clickTheme();
   const t1 = await themeAttr();
   assert.equal(t1, t0 === 'dark' ? 'light' : 'dark', 'click flips to the other palette');
@@ -57,7 +56,6 @@ try {
   const ctrl1 = await controlColors();
   step(`toggled ${t0} → ${t1}`);
 
-  // The palette genuinely changed (chrome + editor recolor).
   assert.notEqual(bg0, bg1, `--ved-bg differs between palettes (${bg0} vs ${bg1})`);
   assert.notEqual(body0, body1, `body background differs between palettes (${body0} vs ${body1})`);
   step('light and dark resolve different token palettes');
@@ -68,7 +66,6 @@ try {
   assert.notEqual(ctrl0.input, ctrl1.input, `number-input text recolors (${ctrl0.input} vs ${ctrl1.input})`);
   step('debug-UI control text recolors with the theme (stays legible in dark)');
 
-  // Toggle back → the original palette (a plain two-state flip, no third icon).
   await clickTheme();
   assert.equal(await themeAttr(), t0, 'second click returns to the original palette');
   step('toggle is a two-state Light ⇄ Dark flip');

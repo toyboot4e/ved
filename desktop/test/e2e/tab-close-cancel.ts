@@ -1,6 +1,6 @@
 // Closing a dirty tab and choosing "cancel" keeps the tab and its edits —
-// the data-safety guarantee (Phase 1.3). Separate launch: the confirm stub
-// is fixed per process.
+// the data-safety guarantee. Separate launch: the confirm stub is fixed per
+// process.
 // Usage: node test/e2e/tab-close-cancel.ts  (after a build; window hidden)
 import assert from 'node:assert/strict';
 import { caretToStart, fail, finish, launchVed, pressMod, step } from './harness.ts';
@@ -11,7 +11,6 @@ const { page } = ved;
 const tabCount = () => page.$$eval('[role=tab]', (els) => els.length);
 
 try {
-  // Two tabs; make the active one dirty
   await page.click('#editor-content');
   await pressMod(page, 'n');
   await page.waitForFunction(() => document.querySelectorAll('[role=tab]').length === 2);
@@ -21,7 +20,6 @@ try {
   await page.keyboard.insertText('keep me');
   await page.waitForTimeout(150);
 
-  // Ctrl+W → confirm answers cancel → the tab and its text survive
   await pressMod(page, 'w');
   await page.waitForTimeout(300);
   assert.equal(await tabCount(), 2);

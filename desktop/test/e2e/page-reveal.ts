@@ -1,17 +1,11 @@
-// Paged-mode caret reveal: after an edit that leaves the caret's page not fully
-// visible, the editor SNAPS the page START to the viewport start — a page turn
-// (editor.tsx caretPageSpan + pageSnapDelta) — instead of the old minimal
-// caret-only reveal, which parked the caret at the viewport edge with its page
-// half-shown (visually indistinguishable from no reveal at all).
-//   - VerticalColumns: the band (a real multicol fragment) snaps its TOP to the
-//     viewport top (+cushion). At the DOC END the scroller clamps at max scroll
-//     (there is nothing below to scroll away), so the band sits fully visible
-//     at the viewport bottom instead — the physical maximum.
-//   - VerticalRows: the page snaps its RIGHT edge (the reading start) to the
-//     viewport right (−cushion), with the same clamp at the leftmost page.
-// Typing inside an already fully visible page must NOT scroll (no-op case).
-// Runs VISIBLE: the reveal is rAF-deferred, and hidden windows throttle rAF.
-// Usage: node test/e2e/page-reveal.ts  (after a build)
+// Paged-mode caret reveal: an edit off-view SNAPS the page start to the
+// viewport start (editor.tsx caretPageSpan + pageSnapDelta), never a minimal
+// caret-only reveal (which parks the caret at the edge, page half-shown).
+// VerticalColumns snaps the band TOP to the viewport top (+cushion);
+// VerticalRows snaps the page RIGHT edge (reading start) to the viewport right
+// (−cushion); both clamp at the scroll extreme (doc end / leftmost page).
+// Typing inside a fully visible page must not scroll.
+// VISIBLE: the reveal is rAF-deferred and hidden windows throttle rAF.
 import assert from 'node:assert/strict';
 import { clickWritingMode, fail, finish, launchVed, setViewConfig, step } from './harness.ts';
 
@@ -32,7 +26,7 @@ const CARET_RECT = `(() => {
   return rect ? { top: rect.top, bottom: rect.bottom, left: rect.left, right: rect.right } : null;
 })()`;
 
-/** VerticalColumns: the caret's BAND span (exact multicol arithmetic) and the
+/** VerticalColumns: the caret's band span (exact multicol arithmetic) and the
  *  scroller viewport, in viewport px. */
 const colsBand = () =>
   page.evaluate(`(() => {
@@ -69,8 +63,8 @@ const colsBand = () =>
     scrollMax: number;
   } | null>;
 
-/** VerticalRows: the caret's PAGE span (between the measured gap-widget
- *  centers; content edges at the ends) and the scroller viewport. */
+/** VerticalRows: the caret's page span (between measured gap-widget centers;
+ *  content edges at the ends) and the scroller viewport. */
 const rowsPage = () =>
   page.evaluate(`(() => {
     const rect = ${CARET_RECT};
@@ -114,16 +108,14 @@ const setCaret = (off: number) =>
 const textLength = () => page.evaluate(() => (window as unknown as { __vedText(): string }).__vedText().length);
 
 try {
-  // Shrink the page so a whole one fits the test window on both axes:
-  // 20字 × 10行 → 360px tall (columns band), ~280px wide (rows page).
+  // 20字 × 10行: a whole page fits the test window on both axes.
   await setViewConfig(page, { pageLineChars: '20', pageLines: '10' });
   await page.waitForTimeout(200);
   await page.click('#editor-content');
   await page.waitForTimeout(150);
 
-  // ── VerticalColumns (default) ──────────────────────────────────────────────
-  // Paste to the DOC END: snapping the last band's top is physically clamped by
-  // the scroll range, so assert "snapped OR clamped-at-max, band fully visible".
+  // Paste to the doc end: the last band's snap is clamped by the scroll range,
+  // so assert "snapped OR clamped-at-max, band fully visible".
   await page.keyboard.insertText(Array.from({ length: 60 }, (_, i) => `第${i}行の本文をここに書く`).join('\n'));
   await page.waitForTimeout(600);
   let band = await colsBand();
@@ -140,7 +132,6 @@ try {
   );
   step(`VerticalColumns: paste page-turns to the caret's band (band ${band.band})`);
 
-  // Typing inside the now-visible page must NOT move the viewport (no-op case).
   const framedScrollTop = band.scrollTop;
   await page.keyboard.insertText('あ');
   await page.waitForTimeout(400);
@@ -149,8 +140,7 @@ try {
   assert.equal(band.scrollTop, framedScrollTop, 'typing inside a fully visible page does not scroll');
   step('VerticalColumns: typing inside the framed page is a scroll no-op');
 
-  // MID-document: scroll away, type — the band must snap its TOP to the
-  // viewport top exactly (no clamp in play).
+  // Mid-document: no clamp in play, so the snap must be exact.
   await setCaret(Math.floor((await textLength()) / 2));
   await page.waitForTimeout(150);
   await page.evaluate(() => {

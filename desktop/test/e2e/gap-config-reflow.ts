@@ -4,10 +4,9 @@
 // VerticalRows (widgets); VerticalColumns adds a 1-cell folio strip
 // (band gap = cell + 上 + 下, floored at the line-number gutter). The split
 // positions the border line inside the gap. Changing either must reflow live: the gap widgets fatten
-// instantly (pure CSS), but the overlay that draws the separators only
-// re-measured on a SCROLLER resize — and a gap change resizes only the
-// CONTENT, so the separators stayed put (stale border bug; editor.tsx now
-// observes the content box too).
+// instantly (pure CSS), but the overlay that draws the separators re-measures
+// on resize — and a gap change resizes only the CONTENT, not the scroller, so
+// editor.tsx must observe the content box too or the separators go stale.
 // Runs VISIBLE (overlay re-measure is frame-deferred; the lattice check
 // pixel-scans a screenshot, which hangs in hidden windows).
 // Usage: node test/e2e/gap-config-reflow.ts  (after a build)

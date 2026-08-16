@@ -1,13 +1,9 @@
-// Quick open (Ctrl+P, editor UI plan Phase 3): a fuzzy picker over one of two
-// pools — workspace FILES (main walks the roots, honoring .gitignore, into a
-// flat WorkspaceFile list) or the open BUFFERS (the tab strip, for quick tab
-// switching). The store snapshots both pools when the palette opens and ranks
-// the active one in the renderer with fuzzysort; two buttons (and
-// `openPalette('buffers')`, for a future shortcut) switch modes. Everything
-// crossing the editor boundary is a plain path — no ProseMirror knowledge
-// here. Not persisted; the palette always opens fresh. The same store/overlay
-// is designed to back the command palette (Ctrl+Shift+P) later — hence
-// generic "items"/"entries", not "files".
+// Quick open (Ctrl+P, editor UI plan Phase 3): fuzzy picker over workspace
+// FILES (main walks the roots, honoring .gitignore) or the open BUFFERS;
+// both pools snapshot on open, ranked in the renderer. Only plain paths
+// cross the editor boundary; nothing is persisted. The generic
+// "items"/"entries" naming is deliberate: the same store/overlay is meant to
+// back the command palette (Ctrl+Shift+P) later.
 
 import { create } from 'zustand';
 import { grepLines } from '../../shared/grep';
@@ -18,16 +14,12 @@ import { focusEditor } from './focus';
 /** Which pool the palette searches: workspace files, or the open buffers. */
 export type QuickOpenMode = 'files' | 'buffers';
 
-/** Rows rendered at most — the full index stays scrollable up to this cap and
- *  the overflow note reports the rest ("type to narrow"). Big enough that a
- *  whole prose workspace is usually fully visible; small enough that the DOM
- *  list stays snappy. */
+/** Max rendered rows; the overflow note reports the rest. */
 export const RESULT_LIMIT = 500;
 
-/** An open buffer as a palette entry (`id` is the stable BufferId — untitled
- *  buffers have no path). `text` is the buffer's document at snapshot time
- *  (the overlay substitutes the ACTIVE buffer's live text), for content
- *  search. */
+/** An open buffer as a palette entry (`id` is the stable BufferId; untitled
+ *  buffers have no path). `text` is the snapshot-time document — the overlay
+ *  substitutes the ACTIVE buffer's live text — for content search. */
 export type BufferEntry = {
   readonly id: number;
   readonly label: string;
@@ -35,19 +27,17 @@ export type BufferEntry = {
   readonly text: string;
 };
 
-/** One palette row, mode-agnostic: what to render (label + match indices),
- *  what the preview reads (`path`), and what choosing it does (`bufferId`
- *  selects that tab; otherwise `path` opens as a file). */
+/** One palette row, mode-agnostic (`bufferId` selects that tab; otherwise
+ *  `path` opens as a file). */
 export type QuickOpenItem = {
   readonly key: string;
   readonly label: string;
-  /** Label character indices the query matched, for highlighting; empty when
-   *  the query is empty (the initial, unranked list). */
+  /** Label indices the query matched; empty for an empty query. */
   readonly matched: readonly number[];
   readonly path: string | null;
   readonly bufferId: number | null;
-  /** Content-search rows only: the matched line (1-based — CursorState.para
-   *  is `line - 1`), the caret column, and the line text with its own match
+  /** Content-search rows only: matched line (1-based — CursorState.para is
+   *  `line - 1`), caret column, and the line text with its own match
    *  highlight. Name rows carry null/empty. */
   readonly line: number | null;
   readonly col: number | null;
@@ -58,15 +48,12 @@ export type QuickOpenItem = {
 /** The name-row tail of {@link QuickOpenItem} (content-search fields empty). */
 const NO_DETAIL = { line: null, col: null, detail: null, detailMatched: [] as readonly number[] };
 
-/** A ranking: the capped rows plus the TOTAL match count (the overflow note
- *  shows `total - items.length`). */
+/** Capped rows plus the TOTAL match count (overflow note shows `total - items.length`). */
 export type RankResult = { readonly items: readonly QuickOpenItem[]; readonly total: number };
 
 /** Filter a labeled pool against `query` (shared/match.ts — AND of literal
- *  substrings, never per-character fuzzy), keeping the POOL's order, capped
- *  at {@link RESULT_LIMIT} with the uncapped match count alongside. An empty
- *  query yields the head of the pool, so the palette shows the whole
- *  (sorted) pool immediately. */
+ *  substrings, never per-character fuzzy) in POOL order, capped at
+ *  {@link RESULT_LIMIT}. An empty query yields the head of the pool. */
 const rank = <T extends { readonly label: string }>(
   pool: readonly T[],
   query: string,
@@ -87,9 +74,8 @@ const rank = <T extends { readonly label: string }>(
   return { items, total };
 };
 
-/** Rank workspace files. `textOnly` drops non-text files — the verdict rides
- * the index from main (`WorkspaceFile.isText`: denylist → size cap → content
- * sniff), so the filter is the same truth the open path uses. */
+/** Rank workspace files. `textOnly` drops non-text files by
+ * `WorkspaceFile.isText` — the same truth the open path uses. */
 export const rankFiles = (files: readonly WorkspaceFile[], query: string, textOnly: boolean): RankResult => {
   const pool = textOnly ? files.filter((f) => f.isText) : files;
   return rank(pool, query, (f, matched) => ({
@@ -113,9 +99,8 @@ export const rankBuffers = (buffers: readonly BufferEntry[], query: string): Ran
     ...NO_DETAIL,
   }));
 
-/** Content search over the open buffers: fuzzy per LINE (shared/grep.ts), in
- *  tab order, capped like the other rankings. Synchronous — the pool is the
- *  handful of open documents, snapshotted with their text. */
+/** Content search over the open buffers: fuzzy per LINE (shared/grep.ts),
+ *  tab order, capped; synchronous. */
 export const rankBufferGrep = (buffers: readonly BufferEntry[], query: string): RankResult => {
   if (query === '') return { items: [], total: 0 };
   const items: QuickOpenItem[] = [];
@@ -160,35 +145,31 @@ export const grepResultItems = (result: GrepResult): RankResult => ({
 type QuickOpenStore = {
   readonly open: boolean;
   readonly mode: QuickOpenMode;
-  /** True between opening and the index snapshot arriving from main (files
-   *  mode; the buffer pool is synchronous). */
+  /** True until the index snapshot arrives from main (files mode; the
+   *  buffer pool is synchronous). */
   readonly loading: boolean;
   readonly query: string;
-  /** The index snapshot taken on open (files-mode ranking runs against this). */
+  /** The index snapshot taken on open (files-mode pool). */
   readonly files: readonly WorkspaceFile[];
   /** The open-buffer snapshot taken on open (buffers-mode pool). */
   readonly buffers: readonly BufferEntry[];
   readonly items: readonly QuickOpenItem[];
   /** Uncapped match count of the last ranking (≥ items.length). */
   readonly total: number;
-  /** Index into `items`; 0 when non-empty. */
+  /** Index into `items`. */
   readonly selected: number;
-  /** Hide known-binary files (files mode; the toggle); kept across opens. */
+  /** Hide known-binary files (files mode); kept across opens. */
   readonly textOnly: boolean;
-  /** Content search (検索): match file/buffer CONTENTS per line instead of
-   *  names — with `mode`, the four palette views (ファイル / 開いている
-   *  ファイル / ファイルを検索 / 開いているファイルを検索). Per-open (reset
-   *  by openPalette) — Ctrl+P muscle memory is name search. Files-mode
-   *  content search is ASYNC (an IPC grep the overlay debounces);
-   *  buffers-mode is synchronous over the snapshot. */
+  /** Content search (検索): match CONTENTS per line instead of names — with
+   *  `mode`, the four palette views. Reset by openPalette (Ctrl+P muscle
+   *  memory is name search). Files-mode content search is ASYNC (an IPC grep
+   *  the overlay debounces); buffers-mode is synchronous over the snapshot. */
   readonly contentSearch: boolean;
   /** True while a files-mode content search is debouncing/fetching. */
   readonly grepping: boolean;
-  /** List-pane width as a % of the two-pane body (the draggable divider);
-   *  a preference like `textOnly`, kept across opens. Clamped. */
+  /** List-pane width % (draggable divider); kept across opens. */
   readonly listWidthPct: number;
-  /** Open the palette in `mode` ('files' unless told otherwise — pass
-   *  'buffers' to start in open-file search, e.g. from a future shortcut). */
+  /** Open the palette in `mode`. */
   readonly openPalette: (mode?: QuickOpenMode) => void;
   /** Adopt the index snapshot and rank it against the current query. */
   readonly setFiles: (files: readonly WorkspaceFile[]) => void;
@@ -216,7 +197,7 @@ export const QUICK_OPEN_LIST_MAX_PCT = 85;
 type PoolState = Pick<QuickOpenStore, 'mode' | 'query' | 'files' | 'buffers' | 'textOnly' | 'contentSearch'>;
 
 /** Files-mode content search ranks in MAIN (async IPC) — rerank leaves the
- *  list empty and the overlay's debounced grep fills it via setGrepResult. */
+ *  list empty; the overlay's debounced grep fills it via setGrepResult. */
 const isAsyncGrep = (s: Pick<PoolState, 'mode' | 'contentSearch'>): boolean => s.contentSearch && s.mode === 'files';
 
 const rerank = (s: PoolState): RankResult =>
@@ -228,8 +209,7 @@ const rerank = (s: PoolState): RankResult =>
         ? rankFiles(s.files, s.query, s.textOnly)
         : rankBuffers(s.buffers, s.query);
 
-/** `grepping` after a pool-state change: an async grep with a needle is
- *  in flight (the overlay debounce picks it up); anything else is settled. */
+/** `grepping` after a pool-state change: an async grep with a needle is in flight. */
 const greppingAfter = (s: PoolState): boolean => isAsyncGrep(s) && s.query !== '';
 
 const CLOSED = {
@@ -288,9 +268,8 @@ export const useQuickOpenStore = create<QuickOpenStore>()((set) => ({
     }),
 }));
 
-/** Close the palette and hand focus back to the editor (the overlay input owns
- *  focus while open — mirrors `closeSearch`). The overlay's keyboard scope —
- *  which keys it owns while open — lives in keymap.ts `handleQuickOpenKey`. */
+/** Close the palette and hand focus back to the editor (mirrors `closeSearch`).
+ *  The overlay's keyboard scope lives in keymap.ts `handleQuickOpenKey`. */
 export const closeQuickOpen = (): void => {
   useQuickOpenStore.getState().close();
   focusEditor();

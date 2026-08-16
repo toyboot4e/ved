@@ -1,8 +1,8 @@
 // Regression: a caret at a TEXT-LESS ruby seam (between two collapsed rubies)
-// must be VISIBLE, at the correct seam offset. The seam has no DOM text node
-// (architecture.md "Caret at ruby boundaries"), so the native caret can't render there — pm/decorations.ts adds a
-// rendered `.vedBoundaryCaret` widget at the head. The model offset is unchanged
-// (the click is NOT snapped to a different position).
+// must be visible at the correct seam offset. The seam has no DOM text node,
+// so the native caret can't render there — pm/decorations.ts adds a
+// `.vedBoundaryCaret` widget at the head; the model offset is NOT snapped away
+// (architecture.md "Caret at ruby boundaries").
 import assert from 'node:assert/strict';
 import { clickWritingMode, fail, finish, launchVed, step } from './harness.ts';
 
@@ -39,7 +39,6 @@ try {
   await page.keyboard.up('Control');
   await setDoc('あ|漢(かん)|字(じ)い'); // plain, ruby, ruby, plain — seam at offset 7
 
-  // Click the seam between the two rubies.
   const pt = await page.evaluate(() => {
     const r = [...document.querySelectorAll('#editor-content ruby')];
     const a = r[0]!.getBoundingClientRect();
@@ -59,14 +58,11 @@ try {
   await until(hasBoundaryCaret, true, 'boundary caret shows when navigated to the seam');
   step('boundary caret follows the caret to/from the seam');
 
-  // REGRESSION (the too-large cursor at page-boundary lines): a caret at a
-  // PARAGRAPH EDGE against hidden markup also has no text-node home. The
-  // native caret there is ELEMENT-level, and at a multicol page break
-  // Chromium painted it from cross-fragment union geometry — a bar spanning
-  // the page gap. The fix: the widget renders at both paragraph edges too,
-  // the caret's paragraph carries .vedNativeCaretOff (native caret
-  // suppressed → it can never paint the bar), and the widget stays
-  // glyph-sized. Native positions with a text home keep no widget/class.
+  // A paragraph edge against hidden markup also has no text-node home: the
+  // native caret there is element-level, and at a multicol page break Chromium
+  // paints it as a bar spanning the page gap (cross-fragment union geometry).
+  // So the widget renders there too and the paragraph carries .vedNativeCaretOff
+  // (native caret suppressed). Positions with a text home keep no widget/class.
   const stateAt = () =>
     page.evaluate(() => {
       const c = document.querySelector('.vedBoundaryCaret');
@@ -99,10 +95,8 @@ try {
   assert.ok(!s.suppressed, 'native caret NOT suppressed at a text home');
   step('paragraph edges against hidden markup: widget caret + native caret suppressed');
 
-  // The widget must have ZERO layout footprint: its bar is painted out of
-  // flow, so the paragraph's geometry is IDENTICAL with the caret on and off
-  // the widget spot (an in-flow extent grew the line per caret move — the
-  // paragraph visibly shook as the caret travelled).
+  // The widget must have ZERO layout footprint (bar painted out of flow) —
+  // an in-flow extent grows the line per caret move and the paragraph shakes.
   const paraRect = () =>
     page.evaluate(() => {
       const r = document.querySelector('#editor-content p')!.getBoundingClientRect();
@@ -119,13 +113,10 @@ try {
   assert.ok(Math.abs(barSize - s.pitch) < 1, `bar spans the pitch (${barSize} vs ${s.pitch})`);
   step('widget caret has zero layout footprint; bar spans the pitch');
 
-  // REGRESSION (invisible caret at lone-ruby doc edges): the appear-policy /
-  // writing-mode effect rebuilt view.dom.className from scratch, WIPING PM's
-  // ProseMirror-focused class. Real focus never left the editor, so PM never
-  // re-added it (it only does on a real focus event) — and the widget caret,
-  // whose blink is gated on that class, went invisible at every no-text-home
-  // spot while typing kept working. The native caret (real-DOM-focus-driven)
-  // was unaffected, which is why only these spots appeared caret-less.
+  // The appear-policy / writing-mode effect must never rebuild view.dom.className
+  // from scratch: that wipes ProseMirror-focused, PM only re-adds it on a real
+  // focus event (which never comes — focus never left), and the widget caret's
+  // blink is gated on that class → invisible at every no-text-home spot.
   const focusedClass = () => page.evaluate(() => !!document.querySelector('.ProseMirror.ProseMirror-focused'));
   const blinkName = () =>
     page.evaluate(() => {

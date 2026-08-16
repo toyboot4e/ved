@@ -1,9 +1,8 @@
 // Search & replace wiring between the shell and the mounted editor
 // (app.tsx): the ops arrive from the editor (select/replace by plain
 // offsets), the highlights flow back down as a pure view prop, and the
-// search store is kept in sync with the document under it. Lifted out of
-// app.tsx verbatim (D12) — the store itself is search.ts; the bar is
-// components/search-bar.tsx.
+// search store is kept in sync with the document under it. The store itself
+// is search.ts; the bar is components/search-bar.tsx.
 import type { EditorSearchOps, SearchHighlights } from '@ved/editor';
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import type { BufferId } from './buffers';

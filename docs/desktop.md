@@ -44,7 +44,7 @@ extension quick-pick. A query is an AND of space-separated *literal*
 substrings, case-insensitive and NFKC-folded (fullwidth ＡＢＣ matches abc),
 each term contiguous; results are filtered in the caller's order. It is
 deliberately never per-character fuzzy: scatter matches (query あいう hitting
-あXいXう) read as noise — `fuzzysort` was removed for exactly that.
+あXいXう) read as noise.
 
 ### The index (main, `main/workspace-index.ts`)
 
@@ -60,7 +60,7 @@ symlinks are never followed (loop safety), and `MAX_FILES_PER_ROOT` bounds a
 pathological tree.
 
 Per-root results are cached and deduped by absolute path; `invalidateRoot` is
-the seam the phase-2 fs watcher will call (dormant until then, so the index
+the seam a future fs watcher will call (dormant until then, so the index
 is a fresh-on-open snapshot). Labels get the root base name prefixed when
 more than one root is open. No `electron` import — the module is unit-tested.
 
@@ -144,9 +144,8 @@ shows itself.
 ## Settings panel
 
 The toolbar gear (`components/settings-panel.tsx`) opens a popover anchored
-under it hosting the runtime configuration controls that used to sit inline
-on the toolbar row — the view-config group and the invisibles toggles (the
-controls and their element ids are unchanged; e2e drivers reach them through
+under it hosting the runtime configuration controls — the view-config group
+and the invisibles toggles (e2e drivers reach them through
 the harness's `openSettings` / `closeSettings` / `setViewConfig`).
 `view.toggleSettings` (default Mod+,) toggles it; Esc, an outside click, or
 the gear dismiss it, and closing hands focus back to the editor (the

@@ -4,8 +4,7 @@ import { describe, expect, it } from 'vitest';
 import { caretStops, nextCaretOffset } from './caret-model';
 import { type CaretCheck, cases } from './caret-model.cases';
 
-/** Walk the caret up to `steps` times from `start`, collecting visited offsets
- *  (stops early when it can no longer move). */
+/** Walk the caret up to `steps` times from `start`, stopping early when stuck. */
 const walk = (doc: string, start: number, policy: CaretCheck['policy'], reverse: boolean, steps: number): number[] => {
   const seq: number[] = [];
   let cur = start;
@@ -37,12 +36,9 @@ for (const group of [...new Set(cases.map((c) => c.group))]) {
   });
 }
 
-// ---------------------------------------------------------------------------
-// Local-query ≡ whole-doc-spec equivalence. `caretStops` is THE SPEC; the
-// shipping movers answer from the caret's leaf neighborhood. Deterministic
-// pseudo-random docs (seeded LCG, like the e2e PBT) sweep every offset ×
-// policy × direction.
-// ---------------------------------------------------------------------------
+// Local-query ≡ whole-doc-spec equivalence: `caretStops` is THE SPEC; the
+// shipping movers answer from the caret's leaf neighborhood. Seeded-LCG docs
+// sweep every offset × policy × direction.
 import { __caretLeafVisits, isCaretStop } from './caret-model';
 
 const POLICIES = ['rich', 'plain', 'paragraph', 'char'] as const;
@@ -55,8 +51,7 @@ const lcg = (seed: number) => {
   };
 };
 
-/** A random ruby-ish document: plain runs, rubies (incl. adjacent and
- *  paragraph-edge ones), empty readings/bases, newlines. */
+/** A random ruby-ish document: plain runs, rubies (incl. adjacent and paragraph-edge), newlines. */
 const genDoc = (seed: number): string => {
   const rnd = lcg(seed);
   const pick = <T>(xs: readonly T[]): T => xs[Math.floor(rnd() * xs.length)]!;
@@ -72,8 +67,7 @@ const genDoc = (seed: number): string => {
   return out;
 };
 
-/** The nearest stop strictly beyond `offset` in the direction (for a caret NOT
- *  on a stop — the recovery snap), or null past the last one. */
+/** Nearest stop strictly beyond `offset` (the recovery snap), or null past the last one. */
 const specNearestBeyond = (stops: number[], offset: number, reverse: boolean): number | null => {
   if (reverse) {
     for (let i = stops.length - 1; i >= 0; i--) if (stops[i]! < offset) return stops[i]!;

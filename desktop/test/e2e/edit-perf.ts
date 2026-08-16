@@ -1,11 +1,12 @@
-// Edit responsiveness on a large RUBY document. Typing must keep up: the old
-// cost was that EVERY doc-changing keystroke re-ran three whole-document
-// passes — `repair` re-parsed and rebuilt every paragraph's canonical content,
-// the decoration caches (keyed on doc identity) rebuilt the base + ruby static
-// sets from scratch, and the line-number overlay re-measured every visual
-// line's client rects — so a hundreds-of-lines ruby doc stalled per keystroke.
-// All three are now scoped to the CHANGED paragraphs (dirty-paragraph repair,
-// decoration-set advance through the transaction, per-paragraph overlay cache).
+// Edit responsiveness on a large RUBY document. Typing must keep up: a
+// doc-changing keystroke must not re-run the three whole-document passes —
+// `repair` re-parsing and rebuilding every paragraph's canonical content,
+// the decoration caches (keyed on doc identity) rebuilding the base + ruby
+// static sets from scratch, and the line-number overlay re-measuring every
+// visual line's client rects — which stall a hundreds-of-lines ruby doc per
+// keystroke. All three are scoped to the CHANGED paragraphs (dirty-paragraph
+// repair, decoration-set advance through the transaction, per-paragraph
+// overlay cache).
 //
 // We assert the bounds directly and deterministically through the counter
 // seams (never timing): over a burst of keystrokes on a large doc,
@@ -115,8 +116,8 @@ try {
   await clickWritingMode(page, 'Vertical Columns');
   await page.waitForTimeout(300);
 
-  // Typing at the document START — the old whole-doc passes are most
-  // expensive here (everything after the edit was re-derived).
+  // Typing at the document START — a whole-doc pass is most expensive here
+  // (everything after the edit would be re-derived).
   await caretToStart(page);
   await page.waitForTimeout(150);
   assertBounded('doc start', await typeBurst());

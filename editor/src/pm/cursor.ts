@@ -1,16 +1,14 @@
-// Document-level caret <-> plain document offset. A `CursorState` (paragraph
-// index + offset within the line) is the backend-neutral form history and tab
-// snapshots already speak; this is plain line arithmetic over the document
-// string. (ProseMirror positions, which count node boundaries, are a separate
-// mapping — see pm/model.ts `offsetToPos`.)
+// Caret <-> plain document offset. `CursorState` is the backend-neutral form
+// history and tab snapshots speak; ProseMirror positions are a separate mapping
+// (pm/model.ts `offsetToPos`).
 import type { CursorState } from '../history';
 import { lineOf, lineStarts } from './leaves';
 
 export type { CursorState };
 
 /** Resolve a document offset to {para, offset-within-line}. Memoized line
- *  starts + binary search (pm/leaves) — the old per-call scan rebuilt the
- *  starts and walked them linearly on every commit/snapshot. */
+ *  starts + binary search (pm/leaves) — a per-call scan would rebuild the
+ *  starts and walk them linearly on every commit/snapshot. */
 export const offsetToCursor = (doc: string, offset: number): CursorState => {
   const para = lineOf(doc, offset);
   return { para, offset: offset - lineStarts(doc)[para]! };

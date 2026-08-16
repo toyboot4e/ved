@@ -17,15 +17,13 @@ import { deleteEntry, isDirectory, listDir, readTextFileChecked, renameEntry, wr
 import { grepWorkspaceFiles } from './workspace-grep';
 import { listWorkspaceFiles } from './workspace-index';
 
-// Native dialogs cannot be driven by Playwright, so the smoke test injects
-// fixed paths through these environment variables instead. The open stubs
-// (file AND directory) may be comma-separated lists, consumed one path per
-// call (clamped to the last) so a test can open several distinct targets.
+// Native dialogs cannot be driven by Playwright; the smoke test injects fixed
+// paths through these env vars. The open stubs (file AND directory) may be
+// comma-separated lists, consumed one path per call (clamped to the last).
 const SMOKE_OPEN_PATH = 'VED_SMOKE_OPEN_PATH';
 const SMOKE_SAVE_PATH = 'VED_SMOKE_SAVE_PATH';
 const SMOKE_OPEN_DIR_PATH = 'VED_SMOKE_OPEN_DIR_PATH';
-// Delete-confirm answers ('delete' | 'cancel'), a comma list consumed one
-// per call (clamped to the last) so a test can exercise cancel THEN delete.
+// Delete-confirm answers ('delete' | 'cancel'), same comma-list semantics.
 const SMOKE_DELETE_RESPONSE = 'VED_SMOKE_DELETE_RESPONSE';
 
 const makeOpenPicker = (
@@ -49,12 +47,11 @@ const makeOpenPicker = (
   };
 };
 
-// Allow a FILE or a DIRECTORY: a chosen folder is added as a workspace root.
-// Only macOS has a unified picker; on Windows/Linux the combined properties
-// FOLD TO A DIRECTORY-ONLY selector, so there Ctrl+O gets a plain file picker
-// and folders arrive via the open-folder dialog (Ctrl+Shift+O / the sidebar
-// button). The handler still branches on the resolved path's kind — the stub
-// seam and macOS can hand it a directory.
+// A chosen folder is added as a workspace root. Only macOS has a unified
+// file+directory picker; on Windows/Linux the combined properties FOLD TO A
+// DIRECTORY-ONLY selector, so there Ctrl+O is file-only and folders arrive
+// via the open-folder dialog. The handler still branches on the resolved
+// path's kind — the stub seam and macOS can hand it a directory.
 const pickOpenPath = makeOpenPicker(
   SMOKE_OPEN_PATH,
   process.platform === 'darwin' ? ['openFile', 'openDirectory'] : ['openFile'],

@@ -1,18 +1,8 @@
-// Caret behavior at ruby boundaries (ProseMirror editor).
-//
-// In the markup-out-of-DOM model (the no-zero-sized-font redesign; architecture.md "verified dead ends")
-// a ruby node holds editable rubyBase + rubyReading children; the delimiters
-// `|`,`(`,`)` are NOT DOM text. So the native caret + IME live on REAL,
-// full-size glyphs at EVERY position — including the outer boundaries — and the
-// old overlay-caret / delimAnchor machinery is gone. We assert:
-//   - the caret rect (coordsAtPos — what positions the native caret + IME) is
-//     NON-DEGENERATE at every boundary position and sits at the ruby, not the
-//     viewport corner (the bug this redesign fixes);
-//   - `rubyActive` is ON strictly inside the ruby, OFF at the outer boundaries;
-//   - moving the caret across the boundaries causes NO layout shift (the
-//     highlight is a background; the markup is never revealed in Rich).
-//
-// Usage: node test/e2e/caret-boundary.ts (after `bun run build`).
+// Caret behavior at ruby boundaries: a ruby holds editable rubyBase +
+// rubyReading children and the delimiters `|`,`(`,`)` are NOT DOM text, so
+// the native caret + IME sit on real glyphs at every position. Asserts the
+// caret rect is non-degenerate at each boundary, `rubyActive` is on strictly
+// inside only, and crossing boundaries causes no layout shift.
 import assert from 'node:assert/strict';
 import type { ModelSeams, Rect } from './harness.ts';
 import { fail, finish, launchVed, pressMod, step } from './harness.ts';
@@ -25,13 +15,10 @@ const setCaret = async (off: number) => {
   await page.waitForTimeout(80);
 };
 
-/** The caret rect, the ruby's own rect, and its highlight class. The caret is
- *  measured BOTH ways — coordsAtPos (PM's metric, drives reveal + IME placement)
- *  and the DOM Range rect (what the browser draws the native caret from) — and we
- *  keep the one with the larger extent. At a node boundary EACH can collapse on
- *  its own (the Range rect is empty before a leading ruby; coordsAtPos is a point
- *  at the base end inside the inline ruby), but the caret is visible as long as
- *  one is real. */
+/** Caret rect measured BOTH ways — coordsAtPos (drives reveal + IME
+ *  placement) and the DOM Range rect (what paints the native caret) — keeping
+ *  the larger extent: at a node boundary each can collapse on its own, but
+ *  the caret is visible as long as one is real. */
 const measure = () =>
   page.evaluate(() => {
     const model = (window as unknown as ModelSeams).__vedCaretRect();
@@ -61,13 +48,10 @@ const setDoc = async (text: string) => {
   await page.waitForTimeout(200);
 };
 
-// The caret's real extent. A caret is a 1-D line: in horizontal text it is tall
-// and thin (height), in vertical-rl it is a horizontal bar at a line end (width,
-// zero height). Either is a valid, visible caret — the OLD bug was a 0×0 box at
-// the viewport ORIGIN. So measure the LARGER axis.
+// A caret is a 1-D line (tall in horizontal text, a wide zero-height bar in
+// vertical-rl), so measure the LARGER axis; degenerate = 0×0 at the origin.
 const extent = (r: Rect) => Math.max(r.bottom - r.top, r.right - r.left);
-// The caret rect lies within the ruby's box (a small margin for the caret's own
-// extent past the glyph and the boundary being just outside the node).
+// Within the ruby's box, with margin for the caret's extent past the glyph.
 const nearRuby = (c: Rect, ruby: Rect) =>
   c.left >= ruby.left - 30 && c.right <= ruby.right + 30 && c.top >= ruby.top - 30 && c.bottom <= ruby.bottom + 30;
 
@@ -76,15 +60,11 @@ try {
   await pressMod(page, '4'); // Rich
   await page.waitForTimeout(150);
 
-  // A leading ruby plus a trailing char, so the BEFORE boundary is the document
-  // start and the AFTER boundary is followed by visible text (not the doc end,
-  // whose caret rect is degenerate in vertical-rl multicol for unrelated reasons).
-  // |ルビ(ruby)あ: offsets — |0 ル1 ビ2 (3 r4 u5 b6 y7 )8 あ9 ; base "ルビ", reading "ruby".
+  // Leading ruby + trailing char: the AFTER boundary must not be the doc end,
+  // whose caret rect is degenerate in vertical-rl multicol for unrelated
+  // reasons. Offsets: |0 ル1 ビ2 (3 r4 u5 b6 y7 )8 あ9.
   await setDoc('|ルビ(ruby)あ');
 
-  // Boundary positions and whether the caret is logically inside the ruby.
-  // 0: before the ruby (outside). 1: base start (inside). 2: mid base (inside).
-  // 3: base end (inside). 9: after the ruby, before あ (outside).
   const cases: { off: number; inside: boolean; label: string }[] = [
     { off: 0, inside: false, label: 'before the ruby (doc start)' },
     { off: 1, inside: true, label: 'just inside, base start (where IME begins)' },
@@ -98,8 +78,7 @@ try {
     await setCaret(c.off);
     const m = await measure();
     assert.ok(m.caret, `${c.label}: caret rect available`);
-    // The native caret has a real, full-size extent (NOT the 0×0 corner box that
-    // threw the IME to the viewport origin in the old display:none model).
+    // A 0×0 corner box would throw the IME to the viewport origin.
     assert.ok(extent(m.caret!) >= 12, `${c.label}: caret rect full extent, got ${JSON.stringify(m.caret)}`);
     assert.ok(
       nearRuby(m.caret!, m.ruby),
@@ -111,23 +90,18 @@ try {
   step('caret rect is full-height and at the ruby at every boundary position');
   step('rubyActive is ON strictly inside, OFF at the outer boundaries');
 
-  // No layout shift: the ruby's own box is identical at every caret position
-  // (the highlight is a background; the markup is never revealed in Rich).
   for (let i = 1; i < rects.length; i++) {
     assert.equal(rects[i]!.left, rects[0]!.left, `ruby.left unchanged across boundaries (pos ${cases[i]!.off})`);
     assert.equal(rects[i]!.top, rects[0]!.top, `ruby.top unchanged across boundaries (pos ${cases[i]!.off})`);
   }
   step('no layout shift across the boundary positions');
 
-  // --- ArrowLeft/Right across paragraphs preserves the inline-axis coordinate.
-  // In vertical-rl, ArrowRight = line backward. The bug landed the caret at the
-  // END of the previous column ("jumped to the end of previous"); the fix
-  // hit-tests the previous column at the caret's inline-axis (y) position.
+  // ArrowRight (= line backward in vertical-rl) must hit-test the previous
+  // column at the caret's inline-axis (y), not land at the column END.
   await setDoc('first paragraph here');
   await page.keyboard.press('Enter');
   await page.keyboard.insertText('second paragraph too');
   await page.waitForTimeout(200);
-  // Click into the middle of the SECOND paragraph's column.
   const p2 = await page.evaluate(() => {
     const ps = document.querySelectorAll('#editor-content p');
     return (ps[1] as HTMLElement).getBoundingClientRect();
@@ -136,7 +110,7 @@ try {
   await page.waitForTimeout(200);
   const beforeY = await page.evaluate(() => getSelection()!.getRangeAt(0).getBoundingClientRect().y);
   const beforeOff = await page.evaluate(() => getSelection()!.focusOffset);
-  await page.keyboard.press('ArrowRight'); // line backward → previous (first) paragraph
+  await page.keyboard.press('ArrowRight');
   await page.waitForTimeout(250);
   const after = await page.evaluate(() => {
     const sel = getSelection()!;

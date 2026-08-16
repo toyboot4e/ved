@@ -1,6 +1,6 @@
 # Plan: editor UI (app shell)
 
-Status: **in progress** (2026-07) — phases 0–1 are complete; the view-config
+Status: **in progress** — phases 0–1 are complete; the view-config
 interlude, phase 3 (Ctrl+P quick open), and phase 6 (VerticalRows) shipped out
 of order. Phase 2 (file-browser sidebar) is nearly done: the multi-root tree,
 resize, and binary refusal shipped; only watching (2b) remains. The app is a
@@ -166,7 +166,7 @@ a checked box here, and a **stop for user review**. The guiding rule: new
 code lives in new modules; the only editor-core touch in the whole phase is
 one optional prop (step 0.2).
 
-- [x] **Step 0.1 — IPC file layer (no UI change).** *(done 2026-06-12)*
+- [x] **Step 0.1 — IPC file layer (no UI change).**
   - `src/shared/ipc.ts`: channel names + `VedFileApi` contract
     (`openFile` / `saveFile` / `saveFileAs`), included by both tsconfigs so
     main, preload, and renderer share one definition.
@@ -179,7 +179,7 @@ one optional prop (step 0.2).
   - Smoke test drives a real open / save / save-as roundtrip through
     `window.ved` against fixture files — no UI involved yet.
 
-- [x] **Step 0.2 — open/save wired to the single buffer.** *(done 2026-06-12)*
+- [x] **Step 0.2 — open/save wired to the single buffer.**
   - New renderer module (`file-commands` + app-level shortcut listener):
     `Ctrl+O` open, `Ctrl+S` save (falls back to save-as when untitled),
     `Ctrl+Shift+S` save as. IME-guarded (`isComposing` / keyCode 229).
@@ -194,14 +194,14 @@ one optional prop (step 0.2).
   - Smoke: open a fixture via stubbed dialog → editor shows it → edit →
     save → assert on-disk content.
 
-- [x] **Step 0.3 — dirty state and close guard.** *(done 2026-06-13)*
+- [x] **Step 0.3 — dirty state and close guard.**
   - Dirty ⇔ `text !== savedText`; title shows `● name`.
   - Confirm-on-close for a dirty buffer: `beforeunload` is unreliable in
     Electron, so main intercepts `window.on('close')`, asks the renderer
     over IPC, and shows a native confirm dialog (with its own env stub).
   - Smoke: edit → close → cancel keeps the window; save → close quits.
 
-### Phase 1 — buffers and tab bar *(done 2026-06-13)*
+### Phase 1 — buffers and tab bar
 
 The `Buffer` store and the `VedEditor` refactor (history lifted out, cursor
 and scroll snapshotted on switch-away). Tab bar: hand-rolled flex row —
@@ -216,13 +216,13 @@ Refinement decided in the detailed plan: Phase 1 uses `useReducer` + a pure
 `buffers.ts`; **Zustand is deferred to Phase 2**, when the sidebar becomes a
 second out-of-tree consumer.
 
-### Interlude — debug view-config controls *(2026-07)*
+### Interlude — debug view-config controls
 
 User-requested, out of phase order: make the view values — font size, line
 space, page geometry, font family — adjustable live, for debugging layout.
 Decisions from the design review (see CONTEXT.md **view config**):
 
-- [x] **Step V.1 — view-config store + toolbar controls.** *(done 2026-07-02)*
+- [x] **Step V.1 — view-config store + toolbar controls.**
   - `ViewConfig` = `{ fontSize (px), lineSpaceRatio (of the cell), pageLineChars
     (fullwidth cells), pageLines, fontFamily ('' = inherit) }`, clamped
     per-field; one pure `viewConfigToCss` produces the custom-property
@@ -246,7 +246,7 @@ Decisions from the design review (see CONTEXT.md **view config**):
     from `init.ts` (`ctx.settings.apply`); localStorage is rejected as
     renderer-owned persistence Phase 4 would have to migrate away from.
 
-- [x] **Step V.2 — invisibles (newline / whitespace markers).** *(done 2026-07)*
+- [x] **Step V.2 — invisibles (newline / whitespace markers).**
   - User-requested. View-only decorations (pm/decorations.ts): whitespace =
     an inline marker class over the real char (space ·, full-width space □,
     tab →); newline = a zero-inline-size `vedNewline` widget at each line end
@@ -257,7 +257,7 @@ Decisions from the design review (see CONTEXT.md **view config**):
     decoration cache (caret-move perf invariant holds). Smoke:
     `test/e2e/invisibles.ts`. See architecture.md "Invisibles".
 
-- [x] **Step V.3 — theme (dark mode + token layer).** *(done 2026-07)*
+- [x] **Step V.3 — theme (dark mode + token layer).**
   - User-requested. Every product color became a `--ved-*` token with light +
     dark palettes (main.scss `ved-light`/`ved-dark`); the editor core CSS
     references them with light fallbacks so it still renders standalone.
@@ -270,7 +270,7 @@ Decisions from the design review (see CONTEXT.md **view config**):
     Not persisted yet (Phase 4). Smoke: `test/e2e/theme.ts`. See
     desktop.md "Theming".
 
-- [x] **Step V.4 — search & replace bar.** *(done 2026-07-05)*
+- [x] **Step V.4 — search & replace bar.**
   - User-requested. Ctrl+F opens the bar (Ctrl+R opens it on the replace
     field; main drops the default Electron menu off macOS so its reload/
     close-window accelerators stop shadowing renderer chords). Matching is
@@ -284,22 +284,21 @@ Decisions from the design review (see CONTEXT.md **view config**):
     bar's Enter/Esc are ignored mid-composition, and the ops refuse while
     `view.composing`. Smoke: `test/e2e/search-replace.ts`. See
     desktop.md "Search and replace".
-  - *(2026-07-05)* The bar docks at the BOTTOM of the editor area (a
+  - The bar docks at the BOTTOM of the editor area (a
     full-width row above the shell panel, in `app.module.scss .main`), not as
     a row inside the fixed-width page column — so it spans the window and
     never shifts the page geometry.
 
-- [x] **Step V.5 — extension seam + @ved/vim.** *(done 2026-07-05)*
+- [x] **Step V.5 — extension seam + @ved/vim.**
   - User-requested. The `commands.ts` layer opened into a real registry
-    (`CORE_COMMANDS` + extension-registered ids; undo/redo migrated in from
-    hardcoded keys) and a new `extensions` prop / `EditorExtensionContext`
+    (`CORE_COMMANDS` + extension-registered ids; undo/redo included) and a new `extensions` prop / `EditorExtensionContext`
     seam (extension.ts): plain strings + offsets only, edits through
     `plainInsertTr`, movement through the arrow-key movers, IME safety
     enforced by the seam itself. Block-caret shape (`setCaretShape`) renders
     in the decoration delta layer. `@ved/vim` is a fourth workspace package —
     pure reducer (model.ts, unit-tested) + adapter (extension.ts) — proving
     the seam suffices for third parties; the shell adds `useVimStore`, a
-    toolbar toggle, and a mode chip. Later rounds filled the modal surface —
+    toolbar toggle, and a mode chip. The modal surface covers
     linewise visual `V`, `s`/`S`, `r`, `f F t T ; ,`, `J`, `X`, count
     `gg`/`G`, visual paste — and the block caret's widget form (a block at
     EVERY position, incl. ruby seams). Movement is SPATIAL (`moveCaretVisual`):
@@ -308,14 +307,14 @@ Decisions from the design review (see CONTEXT.md **view config**):
     move (`moveByLogicalLine`, Vim's j/k). `Ctrl+F/B/D/U` map to a `scrollPage`
     seam, consumed AHEAD of the app's Ctrl+F search / Ctrl+B sidebar in normal
     mode. In vertical writing h/l are a LOGICAL paragraph walk (a ved line is a
-    paragraph); `g`+hjkl is the DISPLAY (wrapped) walk. A later batch added
+    paragraph); `g`+hjkl is the DISPLAY (wrapped) walk. Also included:
     WORD motions `W B E`, `%`, `{ }`, `~`, TEXT OBJECTS (`iw`/`aw`, bracket &
     quote pairs, `ip`/`ap`) for operators + visual, and SEARCH `/ ? n N * #`
     (reducer command-line mode; the shell renders the `/pattern` line — literal,
-    not incremental, not IME-aware). A pre-existing overlay bug surfaced en
-    route — `pickLine` matched on the caret block EDGE, so the current-line
-    highlight lagged a row in wrapped paragraphs (overlapping line boxes); now
-    it matches on the caret block CENTER (`line-highlight-ruby-wrap.ts`).
+    not incremental, not IME-aware). The overlay's `pickLine` matches on the
+    caret block CENTER, not the EDGE — an edge match lags the current-line
+    highlight a row in wrapped paragraphs (overlapping line boxes)
+    (`line-highlight-ruby-wrap.ts`).
     Dot-repeat `.` records the last change's key sequence (insert-mode text
     included) and the adapter replays it. `gg`/`G` keep the column;
     `Ctrl+A`/`Ctrl+X` increment/decrement; linewise `V` keeps the cursor and
@@ -330,7 +329,7 @@ Decisions from the design review (see CONTEXT.md **view config**):
     (`mozc/vim-normal-composition`). See architecture.md "Extensions" and
     `docs/extensions.md`.
 
-- [x] **Step V.6 — settings panel (gear popover).** *(done 2026-07-20)*
+- [x] **Step V.6 — settings panel (gear popover).**
   - User-requested. The view-config group and the invisibles toggles move
     OFF the toolbar row into a popover anchored under a new gear button
     (`components/settings-panel.tsx`; the controls themselves — element ids
@@ -357,7 +356,7 @@ virtualization — i.e. when the browser becomes a file *manager*. Until then
 the dependency (and its focus handling, which must coexist with Slate's)
 costs more than the lines it saves.
 
-- [x] **2a. Multi-root tree + toggle** *(done 2026-07-05)*. Zustand
+- [x] **2a. Multi-root tree + toggle**. Zustand
   `workspace.ts` store (`roots: string[]`, `sidebarOpen`, `sidebarSide`);
   Ctrl+B and the toolbar ☰ button toggle (hidden by default), the ⇄ header
   button docks the pane to either window edge. `Sidebar` renders one lazy
@@ -371,7 +370,7 @@ costs more than the lines it saves.
   grew `readFile` (→ `ReadFileResult`) / `readDir` / `openDirDialog`
   (dir-picker seam: `VED_SMOKE_OPEN_DIR_PATH`, a comma-list consumed per
   call). Dot-entries stay out of the tree (`listDir`). Smoke:
-  `test/e2e/sidebar.ts`. *(2026-07-06)* The **Ctrl+O** open dialog also allows
+  `test/e2e/sidebar.ts`. The **Ctrl+O** open dialog also allows
   a FOLDER: main branches on the resolved path's kind (`fs-io.ts isDirectory`;
   `OpenFileResult` is now a `file | directory` union), and a chosen folder is
   added as a root and reveals the sidebar rather than opening a buffer. Smoke:
@@ -380,18 +379,18 @@ costs more than the lines it saves.
   `.gitignore`d dirs), debounced `FsChangeEvent`s over IPC; the tree
   refreshes the affected directory, and the Ctrl+P index (phase 3)
   invalidates.
-- [x] **2c. Sidebar resize** *(done 2026-07-05)*. ARIA window-splitter on
+- [x] **2c. Sidebar resize**. ARIA window-splitter on
   the pane's inner edge: pointer-drag (pointer capture) and arrow keys
   write `sidebarWidth` (store-clamped 160–480px) into the
   `--sidebar-width` custom property.
-- [x] **2d. Uniform binary refusal** *(done 2026-07-05)*. EVERY open path
+- [x] **2d. Uniform binary refusal**. EVERY open path
   goes through `readTextFileChecked` — sidebar click, Ctrl+O dialog
   (`OpenFileResult.read`), and CLI arguments (skipped with a warning).
   Refusals surface in one app-level toast (`app.tsx` notice, bottom-left).
   Panels use the `--ved-panel-bg` token (near-white in light — quieter
   than the chrome gray, keeping the page as the visual anchor).
 
-- [x] **2e. Open-files view** *(done 2026-07-08)*. User-requested. A
+- [x] **2e. Open-files view**. User-requested. A
   segmented ICON toggle in the sidebar header (folder / page-stack icons,
   tooltips ファイル | 開いているファイル — quick open's mode labels)
   switches the pane between the root trees and the
@@ -402,7 +401,7 @@ costs more than the lines it saves.
   guard. The add-folder button belongs to the files view only. Smoke:
   `test/e2e/sidebar-open-files.ts`.
 
-- [x] **2f. File operations (context menu)** *(done 2026-07-08)*.
+- [x] **2f. File operations (context menu)**.
   User-requested. Right-click on a tree row opens a hand-rolled context menu
   (`components/context-menu.tsx`): 名前を変更 (files AND directories —
   inline input in the row; Enter commits, Esc/blur cancels, IME-guarded),
@@ -420,9 +419,9 @@ costs more than the lines it saves.
 Roots/visibility persistence is machine-owned app state, not user
 configuration — deferred (docs/extensions.md "Deferred").
 
-### Phase 3 — Ctrl+P quick open *(done 2026-07-06)*
+### Phase 3 — Ctrl+P quick open
 
-- [x] **Ctrl+P quick open.** *(done 2026-07-06)*
+- [x] **Ctrl+P quick open.**
   - **Index** (main process, `main/workspace-index.ts`): walks each workspace
     root respecting `.gitignore` (the `ignore` npm package over a hand-walked
     tree; nested `.gitignore` files stack over their subtree; `.git` always
@@ -468,11 +467,11 @@ configuration — deferred (docs/extensions.md "Deferred").
     registry (step 4 of the architecture notes above).
   - Smoke: `test/e2e/quick-open.ts`. Units: `main/workspace-index.test.ts`,
     `renderer/src/quick-open.test.ts`. See desktop.md "Quick open".
-  - *(2026-07-08)* The list/preview divider is DRAGGABLE (an ARIA
+  - The list/preview divider is DRAGGABLE (an ARIA
     window-splitter, pointer-captured drag + arrow keys — the sidebar
     handle's pattern); the list width is a store-clamped % of the body,
     kept across opens like the text-only toggle.
-  - *(2026-07-08)* **Content search (検索)** — the header is TWO rows: a
+  - **Content search (検索)** — the header is TWO rows: a
     four-view mode row (ファイル / 開いているファイル / ファイルを検索 /
     開いているファイルを検索 — `setView`, mode × name/content in the store)
     over the search box. The 検索 views are per-LINE grep
@@ -498,7 +497,7 @@ The same store/overlay is built to back the **command palette**
 `items` (not `files`); the chord table deliberately leaves Shift+P
 unclaimed for it.
 
-### Phase 4 — configuration *(done 2026-07-13)*
+### Phase 4 — configuration
 
 Configuration IS code (docs/extensions.md): `init.ts` — an ordinary
 extension, loaded last — is the user's configuration, typed against the
@@ -551,7 +550,7 @@ Steps:
 
 Later, on demand: a `config.open` command opening `init.ts` in a ved tab.
 
-### Phase 6 — vertical page layouts (`VerticalRows`) *(done 2026-06-16, refined through 2026-07)*
+### Phase 6 — vertical page layouts (`VerticalRows`)
 
 Add the leftward-tiled "book-style" page layout as a sibling of today's
 downward-tiled `VerticalColumns`, exposed in the toolbar with a four-mode
@@ -587,8 +586,8 @@ The deferred 2D case is noted in `editor.tsx` next to the new CSS, so a future
 contributor who wants N≥2 pages per row finds the documented constraint (docs/architecture.md) rather than re-deriving
 it.
 
-- [x] **6e. Continuous modes use the pane along their FREE axis**
-  *(done 2026-07-06)*. Each non-paged mode expands along the axis its scroll
+- [x] **6e. Continuous modes use the pane along their FREE axis.**
+  Each non-paged mode expands along the axis its scroll
   frees, instead of sitting as a fixed page box with dead margins:
   - **Vertical** fills the pane WIDTH (`fillMode`: `.root` + the `.editor`
     scroller go `width:100%` / `align-self:stretch`) — its horizontal scroll
@@ -600,7 +599,7 @@ it.
   The paged modes are unchanged (VerticalColumns fixed & centered;
   VerticalRows already fills via `rowsMode`). Smoke: `test/e2e/rows-fill.ts`.
 
-### Phase 7 — integrated shell *(step 7a done 2026-07-05)*
+### Phase 7 — integrated shell
 
 A terminal panel under the editor: Ctrl+` toggles it; each tab is a PTY in
 the main process (`node-pty` — native, main-only, per the process-boundary
@@ -642,8 +641,8 @@ the `__vedShellText` seam (xterm renders to canvas — the DOM has no text).
 | Need              | Choice                  | Rejected                              |
 | ----------------- | ----------------------- | ------------------------------------- |
 | shell state       | `zustand`               | context drilling, Redux, Jotai        |
-| query matching    | hand-rolled AND-of-     | `fuzzysort` (scatter matches = noise, |
-|                   | substrings (`match.ts`) | REMOVED), `cmdk`, `fzf`               |
+| query matching    | hand-rolled AND-of-     | `fuzzysort` (scatter matches =        |
+|                   | substrings (`match.ts`) | noise), `cmdk`, `fzf`                 |
 | fs watching       | `chokidar` (main)       | raw `fs.watch` (platform quirks)      |
 | gitignore rules   | `ignore`                | spawning ripgrep                      |
 | config schema     | `zod`                   | `electron-store`, hand-rolled checks  |

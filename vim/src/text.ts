@@ -59,8 +59,8 @@ export type VimRange = { from: number; to: number; linewise: boolean };
 
 /** The word-granularity behind `w`/`b`/`e`/`ge`, abstracted so it can be
  *  swapped (a Japanese segmenter, words-ja.ts). Each returns an offset in
- *  `text`. `endBack` is optional (older custom models predate it); a model
- *  without one falls back to the default class walk for `ge`/`gE`. */
+ *  `text`. `endBack` is optional; a model without one falls back to the
+ *  default class walk for `ge`/`gE`. */
 export type WordModel = {
   /** `w`: the start of the next word after `off`. */
   readonly next: (text: string, off: number) => number;
@@ -358,11 +358,11 @@ export const searchNext = (text: string, from: number, pattern: string, forward:
   if (!pattern) return null;
   if (forward) {
     let idx = text.indexOf(pattern, from + 1);
-    if (idx < 0) idx = text.indexOf(pattern, 0); // wrap
+    if (idx < 0) idx = text.indexOf(pattern, 0);
     return idx < 0 ? null : idx;
   }
   let idx = from > 0 ? text.lastIndexOf(pattern, from - 1) : -1;
-  if (idx < 0) idx = text.lastIndexOf(pattern); // wrap
+  if (idx < 0) idx = text.lastIndexOf(pattern);
   return idx < 0 ? null : idx;
 };
 
@@ -393,7 +393,7 @@ export const findNumber = (text: string, from: number): { start: number; end: nu
   while (digit(start - 1)) start--;
   let end = i;
   while (digit(end)) end++;
-  if (start > ls && text[start - 1] === '-') start--; // negative sign
+  if (start > ls && text[start - 1] === '-') start--;
   const value = Number.parseInt(text.slice(start, end), 10);
   return Number.isNaN(value) ? null : { start, end, value };
 };

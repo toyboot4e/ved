@@ -1,33 +1,13 @@
-// Click responsiveness on a large document. A plain in-content click must NOT
-// trigger a glyph walk — `walkGlyphs` measures a rect for EVERY glyph in the
-// document (O(document) layout reads, ~1s at 400k chars), and the old regression
-// ran it from `buildGlyphCache()` on EVERY mousedown, so clicking a line in the
-// paged modes stalled for seconds on a large doc. The cache is for DRAG-selection
-// (and empty-area presses); a click never consumes it, so it is now built lazily
-// on the first drag move.
-//
-// A second O(rubies) cost rode the same event: buildDecorations rebuilt a fresh
-// node decoration for EVERY ruby on every selection change (~100ms/click at 9k
-// rubies). The caret-independent ruby decorations are now a CACHED static set;
-// a caret move adds only an O(1) delta (rubyActive + the atom-base unlock).
-//
-// A third cost rode EMPTY-AREA presses (the gutter, the blank space past a
-// column): each one legitimately hit-tests the glyphs, but the viewport-scoped
-// cache was dropped on every mouseup, so EVERY such click re-measured a rect
-// per paragraph plus a rect per visible glyph (~tens of ms). The cache now
-// persists across gestures (invalidated by doc changes via leaves identity,
-// and by layout signals) — `__vedNearWalks` counts the walks.
-//
-// A fourth cost was ByParagraph/ByCharacter-specific: every caret crossing
-// into another line/ruby rebuilt EVERY ruby's static decorations; crossings
-// now PATCH only the delta rubies (`__vedRubyRebuilds` stays flat).
-//
-// Asserted deterministically via the `__vedGlyphWalks`, `__vedNearWalks`, and
-// `__vedRubyRebuilds` seams (counting the O(document)/O(rubies) passes), like
-// caret-move-perf does for the base-format cache — not via latency, which
-// flakes under load. A drag must still SELECT (its geometric hit-test is how
-// selection crosses a read-only ruby base) — but via the viewport-scoped
-// walk, never the whole document.
+// Click responsiveness on a large doc, asserted via the `__vedGlyphWalks` /
+// `__vedNearWalks` / `__vedRubyRebuilds` seams — never latency, which flakes
+// under load. A plain in-content click must not glyph-walk (`walkGlyphs` reads
+// a rect per glyph, O(document), ~1s at 400k chars) nor rebuild the O(rubies)
+// static decoration set (~100ms/click at 9k rubies; caret moves add only the
+// O(1) rubyActive + atom-base-unlock delta). The glyph cache serves drags and
+// empty-area presses, built lazily, viewport-scoped, persisting across
+// gestures (invalidated by leaves identity / layout signals) — a drag must
+// still SELECT (its geometric hit-test crosses read-only ruby bases), and
+// ByParagraph/ByCharacter caret crossings patch only the delta rubies.
 //
 // Usage: node test/e2e/click-perf.ts (after bun run build).
 import assert from 'node:assert/strict';
@@ -48,8 +28,7 @@ try {
   await page.evaluate(() => getSelection()!.selectAllChildren(document.getElementById('editor-content')!));
   await page.keyboard.press('Backspace');
   await page.waitForTimeout(100);
-  // Realistic prose: LONG rubied paragraphs, each spanning several visual rows
-  // in the paged modes — many rubies per paragraph, wrapping across columns.
+  // Long rubied paragraphs wrapping across columns — many rubies per paragraph.
   await page.keyboard.insertText(
     Array.from(
       { length: 400 },
@@ -61,12 +40,9 @@ try {
   await clickWritingMode(page, 'Vertical Columns');
   await page.waitForTimeout(400);
 
-  // Click points that land ON TEXT (inside a <p>): a press on the empty scroller
-  // area (gutter, blank space past a column) legitimately hit-tests the glyphs —
-  // only an IN-CONTENT click must be walk-free. Probe a grid of candidate points
-  // in the scroller's visible client rect and keep the ones whose target is a
-  // paragraph. (The content element spans the whole scrolled document, so its
-  // own box is off-screen here — probe the scroller instead.)
+  // Only IN-CONTENT clicks must be walk-free (empty-area presses legitimately
+  // hit-test), so probe for points inside a <p>. Probe the scroller's client
+  // rect — the content element spans the whole scrolled doc, box off-screen.
   const pts = await page.evaluate(() => {
     const scroller = document.getElementById('editor-content')!.parentElement!;
     const r = scroller.getBoundingClientRect();
@@ -85,7 +61,6 @@ try {
   const cx = p0.x;
   const cy = p0.y;
 
-  // --- plain clicks: NO glyph walk, NO ruby-decoration rebuild, caret moves ---
   await page.mouse.click(p0.x, p0.y);
   await page.waitForTimeout(150);
   const before = await walks();
@@ -110,8 +85,6 @@ try {
   );
   step('plain clicks on a large doc trigger no O(document) glyph walk and no O(rubies) decoration rebuild');
 
-  // --- a drag selects with NO full-document walk: the hit-test is
-  // viewport-scoped and the selection overlay walks only the spanned lines ---
   const dragWalks0 = await walks();
   await page.mouse.move(cx, cy);
   await page.mouse.down();
@@ -124,11 +97,9 @@ try {
   assert.equal(dragDelta, 0, `a drag must not walk the whole document (got ${dragDelta} full walks)`);
   step('drag-selection selects via viewport-scoped hit-testing (no O(document) walk)');
 
-  // --- empty-area presses: the scoped hit-test cache survives gestures.
-  // A press in the GUTTER (over the line-number overlay — outside the
-  // contenteditable) resolves the caret through offsetAtPoint; repeated
-  // presses without an intervening edit/scroll must reuse the cached
-  // geometry, never re-walk the viewport (a rect per paragraph + per glyph).
+  // A gutter press (over the line-number overlay, outside the contenteditable)
+  // resolves through offsetAtPoint; repeats without an edit/scroll must reuse
+  // the cached geometry, never re-walk (a rect per paragraph + per glyph).
   const gutterPt = await page.evaluate(() => {
     const scroller = document.getElementById('editor-content')!.parentElement!;
     const s = scroller.getBoundingClientRect();
@@ -157,9 +128,8 @@ try {
   assert.equal(nearDelta, 0, `repeated empty-area clicks must reuse the hit-test cache (got ${nearDelta} re-walks)`);
   step('repeated empty-area clicks reuse the cached hit-test geometry (no per-click viewport walk)');
 
-  // --- ByParagraph: a caret crossing into another line PATCHES the ruby
-  // static set (the delta rubies only), never rebuilds every ruby's
-  // decorations. (The policy switch itself rebuilds once, before `before`.)
+  // ByParagraph caret crossings patch the delta rubies only. (The policy
+  // switch itself rebuilds once, before `before`.)
   await pressMod(page, '2');
   await page.waitForTimeout(200);
   const beforePatch = await rubyRebuilds();

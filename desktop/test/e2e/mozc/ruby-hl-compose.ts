@@ -12,7 +12,7 @@
 // can sit ON the boundary between its own band and the previous column's, the
 // band pick tied into the PREVIOUS column, and the steady hold then (rightly,
 // for jitter) refused the correction — the highlight sat one line back for
-// the whole composition. The composing anchor now uses the last preedit
+// the whole composition. The composing anchor uses the last preedit
 // char's LEADING edge (editor.tsx caretRect), interior to the real column, so
 // every keystroke's band must cover the tail glyph's column center.
 // Usage: node test/e2e/mozc/ruby-hl-compose.ts  (after a build)

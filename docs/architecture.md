@@ -570,9 +570,9 @@ the page gap. The native caret only ever paints from a real text-node home.
 **Every widget decoration sits after its position (`side >= 0`) and is
 `contenteditable=false`.** A read-only span as the caret's *previous* DOM
 sibling kills fcitx5's input-method context — each composed character
-confirms raw and the context goes dead. (The ↵ newline mark at `side: -1` did
-this at every paragraph end; the boundary caret at `side: -1` did it at
-seams.) The flattened `coordsAtPos` that `side: -1` once worked around is
+confirms raw and the context goes dead. (A ↵ newline mark at `side: -1` does
+this at every paragraph end; a boundary caret at `side: -1`, at seams.) The
+flattened `coordsAtPos` that `side: -1` would work around is
 handled by `scroll-reveal.ts caretCoords` instead: query side, opposite side,
 then the boundary-caret widget's own box. (`ruby-ime-rect.ts`,
 `caret-boundary.ts`, `ruby-boundary-caret.ts`, `mozc/ruby-composition.ts`
@@ -1050,16 +1050,16 @@ Hard limits and approaches that failed — don't re-derive or re-try:
   ruby-geometry e2e suites there first.
 - **ProseMirror directly, not TipTap.** ved wants a minimal plaintext schema;
   TipTap's mark model fights the identity rich text model.
-- **Markup as hidden editable DOM text.** Both hiding strategies shipped and
-  failed the same way — a box the browser lays out but can't honestly
+- **Markup as hidden editable DOM text.** Both hiding strategies fail the
+  same way — a box the browser lays out but can't honestly
   measure: `font-size:0` (column-cap overrun, phantom rects, wrong-column
   caret affinity, degenerate IME rects) and `display:none` + full editing
-  takeover (IME box still misfired). The fix was structural: markup out of
+  takeover (the IME box still misfires). The fix is structural: markup out of
   the editable text entirely.
 - **A zero-width-space IME anchor and a `compositionend` re-home.** Fragile
-  hacks over composition at a collapsed ruby's boundary; replaced by the
-  structural answer (atom ruby's read-only base + boundary offsets mapping
-  *outside*). Don't reintroduce either.
+  hacks over composition at a collapsed ruby's boundary; the structural
+  answer (atom ruby's read-only base + boundary offsets mapping *outside*)
+  supersedes them. Don't reintroduce either.
 - **"Which side of the ruby is the caret on" cannot be app state.** The DOM
   holds one position at a ruby's edge: a click carries no side, an IME reads
   the live DOM rect, and any DOM-originated selection read-back orphans the
@@ -1075,7 +1075,7 @@ Hard limits and approaches that failed — don't re-derive or re-try:
   repair at page boundaries on every edit, against invariants 1 + 2; CSS
   transforms over the multicol page rows — break every client-rect
   measurement the editor lives on; periodic CSS lattices for separators —
-  tried twice, real documents shift layout non-arithmetically and the lattice
+  real documents shift layout non-arithmetically and the lattice
   drifts onto text. Separators are drawn by the measured overlay.
 
 ## Known papercuts / future work
@@ -1124,5 +1124,5 @@ Hard limits and approaches that failed — don't re-derive or re-try:
   (`ruby-selection-thin.ts`, `drag-select-ruby.ts`.)
 - **Click on non-text may not place the caret** (gap between rows, past a
   line's text). Not yet reproduced — clicks inside the contenteditable's box
-  already snap. A `view.posAtCoords` fallback was prototyped and reverted for
+  already snap. A `view.posAtCoords` fallback is not shipped for
   lack of a failing repro to guard it.

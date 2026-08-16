@@ -35,25 +35,20 @@ import { useVimStore, vimExtensions } from './vim';
 import { useWorkspaceStore } from './workspace';
 import { useWritingModeStore } from './writing-mode';
 
-// The live composing caret rect → the main-process fcitx window guard
-// (src/main/ime-window-guard.ts). Module-level, so the editor prop's identity
-// is stable across renders.
+// The live composing caret rect → main's fcitx window guard
+// (ime-window-guard.ts). Module-level, so the editor prop identity is stable.
 const reportImeCaretRect = (rect: { left: number; top: number; right: number; bottom: number } | null): void =>
   window.ved.imeCaretRect(rect);
 
 export const App = (): React.JSX.Element => {
   const writingMode = useWritingModeStore((s) => s.writingMode);
   const appearPolicy = useAppearPolicyStore((s) => s.appearPolicy);
-  // Handed to VedEditor, which writes back through it (Ctrl+1–4, Ctrl+/);
-  // a store setter, so its identity is stable across renders.
+  // Store setter (stable identity); VedEditor writes back through it (Ctrl+1–4, Ctrl+/).
   const setAppearPolicy = useAppearPolicyStore((s) => s.set);
   const viewConfig = useViewConfigStore((s) => s.config);
   const invisibles = useInvisiblesStore((s) => s.invisibles);
   const vimEnabled = useVimStore((s) => s.enabled);
 
-  // Committed buffer state (tab strip, per-buffer snapshots) lives in the
-  // Zustand store (buffers-store.ts); the whole-state subscription keeps this
-  // shell re-rendering exactly like the previous useReducer did.
   const state = useBuffersStore();
   const active = activeBuffer(state);
 
@@ -70,13 +65,10 @@ export const App = (): React.JSX.Element => {
     setDirty(text !== savedTextRef.current);
     // An edit shifts/consumes matches — recompute (no-op while the bar is closed).
     useSearchStore.getState().docChanged(text);
-    // User extensions' onDidChangeText (extension-host.ts).
     notifyExtensionTextChanged(text);
   }, []);
 
-  // User extensions (extension-host.ts): activated by main.tsx before the
-  // mount; the store feeds the editor's extensions array and its keybinding
-  // table.
+  // User extensions: activated by main.tsx before the mount (extension-host.ts).
   const userExtensions = useUserExtensionsStore((s) => s.editorExtensions);
   const keybindings = useUserExtensionsStore((s) => s.keybindings);
   const vimKeymap = useVimStore((s) => s.keymap);
@@ -87,10 +79,9 @@ export const App = (): React.JSX.Element => {
     [vimEnabled, vimKeymap, userExtensions],
   );
 
-  // Switching to a buffer adopts its committed text + dirtiness as the live
-  // baseline (its stored text is current on switch-in). Done during render —
-  // React's "adjust state when a prop changes" pattern — so there is no
-  // post-paint flicker and no effect-dependency dance.
+  // Switching buffers adopts the committed text + dirtiness as the live
+  // baseline, during render (React's "adjust state when a prop changes"
+  // pattern) — no post-paint flicker, no effect-dependency dance.
   const [baselineId, setBaselineId] = useState(active.id);
   if (baselineId !== active.id) {
     setBaselineId(active.id);
@@ -98,8 +89,6 @@ export const App = (): React.JSX.Element => {
     setDirty(active.text !== active.savedText);
   }
 
-  // Search & replace wiring (ops/highlights/focus/tab-switch resync) —
-  // use-search-wiring.ts.
   const getText = useCallback(() => textRef.current, []);
   const { searchOpen, searchFocus, searchHighlights, handleSearchOps, getOps, openSearch } = useSearchWiring(
     active.id,
@@ -118,8 +107,6 @@ export const App = (): React.JSX.Element => {
     };
   }, []);
 
-  // The window title and the close guard reflect the active buffer plus any
-  // other dirty buffer.
   useEffect(() => {
     document.title = windowTitle(active.path, dirty);
     window.ved.setDirty(dirty || someInactiveDirty(state, active.id));
@@ -152,12 +139,9 @@ export const App = (): React.JSX.Element => {
     [state.buffers, active.id],
   );
 
-  // Transient app notice (bottom-left toast) — notice.ts; the refusal paths
-  // below report through showNotTextNotice.
   const notice = useNoticeStore((s) => s.notice);
 
-  // A chosen folder is added as a sidebar root (revealing the sidebar),
-  // never opened as a buffer.
+  // A chosen folder becomes a sidebar root (revealing the sidebar), never a buffer.
   const addFolderRoot = useCallback((path: string) => {
     const ws = useWorkspaceStore.getState();
     ws.addRoot(path);
@@ -184,10 +168,9 @@ export const App = (): React.JSX.Element => {
     if (path !== null) addFolderRoot(path);
   }, [addFolderRoot]);
 
-  // Opening from the sidebar tree: the path is known, no dialog. Main sniffs
-  // the CONTENT and refuses non-text files, reported via the shared notice.
-  // `openPath` focuses the existing tab when the path is already open (the
-  // fresh read is discarded — the open buffer, possibly dirty, wins).
+  // Sidebar tree open: path known, no dialog; main sniffs the CONTENT and
+  // refuses non-text files. `openPath` focuses an already-open tab — the
+  // fresh read is discarded (the open buffer, possibly dirty, wins).
   const handleOpenTreeFile = useCallback(async (path: string): Promise<void> => {
     const result = await window.ved.readFile(path);
     if (result.kind !== 'text') {
@@ -198,11 +181,10 @@ export const App = (): React.JSX.Element => {
   }, []);
 
   // Caret placement for quick-open content search. The one-editor model moves
-  // carets by MOUNT: a snapshot lands the cursor before React renders, and the
-  // editor reveals a mounted caret itself. For the currently-RENDERED buffer
-  // (same key, no natural remount) commit the LIVE text with the caret and
-  // bump the key epoch to force one — never mid-composition (the palette owns
-  // focus while open, so no editor composition is live here).
+  // carets by MOUNT: a snapshot lands the cursor before React renders. For
+  // the currently-RENDERED buffer (same key, no natural remount) commit the
+  // LIVE text with the caret and bump the key epoch to force one — never
+  // mid-composition (the palette owns focus, so none is live here).
   const [jumpEpoch, setJumpEpoch] = useState(0);
   const placeCursor = useCallback(
     (id: BufferId, cursor: CursorState): void => {
@@ -219,7 +201,6 @@ export const App = (): React.JSX.Element => {
     [baselineId],
   );
 
-  // A files content-search row: open (or focus) the file, caret on the match.
   const handleOpenFileAt = useCallback(
     async (path: string, cursor: CursorState): Promise<void> => {
       const result = await window.ved.readFile(path);
@@ -234,7 +215,6 @@ export const App = (): React.JSX.Element => {
     [placeCursor],
   );
 
-  // A buffers content-search row: activate the tab, caret on the match.
   const handleJumpToBuffer = useCallback(
     (id: BufferId, cursor: CursorState): void => {
       placeCursor(id, cursor);
@@ -273,10 +253,8 @@ export const App = (): React.JSX.Element => {
     [handleClose, handleCycle, active.id],
   );
 
-  // App shortcuts work wherever the focus is, so they live on `window`; the
-  // chord table and the scoped dispatch (quick-open overlay first) are
-  // keymap.ts. View-mode and caret shortcuts stay inside the editor (they
-  // need the editor view).
+  // App shortcuts live on `window` so they work wherever the focus is; the
+  // chord table and the scoped dispatch are keymap.ts.
   useEffect(() => {
     const isDarwin = window.ved.platform === 'darwin';
     const onKeyDown = (event: KeyboardEvent): void =>
@@ -290,42 +268,36 @@ export const App = (): React.JSX.Element => {
   const roots = useWorkspaceStore((s) => s.roots);
   const quickOpenOpen = useQuickOpenStore((s) => s.open);
   const extensionPickerOpen = useExtensionPickerStore((s) => s.open);
-  // New shells open in the active file's directory, else the first workspace
-  // root, else $HOME (main's fallback).
+  // New shells: the active file's dir, else the first root, else $HOME (main's fallback).
   const shellCwd = (active.path !== null ? dirName(active.path) : undefined) ?? roots[0];
   const sidebar = sidebarOpen ? (
     <Sidebar onOpenFile={handleOpenTreeFile} activeDirty={dirty} onCloseBuffer={handleClose} />
   ) : null;
 
   return (
-    // Shell row: sidebar | editor column (editor pane over the shell panel),
-    // with the sidebar docked to either edge. The editor column keeps its
-    // fixed page-geometry width and centers in the remaining pane
-    // (app.module.scss).
+    // Shell row: sidebar | editor column, sidebar docked to either edge. The
+    // editor column keeps its fixed page-geometry width and centers in the
+    // remaining pane (app.module.scss).
     <div className={appStyles.shell}>
       {sidebarSide === 'left' && sidebar}
       <div className={appStyles.main}>
         <div className={appStyles.editorPane}>
-          {/*
-          vertMode on the root transposes the page geometry (CSS custom props);
-          the view config overrides the geometry custom props inline
-          (view-config.ts). pagesPerRow only means something in the columns
-          modes — pin it to 1 elsewhere so the root/page widths stay one page.
-          rowsMode widens the root to the pane: VerticalRows scrolls along the
-          horizontal axis, so the viewport is free there — a wide pane shows
-          more lines (editor.module.scss .root.rowsMode).
-        */}
+          {/* vertMode transposes the page geometry (CSS custom props); the
+          view config overrides those props inline (view-config.ts).
+          pagesPerRow only means something in the columns modes — pinned to 1
+          elsewhere so the root/page widths stay one page. rowsMode widens the
+          root to the pane: VerticalRows scrolls along the horizontal axis,
+          so a wide pane shows more lines. */}
           <div
             className={clsx(
               styles.root,
               isVerticalMode(writingMode) && styles.vertMode,
               writingMode === WritingMode.VerticalRows && styles.rowsMode,
-              // The horizontally-scrolling continuous/columns modes fill the
-              // pane WIDTH. Horizontal and HorizontalRows keep their fixed
-              // line-measure width (centered) and instead grow in HEIGHT —
-              // handled on the editor scroller (growMode), so the root stays
-              // page-fixed there. VerticalColumns stays fixed; VerticalRows
-              // already fills via rowsMode.
+              // Horizontally-scrolling continuous/columns modes fill the pane
+              // WIDTH. Horizontal and HorizontalRows keep their fixed
+              // line-measure width and instead grow in HEIGHT (the scroller's
+              // growMode); VerticalColumns stays fixed; VerticalRows already
+              // fills via rowsMode.
               (writingMode === WritingMode.Vertical || writingMode === WritingMode.HorizontalColumns) &&
                 styles.fillMode,
             )}
@@ -365,8 +337,7 @@ export const App = (): React.JSX.Element => {
             </div>
           </div>
         </div>
-        {/* Search & replace: a full-width bar docked at the bottom of the
-            editor area (above the shell panel), not a row inside the page column. */}
+        {/* Full-width bar above the shell panel, not a row inside the page column. */}
         {searchOpen && <SearchBar getText={getText} getOps={getOps} focusRequest={searchFocus} />}
         <ExtensionPanels />
         <ShellPanel defaultCwd={shellCwd} />

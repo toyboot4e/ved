@@ -1,10 +1,8 @@
-// The renderer half of user extensions (docs/extensions.md): imports
-// the sources main compiled (shared/ipc.ts ExtensionSource) as blob modules,
-// hands each an id-bound VedContext (shared/extension-api.ts — namespacing
-// by construction: there is no unprefixed registration API), and wraps its
-// editor hooks in ONE EditorExtension per user extension, attached through
-// the same seam as @ved/vim. A broken extension reports a notice and is
-// swept; it never takes down the editor.
+// Renderer half of user extensions (docs/extensions.md): imports main's
+// compiled sources as blob modules, hands each an id-bound VedContext
+// (namespacing by construction — no unprefixed registration API), and wraps
+// its editor hooks in one EditorExtension on the same seam as @ved/vim. A
+// broken extension reports a notice and is swept; it never takes down the editor.
 import type {
   Chord,
   EditorCommandId,
@@ -33,19 +31,13 @@ import {
   type SettingsBaseline,
 } from './settings';
 
-// ---------------------------------------------------------------------------
-// Store: what the shell (app.tsx) feeds the editor.
-
 type UserExtensionsStore = {
-  /** The host composition observer, then one loader-built EditorExtension
-   *  per activated user extension in load order — appended to the editor's
-   *  `extensions` prop. Republished by every whole-config re-evaluation:
-   *  fresh wrappers re-attach; the observer is a module constant, so it
-   *  stays attached. */
+  /** The host composition observer, then one EditorExtension per activated
+   *  user extension in load order — the editor's `extensions` prop.
+   *  Republished by every whole-config re-evaluation. */
   readonly editorExtensions: readonly EditorExtension[];
-  /** The editor's whole binding table: DEFAULT_KEYBINDINGS overlaid with the
-   *  extension-bound chords (the prop REPLACES the map, so defaults are
-   *  merged here). */
+  /** DEFAULT_KEYBINDINGS overlaid with extension-bound chords (the prop
+   *  REPLACES the map, so defaults are merged here). */
   readonly keybindings: Readonly<Record<Chord, EditorCommandId>>;
 };
 
@@ -54,14 +46,10 @@ export const useUserExtensionsStore = create<UserExtensionsStore>()(() => ({
   keybindings: DEFAULT_KEYBINDINGS,
 }));
 
-// ---------------------------------------------------------------------------
-// Keybindings: one table, later binders win, dispose restores the previous.
-
 type Binding = { readonly chord: Chord; readonly commandId: EditorCommandId; readonly owner: string };
 
-/** Per-chord binding stacks (module state, app lifetime). The TOP of each
- *  stack is the live binding; DEFAULT_KEYBINDINGS is the floor under every
- *  stack. */
+/** Per-chord binding stacks (module state, app lifetime); the TOP is live,
+ *  DEFAULT_KEYBINDINGS the floor. */
 const bindingStacks = new Map<Chord, Binding[]>();
 
 const rebuildKeybindings = (): void => {
@@ -76,8 +64,7 @@ const rebuildKeybindings = (): void => {
 const pushBinding = (chord: Chord, commandId: EditorCommandId, owner: string): Disposable => {
   const stack = bindingStacks.get(chord) ?? [];
   const shadowed = stack[stack.length - 1];
-  // Rebinding a DEFAULT is the normal use (silent); shadowing another
-  // extension's binding is a likely surprise — say so.
+  // Rebinding a default is silent; shadowing another extension's binding is a surprise — say so.
   if (shadowed && shadowed.owner !== owner) {
     useNoticeStore.getState().show(`${chord}: ${owner} が ${shadowed.owner} の割り当てを上書きしました`);
   }
@@ -92,9 +79,6 @@ const pushBinding = (chord: Chord, commandId: EditorCommandId, owner: string): D
   });
 };
 
-// ---------------------------------------------------------------------------
-// Document events: fanned out from the shell's onTextChange (app.tsx).
-
 const textListeners = new Set<(text: string) => void>();
 
 /** Called by app.tsx from the editor's onTextChange. */
@@ -102,18 +86,14 @@ export const notifyExtensionTextChanged = (text: string): void => {
   for (const listener of textListeners) listener(text);
 };
 
-// The editor's selection PING is payload-free (VedEditorProps
-// onSelectionChange); each extension wrapper registers a notifier that pulls
-// the offsets through its OWN seam only when it actually has listeners.
+// The editor's selection ping is payload-free; each extension wrapper pulls
+// the offsets through its own seam only when it actually has listeners.
 const selectionNotifiers = new Set<() => void>();
 
 /** Called by app.tsx from the editor's onSelectionChange. */
 export const notifyExtensionSelectionChanged = (): void => {
   for (const notifier of selectionNotifiers) notifier();
 };
-
-// ---------------------------------------------------------------------------
-// The per-extension wrapper.
 
 const makeDisposable = (dispose: () => void): Disposable => {
   let disposed = false;
@@ -140,10 +120,8 @@ type UserExtension = {
 };
 
 const createUserExtension = (id: string, fileName: string, activation: ActivationReason): UserExtension => {
-  // Every registration is tracked here, so a failed activate (or a future
-  // reload) sweeps exactly this extension's contributions — no
-  // extension-authored cleanup bookkeeping (docs/extensions.md
-  // "The module contract").
+  // Every registration is tracked so a failed activate (or a reload) sweeps
+  // exactly this extension's contributions (docs/extensions.md).
   const tracked: Disposable[] = [];
   const track = (disposable: Disposable): Disposable => {
     tracked.push(disposable);
@@ -153,12 +131,10 @@ const createUserExtension = (id: string, fileName: string, activation: Activatio
   const hookSets = new Set<EditorHooks>();
   // biome-ignore lint/suspicious/noConfusingVoidType: mirrors the public `register` type — `void` keeps side-effect-only handlers assignable.
   const commands = new Map<EditorCommandId, () => boolean | void | Promise<unknown>>();
-  // The live editor seam while an editor is mounted (there is one editor;
-  // tab switches remount it, re-running attach).
+  // Live while an editor is mounted; tab switches remount, re-running attach.
   let seam: EditorExtensionContext | null = null;
   const seamUnregisters = new Map<EditorCommandId, () => void>();
-  // The extension's current highlight set — kept here so a remount (tab
-  // switch: new seam, empty decoration store) re-applies it at attach.
+  // Kept so a remount (new seam, empty decoration store) re-applies at attach.
   let decorations: readonly ExtensionDecorationRange[] = [];
   const selectionListeners = new Set<(selection: { anchor: number; head: number }) => void>();
   const selectionNotifier = (): void => {
@@ -198,8 +174,7 @@ const createUserExtension = (id: string, fileName: string, activation: Activatio
     seamUnregisters.set(fullId, seam.registerCommand(fullId, wrapCommand(fullId, run)));
   };
 
-  // One guarded fan-out per hook: a user hook must never throw into the
-  // editor's event path.
+  // Guarded: a user hook must never throw into the editor's event path.
   const fanOutConsuming = (call: (hooks: EditorHooks) => boolean | undefined) => (): boolean => {
     for (const hooks of hookSets) {
       try {
@@ -314,8 +289,7 @@ const createUserExtension = (id: string, fileName: string, activation: Activatio
           if (!/^[A-Za-z][A-Za-z0-9_-]*$/.test(range.class)) {
             throw new Error(`invalid decoration class "${range.class}"`);
           }
-          // The namespace prefix, by construction: an extension cannot paint
-          // with the editor's own classes (vedSearchMatch, rubyActive, …).
+          // Namespaced by construction: an extension cannot paint with the editor's own classes.
           return { from: range.from, to: range.to, cls: `vedx-${id}-${range.class}` };
         });
         seam?.setDecorations(id, decorations);
@@ -364,9 +338,8 @@ const createUserExtension = (id: string, fileName: string, activation: Activatio
     },
 
     settings: {
-      // Assignment, not registration (extension-api.ts SettingsHandle):
-      // nothing is tracked — whole-config re-evaluation resets to the launch
-      // baseline before every activation pass, so removed lines revert.
+      // Assignment, not registration: nothing is tracked — re-evaluation
+      // resets to the launch baseline first, so removed lines revert.
       apply: (settings) => applySettings(settings, (message) => useNoticeStore.getState().show(message)),
       applyDefault: (settings) =>
         applySettingsDefault(settings, activation, (message) => useNoticeStore.getState().show(message)),
@@ -387,9 +360,6 @@ const createUserExtension = (id: string, fileName: string, activation: Activatio
   };
 };
 
-// ---------------------------------------------------------------------------
-// The loader (+ whole-config re-evaluation).
-
 type LiveExtension = {
   readonly editorExtension: EditorExtension;
   readonly disposeAll: () => void;
@@ -406,16 +376,14 @@ let loadOrder: string[] = [];
  *  current set, never just the changed file. */
 const latestSources = new Map<string, ExtensionSource>();
 
-/** The store values before any extension ran (captured under the first
- *  evaluation, after main.tsx's default-font pick) — what every
- *  re-evaluation resets to. */
+/** Store values before any extension ran (captured on the first evaluation,
+ *  after main.tsx's default-font pick) — the re-evaluation reset target. */
 let settingsBaseline: SettingsBaseline | null = null;
 
-// Re-evaluating while an IME composition is live would churn layout under
-// the preedit (a settings reset can resize the page); hold the newest
-// pending change and flush it at composition end. The observer is a host
-// EditorExtension under the reserved 'ved' id — a module constant, so it
-// stays attached across re-evaluations (reconciliation is by identity).
+// Re-evaluating during a live IME composition would churn layout under the
+// preedit (a settings reset can resize the page); hold the newest pending
+// change, flush at composition end. The observer is a module constant under
+// the reserved 'ved' id, so it stays attached across re-evaluations.
 let composing = false;
 let pendingReevalFile: string | null = null;
 
@@ -446,9 +414,9 @@ const publishExtensions = (): void => {
 };
 
 /** Import one compiled source as a blob module (CSP allows `script-src
- *  blob:` for exactly this; the `ved` specifier never reaches the runtime —
- *  it is types-only, stripped with the types) and activate it. A failure
- *  sweeps every registration the half-activated extension made. */
+ *  blob:` for exactly this; the types-only `ved` specifier never reaches the
+ *  runtime) and activate it. A failure sweeps every registration the
+ *  half-activated extension made. */
 const activateSource = async (source: ExtensionSource, activation: ActivationReason): Promise<void> => {
   if (source.js === null) {
     reportExtensionError(source.fileName || 'extensions', source.error);
@@ -489,19 +457,14 @@ const deactivateExtension = (id: string): void => {
   liveExtensions.delete(id);
 };
 
-/**
- * Evaluate the whole config from scratch: deactivate every live extension
- * (each sweep undoes its own registrations — bindings, hooks, UI), reset
- * settings to the launch baseline (captured on the FIRST evaluation, when no
- * extension has run yet), then activate every current source in load order.
- * The end state is a pure function of the sources — precedence can never
- * drift with edit history (a per-extension swap would re-push a reloaded
- * extension's chord ON TOP of init.ts's stack entry).
- */
+/** Evaluate the whole config from scratch: deactivate every live extension,
+ *  reset settings to the launch baseline, then activate every current source
+ *  in load order. The end state is a pure function of the sources — a
+ *  per-extension swap would re-push a reloaded extension's chord ON TOP of
+ *  init.ts's stack entry, drifting precedence with edit history. */
 const evaluateAll = async (): Promise<void> => {
   for (const id of [...loadOrder].reverse()) deactivateExtension(id);
-  // The first evaluation IS startup (it also captures the baseline);
-  // extensions read the distinction as ctx.activation.
+  // The first evaluation IS startup; extensions read it as ctx.activation.
   const activation: ActivationReason = settingsBaseline === null ? 'startup' : 'reevaluation';
   if (settingsBaseline === null) settingsBaseline = captureSettingsBaseline();
   else resetSettingsToBaseline(settingsBaseline);

@@ -58,7 +58,6 @@ try {
     `rowsMode scroller geometry: ${baseScroll.scrollW}×${baseScroll.scrollH}, view ${baseScroll.width}×${baseScroll.height}`,
   );
 
-  // Switch back to VerticalColumns to confirm the round-trip:
   await clickWritingMode(page, 'Vertical Columns');
   const b = await readContentMode();
   assert.ok(

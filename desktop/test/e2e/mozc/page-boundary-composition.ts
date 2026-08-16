@@ -85,7 +85,7 @@ try {
   // page 1's last line carries the intra-band page-gap WIDGET at its content
   // end. At side -1 the widget sat BEFORE the caret and the IM context died —
   // every composed character confirmed raw; paragraph-end boundaries render
-  // it at side 2 now (pm/page-gap.ts). 25 one-line paragraphs of 20 fullwidth
+  // it at side 2 (pm/page-gap.ts). 25 one-line paragraphs of 20 fullwidth
   // chars: paragraph 20 ends at line 20 = the 1|2 intra-band boundary.
   {
     const gridText = Array.from({ length: 25 }, () => 'あ'.repeat(20)).join('\n');

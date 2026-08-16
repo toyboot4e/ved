@@ -81,7 +81,6 @@ try {
   );
   step('paragraph-end highlight is a later column, not line 1');
 
-  // A non-end position in the last column stays consistent too.
   const mid = await bandAt(100);
   expectCaretInBand(100, mid);
   step('highlight covers the caret column mid last column');

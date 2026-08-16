@@ -70,7 +70,7 @@ export const cases: MozcCase[] = [
     romaji: 'ne',
     want: '|語(ご)ね|句(く)',
   },
-  // NEW SPEC (commit 63a7d95): a ruby's base START is an EDGE that writes OUTSIDE
+  // SPEC: a ruby's base START is an EDGE that writes OUTSIDE
   // the ruby (only the INTERIOR — strictly between base chars — writes inside). So
   // composing at off 2 (base start of ルビ) lands BEFORE the ruby, same as off 1.
   {

@@ -3,7 +3,7 @@
 // visual line-boundary move drops the DOM caret at the end of the base text —
 // a model offset strictly INSIDE the ruby span — which lit the `rubyActive`
 // highlight while no native caret showed (a caret papercut). The End handler
-// now snaps forward to after the ruby, mirroring the Home snap to before a
+// snaps forward to after the ruby, mirroring the Home snap to before a
 // leading ruby.
 import type { EditCase } from './edit-runner.ts';
 

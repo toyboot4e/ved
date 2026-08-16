@@ -1,35 +1,15 @@
-// View-only decorations for ved's inline syntax. This is where the
-// "decoration model scales with syntax" promise lives: every inline format
-// (bold/italic/縦中横, future Hameln syntax) is one entry in RULES — a parse rule
-// + a CSS class, no schema, no structure repair.
+// View-only decorations for ved's inline syntax: every inline format is one
+// RULES entry (parse rule + CSS class, no schema); ruby alone is a NODE whose
+// markup is never editable DOM text — `serialize` reconstructs it, expanded
+// policies show it as read-only widget decorations (model.ts header).
 //
-// Ruby is the exception: it is a NODE (rubyBase + rubyReading children), so its
-// markup is NOT editable DOM text — it is reconstructed by
-// `serialize` and DISPLAYED (in the expanded appear policies) as read-only
-// widget decorations alongside the `rubyExpanded` node class. The native caret and
-// IME therefore live in real, full-size text at every position, including a
-// ruby boundary; the old overlay caret / font-size:0 / delimAnchor machinery is
-// gone (see the model.ts header).
-//
-// PERFORMANCE: this runs on EVERY editor state change, and per-EVENT work must
-// not scale with the document — neither on a caret move NOR on an edit. Three
-// layers:
-//   1. parseDoc — a cheap per-doc-version index (O(#paragraphs) prefix
-//      arrays); leaves and ruby geometry resolve LAZILY through per-paragraph
-//      caches keyed on the immutable paragraph nodes, so an edit re-parses
-//      only the paragraphs it created.
-//   2. The STATIC decoration sets — the bold/italic/縦中横 base set (doc-keyed,
-//      `baseCache`) plus every caret-INDEPENDENT ruby decoration (`rubyCache`,
-//      keyed by doc + policy + expanded-set value, so a caret move under a
-//      fixed policy always reuses it). An EDIT does not rebuild them: the
-//      dispatch calls `advanceDecorationCaches`, which maps both sets through
-//      the transaction (untouched paragraphs shift wholesale inside PM's set
-//      tree) and rebuilds only the DIRTY paragraphs' decorations.
-//   3. A per-move DELTA — O(active ruby): the rubyActive tint, the active
-//      atom-base unlock, the boundary caret.
-// The `__vedBaseRebuilds`/`__vedRubyRebuilds` seams count layer-2 FULL
-// rebuilds; caret-move-perf and click-perf assert caret moves cause none, and
-// edit-perf asserts edits cause none either (they advance instead).
+// Runs on EVERY state change; per-event work must not scale with the document.
+// Three layers: parseDoc (lazy per-paragraph caches keyed on the immutable
+// paragraph nodes), the STATIC sets (baseCache + rubyCache — edits ADVANCE
+// them via advanceDecorationCaches, rebuilding only dirty paragraphs), and a
+// per-move DELTA (O(active ruby)). `__vedBaseRebuilds`/`__vedRubyRebuilds`
+// count static FULL rebuilds; caret-move-perf/click-perf assert caret moves
+// cause none, edit-perf that edits advance.
 import type { Node as PMNode } from 'prosemirror-model';
 import type { Transaction } from 'prosemirror-state';
 import { Decoration, DecorationSet } from 'prosemirror-view';
@@ -45,8 +25,7 @@ import {
   serialize,
 } from './model';
 
-/** The transaction mapping type, named through prosemirror-state (transform is
- *  not a direct dependency). */
+/** The transaction mapping type, via prosemirror-state (transform is not a direct dependency). */
 type TrMapping = Transaction['mapping'];
 
 /** Each inline format = one rule. Markers are hidden (`syn`), inner text gets
@@ -57,17 +36,7 @@ const RULES: { re: RegExp; cls: string }[] = [
 ];
 const TCY = /\d{2,}/g; // 縦中横: runs of 2+ digits
 
-/** The shown delimiters of an expanded ruby, as real (caret-separating)
- *  elements — pseudo-element delimiters (the former `::before`/`::after`)
- *  have no DOM positions AROUND them, so the caret painted identically on
- *  both sides of a delimiter (moving across `|` or `(` showed no cursor
- *  change). A real element between two text positions renders the two carets
- *  apart. Selection paint comes from the OVERLAY (editor.tsx walkGlyphsLines
- *  measures the widgets like any visible glyph), and the caret-adjacent
- *  `rubyActive` tint reaches the close widget via a sibling CSS rule — so the
- *  widgets are selection-independent and live in the CACHED static set, never
- *  re-rendered by a caret move. */
-// EVERY ved widget is a read-only span: contenteditable=false is the
+// Every ved widget is a read-only span: contenteditable=false is the
 // structural half of the IM-context rule (a widget must never be an editable
 // caret anchor); the side >= 0 half lives at each Decoration.widget call.
 const roSpan =
@@ -84,15 +53,11 @@ const roSpan =
 // class, and the caret must not enter them.
 const delim = (cls: string, ch: string) => roSpan(cls, ch);
 
-/** A rendered caret for a TEXT-LESS seam — between two collapsed rubies (or a
- *  collapsed ruby against a paragraph edge) the markup is not DOM text, so the
- *  native caret has nothing to sit on (an invisible cursor). This widget draws the
- *  caret (CSS, blinks while focused) at the correct seam offset; see ruby.css.
- *  The LAST-CREATED element is tracked so consumers reach it in O(1)
- *  (`boundaryCaretElement`) — at most one exists (it renders only at the
- *  collapsed caret's head, and the desktop shell mounts one editor at a
- *  time), and the old `querySelector('.vedBoundaryCaret')` walked the whole
- *  content tree to a MISS on every plain-text caret move. */
+/** A rendered caret for a TEXT-LESS seam — between collapsed rubies, or a
+ *  collapsed ruby against a paragraph edge, the native caret has no DOM text
+ *  to sit on. The LAST-CREATED element is tracked for O(1) lookup
+ *  (`boundaryCaretElement`): at most one exists, and a querySelector walks
+ *  the whole content tree to a MISS on every plain-text caret move. */
 let liveBoundaryCaret: HTMLElement | null = null;
 const boundaryCaret = (): HTMLElement => {
   liveBoundaryCaret = roSpan('vedBoundaryCaret')();
@@ -104,27 +69,21 @@ export const boundaryCaretElement = (): HTMLElement | null =>
   liveBoundaryCaret?.isConnected ? liveBoundaryCaret : null;
 
 /** The BLOCK caret's widget form — for caret positions with NO visible
- *  character under them (paragraph end, a collapsed ruby's boundary, an empty
- *  line), where the inline-decoration block has nothing to tint. Same box
- *  recipe as the boundary caret (non-degenerate for the caret/IME rect, zero
- *  net footprint, side 0 so the caret's previous DOM sibling stays real
- *  content — the fcitx5 IM-context rule); the painted cell is an out-of-flow
- *  ::after (ruby.css). */
+ *  character to tint (paragraph end, collapsed-ruby boundary, empty line).
+ *  Same box recipe as the boundary caret (non-degenerate for the caret/IME
+ *  rect, zero net footprint, side 0 — the fcitx5 IM-context rule); the
+ *  painted cell is an out-of-flow ::after (ruby.css). */
 const blockCaretBox = roSpan('vedBlockCaretBox');
 
 /** The newline marker (invisibles): a widget at each paragraph's content end
- *  (except the last paragraph — the plain text has no trailing `\n`). Zero
- *  INLINE size, its glyph painted by a CSS `::after` pseudo-element in the
- *  overflow (ruby.css), so it consumes no line-box space — the marker can never
- *  push the line to wrap, and it stays visible after the last glyph even when a
- *  paragraph exactly fills its visual line. Not DOM text (no text node — the
- *  glyph-walk `SHOW_TEXT` filters skip it automatically) and not model text, so
- *  serialize/copy is unaffected. */
+ *  except the last (no trailing `\n`). Zero INLINE size — the glyph is a CSS
+ *  `::after` in the overflow (ruby.css), so it can't wrap the line and stays
+ *  visible when a paragraph exactly fills it; no text node, so glyph walks
+ *  and serialize/copy are unaffected. */
 const newlineMark = roSpan('vedNewline');
 
-/** Which invisibles are shown. A pure view flag threaded from the shell; both
- *  default off. Whitespace markers are inline decoration CLASSES over the real
- *  whitespace text (copy-safe); the newline marker is a widget (above). */
+/** Which invisibles are shown — a pure view flag threaded from the shell,
+ *  both default off. */
 export type Invisibles = {
   /** Show a marker at every paragraph end (the newline widget). */
   readonly newline: boolean;
@@ -134,9 +93,7 @@ export type Invisibles = {
 const NO_INVISIBLES: Invisibles = { newline: false, whitespace: false };
 
 /** A search match as a PLAIN-OFFSET range — the shell searches the plain
- *  string (a document is always a string outside the editor core) and the
- *  offsets are mapped to PM positions here, through the same pos map every
- *  other offset-addressed decoration uses. */
+ *  string; the offsets map to PM positions here. */
 export type SearchRange = {
   /** Start of the match, a plain offset (half-open `[from, to)`). */
   readonly from: number;
@@ -145,10 +102,7 @@ export type SearchRange = {
 };
 
 /** Which search matches to highlight — a pure view flag threaded from the
- *  shell like the invisibles. `active` indexes `ranges` (-1 = none); the
- *  active match stacks a stronger class. View-only decorations — never model
- *  state, so closing the search bar just passes null and the text is
- *  untouched. */
+ *  shell, never model state: closing the search bar just passes null. */
 export type SearchHighlights = {
   /** Every match to highlight, as plain-offset ranges. */
   readonly ranges: readonly SearchRange[];
@@ -161,15 +115,13 @@ export type SearchHighlights = {
 const wsClass = (ch: string): string | null =>
   ch === ' ' ? 'vedWsSpace' : ch === '　' ? 'vedWsFull' : ch === '\t' ? 'vedWsTab' : null;
 
-/** One ruby node's tree geometry, indexed by ruby id (text order — the same
- *  order the node walk visits them in a canonical document). */
+/** One ruby node's tree geometry, indexed by ruby id (text order). */
 type RubyInfo = {
   pos: number;
   size: number;
   baseSize: number;
   rtSize: number;
-  /** The node's own delimiters — rendered as the expanded widgets so the shown
-   *  markup matches the source (`|`/`(`/`)` or `｜`/`《`/`》`). */
+  /** The node's own delimiters — shown markup matches the source (`|`/`(`/`)` or `｜`/`《`/`》`). */
   front: string;
   open: string;
   close: string;
@@ -178,13 +130,9 @@ type RubyInfo = {
   atom: boolean;
 };
 
-// ---------------------------------------------------------------------------
-// Per-paragraph parse caches. Paragraph nodes are IMMUTABLE, so node identity
-// is a perfect cache key: an edit shares every untouched paragraph node, and
-// these caches make the per-doc-version parse O(changed paragraphs) — the old
-// whole-doc `docLeaves` re-parse + `buildPosMap` DFS + per-ruby `resolve` ran
-// per KEYSTROKE and scaled with the document.
-// ---------------------------------------------------------------------------
+// Paragraph nodes are IMMUTABLE, so node identity is a perfect cache key:
+// these per-paragraph caches make the per-doc-version parse O(changed
+// paragraphs) instead of a whole-doc re-parse per keystroke.
 
 /** One paragraph's ruby geometry in LOCAL coordinates (`pos` is the content
  *  offset — absolute pos = paragraph pos + 1 + `pos`). */
@@ -229,18 +177,16 @@ const paraLeaves = (para: PMNode): Leaf[] => {
 };
 
 /** The per-doc-version parse index: O(#paragraphs) prefix arrays plus lazy
- *  memo slots. Everything heavier resolves per paragraph through the caches
- *  above. */
+ *  memo slots. */
 type Parse = {
   doc: PMNode;
   text: string;
   /** Per paragraph: the global id of its FIRST ruby (prefix ruby counts). */
   rubyBase: number[];
   rubyCount: number;
-  /** Every ruby id — the Plain policy's expanded set, one shared instance per
-   *  doc version so the rubyCache key check is an identity hit. Built LAZILY
-   *  (`allRubiesOf`): only the Plain policy reads it, and the eager build ran
-   *  O(#rubies) Set inserts on every keystroke under every policy. */
+  /** Every ruby id — the Plain policy's expanded set, one shared instance
+   *  per doc version so the rubyCache key check is an identity hit. LAZY: an
+   *  eager build costs O(#rubies) on every keystroke under every policy. */
   allRubies: Set<number> | null;
   /** Lazy memo: rebased leaves per line / RubyInfo (absolute pos) per id. */
   lines: (Leaf[] | undefined)[];
@@ -268,10 +214,8 @@ const parseDoc = (doc: PMNode): Parse => {
 };
 
 /** The leaves of line `li` in DOCUMENT coordinates, trailing `nl` leaf
- *  included (the exact per-line slice of `docLeaves`); memoized per doc
- *  version. The per-caret-move scans (active ruby, expanded set,
- *  boundary-caret neighbours) touch ONE line's leaves, not the whole
- *  document's (which scales with ruby count). */
+ *  included; memoized per doc version. Per-caret-move scans touch ONE line's
+ *  leaves — the whole-doc list scales with the ruby count. */
 const lineLeavesOf = (parse: Parse, li: number): Leaf[] => {
   const hit = parse.lines[li];
   if (hit) return hit;
@@ -295,14 +239,14 @@ const lineLeavesOf = (parse: Parse, li: number): Leaf[] => {
   return out;
 };
 
-/** The paragraph holding global ruby id `id`. In a run of paragraphs sharing a
- *  `rubyBase` value only the LAST can hold rubies (a non-empty count bumps the
- *  next value), so the last-at-or-below index is the holder. */
+/** The paragraph holding global ruby id `id`. In a run of paragraphs sharing
+ *  a `rubyBase` value only the LAST can hold rubies, so last-at-or-below
+ *  finds the holder. */
 const paraOfRuby = (parse: Parse, id: number): number => lastAtOrBelow(parse.rubyBase, id);
 
-/** Ruby `id`'s node geometry at ABSOLUTE positions; memoized per doc version.
- *  Undefined for an out-of-range id — or mid-composition, where the text's
- *  ruby count can lead the (repair-skipped) node tree's. */
+/** Ruby `id`'s node geometry at ABSOLUTE positions; memoized per doc
+ *  version. Undefined for an out-of-range id — or mid-composition, where the
+ *  text's ruby count can lead the (repair-skipped) node tree's. */
 const rubyInfoOf = (parse: Parse, id: number): RubyInfo | undefined => {
   if (id < 0 || id >= parse.rubyCount) return undefined;
   const hit = parse.infos[id];
@@ -336,8 +280,8 @@ const rubySpanOf = (parse: Parse, id: number): [number, number] | undefined => {
 /** Plain offset → PM position, over the per-paragraph cached maps. */
 type OffsetToPos = (o: number) => number;
 
-/** One line's inline-format decorations: each RULES format (markers hidden via
- *  `syn`, the inner text classed) plus the 縦中横 digit runs. */
+/** One line's inline-format decorations: each RULES format (markers hidden
+ *  via `syn`) plus the 縦中横 digit runs. */
 const pushLineFormats = (decos: Decoration[], line: string, base: number, at: OffsetToPos): void => {
   for (const { re, cls } of RULES) {
     re.lastIndex = 0;
@@ -355,9 +299,8 @@ const pushLineFormats = (decos: Decoration[], line: string, base: number, at: Of
   }
 };
 
-/** Whitespace markers: one inline decoration per whitespace char, adding a
- *  class to the EXISTING text — the character stays in the model, so copy is
- *  plain. Per-char (not per-run) keeps the offset math trivial. */
+/** Whitespace markers: a class over the EXISTING text, so copy stays plain;
+ *  per-char (not per-run) keeps the offset math trivial. */
 const pushWhitespaceMarks = (decos: Decoration[], line: string, base: number, at: OffsetToPos): void => {
   for (let i = 0; i < line.length; i++) {
     const cls = wsClass(line[i]!);
@@ -365,15 +308,14 @@ const pushWhitespaceMarks = (decos: Decoration[], line: string, base: number, at
   }
 };
 
-/** ONE paragraph's base-layer decorations: the inline formats, the whitespace
- *  markers, and — except on the last paragraph (no trailing `\n`) — the
- *  newline widget at the content end. side 1 (AFTER the position): a caret at
- *  the paragraph end must keep REAL content as its previous DOM sibling —
- *  with the marker before the caret (side -1), fcitx5's IM context anchored
- *  on the contenteditable=false span and confirmed every composed character
- *  raw (mozc-verified at the page-boundary line end). */
+/** ONE paragraph's base-layer decorations: inline formats, whitespace
+ *  markers, and the newline widget (not on the last paragraph — no trailing
+ *  `\n`). side 1: a caret at the paragraph end must keep REAL content as its
+ *  previous DOM sibling, or fcitx5's IM context anchors on the
+ *  contenteditable=false span and confirms every composed character raw
+ *  (mozc-verified). */
 const pushParaBaseDecos = (decos: Decoration[], parse: Parse, pi: number, invis: Invisibles, at: OffsetToPos): void => {
-  if (isWindowed(parse, pi)) return; // no boxes — no decorations (windowing)
+  if (isWindowed(parse, pi)) return; // display:none — no boxes, no decorations
   const { paras, paraPos, prefixOff } = docIndex(parse.doc);
   const para = paras[pi];
   if (!para) return;
@@ -383,20 +325,15 @@ const pushParaBaseDecos = (decos: Decoration[], parse: Parse, pi: number, invis:
   if (invis.whitespace) pushWhitespaceMarks(decos, line, base, at);
   if (invis.newline && pi < paras.length - 1) {
     const contentEnd = paraPos[pi]! + 1 + para.content.size;
-    // The key is CONTENT-derived (every newline mark renders identically), so
-    // widgets stay eq across edits that renumber paragraphs — an ordinal key
-    // made one Enter near the doc start recreate every downstream mark.
+    // Content-derived key: stays eq across edits that renumber paragraphs.
     decos.push(Decoration.widget(contentEnd, newlineMark, { side: 1, key: 'nl', ignoreSelection: true }));
   }
 };
 
-/** Search-match highlights: an inline class over the matched text (the shell's
- *  plain-offset ranges, mapped through the pos map like every format above).
- *  Background-only styling (ruby.css), so no metric — and thus no cached
- *  measurement — can change. A range may cross a ruby (the plain string
- *  contains the markup): the interior offsets map into the base/reading text
- *  and the boundary offsets outside the node, so the paint lands on whatever
- *  matched text is visible. */
+/** Search-match highlights: an inline class over the matched text —
+ *  background-only styling (ruby.css), so no cached measurement can change.
+ *  A range crossing a ruby paints whatever matched text is visible (interior
+ *  offsets map into the base/reading, boundary offsets outside the node). */
 const pushSearchMarks = (decos: Decoration[], search: SearchHighlights, text: string, at: OffsetToPos): void => {
   search.ranges.forEach((r, i) => {
     const from = Math.max(0, Math.min(r.from, text.length));
@@ -407,9 +344,9 @@ const pushSearchMarks = (decos: Decoration[], search: SearchHighlights, text: st
   });
 };
 
-/** Extension highlights (the seam's setDecorations): plain-offset ranges
- *  with caller-namespaced classes, folded exactly like the search matches —
- *  clamped, offset-mapped, background-only by contract. */
+/** Extension highlights (setDecorations): plain-offset ranges with
+ *  caller-namespaced classes, folded like the search matches —
+ *  background-only by contract. */
 const pushExtensionMarks = (
   decos: Decoration[],
   extension: readonly ExtensionDecorationRange[],
@@ -424,12 +361,10 @@ const pushExtensionMarks = (
   }
 };
 
-/** The BULK, caret- and policy-independent decorations: the inline formats
- *  (bold/italic/縦中横) plus the invisibles markers (whitespace classes + newline
- *  widgets) plus the search-match highlights. Fully determined by
- *  (doc, invisibles, search), so it is reused across every caret move and
- *  policy change (the cache keys on all three — see baseCache), and ADVANCED
- *  across edits (advanceDecorationCaches) rather than rebuilt. */
+/** The BULK, caret- and policy-independent decorations (inline formats,
+ *  invisibles, search) — fully determined by (doc, invisibles, search), so
+ *  reused across every caret move and policy change (baseCache) and ADVANCED
+ *  across edits rather than rebuilt. */
 const buildBase = (
   parse: Parse,
   invis: Invisibles,
@@ -446,27 +381,16 @@ const buildBase = (
   return DecorationSet.create(doc, decos);
 };
 
-/** ONE paragraph's caret-independent ruby decorations — everything determined
- *  by (doc, expanded-set) alone:
- *   - `rubyExpanded` shows the markup (the widget delimiters below) and lays
- *     the reading out inline as editable text — set when the appear policy
- *     reveals this ruby (Plain: always; ByParagraph: the caret paragraph;
- *     ByCharacter: the caret ruby; Rich: never).
- *   - on a COLLAPSED ruby the READING (`rubyReading` child) gets `contenteditable=
- *     false` — the caret model already skips it, and read-only keeps an IME from
- *     leaking into the reading at the trailing edge. The BASE usually stays editable
- *     (the caret steps its interior). EXCEPTION: an ATOM ruby (no editable plain
- *     text immediately before it — it LEADS its paragraph, or FOLLOWS another
- *     ruby) also gets its base read-only, so an IME at its boundary composes
- *     OUTSIDE instead of into the base. The read-only base carries a
- *     `vedAtomBase` spec so the one caret-dependent exception — the base
- *     un-locks while the caret is strictly INSIDE — can find it in the cached
- *     set per move (atomBaseDeco) and return it in the delta's `remove`.
- *     An expanded ruby is fully editable.
- *  The caret-dependent class (`rubyActive`) is a separate,
- *  O(1)-ish DELTA added on top in buildDecorations. */
+/** ONE paragraph's caret-independent ruby decorations. `rubyExpanded` shows
+ *  the markup with the reading inline as editable text. Collapsed: the
+ *  READING is contenteditable=false (an IME at the trailing edge would leak
+ *  into it); the BASE stays editable (the caret steps its interior) EXCEPT
+ *  on an ATOM ruby (leads its paragraph, or follows another ruby) —
+ *  read-only, so an IME at its boundary composes OUTSIDE. The atom base
+ *  carries a `vedAtomBase` spec so the caret-strictly-inside unlock can find
+ *  it (atomBaseDeco); the `rubyActive` class is a separate per-move delta. */
 const pushParaRubyDecos = (nodes: Decoration[], parse: Parse, pi: number, expanded: Set<number>): void => {
-  if (isWindowed(parse, pi)) return; // no boxes — no decorations (windowing)
+  if (isWindowed(parse, pi)) return;
   const { paras, paraPos } = docIndex(parse.doc);
   const para = paras[pi];
   if (!para) return;
@@ -477,22 +401,15 @@ const pushParaRubyDecos = (nodes: Decoration[], parse: Parse, pi: number, expand
 };
 
 /** ONE ruby's caret-independent decorations (`r.pos` absolute), expanded or
- *  collapsed — the unit the per-paragraph builders and the expanded-set patch
- *  share, so the patch can reconstruct a ruby's exact old shapes to remove
- *  them by value. */
+ *  collapsed — the shared unit that lets the expanded-set patch reconstruct
+ *  a ruby's exact old shapes to remove them by value. */
 const pushOneRubyDecos = (nodes: Decoration[], r: RubyInfo, isExpanded: boolean): void => {
   const pos = r.pos;
   if (isExpanded) {
     nodes.push(Decoration.node(pos, pos + r.size, { class: 'rubyExpanded' }));
-    // ALL THREE delimiters are WIDGETS (real <span>s), NOT generated content:
-    // generated content has no caret-traversable positions around it, so the
-    // caret painted at the SAME spot on both sides of a pseudo delimiter —
-    // after `)` it collapsed onto the rt's text end, and moving across `|`
-    // or `(` showed no cursor change at all. A real element between the two
-    // text positions renders the two carets apart. `|` sits at the ruby's
-    // content start (before the base), `(` between the base and the reading,
-    // `)` right after the ruby. Keys are CONTENT-derived (the delimiter
-    // char is the whole rendering), never ordinal — same-char widgets stay
+    // WIDGETS, not generated content: pseudo content has no caret-traversable
+    // positions, so the caret painted at the SAME spot on both sides of a
+    // delimiter. Content-derived keys (never ordinal): same-char widgets stay
     // eq across edits that renumber the rubies.
     nodes.push(
       Decoration.widget(pos + 1, delim('rubyDelimOpen', r.front), {
@@ -516,8 +433,6 @@ const pushOneRubyDecos = (nodes: Decoration[], r: RubyInfo, isExpanded: boolean)
       }),
     );
   } else {
-    // Read-only reading on a collapsed ruby: the rubyReading child is at
-    // pos + 1 (into the ruby) + the rubyBase's size.
     const rtFrom = pos + 1 + r.baseSize;
     nodes.push(Decoration.node(rtFrom, rtFrom + r.rtSize, { contenteditable: 'false' }));
     if (r.atom) {
@@ -527,13 +442,11 @@ const pushOneRubyDecos = (nodes: Decoration[], r: RubyInfo, isExpanded: boolean)
 };
 
 /** Swap ONLY the delta rubies' decorations when a caret move under
- *  ByParagraph/ByCharacter changed the expanded set on the SAME doc — the
- *  full rebuild allocated O(all rubies) decorations per line/ruby crossing
- *  (~100ms per click at 9k rubies) although only one line's rubies changed
- *  shape. Removal is by VALUE (DecorationSet.remove matches type-eq +
- *  position), so the exact old shapes are reconstructed and dropped. Null
- *  when a ruby's node geometry can't be resolved (mid-composition text/node
- *  divergence) — the caller falls back to the full rebuild. */
+ *  ByParagraph/ByCharacter changed the expanded set on the SAME doc — a full
+ *  rebuild is O(all rubies) per crossing (~100ms/click at 9k rubies).
+ *  Removal is by VALUE (DecorationSet.remove matches type-eq + position).
+ *  Null when a ruby's geometry can't resolve (mid-composition text/node
+ *  divergence) — caller falls back to the full rebuild. */
 const patchExpandedSet = (
   parse: Parse,
   set: DecorationSet,
@@ -564,10 +477,9 @@ const buildRubyStatic = (parse: Parse, expanded: Set<number>): Decoration[] => {
   return nodes;
 };
 
-/** The cached read-only ATOM-BASE decoration of ruby `r` inside the static
- *  set, found by its `vedAtomBase` spec — the per-move delta removes it while
- *  the caret sits strictly inside the base. O(log doc + local) per lookup, so
- *  no id-keyed side table has to survive the per-edit set advance. */
+/** Ruby `r`'s cached read-only ATOM-BASE decoration, found by its
+ *  `vedAtomBase` spec — O(log doc + local) per lookup, so no id-keyed side
+ *  table has to survive the per-edit set advance. */
 const atomBaseDeco = (set: DecorationSet, r: RubyInfo): Decoration | undefined => {
   const from = r.pos + 1;
   const to = from + r.baseSize;
@@ -581,18 +493,16 @@ const atomBaseDeco = (set: DecorationSet, r: RubyInfo): Decoration | undefined =
 const EMPTY_EXPANDED: Set<number> = new Set();
 
 const setsEq = (a: Set<number>, b: Set<number>): boolean => {
-  if (a === b) return true; // the shared plain/rich instances hit here
+  if (a === b) return true;
   if (a.size !== b.size) return false;
   for (const x of a) if (!b.has(x)) return false;
   return true;
 };
 
 let parseCache: Parse | null = null;
-// The bold/italic/縦中横 + invisibles + search base set, keyed by
-// (doc, invisibles, search IDENTITY): a caret move under fixed invisibles and a
-// fixed search reuses it; a toggle — or a search query/active-match change,
-// which hands down a NEW highlights object — rebuilds it once. An EDIT
-// advances it (advanceDecorationCaches) instead of rebuilding.
+// The base set, keyed by (doc, invisibles, search IDENTITY) — a search
+// change hands down a NEW highlights object. Edits advance it
+// (advanceDecorationCaches) instead of rebuilding.
 let baseCache: {
   doc: PMNode;
   newline: boolean;
@@ -601,18 +511,16 @@ let baseCache: {
   extension: readonly ExtensionDecorationRange[] | null;
   set: DecorationSet;
 } | null = null;
-// The cached static layer: the base (bold/italic/縦中横) set PLUS the ruby static
-// decorations, keyed by (doc, policy, expanded-set VALUE). Under Rich/Plain the
-// expanded set never changes (none/all), so every caret move reuses it — and
-// an edit ADVANCES it; under ByParagraph/ByCharacter it rebuilds when the
-// caret crosses into another line/ruby (which re-renders those rubies anyway).
+// The static layer: the base set PLUS the ruby static decorations, keyed by
+// (doc, policy, expanded-set VALUE). Under Rich/Plain the expanded set never
+// changes, so caret moves reuse it and edits ADVANCE it; under
+// ByParagraph/ByCharacter it rebuilds on caret crossings.
 let rubyCache: {
   doc: PMNode;
   policy: Appear;
   expanded: Set<number>;
-  // The base set the cached `set` was built ON TOP of. Its IDENTITY encodes
-  // every base input (doc, invisibles, search — and any key baseCache gains
-  // later), so a base rebuild invalidates this layer with no mirrored fields
+  // The base set this was built ON TOP of; its IDENTITY encodes every base
+  // input, so a base rebuild invalidates this layer with no mirrored fields
   // to drift.
   base: DecorationSet;
   set: DecorationSet;
@@ -626,8 +534,7 @@ export const __resetDecorationCaches = (): void => {
   rubyCache = null;
 };
 
-// Bumped whenever the EXPANDED SET actually changes (a caret crossing under
-// ByParagraph/ByCharacter, or an edit that reshapes it) — expanded rubies
+// Bumped whenever the EXPANDED SET actually changes — expanded rubies
 // re-wrap their lines, so layout caches keyed on "the expansion didn't move"
 // (the page-gap line-ends cache) gate their reuse on this epoch.
 let expandedSetEpoch = 0;
@@ -635,13 +542,11 @@ let expandedSetEpoch = 0;
 /** The current expanded-set epoch (see above). */
 export const expandedEpoch = (): number => expandedSetEpoch;
 
-// DECORATION WINDOWING: paragraphs the windowing hid (display:none — no
-// boxes) carry no per-paragraph decorations at all. A dense-ruby document
-// holds ~100k+ decorations and ProseMirror MAPS the whole set tree through
-// every transaction — building the layers only for materialized paragraphs
-// cuts that walk by the window ratio. Keyed by NODE identity: a hidden
-// paragraph's node never changes while hidden (edits materialize first), and
-// indexes shift under edits while identities don't.
+// Windowing-hidden paragraphs (display:none) carry no per-paragraph
+// decorations: a dense-ruby document holds ~100k+ decorations and ProseMirror
+// MAPS the whole set tree through every transaction, so building only
+// materialized paragraphs cuts that walk by the window ratio. Keyed by NODE
+// identity (indexes shift under edits, identities don't; edits materialize first).
 let windowedNodes: WeakSet<PMNode> | null = null;
 // A window flip invalidated the caches: the NEXT cold rebuild is designed
 // (O(visible)) and counts on __vedWindowRebuilds, not the accidental seams.
@@ -660,18 +565,15 @@ const isWindowed = (parse: Parse, pi: number): boolean => {
   return para !== undefined && windowedNodes.has(para);
 };
 
-/** Re-derive the cached per-paragraph decorations of the paragraphs whose
- *  WINDOW membership flipped — called by windowing BEFORE its dispatch (and
- *  inside the chain-materialize flush), so updateState pulls sets that agree
- *  with the new visibility. The ruby layer is rebuilt ON TOP of the patched
- *  base (the advance-path recipe: `base` identity encodes every base input). */
+/** Re-derive the cached decorations of the paragraphs whose WINDOW
+ *  membership flipped — called by windowing BEFORE its dispatch, so
+ *  updateState pulls sets that agree with the new visibility. */
 export const patchDecorationWindow = (doc: PMNode, flipped: readonly number[]): void => {
   if (flipped.length === 0) return;
-  // A window-recenter/materialize-all flips hundreds of paragraphs —
-  // patchParas (a set find + removal + add per paragraph) costs more there
-  // than a cold rebuild, which the new windowed set keeps small anyway
-  // (O(visible paragraphs)). The rebuild is DESIGNED, so it counts on its
-  // own seam, not the accidental-rebuild ones the perf suites pin flat.
+  // A recenter/materialize-all flips hundreds of paragraphs — per-paragraph
+  // patching costs more than the cold rebuild, which the new window keeps
+  // O(visible); that DESIGNED rebuild counts on its own seam, not the
+  // accidental-rebuild ones the perf suites pin flat.
   if (flipped.length > 64) {
     baseCache = null;
     rubyCache = null;
@@ -699,9 +601,8 @@ export const patchDecorationWindow = (doc: PMNode, flipped: readonly number[]): 
 };
 
 /** Replace `set`'s decorations inside the given (new-doc) paragraphs with
- *  freshly built ones: drop everything the dirty paragraphs hold, then add
- *  what `push` builds for each. Every cached decoration lives strictly inside
- *  a paragraph, so the find range (content span) touches no neighbour. */
+ *  freshly built ones. Every cached decoration lives strictly inside a
+ *  paragraph, so the find range (content span) touches no neighbour. */
 const patchParas = (
   set: DecorationSet,
   parse: Parse,
@@ -721,10 +622,10 @@ const patchParas = (
   return decos.length ? removed.add(parse.doc, decos) : removed;
 };
 
-/** The NEW-doc paragraphs whose decorations an edit invalidated: the identity
- *  diff span, plus — when the paragraph count changed — the paragraphs whose
- *  LAST-ness flipped (the newline widget exists on every paragraph but the
- *  last, so an untouched paragraph can still need its widget added/removed). */
+/** The NEW-doc paragraphs whose decorations an edit invalidated: the
+ *  identity diff span, plus — when the paragraph count changed — the
+ *  paragraphs whose LAST-ness flipped (the newline widget exists on every
+ *  paragraph but the last). */
 const dirtyParas = (oldDoc: PMNode, newDoc: PMNode): number[] => {
   const { cleanStart, cleanEnd } = changedParagraphSpan(oldDoc, newDoc);
   const dirty: number[] = [];
@@ -734,22 +635,19 @@ const dirtyParas = (oldDoc: PMNode, newDoc: PMNode): number[] => {
       if (i >= 0 && !dirty.includes(i)) dirty.push(i);
     };
     addUnique(newDoc.childCount - 1);
-    // The old LAST paragraph, when it survived in the clean PREFIX (an
-    // append), keeps its index but is no longer last — it needs a widget.
+    // The old LAST paragraph surviving in the clean prefix (an append) keeps
+    // its index but is no longer last — it needs a widget.
     if (oldDoc.childCount - 1 < cleanStart) addUnique(oldDoc.childCount - 1);
   }
   return dirty.sort((a, b) => a - b);
 };
 
 /** Advance the cached decoration sets across ONE applied transaction —
- *  called from dispatchTransaction with (docBefore, docAfter, tr.mapping)
- *  BEFORE updateState pulls the new decorations. Untouched paragraphs shift
- *  wholesale inside PM's mapped set tree; only the dirty paragraphs'
- *  decorations are rebuilt, so an edit costs O(changed + #paragraphs), never
- *  O(document + rubies). The ruby layer advances only under Rich/Plain (the
- *  expanded set is caret-independent there — the same gate as the page-gap
- *  suffix cache); the other policies fall back to their per-move rebuild.
- *  A miss (cold caches, an unhooked dispatch) degrades to the cold rebuild. */
+ *  called from dispatchTransaction BEFORE updateState pulls the new
+ *  decorations. Untouched paragraphs shift wholesale inside PM's mapped set
+ *  tree; only dirty paragraphs rebuild, so an edit costs
+ *  O(changed + #paragraphs), never O(document + rubies). A miss degrades to
+ *  the cold rebuild. */
 export const advanceDecorationCaches = (
   oldDoc: PMNode,
   newDoc: PMNode,
@@ -759,7 +657,7 @@ export const advanceDecorationCaches = (
   head: number | null = null,
 ): void => {
   if (oldDoc === newDoc) return;
-  const parse = parseDoc(newDoc); // cheap: O(#paragraphs) over per-para caches
+  const parse = parseDoc(newDoc);
   if (parseCache?.doc !== newDoc) parseCache = parse;
   const dirty = dirtyParas(oldDoc, newDoc);
   const at: OffsetToPos = (o) => offsetToPos(newDoc, o);
@@ -767,10 +665,9 @@ export const advanceDecorationCaches = (
   if (baseCache && baseCache.doc === oldDoc) {
     const invis: Invisibles = { newline: baseCache.newline, whitespace: baseCache.whitespace };
     const mapped = baseCache.set.map(mapping, newDoc);
-    // Search/extension ranges live in OLD-text offsets; their mapped
-    // decorations ride along outside the dirty paragraphs (inside them they
-    // are dropped until the shell recomputes and redecorates — absent beats
-    // misplaced for a frame).
+    // Search/extension ranges live in OLD-text offsets; inside the dirty
+    // paragraphs they drop until the shell redecorates — absent beats
+    // misplaced for a frame.
     const set = patchParas(mapped, parse, dirty, (decos, pi) => pushParaBaseDecos(decos, parse, pi, invis, at));
     baseCache = { ...baseCache, doc: newDoc, set };
   }
@@ -795,10 +692,8 @@ export const advanceDecorationCaches = (
 
 /** The expanded set an EDIT can advance the ruby layer under — Rich/Plain
  *  are caret-independent; ByParagraph/ByCharacter advance exactly when the
- *  set is VALUE-stable across the edit (typing inside the expanded line:
- *  the common case), and the CACHED instance is kept so identity-keyed
- *  consumers stay hot. A reshaped set (caret left the line, a ruby was
- *  created/removed/renumbered) returns null — cold rebuild. */
+ *  set is VALUE-stable across the edit, keeping the CACHED instance so
+ *  identity-keyed consumers stay hot. Reshaped → null (cold rebuild). */
 const advanceableExpanded = (parse: Parse, newDoc: PMNode, head: number | null): Set<number> | null => {
   if (!rubyCache) return null;
   switch (rubyCache.policy) {
@@ -814,11 +709,9 @@ const advanceableExpanded = (parse: Parse, newDoc: PMNode, head: number | null):
   }
 };
 
-/** The caret's resolved neighbourhood, computed once per build and shared by
- *  the expanded-set resolution and the per-move delta. The caret's neighbours
- *  all live on its own line (no leaf crosses a `\n`), so every per-move scan
- *  reads ONE line's leaves — the whole-doc list scales with the ruby count and
- *  stalled ruby-dense docs. */
+/** The caret's resolved neighbourhood, computed once per build. All the
+ *  caret's neighbours live on its own line (no leaf crosses a `\n`), so
+ *  every per-move scan reads ONE line's leaves. */
 type CaretContext = {
   readonly headOffset: number;
   readonly activeLine: number;
@@ -835,17 +728,15 @@ const caretContext = (parse: Parse, doc: PMNode, head: number): CaretContext => 
   return { headOffset, activeLine, lineLeaves, active: activeRuby(lineLeaves, headOffset) };
 };
 
-/** The rubies whose markup is shown under `policy`. A ruby is "expanded" when
- *  its delimiter is NOT hidden under the policy — this switch MIRRORS
- *  `isHidden` (pm/leaves.ts) case for case, resolved per policy so the common
- *  policies are O(1)/O(line), not a scan of every delimiter in the document.
- *  Keep the two in sync. */
+/** The rubies whose markup is shown under `policy`. This switch MIRRORS
+ *  `isHidden` (pm/leaves.ts) case for case — keep the two in sync; resolved
+ *  per policy so the common policies are O(1)/O(line). */
 const expandedFor = (parse: Parse, policy: Appear, ctx: CaretContext): Set<number> => {
   switch (policy) {
     case 'plain':
-      return allRubiesOf(parse); // every delimiter shown — the one shared instance
+      return allRubiesOf(parse);
     case 'rich':
-      return EMPTY_EXPANDED; // every delimiter hidden
+      return EMPTY_EXPANDED;
     case 'paragraph': {
       const set = new Set<number>();
       for (const l of ctx.lineLeaves) if (l.ruby >= 0) set.add(l.ruby);
@@ -856,9 +747,8 @@ const expandedFor = (parse: Parse, policy: Appear, ctx: CaretContext): Set<numbe
   }
 };
 
-/** The base layer through `baseCache`: the bold/italic/縦中横 + invisibles +
- *  search set depends only on (doc, invisibles, search) — reuse it across
- *  every caret move and policy change. */
+/** The base layer through `baseCache` — reused across every caret move and
+ *  policy change. */
 const cachedBase = (
   parse: Parse,
   invisibles: Invisibles,
@@ -882,10 +772,9 @@ const cachedBase = (
       extension,
       set: buildBase(parse, invisibles, search, extension),
     };
-    // Test seam: count O(document) base rebuilds. A caret move must reuse the
-    // cache, and an EDIT must advance it (no increment either way) —
-    // caret-move-perf / edit-perf assert this. A WINDOW-triggered rebuild is
-    // designed and O(visible): it counts separately.
+    // Seam: caret moves must reuse and edits must advance (no increment
+    // either way) — caret-move-perf / edit-perf assert this. A WINDOW
+    // rebuild is designed and O(visible): it counts separately.
     const w = globalThis as unknown as { __vedBaseRebuilds?: number; __vedWindowRebuilds?: number };
     if (windowRebuildPending) w.__vedWindowRebuilds = (w.__vedWindowRebuilds ?? 0) + 1;
     else w.__vedBaseRebuilds = (w.__vedBaseRebuilds ?? 0) + 1;
@@ -893,16 +782,15 @@ const cachedBase = (
   return baseCache.set;
 };
 
-/** The static layer (base formats + caret-independent ruby decorations)
- *  through `rubyCache` — rebuilt only when the doc/policy/expanded-set
- *  actually changed (an EDIT under Rich/Plain advances it instead). */
+/** The static layer through `rubyCache` — rebuilt only when the
+ *  doc/policy/expanded-set actually changed (an EDIT under Rich/Plain
+ *  advances it instead). */
 const cachedStatic = (parse: Parse, policy: Appear, expanded: Set<number>, base: DecorationSet): DecorationSet => {
   const doc = parse.doc;
   if (rubyCache && rubyCache.doc === doc && rubyCache.policy === policy && rubyCache.base === base) {
     if (setsEq(rubyCache.expanded, expanded)) return rubyCache.set;
-    // Same doc, same base — only the expanded set moved (a caret crossing
-    // under ByParagraph/ByCharacter): PATCH the delta rubies instead of
-    // rebuilding every ruby's decorations. O(the two lines' rubies) per move.
+    // Same doc, same base — only the expanded set moved (a caret crossing):
+    // PATCH the delta rubies, O(the two lines' rubies) per move.
     const patched = patchExpandedSet(parse, rubyCache.set, rubyCache.expanded, expanded);
     expandedSetEpoch++; // the expansion moved — position-derived caches re-measure
     if (patched) {
@@ -918,11 +806,9 @@ const cachedStatic = (parse: Parse, policy: Appear, expanded: Set<number>, base:
     base,
     set: base.add(doc, buildRubyStatic(parse, expanded)),
   };
-  // Test seam: count O(rubies) static rebuilds. A caret move under ANY fixed
-  // policy must reuse or patch the cache, and an edit under Rich/Plain must
-  // advance it (no increment any of those ways) — click-perf / edit-perf
-  // assert this. A WINDOW-triggered rebuild is designed and O(visible): it
-  // counts separately, and completes the pending pair (base then ruby).
+  // Seam: caret moves must reuse/patch and edits under Rich/Plain must
+  // advance (no increment) — click-perf / edit-perf assert this. A WINDOW
+  // rebuild counts separately and completes the pending pair (base, ruby).
   const w = globalThis as unknown as { __vedRubyRebuilds?: number; __vedWindowRebuilds?: number };
   if (windowRebuildPending) {
     w.__vedWindowRebuilds = (w.__vedWindowRebuilds ?? 0) + 1;
@@ -941,8 +827,7 @@ export type DecorationOptions = {
   readonly invisibles?: Invisibles;
   readonly search?: SearchHighlights | null;
   /** Extension highlight ranges (extension.ts setDecorations), keyed into
-   *  the base cache by IDENTITY like `search` — an unchanged set costs caret
-   *  moves nothing. */
+   *  the base cache by IDENTITY like `search`. */
   readonly extension?: readonly ExtensionDecorationRange[] | null;
   readonly caretShape?: CaretShape;
 };
@@ -969,9 +854,9 @@ export const buildDecorations = (
   const expanded = expandedFor(parse, policy, ctx);
   const base = cachedBase(parse, invisibles, search, extension);
 
-  // The current-line highlight is NOT a decoration: it tracks the caret's VISUAL
-  // line (one wrapped column/row), which a node decoration on the <p> can't
-  // express. editor/line-numbers.ts measures and draws it in the overlay.
+  // The current-line highlight is NOT a decoration: it tracks the caret's
+  // VISUAL line, which a node decoration on the <p> can't express —
+  // line-numbers.ts draws it in the overlay.
 
   const staticSet = cachedStatic(parse, policy, expanded, base);
   const { add, remove } = caretDelta(parse, doc, policy, head, selFrom, selTo, caretShape, ctx, staticSet);
@@ -980,27 +865,20 @@ export const buildDecorations = (
   return add.length ? set.add(doc, add) : set;
 };
 
-/** Is `offset` STRICTLY INSIDE ruby `ruby`'s markup span — between the markup
- *  edges, not on them (the boundary offsets map OUTSIDE the node in
- *  pm/model.ts; the highlight, the read-only-base toggle, and the insertion
- *  mapping share this rule so they can't drift)? At most ONE ruby can contain
- *  an offset strictly, and `activeRuby` (edge-inclusive) finds it if it
- *  exists. `ruby` may be -1 (no ruby). */
+/** Is `offset` STRICTLY INSIDE ruby `ruby`'s markup span — between the
+ *  edges, not on them (boundary offsets map OUTSIDE the node, pm/model.ts)?
+ *  The highlight, the read-only-base toggle, and the insertion mapping share
+ *  this rule so they can't drift. `ruby` may be -1 (no ruby). */
 const strictlyInside = (parse: Parse, ruby: number, offset: number): boolean => {
   const sp = rubySpanOf(parse, ruby);
   return !!sp && offset > sp[0] && offset < sp[1];
 };
 
-/** The active-ruby part of the delta — while the caret sits strictly inside a
- *  ruby's markup span:
- *   - The `rubyActive` tint marks the ruby the EDITING caret sits in. While a
- *     non-empty selection is active (`selFrom !== selTo`, the HEAD strictly
- *     inside) it switches to `rubyActiveRange` — an OUTLINE, not the fill:
- *     the (yellow) tint would clash with and visually override the (blue)
- *     text-selection highlight on that ruby, an outline composes with it.
- *   - An atom ruby's base un-locks while the caret is strictly inside it (the
- *     IME then edits the base char-by-char) — drop its cached read-only deco
- *     (found in the static set by its vedAtomBase spec). */
+/** The active-ruby delta while the caret sits strictly inside a ruby's
+ *  markup span: the `rubyActive` tint — `rubyActiveRange` (an OUTLINE)
+ *  during a non-empty selection, or the yellow fill would override the blue
+ *  selection highlight — and the atom-base unlock (drop the cached read-only
+ *  deco so the IME can edit the base). */
 const pushActiveRubyDelta = (
   parse: Parse,
   ctx: CaretContext,
@@ -1019,12 +897,11 @@ const pushActiveRubyDelta = (
   if (ab) remove.push(ab);
 };
 
-/** The unlock honors the selection's OTHER endpoint too: a drag/extend can
- *  anchor strictly inside a DIFFERENT atom ruby's base, and a still-locked
- *  base leaves the DOM selection anchored in contenteditable=false — the IM
- *  context can't establish over a read-only anchor, and the first composing
- *  key falls through RAW (mozc/selection-composition, the adjacent-rubies
- *  case). Same strict-inside rule as the head, so the two can't drift. */
+/** The unlock honors the selection's OTHER endpoint too: an anchor strictly
+ *  inside a DIFFERENT atom base left the DOM selection anchored in
+ *  contenteditable=false — the IM context can't establish there, and the
+ *  first composing key falls through RAW (mozc/selection-composition). Same
+ *  strict-inside rule as the head, so the two can't drift. */
 const pushAnchorAtomUnlock = (
   parse: Parse,
   doc: PMNode,
@@ -1053,15 +930,11 @@ const pushNativeCaretOff = (add: Decoration[], doc: PMNode, head: number): void 
   if ($h.depth >= 1) add.push(Decoration.node($h.before(1), $h.after(1), { class: 'vedNativeCaretOff' }));
 };
 
-/** Block caret (extension-set, extension.ts setCaretShape) — the caret is
- *  a block at EVERY position: where a visible character sits under the
- *  caret in ONE leaf — plain text, or a base INTERIOR (a base-START offset
- *  maps OUTSIDE the ruby, so head+1 would span the node's open token, not
- *  the character) — an inline decoration tints it; everywhere else
- *  (paragraph end, a ruby boundary/seam, an empty line) a WIDGET paints an
- *  empty cell (`blockCaretBox`, which also REPLACES the boundary bar — one
- *  caret, always a block). Native bar suppressed either way. Part of the
- *  per-move DELTA: O(line), no cached layer is touched. */
+/** Block caret (extension.ts setCaretShape): where a visible character sits
+ *  under the caret an inline decoration tints it; everywhere else a WIDGET
+ *  paints an empty cell (`blockCaretBox`, which also replaces the boundary
+ *  bar — one caret, always a block). Native bar suppressed either way. Part
+ *  of the per-move DELTA: O(line), no cached layer touched. */
 const pushBlockCaret = (
   parse: Parse,
   doc: PMNode,
@@ -1084,15 +957,11 @@ const pushBlockCaret = (
     // the character under `headOffset` spans exactly [head, head+1).
     add.push(Decoration.inline(head, head + 1, { class: 'vedBlockCaret' }));
   } else {
-    // A collapsed ruby's LEADING seam (every position of an all-ruby
-    // line): the character under a Vim block cursor is the next VISIBLE
-    // glyph — the ruby's first base character, behind hidden markup.
-    // Tint IT, like `under` (Vim's cursor sits ON the next character; at
-    // a line end that is the NEXT line's first character, matching the
-    // highlight's head+2 anchor). The base-start OFFSET maps outside the
-    // node, so address the base content through the ruby node instead.
-    // No next glyph on the line (paragraph end, empty line) — or visible
-    // markup (a widget, not tintable text) — keeps the empty-cell box.
+    // A collapsed ruby's leading seam: the block cursor tints the next
+    // VISIBLE glyph — the ruby's first base character behind hidden markup.
+    // The base-start OFFSET maps outside the node, so address the base
+    // through the ruby node; no next glyph, or visible markup (a widget, not
+    // tintable text) → keep the empty cell.
     let off = headOffset;
     let leaf = lineLeaves.find((l) => l.from === off);
     while (leaf && leaf.kind === 'delim' && isHidden(leaf, policy, activeLine, active)) {
@@ -1106,16 +975,12 @@ const pushBlockCaret = (
   pushNativeCaretOff(add, doc, head);
 };
 
-/** Boundary caret: a COLLAPSED caret with NO text-node home — the seam BETWEEN
- *  two adjacent collapsed rubies, or a PARAGRAPH EDGE against hidden ruby
- *  markup. The DOM caret at such a spot is ELEMENT-level; the native caret is
- *  then invisible (the seam) or drawn from element geometry (the edge) — and
- *  when the position sits at a multicol PAGE break, Chromium derives that
- *  element-level caret rect from cross-fragment union geometry and paints a
- *  bar spanning the page gap. Render our own caret at the head and suppress
- *  the native one on the caret's paragraph (.vedNativeCaretOff), so exactly
- *  one caret shows and it is always glyph-sized. Plain text or an expanded
- *  ruby beside the head is renderable → the native caret stays, no widget. */
+/** Boundary caret: a COLLAPSED caret with NO text-node home — the seam
+ *  between two collapsed rubies, or a paragraph edge against hidden markup.
+ *  The DOM caret there is ELEMENT-level: invisible, or — at a multicol page
+ *  break — a Chromium cross-fragment union rect painting a bar across the
+ *  page gap. Render our own and suppress the native one (.vedNativeCaretOff);
+ *  renderable text beside the head → native caret stays, no widget. */
 const pushBoundaryCaret = (
   parse: Parse,
   doc: PMNode,
@@ -1127,8 +992,6 @@ const pushBoundaryCaret = (
   const { text } = parse;
   const { headOffset, activeLine, lineLeaves, active } = ctx;
   const hidden = (l?: Leaf): boolean => !!l && l.kind === 'delim' && isHidden(l, policy, activeLine, active);
-  // Delimiter leaves never cross a `\n`, so both neighbours of the head sit on
-  // the head's own line — scan just that line.
   const lb = lineLeaves.find((l) => l.to === headOffset);
   const la = lineLeaves.find((l) => l.from === headOffset);
   const seam = hidden(lb) && hidden(la) && lb?.ruby !== la?.ruby;
@@ -1136,21 +999,18 @@ const pushBoundaryCaret = (
   const atEnd = headOffset === text.length || text[headOffset] === '\n';
   const edge = (atStart && hidden(la)) || (atEnd && hidden(lb));
   if (seam || edge) {
-    // side 0 (AFTER the position): the caret's previous DOM sibling must
-    // stay REAL content — with the widget before the caret, fcitx5's IM
-    // context anchors on a contenteditable=false span and dies after the
-    // first composed character (mozc-verified at the page-boundary line).
-    // coordsAtPos flattening at the widget is handled by the caller-side
-    // fallback (editor.tsx caretCoords), not by flipping this side.
+    // side 0: the caret's previous DOM sibling must stay REAL content — a
+    // widget before the caret anchors fcitx5's IM context on a
+    // contenteditable=false span, which dies after the first composed
+    // character (mozc-verified at the page-boundary line).
     add.push(Decoration.widget(head, boundaryCaret, { key: `bcaret-${head}`, side: 0, ignoreSelection: true }));
     pushNativeCaretOff(add, doc, head);
   }
 };
 
-/** The per-caret-move DELTA — O(active ruby + selection), not O(rubies): the
- *  `rubyActive` tint, the active atom-base unlock (returned in `remove` — the
- *  cached read-only decorations to drop from the static set), and the
- *  boundary/block caret. */
+/** The per-caret-move DELTA — O(active ruby + selection), not O(rubies):
+ *  the `rubyActive` tint, the atom-base unlock (returned in `remove`), and
+ *  the boundary/block caret. */
 const caretDelta = (
   parse: Parse,
   doc: PMNode,
@@ -1166,14 +1026,8 @@ const caretDelta = (
   const remove: Decoration[] = [];
   pushActiveRubyDelta(parse, ctx, selFrom, selTo, staticSet, add, remove);
   pushAnchorAtomUnlock(parse, doc, head, selFrom, selTo, ctx.active, staticSet, remove);
-  // (Selected shown markup needs NO decoration: the selection overlay
-  // (editor.tsx walkGlyphsLines) measures the delimiter widgets and the inline
-  // reading like any other visible glyph, so they get the SAME overlay tint —
-  // a separate CSS tint stacked on the overlay rect and painted them darker.)
-
-  // A COLLAPSED caret renders its own caret where the native one has no
-  // text-node home (pushBoundaryCaret), or as a block everywhere when the
-  // extension asks for one (pushBlockCaret).
+  // Selected shown markup needs NO decoration: the overlay measures delimiter
+  // widgets like any visible glyph — a separate CSS tint double-painted them.
   if (selFrom === selTo) {
     if (caretShape === 'block') pushBlockCaret(parse, doc, policy, head, ctx, add);
     else pushBoundaryCaret(parse, doc, policy, head, ctx, add);

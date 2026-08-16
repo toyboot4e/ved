@@ -1,7 +1,6 @@
-// The shell/extension capability surface: searchOps (VedEditorProps.
-// onSearchOps) and the EditorExtensionContext (extension.ts). Plain offsets
-// in, exact plain-string edits out; every mutator refuses during an IME
-// composition (IME-safety invariant).
+// The shell/extension capability surface: searchOps and the
+// EditorExtensionContext. Plain offsets in, exact plain-string edits out;
+// every mutator refuses during an IME composition.
 import { TextSelection } from 'prosemirror-state';
 import type { EditorView } from 'prosemirror-view';
 import { HORIZ_ARROWS, moveByLogicalLine, moveCaretByLine, moveChar, VERT_ARROWS } from './caret-motion';
@@ -81,9 +80,8 @@ export const createEditorOps = (
     revealSoon,
   } = deps;
 
-  /** One exact plain-range replace: select the range, then the exact
-   *  selection-replacing insert — the same path a paste over a selection
-   *  takes. Shared by searchOps.replace and extensionCtx.replaceRange. */
+  /** Exact plain-range replace: select the range, then the selection-replacing
+   *  insert — the same path a paste over a selection takes. */
   const replacePlainRange = (from: number, to: number, text: string): boolean => {
     if (view.composing) return false;
     const doc = view.state.doc;
@@ -93,16 +91,12 @@ export const createEditorOps = (
     return true;
   };
 
-  // Search operations for the shell (see VedEditorProps.onSearchOps): plain
-  // offsets in, exact plain-string edits out. Edits go through the normal
-  // dispatch, so structure repair, history, and onTextChange all apply. All
-  // three refuse during an IME composition (IME-safety invariant).
+  // Edits go through the normal dispatch, so structure repair, history, and
+  // onTextChange all apply.
   const searchOps: EditorSearchOps = {
     select: (from, to) => {
       if (view.composing) return;
       setPlainSelection(view, goalInlineRef, from, to);
-      // A selection-only transaction never reveals (only doc changes do) —
-      // bring the match into view explicitly; paged modes snap its page start.
       revealSoon();
     },
     replace: (range, replacement) => replacePlainRange(range.from, range.to, replacement),
@@ -121,8 +115,8 @@ export const createEditorOps = (
         prev = r.to;
       }
       out += plain.slice(prev);
-      // ONE transaction over the whole document (a canonical rebuild, like
-      // undo's restore) — a single history entry, a single repair pass.
+      // ONE canonical whole-document rebuild — a single history entry, a
+      // single repair pass.
       const tr = view.state.tr.replaceWith(0, doc.content.size, docFromText(out).content);
       tr.setSelection(TextSelection.create(tr.doc, offsetToPos(tr.doc, caretOff)));
       view.dispatch(tr.scrollIntoView());
@@ -130,9 +124,6 @@ export const createEditorOps = (
     },
   };
 
-  // The extension capability surface (extension.ts): plain offsets in,
-  // exact plain-string edits out — the searchOps rules, plus movement,
-  // commands, and styling. Every mutator refuses during IME composition.
   const extensionCtx: EditorExtensionContext = {
     getText: () => serialize(view.state.doc),
     getSelection: () => ({
@@ -143,8 +134,8 @@ export const createEditorOps = (
       if (view.composing) return;
       const doc = view.state.doc;
       const text = serialize(doc);
-      // legalStop keeps any legal caret stop; a homeless offset snaps onto the
-      // ruby's base (the line-move commit's rule).
+      // legalStop keeps any legal caret stop; a homeless offset snaps onto
+      // the ruby's base.
       const fix = (o: number): number => legalStop(text, o, policyClassRef.current);
       goalInlineRef.current = null;
       view.dispatch(
@@ -152,8 +143,6 @@ export const createEditorOps = (
           TextSelection.create(doc, offsetToPos(doc, fix(anchor)), offsetToPos(doc, fix(head))),
         ),
       );
-      // Selection-only transactions never reveal — bring the caret into view
-      // (paged modes snap its page start, like any caret reveal).
       revealSoon();
     },
     replaceRange: replacePlainRange,
@@ -283,9 +272,8 @@ export const createEditorOps = (
       const policy = policyClassRef.current;
       if (isCaretStop(text, c, policy)) return c;
       // Nearest stop in the direction; at the document edge fall back to the
-      // nearest one the OTHER way (the old whole-list extremes are exactly
-      // those: no stop beyond c in-direction means the extreme is the nearest
-      // stop on the other side).
+      // nearest one the OTHER way (no stop beyond c in-direction means the
+      // extreme is the nearest stop on the other side).
       const ahead = nextCaretOffset(text, c, policy, dir <= 0);
       if (ahead !== c) return ahead;
       const behind = nextCaretOffset(text, c, policy, dir > 0);
