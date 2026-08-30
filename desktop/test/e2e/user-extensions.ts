@@ -138,10 +138,11 @@ try {
   if ((await text()).startsWith('フック')) step('addHooks handleKey consumed Mod+8 and edited');
   else fail(`Mod+8 hook edit missing — got ${JSON.stringify(await text())}`);
 
-  await page.keyboard.press('Alt+7');
-  // Poll: under the parallel pool the edit can land later than 150ms.
+  // Re-press, don't just poll: under the parallel pool the press itself is
+  // dropped now and then (as for Mod+7 above), not merely delivered late.
   let altEdited = false;
   for (let i = 0; i < 20 && !altEdited; i++) {
+    await page.keyboard.press('Alt+7');
     await page.waitForTimeout(100);
     altEdited = (await text()).includes('代替');
   }
