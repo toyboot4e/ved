@@ -347,6 +347,25 @@ const measuredLandingPos = (view: EditorView, target: VisualCol, depth: number, 
   return pastColEnd ? rubyLandingToEnd(view, hit.pos) : hit.pos;
 };
 
+/** Seed a run's goal depth from a step that needed no measuring. A later
+ *  measured move resolves its column with the AFTER-side caret affinity only
+ *  while the goal is held (`caretColumnRect`); at a column seam the
+ *  before-side rect indexes one column back, and the caret sticks. The goal
+ *  is null only on a run's first move, so the common mid-paragraph move
+ *  stays measure-free. */
+const seedGoalDepth = (
+  view: EditorView,
+  content: HTMLElement,
+  vertical: boolean,
+  beforeRect: DOMRect,
+  beforeP: HTMLElement | null,
+  goalRef: { current: number | null },
+): void => {
+  if (goalRef.current != null || !beforeP) return;
+  const cols = paragraphCols(beforeP, vertical);
+  columnAndDepth(cols, caretColumnRect(view, content, vertical, beforeRect, cols, false), vertical, goalRef);
+};
+
 /**
  * Move the caret by one VISUAL line. `Selection.modify` line-wraps reliably
  * WITHIN a paragraph; at a paragraph boundary spanning page rows it lands on
@@ -380,6 +399,7 @@ export const moveCaretByLine = (
 
     const stepPos = withinParagraphStep(view, sel, head, after, landedOnElement, beforeP === afterP, reverse, vertical);
     if (stepPos != null) {
+      seedGoalDepth(view, content, vertical, beforeRect, beforeP, goalRef);
       commit(stepPos);
       return;
     }

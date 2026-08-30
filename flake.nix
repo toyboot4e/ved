@@ -31,7 +31,7 @@
       # the running system's entry (adding it first if missing); an empty
       # string makes Nix print the correct hash on the first build.
       bunDepsHash = {
-        x86_64-linux = "sha256-UGyc1/N+3S6vYo6UsTmJIyjPu/FhD4nRuHWzuprYA5Q=";
+        x86_64-linux = "sha256-wBWykUutYf3AD4afZRpMjx7KM8iH8wargY5NDQguuNg=";
       };
 
       # Offline node_modules trees, shared by the package build and the
@@ -202,7 +202,7 @@
               # rpath and would need a global LD_LIBRARY_PATH; that variable
               # shadows the RUNPATH of every other Nix program launched from
               # this shell, e.g. breaking the system browser). The electron
-              # npm module honors this override; keep pkgs.electron_42 in
+              # npm module honors this override; keep pkgs.electron_43 in
               # step with desktop/package.json's electron version.
               #
               # Both variables MUST point at the bin/ WRAPPER, never the raw
@@ -211,11 +211,11 @@
               # the exe (impossible in /nix/store) and dies on a release
               # CHECK — a silent SIGILL, no output at all. The e2e harness
               # runs with chromiumSandbox: true to keep this path covered.
-              export ELECTRON_OVERRIDE_DIST_PATH=${pkgs.electron_42}/bin
+              export ELECTRON_OVERRIDE_DIST_PATH=${pkgs.electron_43}/bin
               # electron-vite resolves node_modules/electron/dist itself and
               # ignores the override above; it honors this full-path variable
               # instead (`just dev` breaks without it).
-              export ELECTRON_EXEC_PATH=${pkgs.lib.getExe pkgs.electron_42}
+              export ELECTRON_EXEC_PATH=${pkgs.lib.getExe pkgs.electron_43}
               export ELECTRON_SKIP_BINARY_DOWNLOAD=1
               export GTK_IM_MODULE_FILE=${gtk3ImmodulesCache}
               # GSettings schemas: GTK's file/print dialogs abort at runtime
@@ -314,7 +314,7 @@
           # Wrap in preFixup: wrapGAppsHook3 populates $gappsWrapperArgs in its
           # own preFixup hook, so the array is ready by the time this runs.
           preFixup = ''
-            makeWrapper ${pkgs.lib.getExe pkgs.electron_42} $out/bin/ved \
+            makeWrapper ${pkgs.lib.getExe pkgs.electron_43} $out/bin/ved \
               "''${gappsWrapperArgs[@]}" \
               --add-flags $out/share/ved/desktop
           '';

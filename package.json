@@ -27,14 +27,17 @@
   },
   "trustedDependencies": ["electron", "node-pty"],
   "devDependencies": {
-    "@biomejs/biome": "2.5.3",
-    "@ox-content/napi": "^2.76.0",
-    "@ox-content/vite-plugin": "2.76.0",
-    "@types/node": "^26.1.0",
-    "node-gyp": "^11.0.0",
-    "@vitest/ui": "^4.1.10",
+    "@biomejs/biome": "2.5.11",
+    "@ox-content/napi": "^2.90.0",
+    "@ox-content/vite-plugin": "2.90.0",
+    "@types/node": "^26.4.0",
+    "node-gyp": "^13.0.2",
+    "@vitest/ui": "^4.1.11",
     "typescript": "^7.0.2",
-    "vite": "^8.1.5",
-    "vitest": "^4.1.10"
+    "vite": "^8.2.2",
+    "vitest": "^4.1.11"
+  },
+  "dependencies": {
+    "prosemirror-view": "^1.42.3"
   }
 }

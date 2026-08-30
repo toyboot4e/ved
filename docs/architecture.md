@@ -519,9 +519,12 @@ measure columns (`paragraphCols`) and step in reading order:
 
 The goal column (`goalInlineRef`) is the caret's depth *into* the column —
 relative, so it survives page-row boundaries — held across consecutive line
-moves, reset by any other caret change. (`line-movement.ts`,
-`line-move-multirow.ts`; visible windows — the mover defers via
-requestAnimationFrame.)
+moves, reset by any other caret change. A run's *first* move seeds it whether
+or not that move needed measuring: a held goal is also what lets a later
+measured move resolve its column from the after-side caret affinity, and at a
+column seam the before-side rect indexes one column back
+(`ruby-line-move.ts`). (`line-movement.ts`, `line-move-multirow.ts`; visible
+windows — the mover defers via requestAnimationFrame.)
 
 **Extend (Shift+line)**: same measurement; native `modify('extend')` slides
 over a read-only base to the paragraph end, so the commit probes with a plain
