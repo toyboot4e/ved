@@ -1,7 +1,7 @@
 import { contextBridge, ipcRenderer } from 'electron';
 import { IpcChannel, type Unsubscribe, type VedApi } from '../shared/ipc';
 
-const on =<Args extends unknown[]>(channel: string, cb: (...args: Args) => void): Unsubscribe => {
+const on = <Args extends unknown[]>(channel: string, cb: (...args: Args) => void): Unsubscribe => {
   const listener = (_event: Electron.IpcRendererEvent, ...args: unknown[]): void => cb(...(args as Args));
   ipcRenderer.on(channel, listener);
   return () => ipcRenderer.off(channel, listener);
