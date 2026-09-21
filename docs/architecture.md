@@ -131,12 +131,26 @@ Two measurement subtleties:
   the preceding text node: an element-level caret kills fcitx5's
   input-method context.
 
-At compositionend the caret is re-seated to the committed word's end — where
-a native commit leaves it, since Blink commits around whatever caret stands —
-and the composition's *start* is restored as the undo anchor. The re-seat is
-a non-composing selection transaction dispatched before the history commit;
-without the anchor restore, it re-anchors `beforeOffsetRef` to the word's
-end, so undo restores the text but strands the caret there.
+At compositionend the caret is re-seated to the end of the IME **run** —
+where a native commit leaves it, since Blink commits around whatever caret
+stands — and the run's *start* is restored as the undo anchor. The run is
+everything the IME has inserted at that anchor while `lastTextRef` stays
+frozen: a character typed mid-conversion commits it *implicitly* and chains a
+new composition inside the same run. So the re-seat targets `anchor +
+surplus` (the pin's own recipe), not the committed word's length, and the
+clamp above measures from the live preedit's start — past the run's committed
+head — so a chained preedit is not dragged back onto the run's first line.
+
+The re-seat is a non-composing selection transaction dispatched as a
+**microtask**, not a frame: the implicitly committing character's
+`beforeinput` arrives in the same task run and inserts at the model
+selection, so a frame-late re-seat leaves it inside the committed word
+(`。機能している`) whenever a wrap has clamped the caret. ProseMirror queues
+its own composition flush as a microtask from its compositionend handler —
+installed at construction, so before this one — and the dispatch waits a
+frame if the commit is not in the document yet. Without the anchor restore,
+it re-anchors `beforeOffsetRef` to the run's end, so undo restores the text
+but strands the caret there.
 
 mozc composes, converts, and commits through the pinned caret. Verified by
 `mozc/candidate-window-pos.ts` and `mozc/ime-compose-visible.ts`.

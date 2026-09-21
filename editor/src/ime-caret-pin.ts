@@ -35,6 +35,13 @@ export type ImeCaretPinDeps = {
   readonly onCaretRect?: (rect: { left: number; top: number; right: number; bottom: number } | null) => void;
 };
 
+/** One IME *run*: the insertion at `beforeOffsetRef` that an IME builds up
+ *  while `lastTextRef` stays frozen. An implicit commit (the next character
+ *  ends a conversion) chains several compositions inside one run, so the
+ *  run's head is already committed text — only the tail past it is the live
+ *  preedit. */
+type ImeRun = { committed: number };
+
 /** The preedit tail's DOM home as a TEXT-node caret: at a paragraph end
  *  domAtPos answers at the ELEMENT level, and an element-level caret kills
  *  fcitx5's IM context — re-home into the preceding text node. Null when no
@@ -101,42 +108,56 @@ const lastOffsetOnLine = (
 };
 
 /** Re-seat the DOM caret to the preedit's TRUE end, clamped to the starting
- *  line on a wrap. Returns the composition's starting offset on a re-seat;
- *  null when the pin bails to native placement or the caret is already there. */
+ *  line on a wrap. Returns the run's starting offset once the pin owns the
+ *  caret; null when it bails to native placement. `run.committed` is the
+ *  run's already-committed head (see {@link ImeRun}). */
 const seatCaretAtPreeditEnd = (
   view: EditorView,
   deps: ImeCaretPinDeps,
   sel: Selection,
   scroller: HTMLElement,
+  run: ImeRun,
 ): number | null => {
   const doc = view.state.doc;
   const anchorOff = deps.beforeOffsetRef.current;
   // Composing over a selection leaves lastTextRef ahead of the doc (the
   // IME-entry deletion is history-deferred): the surplus underestimates, so
   // the pin bails or clamps short, never past the preedit.
-  const preeditLen = serialize(doc).length - deps.lastTextRef.current.length;
+  const surplus = serialize(doc).length - deps.lastTextRef.current.length;
+  // A surplus no larger than the recorded head means the baseline moved on
+  // (the history commit re-based lastTextRef): this is a fresh run.
+  if (surplus <= run.committed) run.committed = 0;
+  // The LIVE preedit starts past the run's committed head — the clamp below
+  // must measure from the preedit's own line, not the run's first line.
+  const preeditStart = anchorOff + run.committed;
+  const preeditLen = surplus - run.committed;
   if (preeditLen <= 0) return null;
-  const tailOff = anchorOff + preeditLen;
+  const tailOff = preeditStart + preeditLen;
   const tailPos = offsetToPos(doc, tailOff);
   const tailDom = tailTextHome(view, tailPos);
   if (!tailDom) return null;
-  const aRect = caretCoords(view, offsetToPos(doc, anchorOff));
+  const aRect = caretCoords(view, offsetToPos(doc, preeditStart));
   const onLine = makeOnLine(view, scroller, aRect);
   const tailRect = tailRectAt(view, tailDom, tailPos);
-  const target = onLine(tailRect) ? tailOff : lastOffsetOnLine(view, anchorOff, tailOff, onLine);
+  const target = onLine(tailRect) ? tailOff : lastOffsetOnLine(view, preeditStart, tailOff, onLine);
   const pin = target === tailOff ? tailDom : view.domAtPos(offsetToPos(doc, target));
   // An element-level caret kills fcitx5's IM context — bail to native.
   if (pin.node.nodeType !== Node.TEXT_NODE) return null;
-  if (sel.focusNode === pin.node && sel.focusOffset === pin.offset) return null;
-  sel.collapse(pin.node, pin.offset);
+  // The anchor is returned even when the caret already stands there (mozc's
+  // cursor can coincide with the clamp): the compositionend re-seat below is
+  // owed for every pinned composition, not only the ones that moved a caret.
+  if (sel.focusNode !== pin.node || sel.focusOffset !== pin.offset) sel.collapse(pin.node, pin.offset);
   return anchorOff;
 };
 
 /** Install the composition caret pin on a mounted view; returns the teardown. */
 export const installImeCaretPin = (view: EditorView, deps: ImeCaretPinDeps): (() => void) => {
-  // The pinned composition's starting offset. Blink commits around whatever
-  // caret we left, so compositionend must re-seat to the committed word's end.
+  // The pinned run's starting offset. Blink commits around whatever caret we
+  // left, so compositionend must re-seat to the run's end.
   let pinnedAnchor: number | null = null;
+  // The run's already-committed head, grown by each implicit commit and reset
+  // by the next run's first pin (see ImeRun).
+  const run: ImeRun = { committed: 0 };
   // Read AFTER the pin re-seats, so this is the rect the IME window belongs under.
   const reportCaretRect = (): void => {
     if (!deps.onCaretRect) return;
@@ -158,7 +179,7 @@ export const installImeCaretPin = (view: EditorView, deps: ImeCaretPinDeps): (()
     const scroller = view.dom.parentElement;
     if (!scroller) return;
     try {
-      const anchored = seatCaretAtPreeditEnd(view, deps, sel, scroller);
+      const anchored = seatCaretAtPreeditEnd(view, deps, sel, scroller, run);
       if (anchored != null) pinnedAnchor = anchored;
     } catch {
       // A mid-flush mapping can miss; skip this update — the next re-pins.
@@ -170,21 +191,49 @@ export const installImeCaretPin = (view: EditorView, deps: ImeCaretPinDeps): (()
     const anchorOff = pinnedAnchor;
     pinnedAnchor = null;
     const committed = (event as CompositionEvent).data ?? '';
-    // After ProseMirror settles the commit (same deferral as composition.ts);
-    // this listener is installed FIRST, so it runs before the history commit.
-    requestAnimationFrame(() => {
-      if (view.composing) return; // a chained composition took over
+    /** Re-seat once the commit is in the doc; false while it is not (the
+     *  caller retries a frame later). */
+    const reseat = (): boolean => {
+      if (view.composing) return true; // a chained composition took over — its own compositionend re-seats
+      const text = serialize(view.state.doc);
+      // The caret belongs at the end of everything this IME run has inserted:
+      // the anchor plus the doc's surplus over the last COMMITTED text (the
+      // pin's own recipe). Not `anchor + committed.length`: an implicit
+      // commit chains compositions within one run — lastTextRef re-baselines
+      // only at the history commit — so this commit's word is only the run's
+      // tail (機能している + 。 ends at anchor + 7, not anchor + 1).
+      const end = anchorOff + (text.length - deps.lastTextRef.current.length);
+      // Settled only once the doc carries the commit — ProseMirror queues its
+      // composition flush as a microtask, and seating by an offset the text
+      // does not have yet would be read back by that flush. An escape
+      // (committed '') has nothing to verify; its run end is the anchor plus
+      // whatever earlier commits the run carries.
+      if (committed !== '' && text.slice(end - committed.length, end) !== committed) return false;
       try {
-        const pos = offsetToPos(view.state.doc, anchorOff + committed.length);
+        const pos = offsetToPos(view.state.doc, end);
         view.dispatch(view.state.tr.setSelection(TextSelection.create(view.state.doc, pos)));
         // The non-composing selection dispatch re-anchored the undo target
-        // (beforeOffsetRef) to the committed word's END; this re-seat is
-        // repair, not a user move — restore the composition's start so undo
-        // returns there (the history commit reads it in the next rAF).
+        // (beforeOffsetRef) to the run's END; this re-seat is repair, not a
+        // user move — restore the run's start so undo returns there (the
+        // history commit reads it in the next rAF).
         deps.beforeOffsetRef.current = anchorOff;
+        // What the run has committed so far: a chained composition's preedit
+        // starts here, not at the run's anchor.
+        run.committed = end - anchorOff;
       } catch {
         // The commit changed shape under us — keep whatever caret stands.
       }
+      return true;
+    };
+    // A MICROTASK, not a frame: an IME commits IMPLICITLY when the next
+    // character ends a conversion (mozc's 。), and that character's
+    // beforeinput arrives in the same task run — a frame late, it inserts at
+    // the still-pinned caret, which a wrapped preedit clamps INSIDE the
+    // committed word (。機能している). ProseMirror queues its own composition
+    // flush as a microtask from ITS compositionend handler — installed at
+    // construction, so before this one — and this runs right after it.
+    queueMicrotask(() => {
+      if (!reseat()) requestAnimationFrame(reseat);
     });
   };
   view.dom.addEventListener('input', onInput);

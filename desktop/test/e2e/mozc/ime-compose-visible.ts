@@ -8,12 +8,18 @@
 //    for the first), opening the candidate window on the word; the pin
 //    computes the preedit's true end from the committed-text surplus (the
 //    live selection head IS mozc's cursor — useless) and re-seats there.
+// 3. an IMPLICIT commit (typing 。 ends the conversion) of a preedit that
+//    WRAPS a visual line: the pin clamps the caret to the starting line, and
+//    the committing character arrives in the same task run — a frame-late
+//    re-seat let it insert INSIDE the committed word (。機能している). The
+//    re-seat is a microtask, to the end of the whole IME RUN (chained
+//    compositions share one anchor until the history commit re-baselines).
 //
 // Linux-only (fcitx5 + mozc + xdotool; SKIPS elsewhere — see ./harness.ts);
 // steals X focus. Run: node test/e2e/mozc/ime-compose-visible.ts
 import assert from 'node:assert/strict';
 import type { ModelSeams } from '../harness.ts';
-import { fail, finish, step } from '../harness.ts';
+import { clickWritingMode, fail, finish, setCaret, setDoc, setViewConfig, step } from '../harness.ts';
 import { mozcAvailable, openMozc } from './harness.ts';
 
 if (!mozcAvailable()) {
@@ -66,6 +72,39 @@ try {
 
   await m.escape();
   await m.escape();
+
+  // Regression 3: a preedit that wraps the visual line, committed IMPLICITLY
+  // by the next character. Candidates vary with mozc's learning state — the
+  // invariant is that every character of the run lands AFTER the last, and
+  // the caret ends at the run's end.
+  await setViewConfig(page, { fontSize: '18', lineSpaceRatio: '0.55', pageLineChars: '40', pageLines: '20' });
+  await page.waitForTimeout(200);
+  await clickWritingMode(page, 'Vertical Columns');
+  const DOC = 'あ'.repeat(160); // one paragraph, 40 kana per line
+  const off = 37; // 3 cells before the line 1→2 wrap: きのうしている straddles it
+  /** The text this IME run has inserted at `off` (the doc is kana either side). */
+  const runOf = (got: string): string => got.slice(off, got.length - (DOC.length - off));
+  await setDoc(page, DOC, 500);
+  await setCaret(page, off, 250);
+  await m.escape();
+
+  await m.type('kinousiteiru');
+  const word = runOf(await m.convert());
+  assert.ok(word.length > 0, 'the conversion produced a preedit across the wrap');
+  // NO Enter: the 。 commits the conversion and starts its own composition.
+  const implicit = runOf(await m.type('.'));
+  const afterImplicit = await page.evaluate(() => (window as unknown as ModelSeams).__vedCaret());
+  step(`implicit commit at the wrap: run=${JSON.stringify(implicit)} caret=${afterImplicit}`);
+  assert.equal(implicit, `${word}。`, 'the 。 lands AFTER the committed word, not inside it');
+  assert.equal(afterImplicit, off + implicit.length, 'the caret follows the run, not the pin clamp');
+
+  // A third link: `neko` implicitly commits the 。 in turn.
+  await m.type('neko');
+  const chained = runOf(await m.commit());
+  const caretEnd = await page.evaluate(() => (window as unknown as ModelSeams).__vedCaret());
+  step(`chained run: ${JSON.stringify(chained)} caret=${caretEnd}`);
+  assert.ok(chained.startsWith(`${word}。`), 'the chained composition appends to the run');
+  assert.equal(caretEnd, off + chained.length, 'the caret rests at the committed run end');
 } catch (e) {
   fail(e instanceof Error ? e.message : String(e));
 } finally {
